@@ -514,7 +514,7 @@ fn paint_content(
 
         let content_x = LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN;
         let row1_y = 5;
-        let row2_y = 5 + 13 + 7;
+        let row2_y = 5 + SEGMENT_H + 10;
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
