@@ -235,8 +235,10 @@ fn format_countdown(resets_at: Option<SystemTime>) -> String {
         format!("{total_days}d")
     } else if total_mins > 61 {
         format!("{total_hours}h")
-    } else {
+    } else if total_secs > 60 {
         format!("{total_mins}m")
+    } else {
+        format!("{total_secs}")
     }
 }
 
@@ -249,6 +251,11 @@ pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Durati
     let total_mins = total_secs / 60;
     let total_hours = total_secs / 3600;
     let total_days = total_secs / 86400;
+
+    if total_secs <= 60 {
+        // Update every second during final countdown
+        return Some(Duration::from_secs(1));
+    }
 
     let next_boundary = if total_days >= 1 {
         Duration::from_secs(total_days * 86400)
@@ -268,4 +275,11 @@ pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Durati
     } else {
         Some(Duration::from_secs(1))
     }
+}
+
+/// Returns true if either section has reached "now" (reset time has passed).
+pub fn is_past_reset(data: &UsageData) -> bool {
+    let now = SystemTime::now();
+    let past = |s: &UsageSection| matches!(s.resets_at, Some(t) if now.duration_since(t).is_ok());
+    past(&data.session) || past(&data.weekly)
 }

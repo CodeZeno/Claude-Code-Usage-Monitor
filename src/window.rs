@@ -11,7 +11,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
 
 use crate::models::UsageData;
-use crate::native_interop::{self, Color, TIMER_COUNTDOWN, TIMER_POLL, WM_APP_USAGE_UPDATED};
+use crate::native_interop::{self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, WM_APP_USAGE_UPDATED};
 use crate::poller;
 use crate::theme;
 
@@ -559,6 +559,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                 s.weekly_percent = data.weekly.percentage;
                 s.session_text = session_text;
                 s.weekly_text = weekly_text;
+                // Stop fast-poll if reset data is now fresh
+                if !poller::is_past_reset(&data) {
+                    unsafe {
+                        let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                    }
+                }
+
                 s.data = Some(data);
                 s.last_poll_ok = true;
 
@@ -615,6 +622,14 @@ fn schedule_countdown_timer() {
     };
 
     let hwnd = s.hwnd.to_hwnd();
+
+    // If a reset time has passed, poll every 5s to pick up fresh data
+    if poller::is_past_reset(data) {
+        unsafe {
+            SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
+        }
+    }
+
     let session_delay = poller::time_until_display_change(data.session.resets_at);
     let weekly_delay = poller::time_until_display_change(data.weekly.resets_at);
 
@@ -804,7 +819,12 @@ unsafe extern "system" fn wnd_proc(
                     render_layered();
                     schedule_countdown_timer();
                 }
-                3 => {}
+                TIMER_RESET_POLL => {
+                    let sh = SendHwnd::from_hwnd(hwnd);
+                    std::thread::spawn(move || {
+                        do_poll(sh);
+                    });
+                }
                 _ => {}
             }
             LRESULT(0)
