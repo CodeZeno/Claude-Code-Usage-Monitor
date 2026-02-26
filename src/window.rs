@@ -47,7 +47,11 @@ struct AppState {
     data: Option<UsageData>,
 
     poll_interval_ms: u32,
+    retry_count: u32,
+    last_poll_ok: bool,
 }
+
+const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 
 const POLL_1_MIN: u32 = 60_000;
 const POLL_5_MIN: u32 = 300_000;
@@ -246,6 +250,8 @@ pub fn run() {
                 weekly_text: "--".to_string(),
                 data: None,
                 poll_interval_ms: POLL_15_MIN,
+                retry_count: 0,
+                last_poll_ok: false,
             });
         }
 
@@ -554,30 +560,39 @@ fn do_poll(send_hwnd: SendHwnd) {
                 s.session_text = session_text;
                 s.weekly_text = weekly_text;
                 s.data = Some(data);
+                s.last_poll_ok = true;
+
+                // Recovered from errors — restore normal poll interval
+                if s.retry_count > 0 {
+                    s.retry_count = 0;
+                    let interval = s.poll_interval_ms;
+                    unsafe {
+                        SetTimer(hwnd, TIMER_POLL, interval, None);
+                    }
+                }
             }
 
             unsafe {
                 let _ = PostMessageW(hwnd, WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
         }
-        Err(e) => {
-            let err_msg = e.to_string();
-            // Show truncated error in widget (char-boundary safe)
-            let short_err = if err_msg.len() > 20 {
-                let end = err_msg
-                    .char_indices()
-                    .take_while(|(i, _)| *i < 20)
-                    .last()
-                    .map(|(i, c)| i + c.len_utf8())
-                    .unwrap_or(20.min(err_msg.len()));
-                format!("{}…", &err_msg[..end])
-            } else {
-                err_msg
-            };
+        Err(_e) => {
+            // Show refresh indicator — retry will recover silently
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                s.session_text = short_err.clone();
-                s.weekly_text = short_err;
+                s.session_text = "...".to_string();
+                s.weekly_text = "...".to_string();
+                s.last_poll_ok = false;
+
+                // Exponential backoff retry: 30s, 60s, 120s, ... up to poll_interval
+                s.retry_count = s.retry_count.saturating_add(1);
+                let backoff = RETRY_BASE_MS.saturating_mul(
+                    1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
+                );
+                let retry_ms = backoff.min(s.poll_interval_ms);
+                unsafe {
+                    SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+                }
             }
 
             unsafe {
@@ -646,6 +661,11 @@ fn update_display() {
         Some(s) => s,
         None => return,
     };
+
+    // Don't overwrite error text with stale cached data
+    if !s.last_poll_ok {
+        return;
+    }
 
     if let Some(ref data) = s.data {
         s.session_text = poller::format_line(&data.session);

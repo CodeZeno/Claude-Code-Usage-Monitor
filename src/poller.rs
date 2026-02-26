@@ -4,7 +4,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use crate::models::{UsageData, UsageSection};
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
-
+const TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+const CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const OAUTH_SCOPES: &str = "user:profile user:inference user:sessions:claude_code user:mcp_servers";
 
 const MODEL_FALLBACK_CHAIN: &[&str] = &[
     "claude-3-haiku-20240307",
@@ -14,53 +16,101 @@ const MODEL_FALLBACK_CHAIN: &[&str] = &[
 #[derive(Debug)]
 pub enum PollError {
     NoCredentials,
-    AllModelsFailed(String),
-}
-
-impl std::fmt::Display for PollError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PollError::NoCredentials => write!(f, "No Claude credentials found"),
-            PollError::AllModelsFailed(msg) => write!(f, "All models failed:\n{msg}"),
-        }
-    }
+    TokenExpired,
+    AllModelsFailed,
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
-    let token = read_access_token().ok_or(PollError::NoCredentials)?;
+    let creds = read_credentials().ok_or(PollError::NoCredentials)?;
+
+    let token = if is_token_expired(creds.expires_at) {
+        // Token expired — try to refresh it
+        let refresh = creds.refresh_token.ok_or(PollError::TokenExpired)?;
+        refresh_access_token(&refresh).map_err(|_| PollError::TokenExpired)?
+    } else {
+        creds.access_token
+    };
+
     fetch_usage_with_fallback(&token)
 }
 
 fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
-    let mut errors = Vec::new();
-
     for model in MODEL_FALLBACK_CHAIN {
-        match try_model(token, model) {
-            Ok(data) => return Ok(data),
-            Err(msg) => errors.push(format!("{model}: {msg}")),
+        if let Some(data) = try_model(token, model) {
+            return Ok(data);
         }
     }
 
-    let combined = errors.join("\n");
-    Err(PollError::AllModelsFailed(combined))
+    Err(PollError::AllModelsFailed)
 }
 
-fn read_access_token() -> Option<String> {
+struct Credentials {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_at: Option<i64>,
+}
+
+fn read_credentials() -> Option<Credentials> {
     let home = dirs::home_dir()?;
     let cred_path: PathBuf = home.join(".claude").join(".credentials.json");
 
     let content = std::fs::read_to_string(&cred_path).ok()?;
     let json: serde_json::Value = serde_json::from_str(&content).ok()?;
 
-    json.get("claudeAiOauth")?
-        .get("accessToken")?
-        .as_str()
+    let oauth = json.get("claudeAiOauth")?;
+    Some(Credentials {
+        access_token: oauth.get("accessToken")?.as_str()?.to_string(),
+        refresh_token: oauth.get("refreshToken").and_then(|v| v.as_str()).map(String::from),
+        expires_at: oauth.get("expiresAt").and_then(|v| v.as_i64()),
+    })
+}
+
+fn is_token_expired(expires_at: Option<i64>) -> bool {
+    let Some(exp) = expires_at else { return false };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    now >= exp
+}
+
+/// Refresh the OAuth token using the refresh grant.
+/// Returns the new access token in-memory only — does not write to disk.
+fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
+    let tls = std::sync::Arc::new(
+        native_tls::TlsConnector::new().map_err(|e| e.to_string())?
+    );
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .tls_connector(tls)
+        .build();
+
+    let body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLIENT_ID,
+        "scope": OAUTH_SCOPES,
+    });
+
+    let resp = agent
+        .post(TOKEN_URL)
+        .set("Content-Type", "application/json")
+        .send_json(&body)
+        .map_err(|e| e.to_string())?;
+
+    let resp_body: serde_json::Value = resp
+        .into_json()
+        .map_err(|e| e.to_string())?;
+
+    resp_body.get("access_token")
+        .and_then(|v| v.as_str())
+        .ok_or("missing access_token in refresh response".to_string())
         .map(String::from)
 }
 
-fn try_model(token: &str, model: &str) -> Result<UsageData, String> {
+fn try_model(token: &str, model: &str) -> Option<UsageData> {
     let tls = std::sync::Arc::new(
-        native_tls::TlsConnector::new().map_err(|e| e.to_string())?
+        native_tls::TlsConnector::new().ok()?
     );
     let agent = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
@@ -73,16 +123,16 @@ fn try_model(token: &str, model: &str) -> Result<UsageData, String> {
         "messages": [{"role": "user", "content": "."}]
     });
 
-    let (status, response) = match agent
+    let response = match agent
         .post(API_URL)
         .set("Authorization", &format!("Bearer {token}"))
         .set("anthropic-version", "2023-06-01")
         .set("anthropic-beta", "oauth-2025-04-20")
         .send_json(&body)
     {
-        Ok(resp) => (resp.status(), resp),
-        Err(ureq::Error::Status(code, resp)) => (code, resp),
-        Err(e) => return Err(e.to_string()),
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(_, resp)) => resp,
+        Err(_) => return None,
     };
 
     let has_rate_limit_headers = response.header("anthropic-ratelimit-unified-5h-utilization").is_some()
@@ -90,23 +140,10 @@ fn try_model(token: &str, model: &str) -> Result<UsageData, String> {
         || response.header("anthropic-ratelimit-unified-status").is_some();
 
     if has_rate_limit_headers {
-        let data = parse_headers(&response);
-        return Ok(data);
+        Some(parse_headers(&response))
+    } else {
+        None
     }
-
-    let body_text = response.into_string().unwrap_or_default();
-    Err(extract_error_message(&body_text, status))
-}
-
-fn extract_error_message(body: &str, status: u16) -> String {
-    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
-        if let Some(msg) = json.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
-        {
-            return format!("HTTP {status}: {msg}");
-        }
-    }
-    let truncated = if body.len() > 200 { &body[..200] } else { body };
-    format!("HTTP {status}: {truncated}")
 }
 
 fn parse_headers(response: &ureq::Response) -> UsageData {
