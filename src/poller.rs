@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::models::{UsageData, UsageSection};
@@ -13,6 +14,16 @@ const MODEL_FALLBACK_CHAIN: &[&str] = &[
     "claude-haiku-4-5-20251001",
 ];
 
+/// In-memory cache of refreshed tokens so we don't lose them between poll cycles
+/// and don't need to write to the credentials file.
+struct CachedTokens {
+    access_token: String,
+    refresh_token: String,
+    expires_at: i64, // milliseconds since epoch
+}
+
+static TOKEN_CACHE: Mutex<Option<CachedTokens>> = Mutex::new(None);
+
 #[derive(Debug)]
 pub enum PollError {
     NoCredentials,
@@ -21,17 +32,53 @@ pub enum PollError {
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
-    let creds = read_credentials().ok_or(PollError::NoCredentials)?;
+    let token = resolve_access_token()?;
+    fetch_usage_with_fallback(&token)
+}
 
-    let token = if is_token_expired(creds.expires_at) {
-        // Token expired — try to refresh it
-        let refresh = creds.refresh_token.ok_or(PollError::TokenExpired)?;
-        refresh_access_token(&refresh).map_err(|_| PollError::TokenExpired)?
-    } else {
-        creds.access_token
+/// Resolve a valid access token by checking (in order):
+/// 1. In-memory cache (from a previous refresh)
+/// 2. On-disk credentials file
+/// Then refresh if the token is expired.
+fn resolve_access_token() -> Result<String, PollError> {
+    // Try cached tokens first
+    {
+        let cache = TOKEN_CACHE.lock().unwrap();
+        if let Some(cached) = cache.as_ref() {
+            if !is_token_expired(Some(cached.expires_at)) {
+                return Ok(cached.access_token.clone());
+            }
+            // Cached token expired — we'll refresh below using the cached refresh token
+        }
+    }
+
+    // Get the refresh token to use: prefer cached (may be rotated), fall back to disk
+    let (access_token, refresh_token, expires_at) = {
+        let cache = TOKEN_CACHE.lock().unwrap();
+        if let Some(cached) = cache.as_ref() {
+            (cached.access_token.clone(), Some(cached.refresh_token.clone()), Some(cached.expires_at))
+        } else {
+            let creds = read_credentials().ok_or(PollError::NoCredentials)?;
+            (creds.access_token, creds.refresh_token, creds.expires_at)
+        }
     };
 
-    fetch_usage_with_fallback(&token)
+    if !is_token_expired(expires_at) {
+        return Ok(access_token);
+    }
+
+    // Token is expired — refresh it
+    let refresh = refresh_token.ok_or(PollError::TokenExpired)?;
+    let new_tokens = refresh_access_token(&refresh).map_err(|_| PollError::TokenExpired)?;
+
+    // Cache the new tokens
+    let new_access = new_tokens.access_token.clone();
+    {
+        let mut cache = TOKEN_CACHE.lock().unwrap();
+        *cache = Some(new_tokens);
+    }
+
+    Ok(new_access)
 }
 
 fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
@@ -75,8 +122,8 @@ fn is_token_expired(expires_at: Option<i64>) -> bool {
 }
 
 /// Refresh the OAuth token using the refresh grant.
-/// Returns the new access token in-memory only — does not write to disk.
-fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
+/// Returns the full token set (access, refresh, expiry) for in-memory caching.
+fn refresh_access_token(refresh_token: &str) -> Result<CachedTokens, String> {
     let tls = std::sync::Arc::new(
         native_tls::TlsConnector::new().map_err(|e| e.to_string())?
     );
@@ -102,10 +149,32 @@ fn refresh_access_token(refresh_token: &str) -> Result<String, String> {
         .into_json()
         .map_err(|e| e.to_string())?;
 
-    resp_body.get("access_token")
+    let new_access = resp_body.get("access_token")
         .and_then(|v| v.as_str())
-        .ok_or("missing access_token in refresh response".to_string())
-        .map(String::from)
+        .ok_or("missing access_token in refresh response")?
+        .to_string();
+
+    // Use new refresh token if server returned one (rotation), otherwise keep existing
+    let new_refresh = resp_body.get("refresh_token")
+        .and_then(|v| v.as_str())
+        .unwrap_or(refresh_token)
+        .to_string();
+
+    // Calculate expiry from expires_in (seconds), default to 1 hour if missing
+    let expires_in = resp_body.get("expires_in")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(3600);
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64;
+    let expires_at = now_ms + (expires_in * 1000);
+
+    Ok(CachedTokens {
+        access_token: new_access,
+        refresh_token: new_refresh,
+        expires_at,
+    })
 }
 
 fn try_model(token: &str, model: &str) -> Option<UsageData> {
