@@ -49,6 +49,7 @@ struct AppState {
     poll_interval_ms: u32,
     retry_count: u32,
     last_poll_ok: bool,
+    position_offset: i32,
 }
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
@@ -64,6 +65,13 @@ const IDM_FREQ_5MIN: u16 = 11;
 const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
+
+// Menu item IDs for position offset
+const IDM_OFFSET_0: u16 = 30;
+const IDM_OFFSET_50: u16 = 31;
+const IDM_OFFSET_100: u16 = 32;
+const IDM_OFFSET_150: u16 = 33;
+const IDM_OFFSET_200: u16 = 34;
 
 unsafe impl Send for AppState {}
 
@@ -164,7 +172,7 @@ const DIVIDER_RIGHT_MARGIN: i32 = 10;
 const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 52;
+const TEXT_WIDTH: i32 = 62;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
@@ -252,6 +260,7 @@ pub fn run() {
                 poll_interval_ms: POLL_15_MIN,
                 retry_count: 0,
                 last_poll_ok: false,
+                position_offset: 100,
             });
         }
 
@@ -521,7 +530,7 @@ fn paint_content(
 
         let font_name = native_interop::wide_str("Segoe UI");
         let font = CreateFontW(
-            -12,
+            -13,
             0,
             0,
             0,
@@ -697,6 +706,7 @@ fn position_at_taskbar() {
 
     let hwnd = s.hwnd.to_hwnd();
     let embedded = s.embedded;
+    let extra_offset = s.position_offset;
 
     let taskbar_hwnd = match s.taskbar_hwnd {
         Some(h) => h,
@@ -721,12 +731,12 @@ fn position_at_taskbar() {
 
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
-        let x = tray_left - taskbar_rect.left - widget_width;
+        let x = tray_left - taskbar_rect.left - widget_width - extra_offset;
         let y = (taskbar_height - WIDGET_HEIGHT) / 2;
         native_interop::move_window(hwnd, x, y, widget_width, WIDGET_HEIGHT);
     } else {
         // Topmost popup: screen coordinates
-        let x = tray_left - widget_width;
+        let x = tray_left - widget_width - extra_offset;
         let y = taskbar_rect.top + (taskbar_height - WIDGET_HEIGHT) / 2;
         native_interop::move_window(hwnd, x, y, widget_width, WIDGET_HEIGHT);
     }
@@ -886,6 +896,24 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
+                IDM_OFFSET_0 | IDM_OFFSET_50 | IDM_OFFSET_100 | IDM_OFFSET_150 | IDM_OFFSET_200 => {
+                    let new_offset = match id {
+                        IDM_OFFSET_0 => 0,
+                        IDM_OFFSET_50 => 50,
+                        IDM_OFFSET_100 => 100,
+                        IDM_OFFSET_150 => 150,
+                        IDM_OFFSET_200 => 200,
+                        _ => 100,
+                    };
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.position_offset = new_offset;
+                        }
+                    }
+                    position_at_taskbar();
+                    render_layered();
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -907,9 +935,11 @@ unsafe extern "system" fn wnd_proc(
 
 fn show_context_menu(hwnd: HWND) {
     unsafe {
-        let current_interval = {
+        let (current_interval, current_offset) = {
             let state = lock_state();
-            state.as_ref().map(|s| s.poll_interval_ms).unwrap_or(POLL_15_MIN)
+            let interval = state.as_ref().map(|s| s.poll_interval_ms).unwrap_or(POLL_15_MIN);
+            let offset = state.as_ref().map(|s| s.position_offset).unwrap_or(100);
+            (interval, offset)
         };
 
         let menu = CreatePopupMenu().unwrap();
@@ -951,6 +981,38 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             freq_menu.0 as usize,
             PCWSTR::from_raw(freq_label.as_ptr()),
+        );
+
+        // Position Offset submenu
+        let offset_menu = CreatePopupMenu().unwrap();
+        let offset_items: &[(u16, i32, &str)] = &[
+            (IDM_OFFSET_0, 0, "None (0px)"),
+            (IDM_OFFSET_50, 50, "Small (50px)"),
+            (IDM_OFFSET_100, 100, "Medium (100px)"),
+            (IDM_OFFSET_150, 150, "Large (150px)"),
+            (IDM_OFFSET_200, 200, "Extra Large (200px)"),
+        ];
+        for &(id, offset, label) in offset_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if offset == current_offset {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                offset_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+
+        let offset_label = native_interop::wide_str("Position Offset");
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            offset_menu.0 as usize,
+            PCWSTR::from_raw(offset_label.as_ptr()),
         );
 
         // Settings submenu
