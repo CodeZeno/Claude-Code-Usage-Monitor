@@ -2,20 +2,29 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use serde::Deserialize;
+
 use crate::models::{UsageData, UsageSection};
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
-
-const MODEL_FALLBACK_CHAIN: &[&str] = &[
-    "claude-3-haiku-20240307",
-    "claude-haiku-4-5-20251001",
-];
+const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 
 #[derive(Debug)]
 pub enum PollError {
     NoCredentials,
     TokenExpired,
-    AllModelsFailed,
+    RequestFailed,
+}
+
+#[derive(Deserialize)]
+struct UsageResponse {
+    five_hour: Option<UsageBucket>,
+    seven_day: Option<UsageBucket>,
+}
+
+#[derive(Deserialize)]
+struct UsageBucket {
+    utilization: f64,
+    resets_at: Option<String>,
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
@@ -27,7 +36,6 @@ pub fn poll() -> Result<UsageData, PollError> {
     if is_token_expired(creds.expires_at) {
         cli_refresh_token();
 
-        // Re-read credentials in case the CLI refreshed them
         match read_credentials() {
             Some(refreshed) => creds = refreshed,
             None => return Err(PollError::NoCredentials),
@@ -38,20 +46,17 @@ pub fn poll() -> Result<UsageData, PollError> {
         }
     }
 
-    fetch_usage_with_fallback(&creds.access_token)
+    fetch_usage(&creds.access_token)
 }
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
-/// OAuth token refresh.  `claude -p "."` makes the CLI
-/// authenticate (refreshing the access token if expired), perform a
-/// tiny API call, and exit — updating the credentials file on disk.
+/// OAuth token refresh.
 fn cli_refresh_token() {
     let claude_path = resolve_claude_path();
     let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
 
     let args: &[&str] = &["-p", "."];
 
-    // Clear env vars that prevent nested Claude Code sessions
     let mut cmd = if is_cmd {
         let mut c = Command::new("cmd.exe");
         c.arg("/c").arg(&claude_path).args(args);
@@ -70,12 +75,7 @@ fn cli_refresh_token() {
 }
 
 /// Resolve the full path to the `claude` CLI executable.
-/// First tries the bare command name (works if on PATH), then falls back
-/// to `where.exe claude` which searches the system/user PATH from the
-/// registry — important for processes started via the Windows Run key
-/// that may not inherit the full shell PATH.
 fn resolve_claude_path() -> String {
-    // Quick check: try claude.cmd first (Windows npm wrapper), then bare "claude"
     for name in &["claude.cmd", "claude"] {
         if Command::new(name)
             .arg("--version")
@@ -88,8 +88,6 @@ fn resolve_claude_path() -> String {
         }
     }
 
-    // Use where.exe to search the system/user PATH from the registry.
-    // Try claude.cmd first (the Windows batch wrapper npm creates).
     for name in &["claude.cmd", "claude"] {
         if let Ok(output) = Command::new("where.exe").arg(name).output() {
             if output.status.success() {
@@ -107,14 +105,35 @@ fn resolve_claude_path() -> String {
     "claude.cmd".to_string()
 }
 
-fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
-    for model in MODEL_FALLBACK_CHAIN {
-        if let Some(data) = try_model(token, model) {
-            return Ok(data);
-        }
+fn fetch_usage(token: &str) -> Result<UsageData, PollError> {
+    let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
+    let agent = ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .tls_connector(std::sync::Arc::new(tls))
+        .build();
+
+    let response: UsageResponse = agent
+        .get(USAGE_URL)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("anthropic-beta", "oauth-2025-04-20")
+        .call()
+        .map_err(|_| PollError::RequestFailed)?
+        .into_json()
+        .map_err(|_| PollError::RequestFailed)?;
+
+    let mut data = UsageData::default();
+
+    if let Some(bucket) = &response.five_hour {
+        data.session.percentage = bucket.utilization;
+        data.session.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
 
-    Err(PollError::AllModelsFailed)
+    if let Some(bucket) = &response.seven_day {
+        data.weekly.percentage = bucket.utilization;
+        data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+    }
+
+    Ok(data)
 }
 
 struct Credentials {
@@ -148,100 +167,64 @@ fn is_token_expired(expires_at: Option<i64>) -> bool {
     now >= exp
 }
 
-fn try_model(token: &str, model: &str) -> Option<UsageData> {
-    let tls = native_tls::TlsConnector::new().ok()?;
-    let agent = ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .tls_connector(std::sync::Arc::new(tls))
-        .build();
+/// Parse an ISO 8601 timestamp string into a SystemTime.
+fn parse_iso8601(s: Option<&str>) -> Option<SystemTime> {
+    let s = s?;
+    // Strip timezone offset to get "YYYY-MM-DDTHH:MM:SS" or with fractional seconds
+    // The API returns formats like "2026-03-05T08:00:00.321598+00:00"
+    let datetime_part = s.split('+').next().unwrap_or(s);
+    let datetime_part = datetime_part.split('Z').next().unwrap_or(datetime_part);
 
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 1,
-        "messages": [{"role": "user", "content": "."}]
-    });
-
-    let response = match agent
-        .post(API_URL)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("anthropic-version", "2023-06-01")
-        .set("anthropic-beta", "oauth-2025-04-20")
-        .send_json(&body)
-    {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(_code, resp)) => resp,
-        Err(_) => return None,
-    };
-
-    let h5 = response.header("anthropic-ratelimit-unified-5h-utilization");
-    let h7 = response.header("anthropic-ratelimit-unified-7d-utilization");
-    let hs = response.header("anthropic-ratelimit-unified-status");
-
-    let has_rate_limit_headers = h5.is_some() || h7.is_some() || hs.is_some();
-
-    if has_rate_limit_headers {
-        Some(parse_headers(&response))
-    } else {
-        None
-    }
-}
-
-fn parse_headers(response: &ureq::Response) -> UsageData {
-    let mut data = UsageData::default();
-
-    // Session (5-hour window)
-    data.session.percentage = get_header_f64(response, "anthropic-ratelimit-unified-5h-utilization") * 100.0;
-    data.session.resets_at = unix_to_system_time(get_header_i64(response, "anthropic-ratelimit-unified-5h-reset"));
-
-    // Weekly (7-day window)
-    data.weekly.percentage = get_header_f64(response, "anthropic-ratelimit-unified-7d-utilization") * 100.0;
-    data.weekly.resets_at = unix_to_system_time(get_header_i64(response, "anthropic-ratelimit-unified-7d-reset"));
-
-    // Overall reset/status fallback
-    let overall_reset = get_header_i64(response, "anthropic-ratelimit-unified-reset");
-
-    if data.session.percentage == 0.0 && data.weekly.percentage == 0.0 {
-        let status = get_header_str(response, "anthropic-ratelimit-unified-status");
-        if status.as_deref() == Some("rejected") {
-            let claim = get_header_str(response, "anthropic-ratelimit-unified-representative-claim");
-            match claim.as_deref() {
-                Some("five_hour") => data.session.percentage = 100.0,
-                Some("seven_day") => data.weekly.percentage = 100.0,
-                _ => {}
-            }
-        }
-
-        if data.session.resets_at.is_none() && overall_reset.is_some() {
-            data.session.resets_at = unix_to_system_time(overall_reset);
+    // Try parsing with and without fractional seconds
+    let formats = ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"];
+    for fmt in &formats {
+        if let Ok(secs) = parse_datetime_to_unix(datetime_part, fmt) {
+            return Some(UNIX_EPOCH + Duration::from_secs(secs));
         }
     }
-
-    data
+    None
 }
 
-fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {
-    response
-        .header(name)
-        .and_then(|s| s.parse::<f64>().ok())
-        .unwrap_or(0.0)
-}
+/// Minimal datetime parser — avoids pulling in chrono/time crates.
+fn parse_datetime_to_unix(s: &str, _fmt: &str) -> Result<u64, ()> {
+    // Extract date and time parts from "YYYY-MM-DDTHH:MM:SS[.frac]"
+    let (date_str, time_str) = s.split_once('T').ok_or(())?;
+    let date_parts: Vec<&str> = date_str.split('-').collect();
+    if date_parts.len() != 3 { return Err(()); }
 
-fn get_header_i64(response: &ureq::Response, name: &str) -> Option<i64> {
-    response
-        .header(name)
-        .and_then(|s| s.parse::<i64>().ok())
-}
+    let year: u64 = date_parts[0].parse().map_err(|_| ())?;
+    let month: u64 = date_parts[1].parse().map_err(|_| ())?;
+    let day: u64 = date_parts[2].parse().map_err(|_| ())?;
 
-fn get_header_str(response: &ureq::Response, name: &str) -> Option<String> {
-    response.header(name).map(String::from)
-}
+    // Strip fractional seconds
+    let time_base = time_str.split('.').next().unwrap_or(time_str);
+    let time_parts: Vec<&str> = time_base.split(':').collect();
+    if time_parts.len() != 3 { return Err(()); }
 
-fn unix_to_system_time(unix_secs: Option<i64>) -> Option<SystemTime> {
-    let secs = unix_secs?;
-    if secs < 0 {
-        return None;
+    let hour: u64 = time_parts[0].parse().map_err(|_| ())?;
+    let min: u64 = time_parts[1].parse().map_err(|_| ())?;
+    let sec: u64 = time_parts[2].parse().map_err(|_| ())?;
+
+    // Days from year (using a simplified calculation for dates after 1970)
+    let mut days: u64 = 0;
+    for y in 1970..year {
+        days += if is_leap(y) { 366 } else { 365 };
     }
-    Some(UNIX_EPOCH + Duration::from_secs(secs as u64))
+
+    let month_days = [0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..month {
+        days += month_days[m as usize];
+        if m == 2 && is_leap(year) {
+            days += 1;
+        }
+    }
+    days += day - 1;
+
+    Ok(days * 86400 + hour * 3600 + min * 60 + sec)
+}
+
+fn is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 /// Format a usage section as "X% · Yh" style text
