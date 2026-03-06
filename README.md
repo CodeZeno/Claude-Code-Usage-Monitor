@@ -4,6 +4,7 @@ A lightweight Windows taskbar widget that displays your Claude API rate limit us
 
 ![Windows](https://img.shields.io/badge/platform-Windows-blue)
 ![Rust](https://img.shields.io/badge/language-Rust-orange)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ![Screenshot](.github/screenshot.png)
 
@@ -18,9 +19,9 @@ Each bar shows the current utilization percentage and a countdown until the rate
 
 ## How it works
 
-1. Reads your Claude OAuth token from `~/.claude/.credentials.json`
-2. Sends a minimal API request to the Anthropic Messages API
-3. Parses rate limit headers (`anthropic-ratelimit-unified-*`) from the response
+1. Reads your Claude OAuth token from `~/.claude/.credentials.json` (automatically refreshes expired tokens via the Claude CLI)
+2. Queries the dedicated Anthropic OAuth usage endpoint (`/api/oauth/usage`) for utilization data
+3. Falls back to the Messages API with rate limit header parsing (`anthropic-ratelimit-unified-*`) if the usage endpoint is unavailable
 4. Renders the widget using Win32 GDI, embedded as a child window of the taskbar
 5. Polls every 15 minutes by default (adjustable via context menu) and updates countdown timers between polls
 

@@ -7,6 +7,12 @@ use serde::Deserialize;
 use crate::models::{UsageData, UsageSection};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+
+const MODEL_FALLBACK_CHAIN: &[&str] = &[
+    "claude-3-haiku-20240307",
+    "claude-haiku-4-5-20251001",
+];
 
 #[derive(Debug)]
 pub enum PollError {
@@ -46,7 +52,7 @@ pub fn poll() -> Result<UsageData, PollError> {
         }
     }
 
-    fetch_usage(&creds.access_token)
+    fetch_usage_with_fallback(&creds.access_token)
 }
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
@@ -105,22 +111,51 @@ fn resolve_claude_path() -> String {
     "claude.cmd".to_string()
 }
 
-fn fetch_usage(token: &str) -> Result<UsageData, PollError> {
+fn build_agent() -> Result<ureq::Agent, PollError> {
     let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
-    let agent = ureq::AgentBuilder::new()
+    Ok(ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .tls_connector(std::sync::Arc::new(tls))
-        .build();
+        .build())
+}
 
-    let response: UsageResponse = agent
+fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
+    // Try the dedicated usage endpoint first
+    if let Some(data) = try_usage_endpoint(token) {
+        // If reset timers are missing, fill them in from the Messages API
+        if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
+            if let Ok(fallback) = fetch_usage_via_messages(token) {
+                let mut merged = data;
+                if merged.session.resets_at.is_none() {
+                    merged.session.resets_at = fallback.session.resets_at;
+                }
+                if merged.weekly.resets_at.is_none() {
+                    merged.weekly.resets_at = fallback.weekly.resets_at;
+                }
+                return Ok(merged);
+            }
+        }
+        return Ok(data);
+    }
+
+    // Fall back to Messages API with rate limit headers
+    fetch_usage_via_messages(token)
+}
+
+fn try_usage_endpoint(token: &str) -> Option<UsageData> {
+    let agent = build_agent().ok()?;
+
+    let resp = match agent
         .get(USAGE_URL)
         .set("Authorization", &format!("Bearer {token}"))
         .set("anthropic-beta", "oauth-2025-04-20")
         .call()
-        .map_err(|_| PollError::RequestFailed)?
-        .into_json()
-        .map_err(|_| PollError::RequestFailed)?;
+    {
+        Ok(resp) => resp,
+        _ => return None,
+    };
 
+    let response: UsageResponse = resp.into_json().ok()?;
     let mut data = UsageData::default();
 
     if let Some(bucket) = &response.five_hour {
@@ -133,7 +168,92 @@ fn fetch_usage(token: &str) -> Result<UsageData, PollError> {
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
 
-    Ok(data)
+    Some(data)
+}
+
+fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
+    let agent = build_agent()?;
+
+    for model in MODEL_FALLBACK_CHAIN {
+        let body = serde_json::json!({
+            "model": model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "."}]
+        });
+
+        let response = match agent
+            .post(MESSAGES_URL)
+            .set("Authorization", &format!("Bearer {token}"))
+            .set("anthropic-version", "2023-06-01")
+            .set("anthropic-beta", "oauth-2025-04-20")
+            .send_json(&body)
+        {
+            Ok(resp) => resp,
+            Err(ureq::Error::Status(_code, resp)) => resp,
+            Err(_) => continue,
+        };
+
+        let h5 = response.header("anthropic-ratelimit-unified-5h-utilization");
+        let h7 = response.header("anthropic-ratelimit-unified-7d-utilization");
+        let hs = response.header("anthropic-ratelimit-unified-status");
+
+        if h5.is_some() || h7.is_some() || hs.is_some() {
+            return Ok(parse_rate_limit_headers(&response));
+        }
+    }
+
+    Err(PollError::RequestFailed)
+}
+
+fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
+    let mut data = UsageData::default();
+
+    data.session.percentage = get_header_f64(response, "anthropic-ratelimit-unified-5h-utilization") * 100.0;
+    data.session.resets_at = unix_to_system_time(get_header_i64(response, "anthropic-ratelimit-unified-5h-reset"));
+
+    data.weekly.percentage = get_header_f64(response, "anthropic-ratelimit-unified-7d-utilization") * 100.0;
+    data.weekly.resets_at = unix_to_system_time(get_header_i64(response, "anthropic-ratelimit-unified-7d-reset"));
+
+    let overall_reset = get_header_i64(response, "anthropic-ratelimit-unified-reset");
+
+    if data.session.percentage == 0.0 && data.weekly.percentage == 0.0 {
+        let status = response.header("anthropic-ratelimit-unified-status");
+        if status == Some("rejected") {
+            let claim = response.header("anthropic-ratelimit-unified-representative-claim");
+            match claim {
+                Some("five_hour") => data.session.percentage = 100.0,
+                Some("seven_day") => data.weekly.percentage = 100.0,
+                _ => {}
+            }
+        }
+
+        if data.session.resets_at.is_none() && overall_reset.is_some() {
+            data.session.resets_at = unix_to_system_time(overall_reset);
+        }
+    }
+
+    data
+}
+
+fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {
+    response
+        .header(name)
+        .and_then(|s| s.parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+fn get_header_i64(response: &ureq::Response, name: &str) -> Option<i64> {
+    response
+        .header(name)
+        .and_then(|s| s.parse::<i64>().ok())
+}
+
+fn unix_to_system_time(unix_secs: Option<i64>) -> Option<SystemTime> {
+    let secs = unix_secs?;
+    if secs < 0 {
+        return None;
+    }
+    Some(UNIX_EPOCH + Duration::from_secs(secs as u64))
 }
 
 struct Credentials {
