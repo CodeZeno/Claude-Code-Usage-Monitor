@@ -77,10 +77,30 @@ fn cli_refresh_token() {
     cmd.env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let _ = cmd.status();
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Wait up to 30 seconds — don't block the poll thread forever
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() > Duration::from_secs(30) {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 /// Resolve the full path to the `claude` CLI executable.
@@ -88,6 +108,7 @@ fn resolve_claude_path() -> String {
     for name in &["claude.cmd", "claude"] {
         if Command::new(name)
             .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status()
@@ -98,7 +119,7 @@ fn resolve_claude_path() -> String {
     }
 
     for name in &["claude.cmd", "claude"] {
-        if let Ok(output) = Command::new("where.exe").arg(name).output() {
+        if let Ok(output) = Command::new("where.exe").arg(name).creation_flags(CREATE_NO_WINDOW).output() {
             if output.status.success() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 if let Some(first_line) = stdout.lines().next() {
