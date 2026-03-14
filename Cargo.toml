@@ -1,8 +1,20 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "0.1.0"
+version = "1.0.14"
 edition = "2021"
 license = "MIT"
+description = "Windows taskbar widget for monitoring Claude Code usage and rate limits"
+homepage = "https://codezeno.com.au"
+repository = "https://github.com/CodeZeno/Claude-Code-Usage-Monitor"
+
+[package.metadata.winres]
+CompanyName = "Code Zeno Pty Ltd"
+ProductName = "Claude Code Usage Monitor"
+FileDescription = "Windows taskbar widget for monitoring Claude Code usage and rate limits"
+OriginalFilename = "claude-code-usage-monitor.exe"
+InternalName = "ClaudeCodeUsageMonitor"
+Comments = "https://codezeno.com.au"
+LegalCopyright = "Copyright (C) 2026 Code Zeno Pty Ltd"
 
 [dependencies]
 ureq = { version = "2", default-features = false, features = ["native-tls", "json"] }

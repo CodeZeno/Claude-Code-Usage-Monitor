@@ -1286,7 +1286,7 @@ fn show_context_menu(hwnd: HWND) {
 
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
-        let version_str = native_interop::wide_str(&format!("v{}", env!("APP_VERSION")));
+        let version_str = native_interop::wide_str(&format!("v{}", env!("CARGO_PKG_VERSION")));
         let _ = AppendMenuW(
             settings_menu,
             MF_GRAYED,

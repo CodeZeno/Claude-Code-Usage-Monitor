@@ -1,27 +1,30 @@
+use winres::{VersionInfo, WindowsResource};
+
 fn main() {
-    // Derive version from the latest Git tag (e.g. "v1.0.7" → "1.0.7").
-    let version = std::process::Command::new("git")
-        .args(["describe", "--tags", "--abbrev=0"])
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                String::from_utf8(o.stdout).ok()
-            } else {
-                None
-            }
-        })
-        .unwrap_or_else(|| String::from("0.0.0"));
+    let version = env!("CARGO_PKG_VERSION");
 
-    let version = version.trim().trim_start_matches('v');
-    println!("cargo:rustc-env=APP_VERSION={version}");
+    // Embed the icon and richer PE version metadata into the executable.
+    let mut res = WindowsResource::new();
+    let numeric_version = pack_version(version);
 
-    // Re-run build script whenever HEAD or tags change so the version stays current.
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/refs/tags");
+    res.set_icon("src/icons/icon.ico")
+        .set("FileVersion", version)
+        .set("ProductVersion", version)
+        .set_version_info(VersionInfo::FILEVERSION, numeric_version)
+        .set_version_info(VersionInfo::PRODUCTVERSION, numeric_version);
 
-    // Embed the application icon into the executable.
-    let mut res = winres::WindowsResource::new();
-    res.set_icon("src/icons/icon.ico");
     res.compile().expect("Failed to compile Windows resources");
+}
+
+fn pack_version(version: &str) -> u64 {
+    let core = version.split('-').next().unwrap_or(version);
+    let mut parts = core
+        .split('.')
+        .map(|part| part.parse::<u64>().unwrap_or(0));
+
+    let major = parts.next().unwrap_or(0).min(u16::MAX as u64);
+    let minor = parts.next().unwrap_or(0).min(u16::MAX as u64);
+    let patch = parts.next().unwrap_or(0).min(u16::MAX as u64);
+
+    (major << 48) | (minor << 32) | (patch << 16)
 }
