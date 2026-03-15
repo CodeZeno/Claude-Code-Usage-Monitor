@@ -19,7 +19,7 @@ Each bar shows the current utilization percentage and a countdown until the rate
 
 ## How it works
 
-1. Reads your Claude OAuth token from `~/.claude/.credentials.json` (automatically refreshes expired tokens via the Claude CLI)
+1. Reads your Claude OAuth token from `~/.claude/.credentials.json`, or from `~/.claude/.credentials.json` inside an installed WSL distro if the Windows file is missing or expired (automatically refreshes expired tokens via the matching Claude CLI)
 2. Queries the dedicated Anthropic OAuth usage endpoint (`/api/oauth/usage`) for utilization data
 3. Falls back to the Messages API with rate limit header parsing (`anthropic-ratelimit-unified-*`) if the usage endpoint is unavailable
 4. Renders the widget using Win32 GDI, embedded as a child window of the taskbar
@@ -32,6 +32,8 @@ The widget automatically detects dark/light mode from Windows system settings. Y
 - Windows 10/11
 - [Rust toolchain](https://rustup.rs/) (MSVC target)
 - An active Claude Pro/Team subscription with OAuth credentials stored by [Claude Code](https://docs.anthropic.com/en/docs/claude-code)
+
+If you use Claude Code inside WSL2, keep `claude` installed and authenticated in that distro. The monitor will scan installed WSL distros and use the first accessible non-expired credential set it finds.
 
 ## Building
 

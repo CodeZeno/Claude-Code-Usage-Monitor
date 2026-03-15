@@ -42,9 +42,9 @@ pub fn poll() -> Result<UsageData, PollError> {
     };
 
     if is_token_expired(creds.expires_at) {
-        cli_refresh_token();
+        cli_refresh_token(&creds.source);
 
-        match read_credentials() {
+        match read_credentials_from_source(&creds.source) {
             Some(refreshed) => creds = refreshed,
             None => return Err(PollError::NoCredentials),
         }
@@ -59,8 +59,15 @@ pub fn poll() -> Result<UsageData, PollError> {
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
 /// OAuth token refresh.
-fn cli_refresh_token() {
-    let claude_path = resolve_claude_path();
+fn cli_refresh_token(source: &CredentialSource) {
+    match source {
+        CredentialSource::Windows(_) => cli_refresh_windows_token(),
+        CredentialSource::Wsl { distro } => cli_refresh_wsl_token(distro),
+    }
+}
+
+fn cli_refresh_windows_token() {
+    let claude_path = resolve_windows_claude_path();
     let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
 
     let args: &[&str] = &["-p", "."];
@@ -103,8 +110,49 @@ fn cli_refresh_token() {
     }
 }
 
+fn cli_refresh_wsl_token(distro: &str) {
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d")
+        .arg(distro)
+        .arg("--")
+        .arg("bash")
+        .arg("-lic")
+        .arg("if command -v claude >/dev/null 2>&1; then claude -p .; elif [ -x \"$HOME/.local/bin/claude\" ]; then \"$HOME/.local/bin/claude\" -p .; else exit 127; fi")
+        .env_remove("CLAUDECODE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    wait_for_refresh(&mut child);
+}
+
+fn wait_for_refresh(child: &mut std::process::Child) {
+    // Wait up to 30 seconds; don't block the poll thread forever.
+    let start = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() > Duration::from_secs(30) {
+                    let _ = child.kill();
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(_) => break,
+        }
+    }
+}
+
 /// Resolve the full path to the `claude` CLI executable.
-fn resolve_claude_path() -> String {
+fn resolve_windows_claude_path() -> String {
     for name in &["claude.cmd", "claude"] {
         if Command::new(name)
             .arg("--version")
@@ -283,14 +331,77 @@ fn unix_to_system_time(unix_secs: Option<i64>) -> Option<SystemTime> {
 struct Credentials {
     access_token: String,
     expires_at: Option<i64>,
+    source: CredentialSource,
+}
+
+#[derive(Clone, Debug)]
+enum CredentialSource {
+    Windows(PathBuf),
+    Wsl { distro: String },
 }
 
 fn read_credentials() -> Option<Credentials> {
-    let home = dirs::home_dir()?;
-    let cred_path: PathBuf = home.join(".claude").join(".credentials.json");
+    let mut candidates = Vec::new();
 
+    if let Some(creds) = read_windows_credentials() {
+        candidates.push(creds);
+    }
+
+    for distro in list_wsl_distros() {
+        if let Some(creds) = read_wsl_credentials(&distro) {
+            candidates.push(creds);
+        }
+    }
+
+    choose_best_credentials(candidates)
+}
+
+fn read_windows_credentials() -> Option<Credentials> {
+    let home = dirs::home_dir()?;
+    let cred_path = home.join(".claude").join(".credentials.json");
     let content = std::fs::read_to_string(&cred_path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parse_credentials(&content, CredentialSource::Windows(cred_path))
+}
+
+fn read_credentials_from_source(source: &CredentialSource) -> Option<Credentials> {
+    match source {
+        CredentialSource::Windows(path) => {
+            let content = std::fs::read_to_string(path).ok()?;
+            parse_credentials(&content, source.clone())
+        }
+        CredentialSource::Wsl { distro } => read_wsl_credentials(distro),
+    }
+}
+
+fn read_wsl_credentials(distro: &str) -> Option<Credentials> {
+    let output = Command::new("wsl.exe")
+        .arg("-d")
+        .arg(distro)
+        .arg("--")
+        .arg("sh")
+        .arg("-lc")
+        .arg("cat ~/.claude/.credentials.json")
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let content = String::from_utf8(output.stdout).ok()?;
+    parse_credentials(
+        &content,
+        CredentialSource::Wsl {
+            distro: distro.to_string(),
+        },
+    )
+}
+
+fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credentials> {
+    let json: serde_json::Value = serde_json::from_str(content).ok()?;
 
     let oauth = json.get("claudeAiOauth")?;
     let access_token = oauth.get("accessToken").and_then(|v| v.as_str())?.to_string();
@@ -299,7 +410,86 @@ fn read_credentials() -> Option<Credentials> {
     Some(Credentials {
         access_token,
         expires_at,
+        source,
     })
+}
+
+fn choose_best_credentials(mut candidates: Vec<Credentials>) -> Option<Credentials> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    candidates.sort_by_key(|creds| is_token_expired(creds.expires_at));
+    candidates.into_iter().next()
+}
+
+fn list_wsl_distros() -> Vec<String> {
+    let output = match Command::new("wsl.exe")
+        .args(["-l", "-q"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+    {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    let stdout = decode_wsl_text(&output.stdout);
+    stdout
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn decode_wsl_text(bytes: &[u8]) -> String {
+    if bytes.is_empty() {
+        return String::new();
+    }
+
+    if let Some(decoded) = decode_utf16le(bytes) {
+        return decoded;
+    }
+
+    String::from_utf8_lossy(bytes).into_owned()
+}
+
+fn decode_utf16le(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 2 || bytes.len() % 2 != 0 {
+        return None;
+    }
+
+    let body = if bytes.starts_with(&[0xFF, 0xFE]) {
+        &bytes[2..]
+    } else if looks_like_utf16le(bytes) {
+        bytes
+    } else {
+        return None;
+    };
+
+    let units: Vec<u16> = body
+        .chunks_exact(2)
+        .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+        .collect();
+
+    Some(String::from_utf16_lossy(&units))
+}
+
+fn looks_like_utf16le(bytes: &[u8]) -> bool {
+    let sample_len = bytes.len().min(128);
+    let units = sample_len / 2;
+    if units == 0 {
+        return false;
+    }
+
+    let nul_high_bytes = bytes[..sample_len]
+        .chunks_exact(2)
+        .filter(|chunk| chunk[1] == 0)
+        .count();
+
+    nul_high_bytes * 2 >= units
 }
 
 fn is_token_expired(expires_at: Option<i64>) -> bool {
