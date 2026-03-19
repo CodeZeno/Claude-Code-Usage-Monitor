@@ -1,0 +1,35 @@
+use super::Strings;
+
+pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "Actualizar con WinGet";
+
+pub(super) const STRINGS: Strings = Strings {
+    window_title: "Monitor de uso de Claude Code",
+    refresh: "Actualizar",
+    update_frequency: "Frecuencia de actualización",
+    one_minute: "1 minuto",
+    five_minutes: "5 minutos",
+    fifteen_minutes: "15 minutos",
+    one_hour: "1 hora",
+    settings: "Configuración",
+    start_with_windows: "Iniciar con Windows",
+    reset_position: "Restablecer posición",
+    language: "Idioma",
+    system_default: "Predeterminado del sistema",
+    check_for_updates: "Buscar actualizaciones",
+    checking_for_updates: "Buscando actualizaciones...",
+    updates: "Actualizaciones",
+    update_in_progress: "Ya hay una comprobación de actualización en curso.",
+    up_to_date: "Ya tienes la versión más reciente.",
+    up_to_date_short: "Actualizado",
+    update_failed: "No se pudo actualizar automáticamente",
+    applying_update: "Aplicando actualización...",
+    update_to: "Actualizar a",
+    exit: "Salir",
+    session_window: "5h",
+    weekly_window: "7d",
+    now: "ahora",
+    day_suffix: "d",
+    hour_suffix: "h",
+    minute_suffix: "m",
+    second_suffix: "s",
+};

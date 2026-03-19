@@ -1,0 +1,35 @@
+use super::Strings;
+
+pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "WinGet で更新";
+
+pub(super) const STRINGS: Strings = Strings {
+    window_title: "Claude Code 使用量モニター",
+    refresh: "更新",
+    update_frequency: "更新間隔",
+    one_minute: "1分",
+    five_minutes: "5分",
+    fifteen_minutes: "15分",
+    one_hour: "1時間",
+    settings: "設定",
+    start_with_windows: "Windows と同時に開始",
+    reset_position: "位置をリセット",
+    language: "言語",
+    system_default: "システム既定",
+    check_for_updates: "更新を確認",
+    checking_for_updates: "更新を確認しています...",
+    updates: "更新",
+    update_in_progress: "更新確認は既に実行中です。",
+    up_to_date: "既に最新バージョンです。",
+    up_to_date_short: "最新です",
+    update_failed: "自動更新を完了できませんでした",
+    applying_update: "更新を適用しています...",
+    update_to: "更新先",
+    exit: "終了",
+    session_window: "5h",
+    weekly_window: "7d",
+    now: "今",
+    day_suffix: "日",
+    hour_suffix: "時間",
+    minute_suffix: "分",
+    second_suffix: "秒",
+};
