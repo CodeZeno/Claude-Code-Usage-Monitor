@@ -17,6 +17,7 @@ pub const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
 pub const TIMER_POLL: usize = 1;
 pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
+pub const TIMER_UPDATE_CHECK: usize = 4;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;

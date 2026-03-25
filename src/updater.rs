@@ -84,10 +84,19 @@ pub fn check_for_updates() -> Result<UpdateCheckResult, String> {
 }
 
 pub fn begin_winget_update() -> Result<(), String> {
-    let command = winget_upgrade_command();
+    let current_exe =
+        std::env::current_exe().map_err(|e| format!("Unable to locate current executable: {e}"))?;
+    let current_dir = current_exe
+        .parent()
+        .ok_or_else(|| "Unable to determine the app directory for restart.".to_string())?;
+    let command = winget_upgrade_command(
+        std::process::id(),
+        &current_exe.to_string_lossy(),
+        &current_dir.to_string_lossy(),
+    );
+
     Command::new("powershell.exe")
         .arg("-NoLogo")
-        .arg("-NoExit")
         .arg("-Command")
         .arg(&command)
         .creation_flags(CREATE_NEW_CONSOLE)
@@ -335,8 +344,39 @@ fn updates_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Unable to resolve a writable local updates directory.".to_string())
 }
 
-fn winget_upgrade_command() -> String {
-    format!("winget upgrade --id {WINGET_PACKAGE_ID} --exact")
+fn winget_upgrade_command(pid: u32, target: &str, working_dir: &str) -> String {
+    let target = powershell_single_quoted(target);
+    let working_dir = powershell_single_quoted(working_dir);
+    let package_id = WINGET_PACKAGE_ID;
+
+    format!(
+        concat!(
+            "$ErrorActionPreference = 'Stop'; ",
+            "$pidToWait = {pid}; ",
+            "$target = '{target}'; ",
+            "$workingDir = '{working_dir}'; ",
+            "try {{ Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction Stop }} catch {{ }}; ",
+            "winget upgrade --id {package_id} --exact; ",
+            "$exitCode = $LASTEXITCODE; ",
+            "if ($exitCode -eq 0) {{ ",
+            "Start-Sleep -Seconds 2; ",
+            "Start-Process -FilePath $target -WorkingDirectory $workingDir; ",
+            "exit 0 ",
+            "}}; ",
+            "Write-Host ''; ",
+            "Write-Host 'WinGet update failed with exit code' $exitCode; ",
+            "Read-Host 'Press Enter to close'; ",
+            "exit $exitCode"
+        ),
+        pid = pid,
+        target = target,
+        working_dir = working_dir,
+        package_id = package_id,
+    )
+}
+
+fn powershell_single_quoted(value: &str) -> String {
+    value.replace('\'', "''")
 }
 
 fn backup_path_for(target: &Path) -> PathBuf {
@@ -424,10 +464,17 @@ fn winget_install_roots() -> Vec<PathBuf> {
 }
 
 fn normalize_path(path: &Path) -> String {
-    path.to_string_lossy()
+    let normalized = path
+        .to_string_lossy()
         .replace('/', "\\")
         .trim_end_matches('\\')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+
+    normalized
+        .strip_prefix("\\\\?\\unc\\")
+        .map(|rest| format!("\\\\{rest}"))
+        .or_else(|| normalized.strip_prefix("\\\\?\\").map(str::to_owned))
+        .unwrap_or(normalized)
 }
 
 fn is_version_newer(candidate: &str, current: &str) -> bool {

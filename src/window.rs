@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
@@ -19,7 +19,8 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::UsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, WM_APP_USAGE_UPDATED,
+    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
+    WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::theme;
@@ -63,6 +64,7 @@ struct AppState {
     retry_count: u32,
     last_poll_ok: bool,
     update_status: UpdateStatus,
+    last_update_check_unix: Option<u64>,
 
     tray_offset: i32,
     dragging: bool,
@@ -155,6 +157,8 @@ struct SettingsFile {
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     language: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_update_check_unix: Option<u64>,
 }
 
 impl Default for SettingsFile {
@@ -163,6 +167,7 @@ impl Default for SettingsFile {
             tray_offset: 0,
             poll_interval_ms: default_poll_interval(),
             language: None,
+            last_update_check_unix: None,
         }
     }
 }
@@ -198,7 +203,51 @@ fn save_state_settings() {
             language: s
                 .language_override
                 .map(|language| language.code().to_string()),
+            last_update_check_unix: s.last_update_check_unix,
         });
+    }
+}
+
+fn now_unix_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn update_check_interval() -> Duration {
+    Duration::from_secs(24 * 60 * 60)
+}
+
+fn auto_update_check_due(last_update_check_unix: Option<u64>) -> bool {
+    let Some(last_update_check_unix) = last_update_check_unix else {
+        return true;
+    };
+
+    now_unix_secs().saturating_sub(last_update_check_unix) >= update_check_interval().as_secs()
+}
+
+fn schedule_auto_update_check(hwnd: HWND) {
+    let delay_ms = {
+        let state = lock_state();
+        let Some(s) = state.as_ref() else {
+            return;
+        };
+
+        if auto_update_check_due(s.last_update_check_unix) {
+            None
+        } else {
+            let elapsed = now_unix_secs().saturating_sub(s.last_update_check_unix.unwrap_or(0));
+            let remaining_secs = update_check_interval().as_secs().saturating_sub(elapsed);
+            Some((remaining_secs.saturating_mul(1000)).min(u32::MAX as u64) as u32)
+        }
+    };
+
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_UPDATE_CHECK);
+        if let Some(delay_ms) = delay_ms {
+            SetTimer(hwnd, TIMER_UPDATE_CHECK, delay_ms.max(1), None);
+        }
     }
 }
 
@@ -304,27 +353,30 @@ fn version_action_label(
     status: &UpdateStatus,
 ) -> String {
     let current = env!("CARGO_PKG_VERSION");
-    if install_channel == InstallChannel::Winget {
-        return format!("v{current} - {}", localization::update_via_winget(language));
-    }
-
     match status {
         UpdateStatus::Idle => format!("v{current} - {}", strings.check_for_updates),
         UpdateStatus::Checking => format!("v{current} - {}", strings.checking_for_updates),
         UpdateStatus::Applying => format!("v{current} - {}", strings.applying_update),
         UpdateStatus::UpToDate => format!("v{current} - {}", strings.up_to_date_short),
-        UpdateStatus::Available(release) => {
-            format!(
+        UpdateStatus::Available(release) => match install_channel {
+            InstallChannel::Portable => {
+                format!(
+                    "v{current} - {} v{}",
+                    strings.update_to, release.latest_version
+                )
+            }
+            InstallChannel::Winget => format!(
                 "v{current} - {} v{}",
-                strings.update_to, release.latest_version
-            )
-        }
+                localization::update_via_winget(language),
+                release.latest_version
+            ),
+        },
     }
 }
 
-fn begin_update_check(hwnd: HWND) {
+fn begin_update_check(hwnd: HWND, interactive: bool) {
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
-    let strings = {
+    let (strings, install_channel) = {
         let mut state = lock_state();
         let Some(app_state) = state.as_mut() else {
             return;
@@ -334,29 +386,36 @@ fn begin_update_check(hwnd: HWND) {
             app_state.update_status,
             UpdateStatus::Checking | UpdateStatus::Applying
         ) {
-            show_info_message(
-                hwnd,
-                app_state.language.strings().updates,
-                app_state.language.strings().update_in_progress,
-            );
+            if interactive {
+                show_info_message(
+                    hwnd,
+                    app_state.language.strings().updates,
+                    app_state.language.strings().update_in_progress,
+                );
+            }
             return;
         }
 
         app_state.update_status = UpdateStatus::Checking;
-        app_state.language.strings()
+        (app_state.language.strings(), app_state.install_channel)
     };
 
     std::thread::spawn(move || {
         let hwnd = send_hwnd.to_hwnd();
+        let checked_at = now_unix_secs();
         match updater::check_for_updates() {
             Ok(UpdateCheckResult::UpToDate) => {
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::UpToDate;
+                        s.last_update_check_unix = Some(checked_at);
                     }
                 }
-                show_info_message(hwnd, strings.updates, strings.up_to_date);
+                save_state_settings();
+                if interactive {
+                    show_info_message(hwnd, strings.updates, strings.up_to_date);
+                }
                 unsafe {
                     let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
                 }
@@ -366,10 +425,15 @@ fn begin_update_check(hwnd: HWND) {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::Available(release.clone());
+                        s.last_update_check_unix = Some(checked_at);
                     }
                 }
-                if show_update_prompt(hwnd, strings, &release) {
-                    begin_update_apply(hwnd, release);
+                save_state_settings();
+                if interactive && show_update_prompt(hwnd, strings, &release) {
+                    match install_channel {
+                        InstallChannel::Portable => begin_update_apply(hwnd, release),
+                        InstallChannel::Winget => begin_winget_update(hwnd),
+                    }
                 }
                 unsafe {
                     let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
@@ -380,10 +444,14 @@ fn begin_update_check(hwnd: HWND) {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::Idle;
+                        s.last_update_check_unix = Some(checked_at);
                     }
                 }
-                let message = format!("{}.\n\n{}", strings.update_failed, error);
-                show_error_message(hwnd, strings.updates, &message);
+                save_state_settings();
+                if interactive {
+                    let message = format!("{}.\n\n{}", strings.update_failed, error);
+                    show_error_message(hwnd, strings.updates, &message);
+                }
                 unsafe {
                     let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
                 }
@@ -446,9 +514,14 @@ fn begin_winget_update(hwnd: HWND) {
     }
     .unwrap_or(LanguageId::English.strings());
 
-    if let Err(error) = updater::begin_winget_update() {
-        let message = format!("{}.\n\n{}", strings.update_failed, error);
-        show_error_message(hwnd, strings.updates, &message);
+    match updater::begin_winget_update() {
+        Ok(()) => unsafe {
+            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+        },
+        Err(error) => {
+            let message = format!("{}.\n\n{}", strings.update_failed, error);
+            show_error_message(hwnd, strings.updates, &message);
+        }
     }
 }
 
@@ -690,6 +763,7 @@ pub fn run() {
                 retry_count: 0,
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
+                last_update_check_unix: settings.last_update_check_unix,
                 tray_offset: settings.tray_offset,
                 dragging: false,
                 drag_start_mouse_x: 0,
@@ -768,6 +842,18 @@ pub fn run() {
             diagnose::log("initial poll thread started");
             do_poll(send_hwnd);
         });
+
+        schedule_auto_update_check(hwnd);
+        let should_check_updates = {
+            let state = lock_state();
+            state
+                .as_ref()
+                .map(|s| auto_update_check_due(s.last_update_check_unix))
+                .unwrap_or(false)
+        };
+        if should_check_updates {
+            begin_update_check(hwnd, false);
+        }
 
         // Initial theme check
         check_theme_change();
@@ -1356,6 +1442,9 @@ unsafe extern "system" fn wnd_proc(
                         do_poll(sh);
                     });
                 }
+                TIMER_UPDATE_CHECK => {
+                    begin_update_check(hwnd, false);
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -1367,7 +1456,10 @@ unsafe extern "system" fn wnd_proc(
             schedule_countdown_timer();
             LRESULT(0)
         }
-        WM_APP_UPDATE_CHECK_COMPLETE => LRESULT(0),
+        WM_APP_UPDATE_CHECK_COMPLETE => {
+            schedule_auto_update_check(hwnd);
+            LRESULT(0)
+        }
         WM_SETCURSOR => {
             let is_dragging = {
                 let state = lock_state();
@@ -1558,12 +1650,18 @@ unsafe extern "system" fn wnd_proc(
                     };
 
                     match install_channel {
-                        InstallChannel::Winget => begin_winget_update(hwnd),
+                        InstallChannel::Winget => {
+                            if release.is_some() {
+                                begin_winget_update(hwnd);
+                            } else {
+                                begin_update_check(hwnd, true);
+                            }
+                        }
                         InstallChannel::Portable => {
                             if let Some(release) = release {
                                 begin_update_apply(hwnd, release);
                             } else {
-                                begin_update_check(hwnd);
+                                begin_update_check(hwnd, true);
                             }
                         }
                     }
@@ -1793,11 +1891,8 @@ fn show_context_menu(hwnd: HWND) {
         let version_label =
             version_action_label(strings, language, install_channel, &update_status);
         let version_str = native_interop::wide_str(&version_label);
-        let version_flags = if install_channel == InstallChannel::Portable
-            && matches!(
-                update_status,
-                UpdateStatus::Checking | UpdateStatus::Applying
-            ) {
+        let version_flags = if matches!(update_status, UpdateStatus::Checking | UpdateStatus::Applying)
+        {
             MF_GRAYED
         } else {
             MENU_ITEM_FLAGS(0)

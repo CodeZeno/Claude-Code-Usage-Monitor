@@ -104,6 +104,7 @@ What the app stores locally:
 - Widget position
 - Polling frequency
 - Language preference
+- Last update check time
 
 What it does **not** do:
 
