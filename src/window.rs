@@ -20,8 +20,9 @@ use crate::localization::{self, LanguageId, Strings};
 use crate::models::UsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
-    WM_APP_USAGE_UPDATED,
+    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
+use crate::tray_icon;
 use crate::poller;
 use crate::theme;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
@@ -70,6 +71,8 @@ struct AppState {
     dragging: bool,
     drag_start_mouse_x: i32,
     drag_start_offset: i32,
+
+    widget_visible: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -159,6 +162,8 @@ struct SettingsFile {
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_update_check_unix: Option<u64>,
+    #[serde(default = "default_widget_visible")]
+    widget_visible: bool,
 }
 
 impl Default for SettingsFile {
@@ -168,12 +173,17 @@ impl Default for SettingsFile {
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
+            widget_visible: true,
         }
     }
 }
 
 fn default_poll_interval() -> u32 {
     POLL_15_MIN
+}
+
+fn default_widget_visible() -> bool {
+    true
 }
 
 fn load_settings() -> SettingsFile {
@@ -204,7 +214,41 @@ fn save_state_settings() {
                 .language_override
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
+            widget_visible: s.widget_visible,
         });
+    }
+}
+
+fn tray_icon_data_from_state() -> (Option<f64>, String) {
+    let state = lock_state();
+    match state.as_ref() {
+        Some(s) if s.last_poll_ok => {
+            let tooltip = format!("5h: {} | 7d: {}", s.session_text, s.weekly_text);
+            (Some(s.session_percent), tooltip)
+        }
+        _ => (None, "Claude Code Usage Monitor".to_string()),
+    }
+}
+
+fn toggle_widget_visibility(hwnd: HWND) {
+    let new_visible = {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_visible = !s.widget_visible;
+            s.widget_visible
+        } else {
+            return;
+        }
+    };
+    save_state_settings();
+    unsafe {
+        if new_visible {
+            position_at_taskbar();
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            render_layered();
+        } else {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
     }
 }
 
@@ -768,6 +812,7 @@ pub fn run() {
                 dragging: false,
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
+                widget_visible: settings.widget_visible,
             });
         }
 
@@ -818,9 +863,15 @@ pub fn run() {
             );
         }
 
-        // Position and show
+        // Register system tray icon
+        let (tray_pct, tray_tooltip) = tray_icon_data_from_state();
+        tray_icon::add(hwnd, tray_pct, &tray_tooltip);
+
+        // Position and show (only if widget_visible preference is true)
         position_at_taskbar();
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if settings.widget_visible {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
         diagnose::log("window shown");
 
         // Initial render via UpdateLayeredWindow (for embedded) or InvalidateRect (fallback)
@@ -1458,6 +1509,8 @@ unsafe extern "system" fn wnd_proc(
             check_language_change();
             render_layered();
             schedule_countdown_timer();
+            let (pct, tooltip) = tray_icon_data_from_state();
+            tray_icon::update(hwnd, pct, &tooltip);
             LRESULT(0)
         }
         WM_APP_UPDATE_CHECK_COMPLETE => {
@@ -1736,7 +1789,22 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
+                id if id == tray_icon::IDM_TOGGLE_WIDGET => {
+                    toggle_widget_visibility(hwnd);
+                }
                 _ => {}
+            }
+            LRESULT(0)
+        }
+        _ if msg == WM_APP_TRAY => {
+            match tray_icon::handle_message(lparam) {
+                tray_icon::TrayAction::ToggleWidget => {
+                    toggle_widget_visibility(hwnd);
+                }
+                tray_icon::TrayAction::ShowContextMenu => {
+                    show_context_menu(hwnd);
+                }
+                tray_icon::TrayAction::None => {}
             }
             LRESULT(0)
         }
@@ -1748,6 +1816,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
+            tray_icon::remove(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -1764,6 +1833,7 @@ fn show_context_menu(hwnd: HWND) {
             language_override,
             install_channel,
             update_status,
+            widget_visible,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -1774,6 +1844,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.language_override,
                     s.install_channel,
                     s.update_status.clone(),
+                    s.widget_visible,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -1782,6 +1853,7 @@ fn show_context_menu(hwnd: HWND) {
                     None,
                     InstallChannel::Portable,
                     UpdateStatus::Idle,
+                    true,
                 ),
             }
         };
@@ -1919,6 +1991,15 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             settings_menu.0 as usize,
             PCWSTR::from_raw(settings_label.as_ptr()),
+        );
+
+        let widget_label = native_interop::wide_str("Show Widget");
+        let widget_flags = if widget_visible { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            menu,
+            widget_flags,
+            tray_icon::IDM_TOGGLE_WIDGET as usize,
+            PCWSTR::from_raw(widget_label.as_ptr()),
         );
 
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
