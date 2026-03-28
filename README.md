@@ -15,6 +15,8 @@ It sits in your taskbar and shows how much of your Claude Code usage window you 
 - A **7d** bar for your current 7-day window
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
+- A **system tray icon** showing your usage percentage as a color-coded badge
+- Left-click the tray icon to toggle the taskbar widget on or off
 - Right-click options for refresh, update frequency, language, startup, and updates
 
 ## Who This Is For
@@ -48,11 +50,26 @@ After installing with WinGet, run:
 claude-code-usage-monitor
 ```
 
-Once running, it will appear in your taskbar.
+Once running, it will appear in your taskbar and as a tray icon in the notification area.
 
-- Drag the left divider to move it
-- Right-click for refresh, update frequency, Start with Windows, reset position, language, updates, and exit
+- Drag the left divider to move the taskbar widget
+- Right-click the taskbar widget or tray icon for refresh, update frequency, Start with Windows, reset position, language, updates, and exit
+- Left-click the tray icon to toggle the taskbar widget on or off
 - Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
+
+### System Tray Icon
+
+The tray icon shows your current 5-hour usage as a color-coded percentage badge:
+
+| Color  | Meaning           |
+|--------|-------------------|
+| Green  | Under 50% used    |
+| Yellow | 50–75% used       |
+| Orange | 75–90% used       |
+| Red    | 90% or more used  |
+| Gray   | No data available |
+
+Hovering over the tray icon shows a tooltip with both your 5h and 7d usage.
 
 ## Diagnostics
 
