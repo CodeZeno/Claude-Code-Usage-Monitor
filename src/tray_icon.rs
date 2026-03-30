@@ -1,8 +1,9 @@
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
-    Shell_NotifyIconW,
+    ExtractIconExW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
@@ -21,45 +22,65 @@ pub enum TrayAction {
     ShowContextMenu,
 }
 
-/// Create a rounded-rectangle tray icon badge showing the usage percentage.
-/// `percent` = None means "no data" (gray "?"), Some(p) is the usage level.
-pub fn create_icon(percent: Option<f64>) -> HICON {
-    let size = 64_i32;
-    let margin = 4_i32;
-    let radius = 14_i32;
-    let outline = 2_i32;
+fn lerp_channel(start: u8, end: u8, t: f64) -> u8 {
+    (start as f64 + (end as f64 - start as f64) * t.clamp(0.0, 1.0)).round() as u8
+}
 
-    let (fill, outline_col, text_col) = match percent {
-        None => (
-            Color::from_hex("#6c757d"),
-            Color::from_hex("#495057"),
-            Color::from_hex("#FFFFFF"),
-        ),
-        Some(p) if p < 50.0 => (
-            Color::from_hex("#28a745"),
-            Color::from_hex("#1e7e34"),
-            Color::from_hex("#FFFFFF"),
-        ),
-        Some(p) if p < 75.0 => (
-            Color::from_hex("#ffc107"),
-            Color::from_hex("#e0a800"),
-            Color::from_hex("#1a1a1a"),
-        ),
-        Some(p) if p < 90.0 => (
-            Color::from_hex("#fd7e14"),
-            Color::from_hex("#d9650a"),
-            Color::from_hex("#FFFFFF"),
-        ),
-        _ => (
-            Color::from_hex("#dc3545"),
-            Color::from_hex("#bd2130"),
-            Color::from_hex("#FFFFFF"),
-        ),
-    };
+fn lerp_color(start: Color, end: Color, t: f64) -> Color {
+    Color::new(
+        lerp_channel(start.r, end.r, t),
+        lerp_channel(start.g, end.g, t),
+        lerp_channel(start.b, end.b, t),
+    )
+}
+
+fn interpolated_fill(percent: f64) -> Color {
+    if percent <= 50.0 {
+        return Color::from_hex("#D97757");
+    }
+
+    let stops = [
+        (50.0, Color::from_hex("#D97757")),
+        (70.0, Color::from_hex("#D08540")),
+        (85.0, Color::from_hex("#CC8C20")),
+        (95.0, Color::from_hex("#C45020")),
+        (100.0, Color::from_hex("#B82020")),
+    ];
+
+    for pair in stops.windows(2) {
+        let (start_pct, start_color) = pair[0];
+        let (end_pct, end_color) = pair[1];
+        if percent <= end_pct {
+            let span = (end_pct - start_pct).max(f64::EPSILON);
+            let t = (percent - start_pct) / span;
+            return lerp_color(start_color, end_color, t);
+        }
+    }
+
+    stops[stops.len() - 1].1
+}
+
+/// Create a rounded-rectangle tray icon badge showing the usage percentage.
+/// `percent` = None means "no data/loading" and uses the embedded app icon.
+pub fn create_icon(percent: Option<f64>) -> HICON {
+    if percent.is_none() {
+        let app_icon = load_embedded_app_icon();
+        if !app_icon.is_invalid() {
+            return app_icon;
+        }
+    }
+
+    let size = 64_i32;
+    let margin = 0_i32;
+    let radius = 2_i32;
+    let outline = 0_i32;
+
+    let fill = interpolated_fill(percent.unwrap_or(0.0));
+    let text_col = Color::from_hex("#FFFFFF");
 
     let display_text = match percent {
-        None => "?".to_string(),
         Some(p) => format!("{}", p as u32),
+        None => String::new(),
     };
 
     let font_h = match display_text.len() {
@@ -108,22 +129,9 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         let null_pen = GetStockObject(NULL_PEN);
         let old_pen = SelectObject(mem_dc, null_pen);
 
-        // Outer rounded rect = outline colour
-        let br_outline = CreateSolidBrush(COLORREF(outline_col.to_colorref()));
-        let old_brush = SelectObject(mem_dc, br_outline);
-        let _ = RoundRect(
-            mem_dc,
-            margin,
-            margin,
-            size - margin + 1,
-            size - margin + 1,
-            radius * 2,
-            radius * 2,
-        );
-
-        // Inner rounded rect = fill colour
+        // Fill rounded rect
         let br_fill = CreateSolidBrush(COLORREF(fill.to_colorref()));
-        SelectObject(mem_dc, br_fill);
+        let old_brush = SelectObject(mem_dc, br_fill);
         let _ = RoundRect(
             mem_dc,
             margin + outline,
@@ -136,7 +144,6 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
 
         SelectObject(mem_dc, old_brush);
         SelectObject(mem_dc, old_pen);
-        let _ = DeleteObject(br_outline);
         let _ = DeleteObject(br_fill);
 
         // Draw centered percentage text
@@ -211,6 +218,34 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         ReleaseDC(HWND::default(), screen_dc);
 
         hicon
+    }
+}
+
+fn load_embedded_app_icon() -> HICON {
+    unsafe {
+        let mut exe_buf = [0u16; 260];
+        let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
+        if len == 0 {
+            return HICON::default();
+        }
+
+        let mut small_icon = HICON::default();
+        let mut large_icon = HICON::default();
+        let extracted = ExtractIconExW(
+            PCWSTR::from_raw(exe_buf.as_ptr()),
+            0,
+            Some(&mut large_icon),
+            Some(&mut small_icon),
+            1,
+        );
+
+        if extracted == 0 {
+            HICON::default()
+        } else if !small_icon.is_invalid() {
+            small_icon
+        } else {
+            large_icon
+        }
     }
 }
 

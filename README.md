@@ -7,7 +7,7 @@ It sits in your taskbar and shows how much of your Claude Code usage window you 
 ![Windows](https://img.shields.io/badge/platform-Windows-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-![Screenshot](.github/screenshot.png)
+![Screenshot](.github/animation.gif)
 
 ## What You Get
 

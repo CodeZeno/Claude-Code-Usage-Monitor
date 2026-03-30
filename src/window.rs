@@ -13,6 +13,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
@@ -132,6 +133,32 @@ fn refresh_dpi() {
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         if dpi > 0 {
             CURRENT_DPI.store(dpi, Ordering::Relaxed);
+        }
+    }
+}
+
+fn load_embedded_app_icons() -> (HICON, HICON) {
+    unsafe {
+        let mut exe_buf = [0u16; 260];
+        let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
+        if len == 0 {
+            return (HICON::default(), HICON::default());
+        }
+
+        let mut large_icon = HICON::default();
+        let mut small_icon = HICON::default();
+        let extracted = ExtractIconExW(
+            PCWSTR::from_raw(exe_buf.as_ptr()),
+            0,
+            Some(&mut large_icon),
+            Some(&mut small_icon),
+            1,
+        );
+
+        if extracted == 0 {
+            (HICON::default(), HICON::default())
+        } else {
+            (large_icon, small_icon)
         }
     }
 }
@@ -742,12 +769,15 @@ pub fn run() {
 
     unsafe {
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
+        let (large_icon, small_icon) = load_embedded_app_icons();
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wnd_proc),
             hInstance: HINSTANCE(hinstance.0),
+            hIcon: large_icon,
+            hIconSm: small_icon,
             hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
             hbrBackground: HBRUSH(std::ptr::null_mut()),
             lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
@@ -781,6 +811,24 @@ pub fn run() {
             None,
         )
         .unwrap();
+
+        if !large_icon.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_BIG as usize),
+                LPARAM(large_icon.0 as isize),
+            );
+        }
+        if !small_icon.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_SMALL as usize),
+                LPARAM(small_icon.0 as isize),
+            );
+        }
+
         diagnose::log(format!("main window created hwnd={:?}", hwnd));
 
         let is_dark = theme::is_dark_mode();
@@ -1374,23 +1422,29 @@ fn position_at_taskbar() {
     let widget_width = total_widget_width();
 
     let widget_height = sc(WIDGET_HEIGHT);
+    let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
         let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        let y = (anchor_top - taskbar_rect.top) + (anchor_height - widget_height) / 2;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
+        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
         diagnose::log(format!(
-            "positioned embedded widget at x={x} y={y} w={widget_width} h={widget_height}"
+            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
+            y - taskbar_rect.top
         ));
     } else {
         // Topmost popup: screen coordinates
         let x = tray_left - widget_width - tray_offset;
-        let y = anchor_top + (anchor_height - widget_height) / 2;
         native_interop::move_window(hwnd, x, y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
         ));
     }
+}
+
+fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
+    let anchor_bottom = anchor_top + anchor_height;
+    let bottom_padding = (anchor_height - widget_height).clamp(0, sc(6));
+    (anchor_bottom - widget_height - bottom_padding).max(anchor_top)
 }
 
 /// WinEvent callback for tray icon location changes
@@ -1627,20 +1681,18 @@ unsafe extern "system" fn wnd_proc(
                         }
                         let widget_width = total_widget_width();
                         let widget_height = sc(WIDGET_HEIGHT);
+                        let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
                         if s.embedded {
                             let x = tray_left - taskbar_rect.left - widget_width - new_offset;
-                            let y =
-                                (anchor_top - taskbar_rect.top) + (anchor_height - widget_height) / 2;
                             native_interop::move_window(
                                 hwnd_val,
                                 x,
-                                y,
+                                y - taskbar_rect.top,
                                 widget_width,
                                 widget_height,
                             );
                         } else {
                             let x = tray_left - widget_width - new_offset;
-                            let y = anchor_top + (anchor_height - widget_height) / 2;
                             native_interop::move_window(
                                 hwnd_val,
                                 x,
