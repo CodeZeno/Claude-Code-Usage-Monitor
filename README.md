@@ -1,13 +1,13 @@
+![Windows](https://img.shields.io/badge/platform-Windows-blue)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 # Claude Code Usage Monitor
+
+![Screenshot](.github/animation.gif)
 
 A lightweight Windows taskbar widget for people already using Claude Code.
 
 It sits in your taskbar and shows how much of your Claude Code usage window you have left, without needing to open the terminal or the Claude site.
-
-![Windows](https://img.shields.io/badge/platform-Windows-blue)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-
-![Screenshot](.github/animation.gif)
 
 ## What You Get
 
@@ -59,15 +59,7 @@ Once running, it will appear in your taskbar and as a tray icon in the notificat
 
 ### System Tray Icon
 
-The tray icon shows your current 5-hour usage as a color-coded percentage badge:
-
-| Color  | Meaning           |
-|--------|-------------------|
-| Green  | Under 50% used    |
-| Yellow | 50–75% used       |
-| Orange | 75–90% used       |
-| Red    | 90% or more used  |
-| Gray   | No data available |
+The tray icon shows your current 5-hour usage as a color-coded percentage badge.
 
 Hovering over the tray icon shows a tooltip with both your 5h and 7d usage.
 

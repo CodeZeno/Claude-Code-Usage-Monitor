@@ -1179,8 +1179,8 @@ fn paint_content(
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row1_y = sc(5);
-        let row2_y = sc(5) + sc(SEGMENT_H) + sc(10);
+        let row2_y = height - sc(5) - sc(SEGMENT_H);
+        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -1408,14 +1408,12 @@ fn position_at_taskbar() {
 
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
     let mut tray_left = taskbar_rect.right;
-    let mut anchor_top = taskbar_rect.top;
-    let mut anchor_height = taskbar_height;
+    let anchor_top = taskbar_rect.top;
+    let anchor_height = taskbar_height;
 
     if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
         if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
             tray_left = tray_rect.left;
-            anchor_top = tray_rect.top;
-            anchor_height = tray_rect.bottom - tray_rect.top;
         }
     }
 
@@ -1443,8 +1441,7 @@ fn position_at_taskbar() {
 
 fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
     let anchor_bottom = anchor_top + anchor_height;
-    let bottom_padding = (anchor_height - widget_height).clamp(0, sc(6));
-    (anchor_bottom - widget_height - bottom_padding).max(anchor_top)
+    (anchor_bottom - widget_height).max(anchor_top)
 }
 
 /// WinEvent callback for tray icon location changes
@@ -1667,16 +1664,14 @@ unsafe extern "system" fn wnd_proc(
                     if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
                         let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
                         let mut tray_left = taskbar_rect.right;
-                        let mut anchor_top = taskbar_rect.top;
-                        let mut anchor_height = taskbar_height;
+                        let anchor_top = taskbar_rect.top;
+                        let anchor_height = taskbar_height;
                         if let Some(tray_hwnd) =
                             native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                         {
                             if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
                             {
                                 tray_left = tray_rect.left;
-                                anchor_top = tray_rect.top;
-                                anchor_height = tray_rect.bottom - tray_rect.top;
                             }
                         }
                         let widget_width = total_widget_width();
