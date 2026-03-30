@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "1.2.9"
+version = "1.2.10"
 edition = "2021"
 license = "MIT"
 description = "Windows taskbar widget for monitoring Claude Code usage and rate limits"

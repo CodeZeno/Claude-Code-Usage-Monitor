@@ -1323,23 +1323,29 @@ fn position_at_taskbar() {
     let widget_width = total_widget_width();
 
     let widget_height = sc(WIDGET_HEIGHT);
+    let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
         let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        let y = (anchor_top - taskbar_rect.top) + (anchor_height - widget_height) / 2;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
+        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
         diagnose::log(format!(
-            "positioned embedded widget at x={x} y={y} w={widget_width} h={widget_height}"
+            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
+            y - taskbar_rect.top
         ));
     } else {
         // Topmost popup: screen coordinates
         let x = tray_left - widget_width - tray_offset;
-        let y = anchor_top + (anchor_height - widget_height) / 2;
         native_interop::move_window(hwnd, x, y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
         ));
     }
+}
+
+fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
+    let anchor_bottom = anchor_top + anchor_height;
+    let bottom_padding = (anchor_height - widget_height).clamp(0, sc(6));
+    (anchor_bottom - widget_height - bottom_padding).max(anchor_top)
 }
 
 /// WinEvent callback for tray icon location changes
@@ -1574,20 +1580,18 @@ unsafe extern "system" fn wnd_proc(
                         }
                         let widget_width = total_widget_width();
                         let widget_height = sc(WIDGET_HEIGHT);
+                        let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
                         if s.embedded {
                             let x = tray_left - taskbar_rect.left - widget_width - new_offset;
-                            let y =
-                                (anchor_top - taskbar_rect.top) + (anchor_height - widget_height) / 2;
                             native_interop::move_window(
                                 hwnd_val,
                                 x,
-                                y,
+                                y - taskbar_rect.top,
                                 widget_width,
                                 widget_height,
                             );
                         } else {
                             let x = tray_left - widget_width - new_offset;
-                            let y = anchor_top + (anchor_height - widget_height) / 2;
                             native_interop::move_window(
                                 hwnd_val,
                                 x,
