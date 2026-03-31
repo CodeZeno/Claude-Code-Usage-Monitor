@@ -768,6 +768,7 @@ pub fn run() {
                 dragging: false,
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
+                show_decimals: settings.show_decimals,
             });
         }
 
@@ -1702,6 +1703,16 @@ unsafe extern "system" fn wnd_proc(
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
+                IDM_SHOW_DECIMALS => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_decimals = !s.show_decimals;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
@@ -1853,6 +1864,23 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        // Show Decimals toggle
+        let show_decimals_str = native_interop::wide_str(strings.show_decimals);
+        let show_checked_flags = if {
+            let state = lock_state();
+            state.as_ref().map(|s| s.show_decimals).unwrap_or(true)
+        } {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            show_checked_flags,
+            IDM_SHOW_DECIMALS as usize,
+            PCWSTR::from_raw(show_decimals_str.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();

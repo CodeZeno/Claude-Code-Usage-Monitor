@@ -1,3 +1,6 @@
+# Visual Studio
+*.vs/
+
 # Rust build artifacts
 /target/
 
