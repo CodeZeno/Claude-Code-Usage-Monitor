@@ -663,7 +663,17 @@ fn format_countdown(resets_at: Option<SystemTime>, strings: Strings, show_decima
         Err(_) => return strings.now.to_string(),
     };
 
-    let total_secs = remaining.as_secs();
+    format_countdown_from_secs(remaining.as_secs(), strings)
+}
+
+/// Calculate how long until the display text would change
+pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Duration> {
+    let reset = resets_at?;
+    let remaining = reset.duration_since(SystemTime::now()).ok()?;
+    Some(time_until_display_change_from_secs(remaining.as_secs()))
+}
+
+fn format_countdown_from_secs(total_secs: u64, strings: Strings) -> String {
     let total_mins = total_secs / 60;
     let total_hours = total_secs / 3600;
     let total_days = total_secs / 86400;
@@ -689,39 +699,22 @@ fn format_countdown(resets_at: Option<SystemTime>, strings: Strings, show_decima
     }
 }
 
-/// Calculate how long until the display text would change
-pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Duration> {
-    let reset = resets_at?;
-    let remaining = reset.duration_since(SystemTime::now()).ok()?;
-
-    let total_secs = remaining.as_secs();
+fn time_until_display_change_from_secs(total_secs: u64) -> Duration {
     let total_mins = total_secs / 60;
     let total_hours = total_secs / 3600;
     let total_days = total_secs / 86400;
 
-    if total_secs <= 60 {
-        // Update every second during final countdown
-        return Some(Duration::from_secs(1));
-    }
-
-    let next_boundary = if total_days >= 1 {
-        Duration::from_secs(total_days * 86400)
-    } else if total_mins > 61 {
-        if total_hours > 1 {
-            Duration::from_secs(total_hours * 3600)
-        } else {
-            Duration::from_secs(61 * 60)
-        }
+    let current_bucket_start = if total_days >= 1 {
+        total_days * 86400
+    } else if total_hours >= 1 {
+        total_hours * 3600
+    } else if total_mins >= 1 {
+        total_mins * 60
     } else {
-        Duration::from_secs(total_mins * 60)
+        total_secs
     };
 
-    let delay = remaining.saturating_sub(next_boundary);
-    if delay > Duration::ZERO {
-        Some(delay + Duration::from_secs(1))
-    } else {
-        Some(Duration::from_secs(1))
-    }
+    Duration::from_secs(total_secs.saturating_sub(current_bucket_start) + 1)
 }
 
 /// Returns true if either section has reached "now" (reset time has passed).

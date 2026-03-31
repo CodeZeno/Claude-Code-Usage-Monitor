@@ -13,6 +13,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
@@ -20,8 +21,9 @@ use crate::localization::{self, LanguageId, Strings};
 use crate::models::UsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
-    WM_APP_USAGE_UPDATED,
+    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
+use crate::tray_icon;
 use crate::poller;
 use crate::theme;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
@@ -71,6 +73,8 @@ struct AppState {
     drag_start_mouse_x: i32,
     drag_start_offset: i32,
     show_decimals: bool,
+
+    widget_visible: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -135,6 +139,32 @@ fn refresh_dpi() {
     }
 }
 
+fn load_embedded_app_icons() -> (HICON, HICON) {
+    unsafe {
+        let mut exe_buf = [0u16; 260];
+        let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
+        if len == 0 {
+            return (HICON::default(), HICON::default());
+        }
+
+        let mut large_icon = HICON::default();
+        let mut small_icon = HICON::default();
+        let extracted = ExtractIconExW(
+            PCWSTR::from_raw(exe_buf.as_ptr()),
+            0,
+            Some(&mut large_icon),
+            Some(&mut small_icon),
+            1,
+        );
+
+        if extracted == 0 {
+            (HICON::default(), HICON::default())
+        } else {
+            (large_icon, small_icon)
+        }
+    }
+}
+
 unsafe impl Send for AppState {}
 
 static STATE: Mutex<Option<AppState>> = Mutex::new(None);
@@ -163,6 +193,8 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default)]
     show_decimals: bool,
+    #[serde(default = "default_widget_visible")]
+    widget_visible: bool,
 }
 
 impl Default for SettingsFile {
@@ -173,12 +205,17 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             show_decimals: true,
+            widget_visible: true,
         }
     }
 }
 
 fn default_poll_interval() -> u32 {
     POLL_15_MIN
+}
+
+fn default_widget_visible() -> bool {
+    true
 }
 
 fn load_settings() -> SettingsFile {
@@ -210,7 +247,41 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             show_decimals: s.show_decimals,
+            widget_visible: s.widget_visible,
         });
+    }
+}
+
+fn tray_icon_data_from_state() -> (Option<f64>, String) {
+    let state = lock_state();
+    match state.as_ref() {
+        Some(s) if s.last_poll_ok => {
+            let tooltip = format!("5h: {} | 7d: {}", s.session_text, s.weekly_text);
+            (Some(s.session_percent), tooltip)
+        }
+        _ => (None, "Claude Code Usage Monitor".to_string()),
+    }
+}
+
+fn toggle_widget_visibility(hwnd: HWND) {
+    let new_visible = {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.widget_visible = !s.widget_visible;
+            s.widget_visible
+        } else {
+            return;
+        }
+    };
+    save_state_settings();
+    unsafe {
+        if new_visible {
+            position_at_taskbar();
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            render_layered();
+        } else {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
     }
 }
 
@@ -704,12 +775,15 @@ pub fn run() {
 
     unsafe {
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
+        let (large_icon, small_icon) = load_embedded_app_icons();
 
         let wc = WNDCLASSEXW {
             cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
             style: CS_HREDRAW | CS_VREDRAW,
             lpfnWndProc: Some(wnd_proc),
             hInstance: HINSTANCE(hinstance.0),
+            hIcon: large_icon,
+            hIconSm: small_icon,
             hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
             hbrBackground: HBRUSH(std::ptr::null_mut()),
             lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
@@ -743,6 +817,24 @@ pub fn run() {
             None,
         )
         .unwrap();
+
+        if !large_icon.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_BIG as usize),
+                LPARAM(large_icon.0 as isize),
+            );
+        }
+        if !small_icon.is_invalid() {
+            let _ = SendMessageW(
+                hwnd,
+                WM_SETICON,
+                WPARAM(ICON_SMALL as usize),
+                LPARAM(small_icon.0 as isize),
+            );
+        }
+
         diagnose::log(format!("main window created hwnd={:?}", hwnd));
 
         let is_dark = theme::is_dark_mode();
@@ -775,6 +867,7 @@ pub fn run() {
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
                 show_decimals: settings.show_decimals,
+                widget_visible: settings.widget_visible,
             });
         }
 
@@ -825,9 +918,15 @@ pub fn run() {
             );
         }
 
-        // Position and show
+        // Register system tray icon
+        let (tray_pct, tray_tooltip) = tray_icon_data_from_state();
+        tray_icon::add(hwnd, tray_pct, &tray_tooltip);
+
+        // Position and show (only if widget_visible preference is true)
         position_at_taskbar();
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if settings.widget_visible {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
         diagnose::log("window shown");
 
         // Initial render via UpdateLayeredWindow (for embedded) or InvalidateRect (fallback)
@@ -1087,8 +1186,8 @@ fn paint_content(
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row1_y = sc(5);
-        let row2_y = sc(5) + sc(SEGMENT_H) + sc(10);
+        let row2_y = height - sc(5) - sc(SEGMENT_H);
+        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -1316,14 +1415,12 @@ fn position_at_taskbar() {
 
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
     let mut tray_left = taskbar_rect.right;
-    let mut anchor_top = taskbar_rect.top;
-    let mut anchor_height = taskbar_height;
+    let anchor_top = taskbar_rect.top;
+    let anchor_height = taskbar_height;
 
     if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
         if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
             tray_left = tray_rect.left;
-            anchor_top = tray_rect.top;
-            anchor_height = tray_rect.bottom - tray_rect.top;
         }
     }
 
@@ -1351,8 +1448,7 @@ fn position_at_taskbar() {
 
 fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
     let anchor_bottom = anchor_top + anchor_height;
-    let bottom_padding = (anchor_height - widget_height).clamp(0, sc(6));
-    (anchor_bottom - widget_height - bottom_padding).max(anchor_top)
+    (anchor_bottom - widget_height).max(anchor_top)
 }
 
 /// WinEvent callback for tray icon location changes
@@ -1471,6 +1567,8 @@ unsafe extern "system" fn wnd_proc(
             check_language_change();
             render_layered();
             schedule_countdown_timer();
+            let (pct, tooltip) = tray_icon_data_from_state();
+            tray_icon::update(hwnd, pct, &tooltip);
             LRESULT(0)
         }
         WM_APP_UPDATE_CHECK_COMPLETE => {
@@ -1573,16 +1671,14 @@ unsafe extern "system" fn wnd_proc(
                     if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
                         let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
                         let mut tray_left = taskbar_rect.right;
-                        let mut anchor_top = taskbar_rect.top;
-                        let mut anchor_height = taskbar_height;
+                        let anchor_top = taskbar_rect.top;
+                        let anchor_height = taskbar_height;
                         if let Some(tray_hwnd) =
                             native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                         {
                             if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
                             {
                                 tray_left = tray_rect.left;
-                                anchor_top = tray_rect.top;
-                                anchor_height = tray_rect.bottom - tray_rect.top;
                             }
                         }
                         let widget_width = total_widget_width();
@@ -1757,7 +1853,22 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
+                id if id == tray_icon::IDM_TOGGLE_WIDGET => {
+                    toggle_widget_visibility(hwnd);
+                }
                 _ => {}
+            }
+            LRESULT(0)
+        }
+        _ if msg == WM_APP_TRAY => {
+            match tray_icon::handle_message(lparam) {
+                tray_icon::TrayAction::ToggleWidget => {
+                    toggle_widget_visibility(hwnd);
+                }
+                tray_icon::TrayAction::ShowContextMenu => {
+                    show_context_menu(hwnd);
+                }
+                tray_icon::TrayAction::None => {}
             }
             LRESULT(0)
         }
@@ -1769,6 +1880,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
+            tray_icon::remove(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -1785,6 +1897,7 @@ fn show_context_menu(hwnd: HWND) {
             language_override,
             install_channel,
             update_status,
+            widget_visible,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -1795,6 +1908,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.language_override,
                     s.install_channel,
                     s.update_status.clone(),
+                    s.widget_visible,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -1803,6 +1917,7 @@ fn show_context_menu(hwnd: HWND) {
                     None,
                     InstallChannel::Portable,
                     UpdateStatus::Idle,
+                    true,
                 ),
             }
         };
@@ -1957,6 +2072,15 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             settings_menu.0 as usize,
             PCWSTR::from_raw(settings_label.as_ptr()),
+        );
+
+        let widget_label = native_interop::wide_str("Show Widget");
+        let widget_flags = if widget_visible { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            menu,
+            widget_flags,
+            tray_icon::IDM_TOGGLE_WIDGET as usize,
+            PCWSTR::from_raw(widget_label.as_ptr()),
         );
 
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());

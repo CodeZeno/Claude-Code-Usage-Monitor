@@ -1,16 +1,16 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "1.2.10"
+version = "1.3.0"
 edition = "2021"
 license = "MIT"
-description = "Windows taskbar widget for monitoring Claude Code usage and rate limits"
+description = "Claude Code Usage Monitor"
 homepage = "https://codezeno.com.au"
 repository = "https://github.com/CodeZeno/Claude-Code-Usage-Monitor"
 
 [package.metadata.winres]
 CompanyName = "Code Zeno Pty Ltd"
 ProductName = "Claude Code Usage Monitor"
-FileDescription = "Windows taskbar widget for monitoring Claude Code usage and rate limits"
+FileDescription = "Claude Code Usage Monitor"
 OriginalFilename = "claude-code-usage-monitor.exe"
 InternalName = "ClaudeCodeUsageMonitor"
 Comments = "https://codezeno.com.au"
