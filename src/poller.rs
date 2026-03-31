@@ -642,9 +642,9 @@ fn is_leap(y: u64) -> bool {
 }
 
 /// Format a usage section as "X% · Yh" style text
-pub fn format_line(section: &UsageSection, strings: Strings) -> String {
+pub fn format_line(section: &UsageSection, strings: Strings, show_decimals: bool) -> String {
     let pct = format!("{:.0}%", section.percentage);
-    let cd = format_countdown(section.resets_at, strings);
+    let cd = format_countdown(section.resets_at, strings, show_decimals);
     if cd.is_empty() {
         pct
     } else {
@@ -652,7 +652,7 @@ pub fn format_line(section: &UsageSection, strings: Strings) -> String {
     }
 }
 
-fn format_countdown(resets_at: Option<SystemTime>, strings: Strings) -> String {
+fn format_countdown(resets_at: Option<SystemTime>, strings: Strings, show_decimals: bool) -> String {
     let reset = match resets_at {
         Some(t) => t,
         None => return String::new(),
@@ -678,11 +678,21 @@ fn format_countdown_from_secs(total_secs: u64, strings: Strings) -> String {
     let total_hours = total_secs / 3600;
     let total_days = total_secs / 86400;
 
-    if total_days >= 1 {
+    let hours_fraction = total_mins / 60;
+    let days_fraction = total_hours / 24;
+    let minute_fraction = total_secs / 60;
+
+    if total_days > 0 && show_decimals && days_fraction > 0 {
+        format!("{total_days}.{days_fraction:01}{}", strings.day_suffix)
+    } else if total_days > 0 {
         format!("{total_days}{}", strings.day_suffix)
-    } else if total_hours >= 1 {
+    } else if total_hours > 0 && show_decimals && hours_fraction > 0 {
+        format!("{total_hours}.{hours_fraction:01}{}", strings.hour_suffix)
+    } else if total_hours > 0 {
         format!("{total_hours}{}", strings.hour_suffix)
-    } else if total_mins >= 1 {
+    } else if total_mins > 0 && show_decimals && minute_fraction > 0 {
+        format!("{total_mins}.{minute_fraction:01}{}", strings.minute_suffix)
+    } else if total_mins > 0 {
         format!("{total_mins}{}", strings.minute_suffix)
     } else {
         format!("{total_secs}{}", strings.second_suffix)

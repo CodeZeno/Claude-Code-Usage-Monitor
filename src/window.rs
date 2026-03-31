@@ -72,6 +72,7 @@ struct AppState {
     dragging: bool,
     drag_start_mouse_x: i32,
     drag_start_offset: i32,
+    show_decimals: bool,
 
     widget_visible: bool,
 }
@@ -106,6 +107,7 @@ const IDM_LANG_SPANISH: u16 = 42;
 const IDM_LANG_FRENCH: u16 = 43;
 const IDM_LANG_GERMAN: u16 = 44;
 const IDM_LANG_JAPANESE: u16 = 45;
+const IDM_SHOW_DECIMALS: u16 = 50;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -189,6 +191,8 @@ struct SettingsFile {
     language: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_update_check_unix: Option<u64>,
+    #[serde(default)]
+    show_decimals: bool,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
 }
@@ -200,6 +204,7 @@ impl Default for SettingsFile {
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
+            show_decimals: true,
             widget_visible: true,
         }
     }
@@ -241,6 +246,7 @@ fn save_state_settings() {
                 .language_override
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
+            show_decimals: s.show_decimals,
             widget_visible: s.widget_visible,
         });
     }
@@ -330,8 +336,8 @@ fn refresh_usage_texts(state: &mut AppState) {
     let strings = state.language.strings();
     let Some((session_text, weekly_text)) = state.data.as_ref().map(|data| {
         (
-            poller::format_line(&data.session, strings),
-            poller::format_line(&data.weekly, strings),
+            poller::format_line(&data.session, strings, state.show_decimals),
+            poller::format_line(&data.weekly, strings, state.show_decimals),
         )
     }) else {
         return;
@@ -722,7 +728,7 @@ const DIVIDER_RIGHT_MARGIN: i32 = 10;
 const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 62;
+const TEXT_WIDTH: i32 = 80;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
@@ -860,6 +866,7 @@ pub fn run() {
                 dragging: false,
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
+                show_decimals: settings.show_decimals,
                 widget_visible: settings.widget_visible,
             });
         }
@@ -1798,6 +1805,16 @@ unsafe extern "system" fn wnd_proc(
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
+                IDM_SHOW_DECIMALS => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_decimals = !s.show_decimals;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
@@ -1968,6 +1985,23 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        // Show Decimals toggle
+        let show_decimals_str = native_interop::wide_str(strings.show_decimals);
+        let show_checked_flags = if {
+            let state = lock_state();
+            state.as_ref().map(|s| s.show_decimals).unwrap_or(true)
+        } {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            show_checked_flags,
+            IDM_SHOW_DECIMALS as usize,
+            PCWSTR::from_raw(show_decimals_str.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
