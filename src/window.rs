@@ -106,6 +106,7 @@ const IDM_LANG_SPANISH: u16 = 42;
 const IDM_LANG_FRENCH: u16 = 43;
 const IDM_LANG_GERMAN: u16 = 44;
 const IDM_LANG_JAPANESE: u16 = 45;
+const IDM_LANG_KOREAN: u16 = 46;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -1817,7 +1818,7 @@ unsafe extern "system" fn wnd_proc(
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
                 IDM_LANG_SYSTEM | IDM_LANG_ENGLISH | IDM_LANG_SPANISH | IDM_LANG_FRENCH
-                | IDM_LANG_GERMAN | IDM_LANG_JAPANESE => {
+                | IDM_LANG_GERMAN | IDM_LANG_JAPANESE | IDM_LANG_KOREAN => {
                     let language_override = match id {
                         IDM_LANG_SYSTEM => None,
                         IDM_LANG_ENGLISH => Some(LanguageId::English),
@@ -1825,6 +1826,7 @@ unsafe extern "system" fn wnd_proc(
                         IDM_LANG_FRENCH => Some(LanguageId::French),
                         IDM_LANG_GERMAN => Some(LanguageId::German),
                         IDM_LANG_JAPANESE => Some(LanguageId::Japanese),
+                        IDM_LANG_KOREAN => Some(LanguageId::Korean),
                         _ => None,
                     };
                     {
@@ -1991,6 +1993,7 @@ fn show_context_menu(hwnd: HWND) {
                 LanguageId::French => IDM_LANG_FRENCH,
                 LanguageId::German => IDM_LANG_GERMAN,
                 LanguageId::Japanese => IDM_LANG_JAPANESE,
+                LanguageId::Korean => IDM_LANG_KOREAN,
             };
             let label_str = native_interop::wide_str(language.native_name());
             let flags = if language_override == Some(language) {
@@ -2040,7 +2043,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(settings_label.as_ptr()),
         );
 
-        let widget_label = native_interop::wide_str("Show Widget");
+        let widget_label = native_interop::wide_str(strings.show_widget);
         let widget_flags = if widget_visible { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
         let _ = AppendMenuW(
             menu,
