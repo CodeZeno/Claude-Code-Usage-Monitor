@@ -2,6 +2,7 @@ mod english;
 mod french;
 mod german;
 mod japanese;
+mod korean;
 mod spanish;
 
 use windows::core::PWSTR;
@@ -17,15 +18,17 @@ pub enum LanguageId {
     French,
     German,
     Japanese,
+    Korean,
 }
 
 impl LanguageId {
-    pub const ALL: [LanguageId; 5] = [
+    pub const ALL: [LanguageId; 6] = [
         LanguageId::English,
         LanguageId::Spanish,
         LanguageId::French,
         LanguageId::German,
         LanguageId::Japanese,
+        LanguageId::Korean,
     ];
 
     pub fn code(self) -> &'static str {
@@ -35,6 +38,7 @@ impl LanguageId {
             Self::French => "fr",
             Self::German => "de",
             Self::Japanese => "ja",
+            Self::Korean => "ko",
         }
     }
 
@@ -45,6 +49,7 @@ impl LanguageId {
             Self::French => "Français",
             Self::German => "Deutsch",
             Self::Japanese => "日本語",
+            Self::Korean => "한국어",
         }
     }
 
@@ -55,6 +60,7 @@ impl LanguageId {
             Self::French => french::STRINGS,
             Self::German => german::STRINGS,
             Self::Japanese => japanese::STRINGS,
+            Self::Korean => korean::STRINGS,
         }
     }
 
@@ -65,6 +71,7 @@ impl LanguageId {
             Self::French => french::UPDATE_VIA_WINGET_LABEL,
             Self::German => german::UPDATE_VIA_WINGET_LABEL,
             Self::Japanese => japanese::UPDATE_VIA_WINGET_LABEL,
+            Self::Korean => korean::UPDATE_VIA_WINGET_LABEL,
         }
     }
 
@@ -80,6 +87,7 @@ impl LanguageId {
             "fr" => Some(Self::French),
             "de" => Some(Self::German),
             "ja" => Some(Self::Japanese),
+            "ko" => Some(Self::Korean),
             _ => None,
         }
     }
@@ -112,6 +120,7 @@ pub struct Strings {
     pub update_available: &'static str,
     pub update_prompt_now: &'static str,
     pub exit: &'static str,
+    pub show_widget: &'static str,
     pub session_window: &'static str,
     pub weekly_window: &'static str,
     pub now: &'static str,

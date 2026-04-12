@@ -1,0 +1,38 @@
+use super::Strings;
+
+pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "WinGet으로 업데이트";
+
+pub(super) const STRINGS: Strings = Strings {
+    window_title: "Claude Code 사용량 모니터",
+    refresh: "새로고침",
+    update_frequency: "업데이트 주기",
+    one_minute: "1분",
+    five_minutes: "5분",
+    fifteen_minutes: "15분",
+    one_hour: "1시간",
+    settings: "설정",
+    start_with_windows: "Windows 시작 시 자동 실행",
+    reset_position: "위치 초기화",
+    language: "언어",
+    system_default: "시스템 기본값",
+    check_for_updates: "업데이트 확인",
+    checking_for_updates: "업데이트 확인 중...",
+    updates: "업데이트",
+    update_in_progress: "이미 업데이트 확인이 진행 중입니다.",
+    up_to_date: "이미 최신 버전입니다.",
+    up_to_date_short: "최신",
+    update_failed: "자동 업데이트를 완료할 수 없습니다",
+    applying_update: "업데이트 적용 중...",
+    update_to: "업데이트 대상",
+    update_available: "업데이트 사용 가능",
+    update_prompt_now: "버전 {version}을 사용할 수 있습니다. 지금 업데이트하시겠습니까?",
+    exit: "종료",
+    show_widget: "위젯 표시",
+    session_window: "5시간",
+    weekly_window: "7일",
+    now: "지금",
+    day_suffix: "일",
+    hour_suffix: "시간",
+    minute_suffix: "분",
+    second_suffix: "초",
+};
