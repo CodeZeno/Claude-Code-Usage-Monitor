@@ -35,4 +35,7 @@ pub(super) const STRINGS: Strings = Strings {
     hour_suffix: "h",
     minute_suffix: "m",
     second_suffix: "s",
+    quiet_hours: "Quiet Hours",
+    quiet_start: "Start",
+    quiet_end: "End",
 };

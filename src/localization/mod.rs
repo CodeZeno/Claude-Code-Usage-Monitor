@@ -4,6 +4,7 @@ mod german;
 mod japanese;
 mod korean;
 mod spanish;
+mod traditional_chinese;
 
 use windows::core::PWSTR;
 use windows::Win32::Globalization::{
@@ -19,16 +20,18 @@ pub enum LanguageId {
     German,
     Japanese,
     Korean,
+    TraditionalChinese,
 }
 
 impl LanguageId {
-    pub const ALL: [LanguageId; 6] = [
+    pub const ALL: [LanguageId; 7] = [
         LanguageId::English,
         LanguageId::Spanish,
         LanguageId::French,
         LanguageId::German,
         LanguageId::Japanese,
         LanguageId::Korean,
+        LanguageId::TraditionalChinese,
     ];
 
     pub fn code(self) -> &'static str {
@@ -39,6 +42,7 @@ impl LanguageId {
             Self::German => "de",
             Self::Japanese => "ja",
             Self::Korean => "ko",
+            Self::TraditionalChinese => "zh-TW",
         }
     }
 
@@ -50,6 +54,7 @@ impl LanguageId {
             Self::German => "Deutsch",
             Self::Japanese => "日本語",
             Self::Korean => "한국어",
+            Self::TraditionalChinese => "繁體中文",
         }
     }
 
@@ -61,6 +66,7 @@ impl LanguageId {
             Self::German => german::STRINGS,
             Self::Japanese => japanese::STRINGS,
             Self::Korean => korean::STRINGS,
+            Self::TraditionalChinese => traditional_chinese::STRINGS,
         }
     }
 
@@ -72,6 +78,7 @@ impl LanguageId {
             Self::German => german::UPDATE_VIA_WINGET_LABEL,
             Self::Japanese => japanese::UPDATE_VIA_WINGET_LABEL,
             Self::Korean => korean::UPDATE_VIA_WINGET_LABEL,
+            Self::TraditionalChinese => traditional_chinese::UPDATE_VIA_WINGET_LABEL,
         }
     }
 
@@ -81,13 +88,26 @@ impl LanguageId {
             return None;
         }
 
-        match normalized.split('-').next().unwrap_or_default() {
+        let prefix = normalized.split('-').next().unwrap_or_default();
+        match prefix {
             "en" => Some(Self::English),
             "es" => Some(Self::Spanish),
             "fr" => Some(Self::French),
             "de" => Some(Self::German),
             "ja" => Some(Self::Japanese),
             "ko" => Some(Self::Korean),
+            "zh" => {
+                // 細分繁體（zh-TW、zh-HK、zh-Hant）與簡體
+                if normalized.contains("tw")
+                    || normalized.contains("hk")
+                    || normalized.contains("hant")
+                {
+                    Some(Self::TraditionalChinese)
+                } else {
+                    // 簡體中文目前不支援，fallback 至系統語言
+                    None
+                }
+            }
             _ => None,
         }
     }
@@ -127,6 +147,9 @@ pub struct Strings {
     pub hour_suffix: &'static str,
     pub minute_suffix: &'static str,
     pub second_suffix: &'static str,
+    pub quiet_hours: &'static str,
+    pub quiet_start: &'static str,
+    pub quiet_end: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

@@ -35,4 +35,7 @@ pub(super) const STRINGS: Strings = Strings {
     hour_suffix: "時間",
     minute_suffix: "分",
     second_suffix: "秒",
+    quiet_hours: "サイレント時間",
+    quiet_start: "開始",
+    quiet_end: "終了",
 };

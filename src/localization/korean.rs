@@ -35,4 +35,7 @@ pub(super) const STRINGS: Strings = Strings {
     hour_suffix: "시간",
     minute_suffix: "분",
     second_suffix: "초",
+    quiet_hours: "조용한 시간",
+    quiet_start: "시작",
+    quiet_end: "종료",
 };
