@@ -10,6 +10,7 @@ use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
@@ -74,6 +75,10 @@ struct AppState {
     drag_start_offset: i32,
 
     widget_visible: bool,
+
+    quiet_hours_enabled: bool,
+    quiet_hours_start: u8,
+    quiet_hours_end: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +112,11 @@ const IDM_LANG_FRENCH: u16 = 43;
 const IDM_LANG_GERMAN: u16 = 44;
 const IDM_LANG_JAPANESE: u16 = 45;
 const IDM_LANG_KOREAN: u16 = 46;
+const IDM_LANG_TRADITIONAL_CHINESE: u16 = 47;
+
+const IDM_QUIET_TOGGLE: u16 = 60;
+const IDM_QUIET_START_BASE: u16 = 70;  // 70..93 對應小時 0..23
+const IDM_QUIET_END_BASE: u16 = 100;   // 100..123 對應小時 0..23
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -192,6 +202,12 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
+    #[serde(default)]
+    quiet_hours_enabled: bool,
+    #[serde(default = "default_quiet_start")]
+    quiet_hours_start: u8,
+    #[serde(default = "default_quiet_end")]
+    quiet_hours_end: u8,
 }
 
 impl Default for SettingsFile {
@@ -202,6 +218,9 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             widget_visible: true,
+            quiet_hours_enabled: false,
+            quiet_hours_start: default_quiet_start(),
+            quiet_hours_end: default_quiet_end(),
         }
     }
 }
@@ -212,6 +231,14 @@ fn default_poll_interval() -> u32 {
 
 fn default_widget_visible() -> bool {
     true
+}
+
+fn default_quiet_start() -> u8 {
+    22
+}
+
+fn default_quiet_end() -> u8 {
+    8
 }
 
 fn load_settings() -> SettingsFile {
@@ -243,7 +270,47 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
+            quiet_hours_enabled: s.quiet_hours_enabled,
+            quiet_hours_start: s.quiet_hours_start,
+            quiet_hours_end: s.quiet_hours_end,
         });
+    }
+}
+
+/// 從已持有的 AppState 判斷目前是否在安靜時刻（不取鎖）
+fn quiet_now(s: &AppState) -> bool {
+    if !s.quiet_hours_enabled {
+        return false;
+    }
+    let st = unsafe { GetLocalTime() };
+    let hour = st.wHour as u8;
+    let start = s.quiet_hours_start;
+    let end = s.quiet_hours_end;
+    if start <= end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
+    }
+}
+
+/// 檢查目前是否在安靜時刻範圍內（需自行取鎖，不可在持有鎖時呼叫）
+fn is_quiet_time() -> bool {
+    let (enabled, start, end) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.quiet_hours_enabled, s.quiet_hours_start, s.quiet_hours_end),
+            None => return false,
+        }
+    };
+    if !enabled {
+        return false;
+    }
+    let st = unsafe { GetLocalTime() };
+    let hour = st.wHour as u8;
+    if start <= end {
+        hour >= start && hour < end
+    } else {
+        hour >= start || hour < end
     }
 }
 
@@ -862,6 +929,9 @@ pub fn run() {
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
+                quiet_hours_enabled: settings.quiet_hours_enabled,
+                quiet_hours_start: settings.quiet_hours_start,
+                quiet_hours_end: settings.quiet_hours_end,
             });
         }
 
@@ -975,16 +1045,27 @@ fn render_layered() {
     let (hwnd_val, is_dark, embedded, strings, session_pct, session_text, weekly_pct, weekly_text) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (
-                s.hwnd,
-                s.is_dark,
-                s.embedded,
-                s.language.strings(),
-                s.session_percent,
-                s.session_text.clone(),
-                s.weekly_percent,
-                s.weekly_text.clone(),
-            ),
+            Some(s) => {
+                // 在鎖內直接讀取安靜時刻狀態，避免再呼叫 is_quiet_time() 造成死結
+                let quiet = quiet_now(s);
+                let session_text = if quiet {
+                    s.language.strings().quiet_hours.to_string()
+                } else {
+                    s.session_text.clone()
+                };
+                // weekly_text 保留最後一次 poll 的資料（不設空字串以避免 DrawTextW 收到空切片）
+                let weekly_text = s.weekly_text.clone();
+                (
+                    s.hwnd,
+                    s.is_dark,
+                    s.embedded,
+                    s.language.strings(),
+                    s.session_percent,
+                    session_text,
+                    s.weekly_percent,
+                    weekly_text,
+                )
+            }
             None => return,
         }
     };
@@ -1533,10 +1614,12 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let sh = SendHwnd::from_hwnd(hwnd);
-                    std::thread::spawn(move || {
-                        do_poll(sh);
-                    });
+                    if !is_quiet_time() {
+                        let sh = SendHwnd::from_hwnd(hwnd);
+                        std::thread::spawn(move || {
+                            do_poll(sh);
+                        });
+                    }
                 }
                 TIMER_COUNTDOWN => {
                     update_display();
@@ -1544,10 +1627,12 @@ unsafe extern "system" fn wnd_proc(
                     schedule_countdown_timer();
                 }
                 TIMER_RESET_POLL => {
-                    let sh = SendHwnd::from_hwnd(hwnd);
-                    std::thread::spawn(move || {
-                        do_poll(sh);
-                    });
+                    if !is_quiet_time() {
+                        let sh = SendHwnd::from_hwnd(hwnd);
+                        std::thread::spawn(move || {
+                            do_poll(sh);
+                        });
+                    }
                 }
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
@@ -1817,8 +1902,14 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_LANG_SYSTEM | IDM_LANG_ENGLISH | IDM_LANG_SPANISH | IDM_LANG_FRENCH
-                | IDM_LANG_GERMAN | IDM_LANG_JAPANESE | IDM_LANG_KOREAN => {
+                IDM_LANG_SYSTEM
+                | IDM_LANG_ENGLISH
+                | IDM_LANG_SPANISH
+                | IDM_LANG_FRENCH
+                | IDM_LANG_GERMAN
+                | IDM_LANG_JAPANESE
+                | IDM_LANG_KOREAN
+                | IDM_LANG_TRADITIONAL_CHINESE => {
                     let language_override = match id {
                         IDM_LANG_SYSTEM => None,
                         IDM_LANG_ENGLISH => Some(LanguageId::English),
@@ -1827,6 +1918,7 @@ unsafe extern "system" fn wnd_proc(
                         IDM_LANG_GERMAN => Some(LanguageId::German),
                         IDM_LANG_JAPANESE => Some(LanguageId::Japanese),
                         IDM_LANG_KOREAN => Some(LanguageId::Korean),
+                        IDM_LANG_TRADITIONAL_CHINESE => Some(LanguageId::TraditionalChinese),
                         _ => None,
                     };
                     {
@@ -1837,6 +1929,36 @@ unsafe extern "system" fn wnd_proc(
                     }
                     save_state_settings();
                     render_layered();
+                }
+                IDM_QUIET_TOGGLE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.quiet_hours_enabled = !s.quiet_hours_enabled;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                }
+                id if (IDM_QUIET_START_BASE..IDM_QUIET_START_BASE + 24).contains(&id) => {
+                    let hour = (id - IDM_QUIET_START_BASE) as u8;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.quiet_hours_start = hour;
+                        }
+                    }
+                    save_state_settings();
+                }
+                id if (IDM_QUIET_END_BASE..IDM_QUIET_END_BASE + 24).contains(&id) => {
+                    let hour = (id - IDM_QUIET_END_BASE) as u8;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.quiet_hours_end = hour;
+                        }
+                    }
+                    save_state_settings();
                 }
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
@@ -1883,6 +2005,9 @@ fn show_context_menu(hwnd: HWND) {
             install_channel,
             update_status,
             widget_visible,
+            quiet_hours_enabled,
+            quiet_hours_start,
+            quiet_hours_end,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -1894,6 +2019,9 @@ fn show_context_menu(hwnd: HWND) {
                     s.install_channel,
                     s.update_status.clone(),
                     s.widget_visible,
+                    s.quiet_hours_enabled,
+                    s.quiet_hours_start,
+                    s.quiet_hours_end,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -1903,6 +2031,9 @@ fn show_context_menu(hwnd: HWND) {
                     InstallChannel::Portable,
                     UpdateStatus::Idle,
                     true,
+                    false,
+                    22u8,
+                    8u8,
                 ),
             }
         };
@@ -1972,6 +2103,79 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
 
+        // Quiet Hours 子選單
+        // 儲存動態字串的 Vec，讓其生命週期延伸至 TrackPopupMenu 完成
+        let mut quiet_wide_strs: Vec<Vec<u16>> = Vec::new();
+
+        let quiet_menu = CreatePopupMenu().unwrap();
+
+        let quiet_toggle_str = native_interop::wide_str(strings.quiet_hours);
+        let quiet_toggle_flags = if quiet_hours_enabled { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            quiet_menu,
+            quiet_toggle_flags,
+            IDM_QUIET_TOGGLE as usize,
+            PCWSTR::from_raw(quiet_toggle_str.as_ptr()),
+        );
+
+        let _ = AppendMenuW(quiet_menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+        // Start hour 子選單（0..23）
+        let start_menu = CreatePopupMenu().unwrap();
+        for h in 0u8..24 {
+            let label = format!("{:02}:00", h);
+            quiet_wide_strs.push(native_interop::wide_str(&label));
+            let label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+            let flags = if h == quiet_hours_start { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+            let _ = AppendMenuW(
+                start_menu,
+                flags,
+                (IDM_QUIET_START_BASE + h as u16) as usize,
+                PCWSTR::from_raw(label_ptr),
+            );
+        }
+        let start_label_str = format!("{}: {:02}:00", strings.quiet_start, quiet_hours_start);
+        quiet_wide_strs.push(native_interop::wide_str(&start_label_str));
+        let start_label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+        let _ = AppendMenuW(
+            quiet_menu,
+            MF_POPUP,
+            start_menu.0 as usize,
+            PCWSTR::from_raw(start_label_ptr),
+        );
+
+        // End hour 子選單（0..23）
+        let end_menu = CreatePopupMenu().unwrap();
+        for h in 0u8..24 {
+            let label = format!("{:02}:00", h);
+            quiet_wide_strs.push(native_interop::wide_str(&label));
+            let label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+            let flags = if h == quiet_hours_end { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+            let _ = AppendMenuW(
+                end_menu,
+                flags,
+                (IDM_QUIET_END_BASE + h as u16) as usize,
+                PCWSTR::from_raw(label_ptr),
+            );
+        }
+        let end_label_str = format!("{}: {:02}:00", strings.quiet_end, quiet_hours_end);
+        quiet_wide_strs.push(native_interop::wide_str(&end_label_str));
+        let end_label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+        let _ = AppendMenuW(
+            quiet_menu,
+            MF_POPUP,
+            end_menu.0 as usize,
+            PCWSTR::from_raw(end_label_ptr),
+        );
+
+        let quiet_label_str = native_interop::wide_str(strings.quiet_hours);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            quiet_menu.0 as usize,
+            PCWSTR::from_raw(quiet_label_str.as_ptr()),
+        );
+
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);
         let system_flags = if language_override.is_none() {
@@ -1986,17 +2190,18 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(system_label.as_ptr()),
         );
 
-        for language in LanguageId::ALL {
-            let id = match language {
+        for lang in LanguageId::ALL {
+            let id = match lang {
                 LanguageId::English => IDM_LANG_ENGLISH,
                 LanguageId::Spanish => IDM_LANG_SPANISH,
                 LanguageId::French => IDM_LANG_FRENCH,
                 LanguageId::German => IDM_LANG_GERMAN,
                 LanguageId::Japanese => IDM_LANG_JAPANESE,
                 LanguageId::Korean => IDM_LANG_KOREAN,
+                LanguageId::TraditionalChinese => IDM_LANG_TRADITIONAL_CHINESE,
             };
-            let label_str = native_interop::wide_str(language.native_name());
-            let flags = if language_override == Some(language) {
+            let label_str = native_interop::wide_str(lang.native_name());
+            let flags = if language_override == Some(lang) {
                 MF_CHECKED
             } else {
                 MENU_ITEM_FLAGS(0)
@@ -2075,14 +2280,24 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (
-                s.is_dark,
-                s.language.strings(),
-                s.session_percent,
-                s.session_text.clone(),
-                s.weekly_percent,
-                s.weekly_text.clone(),
-            ),
+            Some(s) => {
+                let quiet = quiet_now(s);
+                let session_text = if quiet {
+                    s.language.strings().quiet_hours.to_string()
+                } else {
+                    s.session_text.clone()
+                };
+                // weekly_text 保留最後一次 poll 的資料（不設空字串以避免 DrawTextW 收到空切片）
+                let weekly_text = s.weekly_text.clone();
+                (
+                    s.is_dark,
+                    s.language.strings(),
+                    s.session_percent,
+                    session_text,
+                    s.weekly_percent,
+                    weekly_text,
+                )
+            }
             None => return,
         }
     };
