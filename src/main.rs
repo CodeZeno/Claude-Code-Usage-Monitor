@@ -4,6 +4,7 @@ mod diagnose;
 mod localization;
 mod models;
 mod native_interop;
+mod peak_dialog;
 mod poller;
 mod theme;
 mod tray_icon;
@@ -15,10 +16,7 @@ fn main() {
     let diagnose_enabled = args.iter().any(|arg| arg == "--diagnose");
     if diagnose_enabled {
         match diagnose::init() {
-            Ok(path) => diagnose::log(format!(
-                "startup args={args:?} log_path={}",
-                path.display()
-            )),
+            Ok(path) => diagnose::log(format!("startup args={args:?} log_path={}", path.display())),
             Err(error) => {
                 // Logging may not be available yet, but keep startup behavior unchanged.
                 let _ = error;

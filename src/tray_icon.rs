@@ -1,12 +1,12 @@
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW, Shell_NotifyIconW,
+    ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::PCWSTR;
 
 use crate::native_interop::{self, Color, WM_APP_TRAY};
 
@@ -107,8 +107,8 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         };
 
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let dib = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-            .unwrap_or_default();
+        let dib =
+            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
 
         if dib.is_invalid() {
             let _ = DeleteDC(mem_dc);
@@ -119,8 +119,7 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         let old_bmp = SelectObject(mem_dc, dib);
 
         // Zero-fill (transparent background)
-        let pixel_data =
-            std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
+        let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
         for px in pixel_data.iter_mut() {
             *px = 0;
         }

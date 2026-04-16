@@ -417,7 +417,10 @@ fn read_windows_credentials() -> Option<Credentials> {
         Err(error) => {
             if diagnose::is_enabled() {
                 diagnose::log_error(
-                    &format!("unable to read Windows credentials at {}", cred_path.display()),
+                    &format!(
+                        "unable to read Windows credentials at {}",
+                        cred_path.display()
+                    ),
                     error,
                 );
             }

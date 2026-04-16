@@ -9,6 +9,7 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Registry::*;
+use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
@@ -20,12 +21,13 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::UsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
+    self, Color, TIMER_COUNTDOWN, TIMER_PEAK, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
     WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
-use crate::tray_icon;
+use crate::peak_dialog;
 use crate::poller;
 use crate::theme;
+use crate::tray_icon;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
@@ -74,6 +76,13 @@ struct AppState {
     drag_start_offset: i32,
 
     widget_visible: bool,
+
+    /// Peak hours start (hour, minute), or None if not configured.
+    peak_start: Option<(u8, u8)>,
+    /// Peak hours end (hour, minute), or None if not configured.
+    peak_end: Option<(u8, u8)>,
+    /// UTC offset override in hours. None = use system local time.
+    peak_tz_offset_hours: Option<i32>,
 }
 
 #[derive(Clone, Debug)]
@@ -83,6 +92,19 @@ enum UpdateStatus {
     Applying,
     UpToDate,
     Available(ReleaseDescriptor),
+}
+
+/// Peak-hours indicator state.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PeakStatus {
+    /// Peak hours not configured – no icon shown.
+    NoPeakHours,
+    /// Current time is outside peak hours (more than 60 min away).
+    Outside,
+    /// Within 60 minutes of peak-hours start – warning colour.
+    Warning,
+    /// Currently within peak hours – alert colour.
+    Inside,
 }
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
@@ -107,8 +129,15 @@ const IDM_LANG_FRENCH: u16 = 43;
 const IDM_LANG_GERMAN: u16 = 44;
 const IDM_LANG_JAPANESE: u16 = 45;
 const IDM_LANG_KOREAN: u16 = 46;
+const IDM_PEAK_HOURS: u16 = 50;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
+
+/// Diameter of the peak-hours status circle (px at 96 DPI).
+/// Equals 2 × SEGMENT_H + row gap = 2 × 13 + 10 = 36, spanning both meter rows.
+const PEAK_ICON_W: i32 = 36;
+/// Gap between the right edge of the circle and the first meter label.
+const PEAK_ICON_GAP: i32 = 6;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -192,6 +221,15 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
+    /// Peak-hours start time in "HH:MM" format, or absent to disable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peak_start: Option<String>,
+    /// Peak-hours end time in "HH:MM" format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peak_end: Option<String>,
+    /// UTC offset override in hours (e.g. 10 = UTC+10). Absent = system TZ.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    peak_tz_offset_hours: Option<i32>,
 }
 
 impl Default for SettingsFile {
@@ -202,6 +240,9 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             widget_visible: true,
+            peak_start: None,
+            peak_end: None,
+            peak_tz_offset_hours: None,
         }
     }
 }
@@ -243,6 +284,9 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
+            peak_start: s.peak_start.map(|(h, m)| format!("{:02}:{:02}", h, m)),
+            peak_end: s.peak_end.map(|(h, m)| format!("{:02}:{:02}", h, m)),
+            peak_tz_offset_hours: s.peak_tz_offset_hours,
         });
     }
 }
@@ -727,9 +771,35 @@ const TEXT_WIDTH: i32 = 62;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
+/// Extra pixels reserved for the peak-hours status circle (0 when not configured).
+fn peak_icon_extra_width(has_peak: bool) -> i32 {
+    if has_peak {
+        sc(PEAK_ICON_W) + sc(PEAK_ICON_GAP)
+    } else {
+        0
+    }
+}
+
+/// Whether peak hours are configured. Acquires the state lock briefly.
+fn has_peak_hours() -> bool {
+    let state = lock_state();
+    state
+        .as_ref()
+        .map(|s| s.peak_start.is_some())
+        .unwrap_or(false)
+}
+
 fn total_widget_width() -> i32 {
+    widget_width_with_peak(has_peak_hours())
+}
+
+/// Compute widget width given whether peak hours are configured.
+/// Use this variant when the caller already knows the peak state
+/// (e.g. while holding the state lock) to avoid re-acquiring it.
+fn widget_width_with_peak(has_peak: bool) -> i32 {
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
+        + peak_icon_extra_width(has_peak)
         + sc(LABEL_WIDTH)
         + sc(LABEL_RIGHT_MARGIN)
         + (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * SEGMENT_COUNT
@@ -737,6 +807,64 @@ fn total_widget_width() -> i32 {
         + sc(BAR_RIGHT_MARGIN)
         + sc(TEXT_WIDTH)
         + sc(RIGHT_MARGIN)
+}
+
+/// Compute the current peak-hours status from state.
+fn compute_peak_status(state: &AppState) -> PeakStatus {
+    let (start, end) = match (state.peak_start, state.peak_end) {
+        (Some(s), Some(e)) => (s, e),
+        _ => return PeakStatus::NoPeakHours,
+    };
+
+    let (cur_h, cur_m) = get_local_hm(state.peak_tz_offset_hours);
+    let cur = cur_h as i32 * 60 + cur_m as i32;
+    let s_m = start.0 as i32 * 60 + start.1 as i32;
+    let e_m = end.0 as i32 * 60 + end.1 as i32;
+
+    // Helper: is `t` in the half-open range [a, b) wrapping midnight?
+    let in_range = |t: i32, a: i32, b: i32| -> bool {
+        if a <= b {
+            t >= a && t < b
+        } else {
+            t >= a || t < b
+        }
+    };
+
+    if in_range(cur, s_m, e_m) {
+        return PeakStatus::Inside;
+    }
+
+    // Warning: within 60 minutes before peak start (wrapping midnight)
+    let warn_start = ((s_m - 60) + 1440) % 1440;
+    if in_range(cur, warn_start, s_m) {
+        return PeakStatus::Warning;
+    }
+
+    PeakStatus::Outside
+}
+
+/// Return (hour, minute) in local time adjusted by the given UTC offset in hours.
+/// `None` means use the OS local time via GetLocalTime.
+fn get_local_hm(tz_offset_hours: Option<i32>) -> (u8, u8) {
+    match tz_offset_hours {
+        None => {
+            // Use OS local time (handles DST automatically)
+            unsafe {
+                let st = GetLocalTime();
+                (st.wHour as u8, st.wMinute as u8)
+            }
+        }
+        Some(offset_h) => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let utc_secs = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            let local_secs = utc_secs + offset_h as i64 * 3600;
+            let day_secs = ((local_secs % 86400) + 86400) % 86400;
+            ((day_secs / 3600) as u8, ((day_secs % 3600) / 60) as u8)
+        }
+    }
 }
 
 pub fn run() {
@@ -760,7 +888,10 @@ pub fn run() {
                 h
             }
             Err(error) => {
-                diagnose::log_error("startup aborted: unable to create single-instance mutex", error);
+                diagnose::log_error(
+                    "startup aborted: unable to create single-instance mutex",
+                    error,
+                );
                 return;
             }
         }
@@ -862,8 +993,22 @@ pub fn run() {
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
+                peak_start: settings
+                    .peak_start
+                    .as_deref()
+                    .and_then(|s| peak_dialog::parse_time(s).ok()),
+                peak_end: settings
+                    .peak_end
+                    .as_deref()
+                    .and_then(|s| peak_dialog::parse_time(s).ok()),
+                peak_tz_offset_hours: settings.peak_tz_offset_hours,
             });
         }
+
+        diagnose::log(format!(
+            "peak hours config: start={:?} end={:?} tz_hours={:?}",
+            settings.peak_start, settings.peak_end, settings.peak_tz_offset_hours
+        ));
 
         // Try to embed in taskbar
         if let Some(taskbar_hwnd) = native_interop::find_taskbar() {
@@ -943,6 +1088,9 @@ pub fn run() {
             do_poll(send_hwnd);
         });
 
+        // 1-minute timer to refresh the peak-hours status circle colour.
+        SetTimer(hwnd, TIMER_PEAK, 60_000, None);
+
         schedule_auto_update_check(hwnd);
         let should_check_updates = {
             let state = lock_state();
@@ -972,7 +1120,17 @@ pub fn run() {
 /// ClearType sub-pixel font rendering can be used for crisp, OS-native text.
 fn render_layered() {
     refresh_dpi();
-    let (hwnd_val, is_dark, embedded, strings, session_pct, session_text, weekly_pct, weekly_text) = {
+    let (
+        hwnd_val,
+        is_dark,
+        embedded,
+        strings,
+        session_pct,
+        session_text,
+        weekly_pct,
+        weekly_text,
+        peak_status,
+    ) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => (
@@ -984,6 +1142,7 @@ fn render_layered() {
                 s.session_text.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                compute_peak_status(s),
             ),
             None => return,
         }
@@ -1066,6 +1225,7 @@ fn render_layered() {
             &session_text,
             weekly_pct,
             &weekly_text,
+            peak_status,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1129,6 +1289,7 @@ fn paint_content(
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    peak_status: PeakStatus,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1179,9 +1340,19 @@ fn paint_content(
         FillRect(hdc, &right_rect, right_brush);
         let _ = DeleteObject(right_brush);
 
-        let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
+        let icon_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
+        let peak_extra = if peak_status != PeakStatus::NoPeakHours {
+            sc(PEAK_ICON_W) + sc(PEAK_ICON_GAP)
+        } else {
+            0
+        };
+        let content_x = icon_x + peak_extra;
         let row2_y = height - sc(5) - sc(SEGMENT_H);
         let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+
+        if peak_status != PeakStatus::NoPeakHours {
+            draw_peak_circle(hdc, icon_x, height, peak_status, is_dark);
+        }
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -1552,6 +1723,10 @@ unsafe extern "system" fn wnd_proc(
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
                 }
+                TIMER_PEAK => {
+                    // Re-evaluate and repaint peak status every minute.
+                    render_layered();
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -1634,6 +1809,7 @@ unsafe extern "system" fn wnd_proc(
                 }
 
                 // Clamp: don't go past left edge of taskbar
+                let has_peak = s.peak_start.is_some();
                 if let Some(taskbar_hwnd) = s.taskbar_hwnd {
                     if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
                         let mut tray_left = taskbar_rect.right;
@@ -1645,7 +1821,7 @@ unsafe extern "system" fn wnd_proc(
                                 tray_left = tray_rect.left;
                             }
                         }
-                        let widget_width = total_widget_width();
+                        let widget_width = widget_width_with_peak(has_peak);
                         let max_offset = if s.embedded {
                             tray_left - taskbar_rect.left - widget_width
                         } else {
@@ -1675,7 +1851,7 @@ unsafe extern "system" fn wnd_proc(
                                 tray_left = tray_rect.left;
                             }
                         }
-                        let widget_width = total_widget_width();
+                        let widget_width = widget_width_with_peak(has_peak);
                         let widget_height = sc(WIDGET_HEIGHT);
                         let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
                         if s.embedded {
@@ -1798,6 +1974,51 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
+                }
+                IDM_PEAK_HOURS => {
+                    // Read current peak settings for pre-population
+                    let (cur_start, cur_end, cur_tz, strings) = {
+                        let state = lock_state();
+                        match state.as_ref() {
+                            Some(s) => (
+                                s.peak_start
+                                    .map(|(h, m)| format!("{:02}:{:02}", h, m))
+                                    .unwrap_or_default(),
+                                s.peak_end
+                                    .map(|(h, m)| format!("{:02}:{:02}", h, m))
+                                    .unwrap_or_default(),
+                                s.peak_tz_offset_hours
+                                    .map(|v| v.to_string())
+                                    .unwrap_or_default(),
+                                s.language.strings(),
+                            ),
+                            None => return LRESULT(0),
+                        }
+                    };
+
+                    diagnose::log("opening peak hours dialog");
+                    if let Some(result) =
+                        peak_dialog::show(hwnd, &cur_start, &cur_end, &cur_tz, strings)
+                    {
+                        let new_start = peak_dialog::parse_time(&result.start).ok();
+                        let new_end = peak_dialog::parse_time(&result.end).ok();
+                        let new_tz: Option<i32> = result.tz.trim().parse().ok();
+                        {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.peak_start = new_start;
+                                s.peak_end = new_end;
+                                s.peak_tz_offset_hours = new_tz;
+                            }
+                        }
+                        diagnose::log(format!(
+                            "peak hours updated: start={:?} end={:?} tz={:?}",
+                            new_start, new_end, new_tz
+                        ));
+                        save_state_settings();
+                        position_at_taskbar();
+                        render_layered();
+                    }
                 }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
@@ -1972,6 +2193,14 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
 
+        let peak_hours_str = native_interop::wide_str(strings.peak_hours);
+        let _ = AppendMenuW(
+            settings_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_PEAK_HOURS as usize,
+            PCWSTR::from_raw(peak_hours_str.as_ptr()),
+        );
+
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);
         let system_flags = if language_override.is_none() {
@@ -2022,8 +2251,10 @@ fn show_context_menu(hwnd: HWND) {
         let version_label =
             version_action_label(strings, language, install_channel, &update_status);
         let version_str = native_interop::wide_str(&version_label);
-        let version_flags = if matches!(update_status, UpdateStatus::Checking | UpdateStatus::Applying)
-        {
+        let version_flags = if matches!(
+            update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        ) {
             MF_GRAYED
         } else {
             MENU_ITEM_FLAGS(0)
@@ -2044,7 +2275,11 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let widget_label = native_interop::wide_str(strings.show_widget);
-        let widget_flags = if widget_visible { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let widget_flags = if widget_visible {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
         let _ = AppendMenuW(
             menu,
             widget_flags,
@@ -2072,7 +2307,7 @@ fn show_context_menu(hwnd: HWND) {
 
 /// Paint for non-embedded fallback (normal WM_PAINT path)
 fn paint(hdc: HDC, hwnd: HWND) {
-    let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text) = {
+    let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text, peak_status) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => (
@@ -2082,6 +2317,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.session_text.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                compute_peak_status(s),
             ),
             None => return,
         }
@@ -2132,6 +2368,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &session_text,
             weekly_pct,
             &weekly_text,
+            peak_status,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -2250,6 +2487,46 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
         );
         let _ = FillRgn(hdc, rgn, brush);
         let _ = DeleteObject(rgn);
+        let _ = DeleteObject(brush);
+    }
+}
+
+/// Draw the peak-hours status circle.
+///
+/// The circle is a filled GDI ellipse whose diameter spans the full height of
+/// both meter rows (= PEAK_ICON_W = 36 px at 96 DPI), centred vertically in
+/// the widget. Colours adapt to the current theme:
+/// - Outside (>60 min until peak):  green
+/// - Warning (<60 min until peak):  amber
+/// - Inside (within peak hours):    red
+fn draw_peak_circle(hdc: HDC, x: i32, height: i32, status: PeakStatus, is_dark: bool) {
+    let color = match (status, is_dark) {
+        (PeakStatus::Outside, true) => Color::from_hex("#22C55E"),
+        (PeakStatus::Outside, false) => Color::from_hex("#16A34A"),
+        (PeakStatus::Warning, true) => Color::from_hex("#F59E0B"),
+        (PeakStatus::Warning, false) => Color::from_hex("#D97706"),
+        (PeakStatus::Inside, true) => Color::from_hex("#EF4444"),
+        (PeakStatus::Inside, false) => Color::from_hex("#DC2626"),
+        (PeakStatus::NoPeakHours, _) => return,
+    };
+
+    // Align circle top/bottom with the meter rows.
+    let row2_y = height - sc(5) - sc(SEGMENT_H);
+    let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+    let top = row1_y;
+    let bottom = row2_y + sc(SEGMENT_H);
+    let right = x + sc(PEAK_ICON_W);
+
+    unsafe {
+        let brush = CreateSolidBrush(COLORREF(color.to_colorref()));
+        let old_brush = SelectObject(hdc, brush);
+        let null_pen = GetStockObject(NULL_PEN);
+        let old_pen = SelectObject(hdc, null_pen);
+
+        let _ = Ellipse(hdc, x, top, right, bottom);
+
+        SelectObject(hdc, old_pen);
+        SelectObject(hdc, old_brush);
         let _ = DeleteObject(brush);
     }
 }

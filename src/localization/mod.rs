@@ -127,6 +127,20 @@ pub struct Strings {
     pub hour_suffix: &'static str,
     pub minute_suffix: &'static str,
     pub second_suffix: &'static str,
+    pub peak_hours: &'static str,
+    pub peak_hours_title: &'static str,
+    pub peak_start_label: &'static str,
+    pub peak_end_label: &'static str,
+    pub peak_tz_label: &'static str,
+    pub peak_tz_hint: &'static str,
+    pub peak_clear: &'static str,
+    pub peak_invalid_input: &'static str,
+    pub peak_err_both_required: &'static str,
+    pub peak_err_start_format: &'static str,
+    pub peak_err_end_format: &'static str,
+    pub peak_err_tz_format: &'static str,
+    pub peak_err_tz_range: &'static str,
+    pub peak_err_start_equals_end: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {
