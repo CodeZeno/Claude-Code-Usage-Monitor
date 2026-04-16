@@ -141,6 +141,7 @@ pub struct Strings {
     pub peak_err_tz_format: &'static str,
     pub peak_err_tz_range: &'static str,
     pub peak_err_start_equals_end: &'static str,
+    pub peak_show_indicator: &'static str,
     pub peak_status_ok: &'static str,
     pub peak_status_warn: &'static str,
     pub peak_status_peak: &'static str,

@@ -83,6 +83,8 @@ struct AppState {
     peak_end: Option<(u8, u8)>,
     /// UTC offset override in hours. None = use system local time.
     peak_tz_offset_hours: Option<i32>,
+    /// Whether to show the peak-hours indicator on the widget.
+    show_peak_indicator: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -129,7 +131,7 @@ const IDM_LANG_FRENCH: u16 = 43;
 const IDM_LANG_GERMAN: u16 = 44;
 const IDM_LANG_JAPANESE: u16 = 45;
 const IDM_LANG_KOREAN: u16 = 46;
-const IDM_PEAK_HOURS: u16 = 50;
+const IDM_PEAK_HOURS: u16 = 51;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -230,6 +232,9 @@ struct SettingsFile {
     /// UTC offset override in hours (e.g. 10 = UTC+10). Absent = system TZ.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     peak_tz_offset_hours: Option<i32>,
+    /// Whether to show the peak-hours indicator on the widget. Defaults to true.
+    #[serde(default = "default_show_peak_indicator")]
+    show_peak_indicator: bool,
 }
 
 impl Default for SettingsFile {
@@ -243,6 +248,7 @@ impl Default for SettingsFile {
             peak_start: None,
             peak_end: None,
             peak_tz_offset_hours: None,
+            show_peak_indicator: true,
         }
     }
 }
@@ -252,6 +258,10 @@ fn default_poll_interval() -> u32 {
 }
 
 fn default_widget_visible() -> bool {
+    true
+}
+
+fn default_show_peak_indicator() -> bool {
     true
 }
 
@@ -287,6 +297,7 @@ fn save_state_settings() {
             peak_start: s.peak_start.map(|(h, m)| format!("{:02}:{:02}", h, m)),
             peak_end: s.peak_end.map(|(h, m)| format!("{:02}:{:02}", h, m)),
             peak_tz_offset_hours: s.peak_tz_offset_hours,
+            show_peak_indicator: s.show_peak_indicator,
         });
     }
 }
@@ -780,12 +791,13 @@ fn peak_icon_extra_width(has_peak: bool) -> i32 {
     }
 }
 
-/// Whether peak hours are configured. Acquires the state lock briefly.
+/// Whether peak hours are configured and the indicator is visible.
+/// Acquires the state lock briefly.
 fn has_peak_hours() -> bool {
     let state = lock_state();
     state
         .as_ref()
-        .map(|s| s.peak_start.is_some())
+        .map(|s| s.peak_start.is_some() && s.show_peak_indicator)
         .unwrap_or(false)
 }
 
@@ -811,6 +823,10 @@ fn widget_width_with_peak(has_peak: bool) -> i32 {
 
 /// Compute the current peak-hours status from state.
 fn compute_peak_status(state: &AppState) -> PeakStatus {
+    if !state.show_peak_indicator {
+        return PeakStatus::NoPeakHours;
+    }
+
     let (start, end) = match (state.peak_start, state.peak_end) {
         (Some(s), Some(e)) => (s, e),
         _ => return PeakStatus::NoPeakHours,
@@ -1002,6 +1018,7 @@ pub fn run() {
                     .as_deref()
                     .and_then(|s| peak_dialog::parse_time(s).ok()),
                 peak_tz_offset_hours: settings.peak_tz_offset_hours,
+                show_peak_indicator: settings.show_peak_indicator,
             });
         }
 
@@ -1993,7 +2010,7 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_PEAK_HOURS => {
                     // Read current peak settings for pre-population
-                    let (cur_start, cur_end, cur_tz, strings) = {
+                    let (cur_start, cur_end, cur_tz, cur_show_indicator, strings) = {
                         let state = lock_state();
                         match state.as_ref() {
                             Some(s) => (
@@ -2006,6 +2023,7 @@ unsafe extern "system" fn wnd_proc(
                                 s.peak_tz_offset_hours
                                     .map(|v| v.to_string())
                                     .unwrap_or_default(),
+                                s.show_peak_indicator,
                                 s.language.strings(),
                             ),
                             None => return LRESULT(0),
@@ -2014,7 +2032,7 @@ unsafe extern "system" fn wnd_proc(
 
                     diagnose::log("opening peak hours dialog");
                     if let Some(result) =
-                        peak_dialog::show(hwnd, &cur_start, &cur_end, &cur_tz, strings)
+                        peak_dialog::show(hwnd, &cur_start, &cur_end, &cur_tz, cur_show_indicator, strings)
                     {
                         let new_start = peak_dialog::parse_time(&result.start).ok();
                         let new_end = peak_dialog::parse_time(&result.end).ok();
@@ -2025,6 +2043,7 @@ unsafe extern "system" fn wnd_proc(
                                 s.peak_start = new_start;
                                 s.peak_end = new_end;
                                 s.peak_tz_offset_hours = new_tz;
+                                s.show_peak_indicator = result.show_indicator;
                             }
                         }
                         diagnose::log(format!(

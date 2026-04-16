@@ -21,6 +21,7 @@ const IDC_START: i32 = 101;
 const IDC_END: i32 = 102;
 const IDC_TZ: i32 = 103;
 const IDC_CLEAR: i32 = 104;
+const IDC_SHOW_INDICATOR: i32 = 105;
 
 // ── Thread-local dialog state (main thread only) ──────────────────────────────
 
@@ -28,11 +29,12 @@ struct DialogState {
     start: String,
     end: String,
     tz: String,
+    show_indicator: bool,
     strings: Strings,
 }
 
 static DIALOG_INPUT: Mutex<Option<DialogState>> = Mutex::new(None);
-static DIALOG_OUTPUT: Mutex<Option<(String, String, String)>> = Mutex::new(None);
+static DIALOG_OUTPUT: Mutex<Option<(String, String, String, bool)>> = Mutex::new(None);
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
@@ -43,6 +45,8 @@ pub struct PeakDialogResult {
     pub end: String,
     /// Hours from UTC (e.g. "10"), or empty for system timezone
     pub tz: String,
+    /// Whether to show the peak-hours indicator on the widget
+    pub show_indicator: bool,
 }
 
 /// Show the peak-hours dialog modally over `parent`.
@@ -52,6 +56,7 @@ pub fn show(
     start: &str,
     end: &str,
     tz: &str,
+    show_indicator: bool,
     strings: Strings,
 ) -> Option<PeakDialogResult> {
     unsafe {
@@ -59,6 +64,7 @@ pub fn show(
             start: start.to_string(),
             end: end.to_string(),
             tz: tz.to_string(),
+            show_indicator,
             strings,
         });
         *DIALOG_OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -83,10 +89,11 @@ pub fn show(
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .take()
-            .map(|(s, e, t)| PeakDialogResult {
+            .map(|(s, e, t, ind)| PeakDialogResult {
                 start: s,
                 end: e,
                 tz: t,
+                show_indicator: ind,
             })
     }
 }
@@ -113,6 +120,11 @@ unsafe extern "system" fn dlg_proc(hdlg: HWND, msg: u32, wparam: WPARAM, _lparam
                 set_text(hdlg, IDC_START, &state.start);
                 set_text(hdlg, IDC_END, &state.end);
                 set_text(hdlg, IDC_TZ, &state.tz);
+                if state.show_indicator {
+                    if let Ok(ctrl) = GetDlgItem(hdlg, IDC_SHOW_INDICATOR) {
+                        SendMessageW(ctrl, BM_SETCHECK, WPARAM(1), LPARAM(0)); // BST_CHECKED
+                    }
+                }
             }
             1 // TRUE: let dialog manager set initial focus
         }
@@ -145,8 +157,12 @@ unsafe extern "system" fn dlg_proc(hdlg: HWND, msg: u32, wparam: WPARAM, _lparam
                         return 1;
                     }
 
-                    *DIALOG_OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) =
-                        Some((start, end, tz));
+                    *DIALOG_OUTPUT.lock().unwrap_or_else(|e| e.into_inner()) = {
+                        let checked = GetDlgItem(hdlg, IDC_SHOW_INDICATOR)
+                            .map(|ctrl| SendMessageW(ctrl, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1)
+                            .unwrap_or(true);
+                        Some((start, end, tz, checked))
+                    };
                     let _ = EndDialog(hdlg, 1);
                     1
                 }
@@ -310,7 +326,7 @@ fn build_template(strings: &Strings) -> Vec<u8> {
     b.i16v(0); // x (DS_CENTER overrides)
     b.i16v(0); // y
     b.i16v(210); // cx in dialog units
-    b.i16v(100); // cy in dialog units
+    b.i16v(115); // cy in dialog units
 
     b.u16v(0); // menu: none
     b.u16v(0); // class: default dialog class
@@ -393,11 +409,23 @@ fn build_template(strings: &Strings) -> Vec<u8> {
         ATOM_STATIC,
         &hint_text
     );
+    // Show indicator checkbox
+    const BS_AUTOCHECKBOX: u32 = 0x00000003;
+    item!(
+        btn | BS_AUTOCHECKBOX,
+        7,
+        73,
+        196,
+        10,
+        IDC_SHOW_INDICATOR as u16,
+        ATOM_BUTTON,
+        strings.peak_show_indicator
+    );
     // Buttons
     item!(
         btn,
         7,
-        80,
+        95,
         42,
         14,
         IDC_CLEAR as u16,
@@ -407,14 +435,14 @@ fn build_template(strings: &Strings) -> Vec<u8> {
     item!(
         btn | BS_DEFPUSHBUTTON,
         105,
-        80,
+        95,
         45,
         14,
         1u16,
         ATOM_BUTTON,
         "OK"
     );
-    item!(btn, 155, 80, 45, 14, 2u16, ATOM_BUTTON, "Cancel");
+    item!(btn, 155, 95, 45, 14, 2u16, ATOM_BUTTON, "Cancel");
 
     b.patch_u16(cdit_offset, n);
     b.0

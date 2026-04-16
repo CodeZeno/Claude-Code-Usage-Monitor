@@ -49,6 +49,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "El desfase UTC debe ser un número de horas (ej. 10 para UTC+10, -5 para UTC-5).",
     peak_err_tz_range: "El desfase UTC debe estar entre -12 y +14 horas.",
     peak_err_start_equals_end: "Las horas de inicio y fin deben ser diferentes.",
+    peak_show_indicator: "Mostrar indicador en el widget",
     peak_status_ok: "OK",
     peak_status_warn: "AVISO",
     peak_status_peak: "PICO",

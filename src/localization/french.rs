@@ -49,6 +49,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "Le décalage UTC doit être un nombre d'heures (ex. 10 pour UTC+10, -5 pour UTC-5).",
     peak_err_tz_range: "Le décalage UTC doit être entre -12 et +14 heures.",
     peak_err_start_equals_end: "Les heures de début et de fin doivent être différentes.",
+    peak_show_indicator: "Afficher l'indicateur sur le widget",
     peak_status_ok: "OK",
     peak_status_warn: "ALERTE",
     peak_status_peak: "PIC",
