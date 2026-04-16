@@ -50,4 +50,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "UTCオフセットは時間数で入力してください（例: UTC+10は10、UTC-5は-5）。",
     peak_err_tz_range: "UTCオフセットは-12から+14時間の範囲で入力してください。",
     peak_err_start_equals_end: "開始時刻と終了時刻は異なる必要があります。",
+    peak_status_ok: "OK",
+    peak_status_warn: "注意",
+    peak_status_peak: "ピーク",
 };

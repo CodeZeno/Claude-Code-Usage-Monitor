@@ -50,4 +50,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "UTC offset must be a number of hours (e.g. 10 for UTC+10, -5 for UTC-5).",
     peak_err_tz_range: "UTC offset must be between -12 and +14 hours.",
     peak_err_start_equals_end: "Start and end times must be different.",
+    peak_status_ok: "OK",
+    peak_status_warn: "WARN",
+    peak_status_peak: "PEAK",
 };

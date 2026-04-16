@@ -133,10 +133,10 @@ const IDM_PEAK_HOURS: u16 = 50;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
-/// Diameter of the peak-hours status circle (px at 96 DPI).
-/// Equals 2 × SEGMENT_H + row gap = 2 × 13 + 10 = 36, spanning both meter rows.
+/// Width of the peak-status indicator column (px at 96 DPI).
+/// Contains a colored rectangle on row 1 and a short text label on row 2.
 const PEAK_ICON_W: i32 = 36;
-/// Gap between the right edge of the circle and the first meter label.
+/// Gap between the right edge of the indicator and the first meter label.
 const PEAK_ICON_GAP: i32 = 6;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
@@ -1362,7 +1362,7 @@ fn paint_content(
         let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
 
         if peak_status != PeakStatus::NoPeakHours {
-            draw_peak_circle(hdc, icon_x, height, peak_status, is_dark);
+            draw_peak_indicator(hdc, icon_x, height, peak_status, is_dark, text_color, strings);
         }
 
         let _ = SetBkMode(hdc, TRANSPARENT);
@@ -2507,15 +2507,23 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
     }
 }
 
-/// Draw the peak-hours status circle.
+/// Draw the peak-hours status indicator as two rows matching the meter layout.
 ///
-/// The circle is a filled GDI ellipse whose diameter spans the full height of
-/// both meter rows (= PEAK_ICON_W = 36 px at 96 DPI), centred vertically in
-/// the widget. Colours adapt to the current theme:
+/// Row 1: a colored rounded rectangle (same height as a bar segment).
+/// Row 2: a short text label ("OK", "WARN", "PEAK" or localised equivalent).
+/// Colours adapt to the current theme:
 /// - Outside (>60 min until peak):  green
 /// - Warning (<60 min until peak):  amber
 /// - Inside (within peak hours):    red
-fn draw_peak_circle(hdc: HDC, x: i32, height: i32, status: PeakStatus, is_dark: bool) {
+fn draw_peak_indicator(
+    hdc: HDC,
+    x: i32,
+    height: i32,
+    status: PeakStatus,
+    is_dark: bool,
+    text_color: &Color,
+    strings: Strings,
+) {
     let color = match (status, is_dark) {
         (PeakStatus::Outside, true) => Color::from_hex("#22C55E"),
         (PeakStatus::Outside, false) => Color::from_hex("#16A34A"),
@@ -2526,23 +2534,66 @@ fn draw_peak_circle(hdc: HDC, x: i32, height: i32, status: PeakStatus, is_dark: 
         (PeakStatus::NoPeakHours, _) => return,
     };
 
-    // Align circle top/bottom with the meter rows.
-    let row2_y = height - sc(5) - sc(SEGMENT_H);
-    let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
-    let top = row1_y;
-    let bottom = row2_y + sc(SEGMENT_H);
-    let right = x + sc(PEAK_ICON_W);
+    let label = match status {
+        PeakStatus::Outside => strings.peak_status_ok,
+        PeakStatus::Warning => strings.peak_status_warn,
+        PeakStatus::Inside => strings.peak_status_peak,
+        PeakStatus::NoPeakHours => return,
+    };
 
+    let seg_h = sc(SEGMENT_H);
+    let row2_y = height - sc(5) - seg_h;
+    let row1_y = row2_y - sc(10) - seg_h;
+    let w = sc(PEAK_ICON_W);
+
+    // Row 1: colored rectangle
+    let rect = RECT {
+        left: x,
+        top: row1_y,
+        right: x + w,
+        bottom: row1_y + seg_h,
+    };
+    draw_rounded_rect(hdc, &rect, &color, sc(CORNER_RADIUS));
+
+    // Row 2: text label
     unsafe {
-        let brush = CreateSolidBrush(COLORREF(color.to_colorref()));
-        let old_brush = SelectObject(hdc, brush);
-        let null_pen = GetStockObject(NULL_PEN);
-        let old_pen = SelectObject(hdc, null_pen);
+        let _ = SetBkMode(hdc, TRANSPARENT);
+        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
 
-        let _ = Ellipse(hdc, x, top, right, bottom);
+        let font_name = native_interop::wide_str("Segoe UI");
+        let font = CreateFontW(
+            sc(-10),
+            0,
+            0,
+            0,
+            FW_MEDIUM.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_TT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            PCWSTR::from_raw(font_name.as_ptr()),
+        );
+        let old_font = SelectObject(hdc, font);
 
-        SelectObject(hdc, old_pen);
-        SelectObject(hdc, old_brush);
-        let _ = DeleteObject(brush);
+        let mut label_wide: Vec<u16> = label.encode_utf16().collect();
+        let mut label_rect = RECT {
+            left: x,
+            top: row2_y,
+            right: x + w,
+            bottom: row2_y + seg_h,
+        };
+        let _ = DrawTextW(
+            hdc,
+            &mut label_wide,
+            &mut label_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+
+        SelectObject(hdc, old_font);
+        let _ = DeleteObject(font);
     }
 }

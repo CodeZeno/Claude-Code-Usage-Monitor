@@ -50,4 +50,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "UTC 오프셋은 시간 단위의 숫자여야 합니다 (예: UTC+10은 10, UTC-5는 -5).",
     peak_err_tz_range: "UTC 오프셋은 -12에서 +14 시간 사이여야 합니다.",
     peak_err_start_equals_end: "시작 시간과 종료 시간은 달라야 합니다.",
+    peak_status_ok: "OK",
+    peak_status_warn: "주의",
+    peak_status_peak: "피크",
 };

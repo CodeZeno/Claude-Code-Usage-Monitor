@@ -49,4 +49,7 @@ pub(super) const STRINGS: Strings = Strings {
     peak_err_tz_format: "UTC-Abweichung muss eine Anzahl von Stunden sein (z.B. 10 für UTC+10, -5 für UTC-5).",
     peak_err_tz_range: "UTC-Abweichung muss zwischen -12 und +14 Stunden liegen.",
     peak_err_start_equals_end: "Start- und Endzeit müssen unterschiedlich sein.",
+    peak_status_ok: "OK",
+    peak_status_warn: "WARN",
+    peak_status_peak: "PEAK",
 };

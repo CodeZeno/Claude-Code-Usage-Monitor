@@ -9,6 +9,7 @@ use std::sync::Mutex;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::System::SystemInformation::{GetLocalTime, GetSystemTime};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::localization::Strings;
@@ -216,6 +217,34 @@ fn get_text(hdlg: HWND, id: i32) -> String {
     }
 }
 
+// ── System timezone helpers ─────────────────────────────────────────────────────
+
+/// Returns a string like "UTC+10", "UTC-5:30", or "UTC" for the current local offset.
+fn local_tz_offset_str() -> String {
+    let (utc, local) = unsafe { (GetSystemTime(), GetLocalTime()) };
+    let mut offset_min = (local.wHour as i32 - utc.wHour as i32) * 60
+        + (local.wMinute as i32 - utc.wMinute as i32);
+    // Clamp across day boundaries (offsets are always in [-12h, +14h])
+    if offset_min > 14 * 60 {
+        offset_min -= 24 * 60;
+    } else if offset_min < -12 * 60 {
+        offset_min += 24 * 60;
+    }
+    if offset_min == 0 {
+        "UTC".to_string()
+    } else {
+        let sign = if offset_min > 0 { "+" } else { "-" };
+        let abs = offset_min.unsigned_abs();
+        let h = abs / 60;
+        let m = abs % 60;
+        if m == 0 {
+            format!("UTC{}{}", sign, h)
+        } else {
+            format!("UTC{}{}:{:02}", sign, h, m)
+        }
+    }
+}
+
 // ── In-memory DLGTEMPLATE builder ─────────────────────────────────────────────
 
 struct Buf(Vec<u8>);
@@ -352,7 +381,8 @@ fn build_template(strings: &Strings) -> Vec<u8> {
         strings.peak_tz_label
     );
     item!(edt, 93, 44, 55, 12, IDC_TZ as u16, ATOM_EDIT, "");
-    // Hint text
+    // Hint text (with resolved system timezone appended)
+    let hint_text = format!("{} [{}]", strings.peak_tz_hint, local_tz_offset_str());
     item!(
         lbl,
         7,
@@ -361,7 +391,7 @@ fn build_template(strings: &Strings) -> Vec<u8> {
         8,
         0xFFFF_u16,
         ATOM_STATIC,
-        strings.peak_tz_hint
+        &hint_text
     );
     // Buttons
     item!(
