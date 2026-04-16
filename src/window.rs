@@ -1043,6 +1043,8 @@ pub fn run() {
             diagnose::log("taskbar not found; using fallback popup window");
         }
 
+        diagnose::log("taskbar embedding complete");
+
         // If not embedded, fall back to topmost popup with SetLayeredWindowAttributes
         if !embedded {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
@@ -1058,18 +1060,24 @@ pub fn run() {
         }
 
         // Register system tray icon
+        diagnose::log("adding tray icon...");
         let (tray_pct, tray_tooltip) = tray_icon_data_from_state();
         tray_icon::add(hwnd, tray_pct, &tray_tooltip);
+        diagnose::log("tray icon added");
 
         // Position and show (only if widget_visible preference is true)
+        diagnose::log("positioning at taskbar...");
         position_at_taskbar();
+        diagnose::log("position_at_taskbar done");
         if settings.widget_visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-        diagnose::log("window shown");
+        diagnose::log(format!("window shown (visible={})", settings.widget_visible));
 
         // Initial render via UpdateLayeredWindow (for embedded) or InvalidateRect (fallback)
+        diagnose::log("initial render_layered...");
         render_layered();
+        diagnose::log("initial render_layered done");
 
         // Poll timer: 15 minutes
         let initial_poll_ms = {
@@ -1091,6 +1099,7 @@ pub fn run() {
         // 1-minute timer to refresh the peak-hours status circle colour.
         SetTimer(hwnd, TIMER_PEAK, 60_000, None);
 
+        diagnose::log("scheduling auto-update check");
         schedule_auto_update_check(hwnd);
         let should_check_updates = {
             let state = lock_state();
@@ -1105,6 +1114,8 @@ pub fn run() {
 
         // Initial theme check
         check_theme_change();
+
+        diagnose::log("entering message loop");
 
         // Message loop
         let mut msg = MSG::default();
@@ -1547,28 +1558,33 @@ fn update_display() {
 
 fn position_at_taskbar() {
     refresh_dpi();
-    let state = lock_state();
-    let s = match state.as_ref() {
-        Some(s) => s,
-        None => return,
-    };
 
-    // Don't fight the user's drag
-    if s.dragging {
-        return;
-    }
+    // Extract everything we need from state, then DROP the lock before
+    // making any Win32 calls. MoveWindow dispatches WM_PAINT synchronously
+    // and our wnd_proc also calls lock_state() — Rust's Mutex is not
+    // reentrant, so holding it across Win32 calls causes a deadlock.
+    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+        let state = lock_state();
+        let s = match state.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
 
-    let hwnd = s.hwnd.to_hwnd();
-    let embedded = s.embedded;
-    let tray_offset = s.tray_offset;
-
-    let taskbar_hwnd = match s.taskbar_hwnd {
-        Some(h) => h,
-        None => {
-            diagnose::log("position_at_taskbar skipped: no taskbar handle");
+        if s.dragging {
             return;
         }
+
+        let tb = match s.taskbar_hwnd {
+            Some(h) => h,
+            None => {
+                diagnose::log("position_at_taskbar skipped: no taskbar handle");
+                return;
+            }
+        };
+
+        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, tb)
     };
+    // STATE lock is released here
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
         Some(r) => r,

@@ -35,8 +35,16 @@ struct UsageBucket {
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
+    diagnose::log("poll: reading credentials...");
     let mut creds = match read_credentials() {
-        Some(c) => c,
+        Some(c) => {
+            diagnose::log(format!(
+                "poll: credentials found (source={:?}, expired={})",
+                c.source,
+                is_token_expired(c.expires_at)
+            ));
+            c
+        }
         None => {
             diagnose::log("poll failed: no Claude credentials found");
             return Err(PollError::NoCredentials);
@@ -60,7 +68,16 @@ pub fn poll() -> Result<UsageData, PollError> {
         }
     }
 
-    fetch_usage_with_fallback(&creds.access_token)
+    diagnose::log("poll: fetching usage data...");
+    let result = fetch_usage_with_fallback(&creds.access_token);
+    match &result {
+        Ok(data) => diagnose::log(format!(
+            "poll: success — session={:.1}% weekly={:.1}%",
+            data.session.percentage, data.weekly.percentage
+        )),
+        Err(e) => diagnose::log(format!("poll: failed — {:?}", e)),
+    }
+    result
 }
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
@@ -76,7 +93,7 @@ fn cli_refresh_windows_token() {
     let claude_path = resolve_windows_claude_path();
     let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
     diagnose::log(format!(
-        "attempting Windows Claude token refresh via {claude_path}"
+        "attempting Windows Claude token refresh via {claude_path} (is_cmd={is_cmd})"
     ));
 
     let args: &[&str] = &["-p", "."];
@@ -95,7 +112,7 @@ fn cli_refresh_windows_token() {
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::piped());
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
@@ -109,15 +126,36 @@ fn cli_refresh_windows_token() {
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
+            Ok(Some(status)) => {
+                let elapsed = start.elapsed();
+                diagnose::log(format!(
+                    "Windows token refresh finished: status={status} elapsed={:.1}s",
+                    elapsed.as_secs_f64()
+                ));
+                // Capture stderr if available for diagnostics
+                if let Some(stderr) = child.stderr.take() {
+                    use std::io::Read;
+                    let mut buf = String::new();
+                    let mut reader = std::io::BufReader::new(stderr);
+                    if reader.read_to_string(&mut buf).is_ok() && !buf.is_empty() {
+                        let truncated: String = buf.chars().take(500).collect();
+                        diagnose::log(format!("  token refresh stderr: {truncated}"));
+                    }
+                }
+                break;
+            }
             Ok(None) => {
                 if start.elapsed() > Duration::from_secs(30) {
+                    diagnose::log("Windows token refresh killed: exceeded 30s timeout");
                     let _ = child.kill();
                     break;
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
-            Err(_) => break,
+            Err(e) => {
+                diagnose::log(format!("Windows token refresh try_wait error: {e}"));
+                break;
+            }
         }
     }
 }
@@ -262,6 +300,8 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
 }
 
 fn try_usage_endpoint(token: &str) -> Option<UsageData> {
+    diagnose::log("try_usage_endpoint: sending GET to usage API...");
+    let start = std::time::Instant::now();
     let agent = build_agent().ok()?;
 
     let resp = match agent
@@ -270,8 +310,21 @@ fn try_usage_endpoint(token: &str) -> Option<UsageData> {
         .set("anthropic-beta", "oauth-2025-04-20")
         .call()
     {
-        Ok(resp) => resp,
-        _ => return None,
+        Ok(resp) => {
+            diagnose::log(format!(
+                "try_usage_endpoint: got response status={} elapsed={:.1}s",
+                resp.status(),
+                start.elapsed().as_secs_f64()
+            ));
+            resp
+        }
+        Err(e) => {
+            diagnose::log(format!(
+                "try_usage_endpoint: request failed elapsed={:.1}s error={e}",
+                start.elapsed().as_secs_f64()
+            ));
+            return None;
+        }
     };
 
     let response: UsageResponse = resp.into_json().ok()?;
@@ -291,6 +344,7 @@ fn try_usage_endpoint(token: &str) -> Option<UsageData> {
 }
 
 fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
+    diagnose::log("fetch_usage_via_messages: starting Messages API fallback");
     let agent = build_agent()?;
 
     for model in MODEL_FALLBACK_CHAIN {
@@ -300,6 +354,8 @@ fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
             "messages": [{"role": "user", "content": "."}]
         });
 
+        diagnose::log(format!("fetch_usage_via_messages: trying model {model}..."));
+        let model_start = std::time::Instant::now();
         let response = match agent
             .post(MESSAGES_URL)
             .set("Authorization", &format!("Bearer {token}"))
@@ -307,9 +363,28 @@ fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
             .set("anthropic-beta", "oauth-2025-04-20")
             .send_json(&body)
         {
-            Ok(resp) => resp,
-            Err(ureq::Error::Status(_code, resp)) => resp,
-            Err(_) => continue,
+            Ok(resp) => {
+                diagnose::log(format!(
+                    "fetch_usage_via_messages: model {model} responded status={} elapsed={:.1}s",
+                    resp.status(),
+                    model_start.elapsed().as_secs_f64()
+                ));
+                resp
+            }
+            Err(ureq::Error::Status(code, resp)) => {
+                diagnose::log(format!(
+                    "fetch_usage_via_messages: model {model} error status={code} elapsed={:.1}s",
+                    model_start.elapsed().as_secs_f64()
+                ));
+                resp
+            }
+            Err(e) => {
+                diagnose::log(format!(
+                    "fetch_usage_via_messages: model {model} failed elapsed={:.1}s error={e}",
+                    model_start.elapsed().as_secs_f64()
+                ));
+                continue;
+            }
         };
 
         let h5 = response.header("anthropic-ratelimit-unified-5h-utilization");
