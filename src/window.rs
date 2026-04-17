@@ -1884,27 +1884,28 @@ fn update_display() {
 
 fn position_at_taskbar() {
     refresh_dpi();
-    let state = lock_state();
-    let s = match state.as_ref() {
-        Some(s) => s,
-        None => return,
-    };
 
-    // Don't fight the user's drag
-    if s.dragging {
-        return;
-    }
-
-    let hwnd = s.hwnd.to_hwnd();
-    let embedded = s.embedded;
-    let tray_offset = s.tray_offset;
-
-    let taskbar_hwnd = match s.taskbar_hwnd {
-        Some(h) => h,
-        None => {
-            diagnose::log("position_at_taskbar skipped: no taskbar handle");
+    // Extract everything we need from state, then DROP the lock before making
+    // any Win32 calls. MoveWindow dispatches WM_PAINT synchronously and our
+    // wnd_proc also calls lock_state() — Rust's Mutex is not reentrant,
+    // so holding it across Win32 calls causes a deadlock.
+    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+        let state = lock_state();
+        let s = match state.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
+        if s.dragging {
             return;
         }
+        let taskbar_hwnd = match s.taskbar_hwnd {
+            Some(h) => h,
+            None => {
+                diagnose::log("position_at_taskbar skipped: no taskbar handle");
+                return;
+            }
+        };
+        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
     };
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
