@@ -38,4 +38,10 @@ pub(super) const STRINGS: Strings = Strings {
     quiet_hours: "安靜時刻",
     quiet_start: "開始時間",
     quiet_end: "結束時間",
+    quiet_set_time: "設定時間...",
+    quiet_clear: "清除",
+    ok: "確定",
+    cancel: "取消",
+    quiet_time_hint: "格式：HH:MM（清空兩欄以停用）",
+    quiet_time_error: "請兩欄都填寫，或兩欄都清空",
 };

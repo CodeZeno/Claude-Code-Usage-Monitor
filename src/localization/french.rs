@@ -38,4 +38,10 @@ pub(super) const STRINGS: Strings = Strings {
     quiet_hours: "Quiet Hours",
     quiet_start: "Start",
     quiet_end: "End",
+    quiet_set_time: "Définir l'heure...",
+    quiet_clear: "Effacer",
+    ok: "OK",
+    cancel: "Annuler",
+    quiet_time_hint: "Format : HH:MM  (effacer les deux pour désactiver)",
+    quiet_time_error: "Remplissez les deux champs ou laissez-les vides",
 };

@@ -13,7 +13,7 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -21,7 +21,7 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::UsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
+    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_QUIET_BOUNDARY, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
     WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::tray_icon;
@@ -76,9 +76,8 @@ struct AppState {
 
     widget_visible: bool,
 
-    quiet_hours_enabled: bool,
-    quiet_hours_start: u8,
-    quiet_hours_end: u8,
+    quiet_hours_start: Option<(u8, u8)>,
+    quiet_hours_end: Option<(u8, u8)>,
 }
 
 #[derive(Clone, Debug)]
@@ -114,9 +113,15 @@ const IDM_LANG_JAPANESE: u16 = 45;
 const IDM_LANG_KOREAN: u16 = 46;
 const IDM_LANG_TRADITIONAL_CHINESE: u16 = 47;
 
-const IDM_QUIET_TOGGLE: u16 = 60;
-const IDM_QUIET_START_BASE: u16 = 70;  // 70..93 對應小時 0..23
-const IDM_QUIET_END_BASE: u16 = 100;   // 100..123 對應小時 0..23
+const IDM_QUIET_SET_TIME: u16 = 62;
+const IDM_QUIET_CLEAR: u16 = 63;
+
+// Dialog control IDs
+const IDC_QUIET_START_EDIT: i32 = 201;
+const IDC_QUIET_END_EDIT: i32 = 202;
+const IDC_QUIET_OK: i32 = 203;
+const IDC_QUIET_CANCEL: i32 = 204;
+const IDC_QUIET_ERROR: i32 = 205;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -202,12 +207,10 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
-    #[serde(default)]
-    quiet_hours_enabled: bool,
-    #[serde(default = "default_quiet_start")]
-    quiet_hours_start: u8,
-    #[serde(default = "default_quiet_end")]
-    quiet_hours_end: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quiet_time_start: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    quiet_time_end: Option<String>,
 }
 
 impl Default for SettingsFile {
@@ -218,9 +221,8 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             widget_visible: true,
-            quiet_hours_enabled: false,
-            quiet_hours_start: default_quiet_start(),
-            quiet_hours_end: default_quiet_end(),
+            quiet_time_start: None,
+            quiet_time_end: None,
         }
     }
 }
@@ -231,14 +233,6 @@ fn default_poll_interval() -> u32 {
 
 fn default_widget_visible() -> bool {
     true
-}
-
-fn default_quiet_start() -> u8 {
-    22
-}
-
-fn default_quiet_end() -> u8 {
-    8
 }
 
 fn load_settings() -> SettingsFile {
@@ -270,47 +264,480 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
-            quiet_hours_enabled: s.quiet_hours_enabled,
-            quiet_hours_start: s.quiet_hours_start,
-            quiet_hours_end: s.quiet_hours_end,
+            quiet_time_start: s.quiet_hours_start.map(|(h, m)| format!("{:02}:{:02}", h, m)),
+            quiet_time_end: s.quiet_hours_end.map(|(h, m)| format!("{:02}:{:02}", h, m)),
         });
     }
 }
 
+/// 解析 "HH:MM" 格式字串，傳回 (hour, minute)；格式錯誤或超出範圍傳回 None
+fn parse_hhmm(s: &str) -> Option<(u8, u8)> {
+    let s = s.trim();
+    if s.len() != 5 || s.as_bytes().get(2) != Some(&b':') {
+        return None;
+    }
+    let h: u8 = s[..2].parse().ok()?;
+    let m: u8 = s[3..].parse().ok()?;
+    if h > 23 || m > 59 {
+        return None;
+    }
+    Some((h, m))
+}
+
 /// 從已持有的 AppState 判斷目前是否在安靜時刻（不取鎖）
 fn quiet_now(s: &AppState) -> bool {
-    if !s.quiet_hours_enabled {
-        return false;
-    }
-    let st = unsafe { GetLocalTime() };
-    let hour = st.wHour as u8;
-    let start = s.quiet_hours_start;
-    let end = s.quiet_hours_end;
-    if start <= end {
-        hour >= start && hour < end
+    let (start, end) = match (s.quiet_hours_start, s.quiet_hours_end) {
+        (Some(st), Some(en)) => (st, en),
+        _ => return false,
+    };
+    let now = unsafe { GetLocalTime() };
+    let now_min = now.wHour as u32 * 60 + now.wMinute as u32;
+    let start_min = start.0 as u32 * 60 + start.1 as u32;
+    let end_min = end.0 as u32 * 60 + end.1 as u32;
+    if start_min <= end_min {
+        now_min >= start_min && now_min < end_min
     } else {
-        hour >= start || hour < end
+        now_min >= start_min || now_min < end_min
     }
 }
 
 /// 檢查目前是否在安靜時刻範圍內（需自行取鎖，不可在持有鎖時呼叫）
 fn is_quiet_time() -> bool {
-    let (enabled, start, end) = {
+    let (start, end) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (s.quiet_hours_enabled, s.quiet_hours_start, s.quiet_hours_end),
+            Some(s) => (s.quiet_hours_start, s.quiet_hours_end),
             None => return false,
         }
     };
-    if !enabled {
-        return false;
-    }
-    let st = unsafe { GetLocalTime() };
-    let hour = st.wHour as u8;
-    if start <= end {
-        hour >= start && hour < end
+    let (start, end) = match (start, end) {
+        (Some(st), Some(en)) => (st, en),
+        _ => return false,
+    };
+    let now = unsafe { GetLocalTime() };
+    let now_min = now.wHour as u32 * 60 + now.wMinute as u32;
+    let start_min = start.0 as u32 * 60 + start.1 as u32;
+    let end_min = end.0 as u32 * 60 + end.1 as u32;
+    if start_min <= end_min {
+        now_min >= start_min && now_min < end_min
     } else {
-        hour >= start || hour < end
+        now_min >= start_min || now_min < end_min
+    }
+}
+
+/// 安靜時刻輸入對話框的共享狀態（透過 GWLP_USERDATA 傳入視窗 proc）
+struct QuietDlgState {
+    start_h_edit: HWND,  // 開始時間「時」
+    start_m_edit: HWND,  // 開始時間「分」
+    end_h_edit: HWND,    // 結束時間「時」
+    end_m_edit: HWND,    // 結束時間「分」
+    error_label: HWND,
+    strings: crate::localization::Strings,
+    /// None = 使用者取消；Some((start, end)) = 確定，None 值代表清除
+    result: Option<(Option<(u8, u8)>, Option<(u8, u8)>)>,
+}
+
+/// 用來通知外層訊息迴圈對話框已關閉
+static QUIET_DLG_DONE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// 安靜時刻對話框的視窗 Proc
+unsafe extern "system" fn quiet_dlg_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    match msg {
+        WM_CREATE => {
+            let cs = &*(lparam.0 as *const CREATESTRUCTW);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, cs.lpCreateParams as isize);
+            LRESULT(0)
+        }
+        WM_COMMAND => {
+            let ctrl_id  = (wparam.0 & 0xFFFF) as i32;
+            let notif    = ((wparam.0 >> 16) & 0xFFFF) as u16;
+
+            // EN_SETFOCUS (0x0100)：輸入框取得焦點時全選，方便直接覆蓋
+            if notif == 0x0100 && lparam.0 != 0 {
+                let edit = HWND(lparam.0 as *mut _);
+                SendMessageW(edit, 0x00B1u32, WPARAM(0), LPARAM(-1isize)); // EM_SETSEL(0,-1)
+                return LRESULT(0);
+            }
+
+            // EN_CHANGE (0x0300)：輸入框內容變更時，若已達 2 位數且目前有焦點，自動跳下一格
+            if notif == 0x0300 && lparam.0 != 0 {
+                let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut QuietDlgState;
+                if !state_ptr.is_null() {
+                    let s = &*state_ptr;
+                    let edit = HWND(lparam.0 as *mut _);
+                    // 僅前 3 格需要自動跳（最後一格結束分不跳）
+                    let order = [s.start_h_edit, s.start_m_edit, s.end_h_edit, s.end_m_edit];
+                    if let Some(idx) = order.iter().position(|&h| h == edit) {
+                        if idx < 3
+                            && GetWindowTextLengthW(edit) == 2
+                            && GetFocus() == edit
+                        {
+                            let _ = SetFocus(order[idx + 1]);
+                        }
+                    }
+                }
+                return LRESULT(0);
+            }
+
+            let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut QuietDlgState;
+            if state_ptr.is_null() {
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
+            let state = &mut *state_ptr;
+            if ctrl_id == IDC_QUIET_OK {
+                let sh = get_edit_text(state.start_h_edit);
+                let sm = get_edit_text(state.start_m_edit);
+                let eh = get_edit_text(state.end_h_edit);
+                let em = get_edit_text(state.end_m_edit);
+                let sh = sh.trim(); let sm = sm.trim();
+                let eh = eh.trim(); let em = em.trim();
+
+                let all_empty = sh.is_empty() && sm.is_empty() && eh.is_empty() && em.is_empty();
+                let all_filled = !sh.is_empty() && !sm.is_empty() && !eh.is_empty() && !em.is_empty();
+
+                if all_empty {
+                    state.result = Some((None, None));
+                    let _ = DestroyWindow(hwnd);
+                } else if all_filled {
+                    let ok_sh = sh.parse::<u32>().ok().filter(|&h| h <= 23).map(|h| h as u8);
+                    let ok_sm = sm.parse::<u32>().ok().filter(|&m| m <= 59).map(|m| m as u8);
+                    let ok_eh = eh.parse::<u32>().ok().filter(|&h| h <= 23).map(|h| h as u8);
+                    let ok_em = em.parse::<u32>().ok().filter(|&m| m <= 59).map(|m| m as u8);
+                    match (ok_sh, ok_sm, ok_eh, ok_em) {
+                        (Some(sh), Some(sm), Some(eh), Some(em)) => {
+                            state.result = Some((Some((sh, sm)), Some((eh, em))));
+                            let _ = DestroyWindow(hwnd);
+                        }
+                        _ => {
+                            let err = native_interop::wide_str(state.strings.quiet_time_error);
+                            let _ = SetWindowTextW(state.error_label, PCWSTR::from_raw(err.as_ptr()));
+                            let _ = ShowWindow(state.error_label, SW_SHOW);
+                        }
+                    }
+                } else {
+                    let err = native_interop::wide_str(state.strings.quiet_time_error);
+                    let _ = SetWindowTextW(state.error_label, PCWSTR::from_raw(err.as_ptr()));
+                    let _ = ShowWindow(state.error_label, SW_SHOW);
+                }
+                LRESULT(0)
+            } else if ctrl_id == IDC_QUIET_CANCEL {
+                let _ = DestroyWindow(hwnd);
+                LRESULT(0)
+            } else {
+                DefWindowProcW(hwnd, msg, wparam, lparam)
+            }
+        }
+        WM_DESTROY => {
+            QUIET_DLG_DONE.store(true, std::sync::atomic::Ordering::Relaxed);
+            LRESULT(0)
+        }
+        WM_CLOSE => {
+            let _ = DestroyWindow(hwnd);
+            LRESULT(0)
+        }
+        WM_KEYDOWN => {
+            if wparam.0 == 0x1B {
+                // ESC
+                let _ = DestroyWindow(hwnd);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// 取得 EDIT 控制項的文字
+unsafe fn get_edit_text(hwnd: HWND) -> String {
+    let mut buf = [0u16; 16];
+    let len = GetWindowTextW(hwnd, &mut buf);
+    if len <= 0 {
+        String::new()
+    } else {
+        String::from_utf16_lossy(&buf[..len as usize])
+    }
+}
+
+/// 顯示安靜時刻輸入對話框；傳回 None 代表取消，Some((None,None)) 代表清除
+fn show_quiet_hours_dialog(
+    parent: HWND,
+    current_start: Option<(u8, u8)>,
+    current_end: Option<(u8, u8)>,
+    strings: crate::localization::Strings,
+) -> Option<(Option<(u8, u8)>, Option<(u8, u8)>)> {
+    // 客戶區尺寸（96 DPI 基準）
+    const CLIENT_W: i32 = 280;
+    const CLIENT_H: i32 = 190;
+
+    // 縮放後客戶區尺寸
+    let cw = sc(CLIENT_W);
+    let ch = sc(CLIENT_H);
+
+    // 用 AdjustWindowRectEx 計算含標題列/邊框的實際視窗尺寸
+    let (dw, dh) = unsafe {
+        let mut r = RECT { left: 0, top: 0, right: cw, bottom: ch };
+        let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
+        let ex_style = WS_EX_DLGMODALFRAME | WS_EX_TOPMOST;
+        let _ = AdjustWindowRectEx(&mut r, style, false, ex_style);
+        (r.right - r.left, r.bottom - r.top)
+    };
+
+    // 以滑鼠所在螢幕的工作區置中
+    let (cx, cy) = unsafe {
+        let mut cursor = POINT::default();
+        let _ = GetCursorPos(&mut cursor);
+        let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+        let mut mi = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        let work = if GetMonitorInfoW(monitor, &mut mi).as_bool() {
+            mi.rcWork
+        } else {
+            RECT { left: 0, top: 0, right: 1920, bottom: 1080 }
+        };
+        (
+            work.left + (work.right - work.left - dw) / 2,
+            work.top + (work.bottom - work.top - dh) / 2,
+        )
+    };
+
+    // 建立對話框狀態（Box 確保在對話框生命週期內有效）
+    let mut state = Box::new(QuietDlgState {
+        start_h_edit: HWND::default(),
+        start_m_edit: HWND::default(),
+        end_h_edit: HWND::default(),
+        end_m_edit: HWND::default(),
+        error_label: HWND::default(),
+        strings,
+        result: None,
+    });
+    let state_ptr = &mut *state as *mut QuietDlgState;
+
+    unsafe {
+        let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
+
+        // 一次性註冊視窗類別
+        static QUIET_DLG_CLASS_ONCE: std::sync::Once = std::sync::Once::new();
+        let class_name = native_interop::wide_str("QuietHoursDlgCls");
+        QUIET_DLG_CLASS_ONCE.call_once(|| {
+            let wc = WNDCLASSEXW {
+                cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
+                lpfnWndProc: Some(quiet_dlg_proc),
+                hInstance: HINSTANCE(hinstance.0),
+                hbrBackground: HBRUSH((COLOR_BTNFACE.0 + 1) as *mut _),
+                hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
+                lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
+                ..Default::default()
+            };
+            RegisterClassExW(&wc);
+        });
+
+        // 建立對話框視窗
+        let title = native_interop::wide_str(strings.quiet_hours);
+        let dlg_hwnd = CreateWindowExW(
+            WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
+            PCWSTR::from_raw(class_name.as_ptr()),
+            PCWSTR::from_raw(title.as_ptr()),
+            WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
+            cx, cy, dw, dh,
+            parent,
+            HMENU::default(),
+            hinstance,
+            Some(state_ptr as *const _ as *const std::ffi::c_void),
+        )
+        .unwrap_or_default();
+
+        if dlg_hwnd.is_invalid() {
+            return None;
+        }
+
+        // 取得預設 GUI 字型
+        let gui_font = GetStockObject(DEFAULT_GUI_FONT);
+
+        // 輔助巨集：建立子控件並設字型
+        macro_rules! make_ctrl {
+            ($ex:expr, $cls:expr, $text:expr, $style:expr, $x:expr, $y:expr, $w:expr, $h:expr, $id:expr) => {{
+                let cls_w  = native_interop::wide_str($cls);
+                let text_w = native_interop::wide_str($text);
+                let ctrl = CreateWindowExW(
+                    $ex, PCWSTR::from_raw(cls_w.as_ptr()),
+                    PCWSTR::from_raw(text_w.as_ptr()),
+                    $style, $x, $y, $w, $h,
+                    dlg_hwnd, HMENU($id as *mut _), hinstance, None,
+                ).unwrap_or_default();
+                SendMessageW(ctrl, WM_SETFONT, WPARAM(gui_font.0 as usize), LPARAM(1));
+                ctrl
+            }};
+        }
+
+        // ES_NUMBER=0x2000, ES_AUTOHSCROLL=0x0080
+        let es_num  = WINDOW_STYLE(0x2000 | 0x0080);
+        let ss_left = WINDOW_STYLE(0x0000);
+        let base_edit_style  = WS_CHILD | WS_VISIBLE | WS_TABSTOP | es_num;
+        let base_label_style = WS_CHILD | WS_VISIBLE | ss_left;
+
+        let pad    = sc(12);
+        let lbl_w  = sc(80);   // "開始時間" 標籤寬
+        let h_w    = sc(44);   // 時輸入框
+        let colon  = sc(14);   // ":" 隔字
+        let m_w    = sc(44);   // 分輸入框
+        let row_h  = sc(22);
+        let row1_y = sc(18);
+        let row2_y = row1_y + row_h + sc(12);
+        let hint_y = row2_y + row_h + sc(10);
+        let err_y  = hint_y + sc(20);
+        let btn_y  = ch - sc(42);
+        let btn_w  = sc(72);
+        let btn_h  = sc(24);
+
+        // X 座標
+        let h_x = pad + lbl_w + sc(6);
+        let colon_x = h_x + h_w;
+        let m_x = colon_x + colon;
+
+        // ---- 開始時間 ----
+        make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_start,
+            base_label_style, pad, row1_y + sc(2), lbl_w, row_h, 0);
+
+        let start_h_edit = make_ctrl!(WS_EX_CLIENTEDGE, "EDIT", "",
+            base_edit_style, h_x, row1_y, h_w, row_h, IDC_QUIET_START_EDIT);
+        SendMessageW(start_h_edit, 0x00C5u32, WPARAM(2), LPARAM(0)); // EM_SETLIMITTEXT=2
+
+        make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", ":",
+            base_label_style, colon_x, row1_y + sc(2), colon, row_h, 0);
+
+        let start_m_edit = make_ctrl!(WS_EX_CLIENTEDGE, "EDIT", "",
+            base_edit_style, m_x, row1_y, m_w, row_h, IDC_QUIET_END_EDIT);
+        SendMessageW(start_m_edit, 0x00C5u32, WPARAM(2), LPARAM(0));
+
+        // ---- 結束時間 ----
+        make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_end,
+            base_label_style, pad, row2_y + sc(2), lbl_w, row_h, 0);
+
+        let end_h_edit = make_ctrl!(WS_EX_CLIENTEDGE, "EDIT", "",
+            base_edit_style, h_x, row2_y, h_w, row_h, 0);
+        SendMessageW(end_h_edit, 0x00C5u32, WPARAM(2), LPARAM(0));
+
+        make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", ":",
+            base_label_style, colon_x, row2_y + sc(2), colon, row_h, 0);
+
+        let end_m_edit = make_ctrl!(WS_EX_CLIENTEDGE, "EDIT", "",
+            base_edit_style, m_x, row2_y, m_w, row_h, 0);
+        SendMessageW(end_m_edit, 0x00C5u32, WPARAM(2), LPARAM(0));
+
+        // ---- 提示文字 ----
+        make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_time_hint,
+            base_label_style, pad, hint_y, cw - pad * 2, sc(18), 0);
+
+        // ---- 錯誤訊息（初始隱藏）----
+        let error_lbl = make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", "",
+            WS_CHILD | ss_left, pad, err_y, cw - pad * 2, sc(18), IDC_QUIET_ERROR);
+
+        // ---- 確定 / 取消 ----
+        make_ctrl!(WINDOW_EX_STYLE(0), "BUTTON", strings.ok,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(0x0001), // BS_DEFPUSHBUTTON
+            cw - (btn_w + sc(8)) * 2 - sc(4), btn_y, btn_w, btn_h, IDC_QUIET_OK);
+
+        make_ctrl!(WINDOW_EX_STYLE(0), "BUTTON", strings.cancel,
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(0x0000), // BS_PUSHBUTTON
+            cw - btn_w - sc(8), btn_y, btn_w, btn_h, IDC_QUIET_CANCEL);
+
+        // ---- 預填目前值 ----
+        let fill = |hwnd: HWND, val: u8| {
+            let s = native_interop::wide_str(&val.to_string());
+            let _ = SetWindowTextW(hwnd, PCWSTR::from_raw(s.as_ptr()));
+        };
+        if let Some((h, m)) = current_start { fill(start_h_edit, h); fill(start_m_edit, m); }
+        if let Some((h, m)) = current_end   { fill(end_h_edit,   h); fill(end_m_edit,   m); }
+
+        // ---- 同步 HWND 到 state ----
+        (*state_ptr).start_h_edit = start_h_edit;
+        (*state_ptr).start_m_edit = start_m_edit;
+        (*state_ptr).end_h_edit   = end_h_edit;
+        (*state_ptr).end_m_edit   = end_m_edit;
+        (*state_ptr).error_label  = error_lbl;
+
+        QUIET_DLG_DONE.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = ShowWindow(dlg_hwnd, SW_SHOW);
+        let _ = SetForegroundWindow(dlg_hwnd);
+        let _ = SetFocus(start_h_edit);
+
+        // 巢狀訊息迴圈
+        let tab_order = [start_h_edit, start_m_edit, end_h_edit, end_m_edit];
+        let mut msg = MSG::default();
+        loop {
+            if QUIET_DLG_DONE.load(std::sync::atomic::Ordering::Relaxed) {
+                break;
+            }
+            let has_msg = PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool();
+            if has_msg {
+                // Tab — 循環切換焦點
+                if msg.message == WM_KEYDOWN && msg.wParam.0 == 0x09 {
+                    let focused = GetFocus();
+                    let idx = tab_order.iter().position(|&h| h == focused).unwrap_or(0);
+                    let _ = SetFocus(tab_order[(idx + 1) % tab_order.len()]);
+                    continue;
+                }
+                // Enter — 觸發確定
+                if msg.message == WM_KEYDOWN && msg.wParam.0 == 0x0D {
+                    SendMessageW(dlg_hwnd, WM_COMMAND, WPARAM(IDC_QUIET_OK as usize), LPARAM(0));
+                    continue;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            } else {
+                WaitMessage();
+            }
+        }
+
+        let _ = SetForegroundWindow(parent);
+    }
+
+    state.result
+}
+
+/// 傳回距下一個安靜時刻邊界（開始或結束）的毫秒數，
+/// 用以排程精確的畫面切換計時器。
+fn ms_until_quiet_boundary(s: &AppState) -> Option<u32> {
+    let start = s.quiet_hours_start?;
+    let end   = s.quiet_hours_end?;
+
+    let now = unsafe { GetLocalTime() };
+    let now_sec = now.wHour as u32 * 3600
+        + now.wMinute as u32 * 60
+        + now.wSecond as u32;
+
+    let start_sec = start.0 as u32 * 3600 + start.1 as u32 * 60;
+    let end_sec   = end.0   as u32 * 3600 + end.1   as u32 * 60;
+    let day_sec: u32 = 24 * 3600;
+
+    // 距某整分邊界的剩餘秒數（已過則算明天）
+    let secs_until = |boundary: u32| -> u32 {
+        if boundary > now_sec { boundary - now_sec }
+        else { day_sec - now_sec + boundary }
+    };
+
+    let until_next = secs_until(start_sec).min(secs_until(end_sec));
+    Some(until_next.max(1).saturating_mul(1000))
+}
+
+/// 設定安靜時刻邊界計時器（精確在開始/結束分鐘觸發重繪）
+fn schedule_quiet_boundary_timer(hwnd: HWND) {
+    let ms = {
+        let state = lock_state();
+        state.as_ref().and_then(ms_until_quiet_boundary)
+    };
+    unsafe {
+        KillTimer(hwnd, TIMER_QUIET_BOUNDARY);
+        if let Some(ms) = ms {
+            SetTimer(hwnd, TIMER_QUIET_BOUNDARY, ms, None);
+        }
     }
 }
 
@@ -929,9 +1356,8 @@ pub fn run() {
                 drag_start_mouse_x: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
-                quiet_hours_enabled: settings.quiet_hours_enabled,
-                quiet_hours_start: settings.quiet_hours_start,
-                quiet_hours_end: settings.quiet_hours_end,
+                quiet_hours_start: settings.quiet_time_start.as_deref().and_then(parse_hhmm),
+                quiet_hours_end: settings.quiet_time_end.as_deref().and_then(parse_hhmm),
             });
         }
 
@@ -1005,6 +1431,7 @@ pub fn run() {
                 .unwrap_or(POLL_15_MIN)
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
+        schedule_quiet_boundary_timer(hwnd);
 
         // Initial poll
         let send_hwnd = SendHwnd::from_hwnd(hwnd);
@@ -1634,6 +2061,11 @@ unsafe extern "system" fn wnd_proc(
                         });
                     }
                 }
+                TIMER_QUIET_BOUNDARY => {
+                    // 安靜時刻邊界到了，立即重繪並排程下一個邊界
+                    render_layered();
+                    schedule_quiet_boundary_timer(hwnd);
+                }
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
                 }
@@ -1930,35 +2362,40 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
-                IDM_QUIET_TOGGLE => {
+                IDM_QUIET_SET_TIME => {
+                    let (current_start, current_end, strings) = {
+                        let state = lock_state();
+                        match state.as_ref() {
+                            Some(s) => (s.quiet_hours_start, s.quiet_hours_end, s.language.strings()),
+                            None => return LRESULT(0),
+                        }
+                    };
+                    if let Some((new_start, new_end)) =
+                        show_quiet_hours_dialog(hwnd, current_start, current_end, strings)
+                    {
+                        {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.quiet_hours_start = new_start;
+                                s.quiet_hours_end = new_end;
+                            }
+                        }
+                        save_state_settings();
+                        render_layered();
+                        schedule_quiet_boundary_timer(hwnd);
+                    }
+                }
+                IDM_QUIET_CLEAR => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
-                            s.quiet_hours_enabled = !s.quiet_hours_enabled;
+                            s.quiet_hours_start = None;
+                            s.quiet_hours_end = None;
                         }
                     }
                     save_state_settings();
                     render_layered();
-                }
-                id if (IDM_QUIET_START_BASE..IDM_QUIET_START_BASE + 24).contains(&id) => {
-                    let hour = (id - IDM_QUIET_START_BASE) as u8;
-                    {
-                        let mut state = lock_state();
-                        if let Some(s) = state.as_mut() {
-                            s.quiet_hours_start = hour;
-                        }
-                    }
-                    save_state_settings();
-                }
-                id if (IDM_QUIET_END_BASE..IDM_QUIET_END_BASE + 24).contains(&id) => {
-                    let hour = (id - IDM_QUIET_END_BASE) as u8;
-                    {
-                        let mut state = lock_state();
-                        if let Some(s) = state.as_mut() {
-                            s.quiet_hours_end = hour;
-                        }
-                    }
-                    save_state_settings();
+                    schedule_quiet_boundary_timer(hwnd);
                 }
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
@@ -2005,7 +2442,6 @@ fn show_context_menu(hwnd: HWND) {
             install_channel,
             update_status,
             widget_visible,
-            quiet_hours_enabled,
             quiet_hours_start,
             quiet_hours_end,
         ) = {
@@ -2019,7 +2455,6 @@ fn show_context_menu(hwnd: HWND) {
                     s.install_channel,
                     s.update_status.clone(),
                     s.widget_visible,
-                    s.quiet_hours_enabled,
                     s.quiet_hours_start,
                     s.quiet_hours_end,
                 ),
@@ -2031,9 +2466,8 @@ fn show_context_menu(hwnd: HWND) {
                     InstallChannel::Portable,
                     UpdateStatus::Idle,
                     true,
-                    false,
-                    22u8,
-                    8u8,
+                    None::<(u8, u8)>,
+                    None::<(u8, u8)>,
                 ),
             }
         };
@@ -2104,68 +2538,49 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         // Quiet Hours 子選單
-        // 儲存動態字串的 Vec，讓其生命週期延伸至 TrackPopupMenu 完成
         let mut quiet_wide_strs: Vec<Vec<u16>> = Vec::new();
 
         let quiet_menu = CreatePopupMenu().unwrap();
 
-        let quiet_toggle_str = native_interop::wide_str(strings.quiet_hours);
-        let quiet_toggle_flags = if quiet_hours_enabled { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        // 狀態資訊列（灰色，不可點擊）
+        let status_text = match (quiet_hours_start, quiet_hours_end) {
+            (Some((sh, sm)), Some((eh, em))) => {
+                format!("{:02}:{:02} – {:02}:{:02}", sh, sm, eh, em)
+            }
+            _ => "—".to_string(),
+        };
+        quiet_wide_strs.push(native_interop::wide_str(&status_text));
+        let status_ptr = quiet_wide_strs.last().unwrap().as_ptr();
         let _ = AppendMenuW(
             quiet_menu,
-            quiet_toggle_flags,
-            IDM_QUIET_TOGGLE as usize,
-            PCWSTR::from_raw(quiet_toggle_str.as_ptr()),
+            MF_GRAYED,
+            0,
+            PCWSTR::from_raw(status_ptr),
         );
 
         let _ = AppendMenuW(quiet_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
-        // Start hour 子選單（0..23）
-        let start_menu = CreatePopupMenu().unwrap();
-        for h in 0u8..24 {
-            let label = format!("{:02}:00", h);
-            quiet_wide_strs.push(native_interop::wide_str(&label));
-            let label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
-            let flags = if h == quiet_hours_start { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
-            let _ = AppendMenuW(
-                start_menu,
-                flags,
-                (IDM_QUIET_START_BASE + h as u16) as usize,
-                PCWSTR::from_raw(label_ptr),
-            );
-        }
-        let start_label_str = format!("{}: {:02}:00", strings.quiet_start, quiet_hours_start);
-        quiet_wide_strs.push(native_interop::wide_str(&start_label_str));
-        let start_label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+        // 設定時間...
+        let set_time_str = native_interop::wide_str(strings.quiet_set_time);
         let _ = AppendMenuW(
             quiet_menu,
-            MF_POPUP,
-            start_menu.0 as usize,
-            PCWSTR::from_raw(start_label_ptr),
+            MENU_ITEM_FLAGS(0),
+            IDM_QUIET_SET_TIME as usize,
+            PCWSTR::from_raw(set_time_str.as_ptr()),
         );
 
-        // End hour 子選單（0..23）
-        let end_menu = CreatePopupMenu().unwrap();
-        for h in 0u8..24 {
-            let label = format!("{:02}:00", h);
-            quiet_wide_strs.push(native_interop::wide_str(&label));
-            let label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
-            let flags = if h == quiet_hours_end { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
-            let _ = AppendMenuW(
-                end_menu,
-                flags,
-                (IDM_QUIET_END_BASE + h as u16) as usize,
-                PCWSTR::from_raw(label_ptr),
-            );
-        }
-        let end_label_str = format!("{}: {:02}:00", strings.quiet_end, quiet_hours_end);
-        quiet_wide_strs.push(native_interop::wide_str(&end_label_str));
-        let end_label_ptr = quiet_wide_strs.last().unwrap().as_ptr();
+        // 清除（只有已設定時才啟用）
+        let clear_str = native_interop::wide_str(strings.quiet_clear);
+        let clear_flags = if quiet_hours_start.is_some() {
+            MENU_ITEM_FLAGS(0)
+        } else {
+            MF_GRAYED
+        };
         let _ = AppendMenuW(
             quiet_menu,
-            MF_POPUP,
-            end_menu.0 as usize,
-            PCWSTR::from_raw(end_label_ptr),
+            clear_flags,
+            IDM_QUIET_CLEAR as usize,
+            PCWSTR::from_raw(clear_str.as_ptr()),
         );
 
         let quiet_label_str = native_interop::wide_str(strings.quiet_hours);

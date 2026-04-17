@@ -38,4 +38,10 @@ pub(super) const STRINGS: Strings = Strings {
     quiet_hours: "조용한 시간",
     quiet_start: "시작",
     quiet_end: "종료",
+    quiet_set_time: "시간 설정...",
+    quiet_clear: "지우기",
+    ok: "확인",
+    cancel: "취소",
+    quiet_time_hint: "형식: HH:MM  (둘 다 비우면 비활성화)",
+    quiet_time_error: "두 필드를 모두 채우거나 모두 비워두세요",
 };

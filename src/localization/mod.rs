@@ -150,6 +150,12 @@ pub struct Strings {
     pub quiet_hours: &'static str,
     pub quiet_start: &'static str,
     pub quiet_end: &'static str,
+    pub quiet_set_time: &'static str,
+    pub quiet_clear: &'static str,
+    pub ok: &'static str,
+    pub cancel: &'static str,
+    pub quiet_time_hint: &'static str,
+    pub quiet_time_error: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

@@ -38,4 +38,10 @@ pub(super) const STRINGS: Strings = Strings {
     quiet_hours: "サイレント時間",
     quiet_start: "開始",
     quiet_end: "終了",
+    quiet_set_time: "時刻を設定...",
+    quiet_clear: "クリア",
+    ok: "OK",
+    cancel: "キャンセル",
+    quiet_time_hint: "形式：HH:MM（両方を空にすると無効）",
+    quiet_time_error: "両方入力するか、両方空にしてください",
 };
