@@ -1264,24 +1264,58 @@ fn do_poll(send_hwnd: SendHwnd) {
                 let _ = PostMessageW(hwnd, WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
         }
-        Err(_e) => {
-            // Show refresh indicator — retry will recover silently
-            let mut state = lock_state();
-            if let Some(s) = state.as_mut() {
-                s.session_text = "...".to_string();
-                s.weekly_text = "...".to_string();
-                s.last_poll_ok = false;
+        Err(e) => {
+            // Distinguish token expiry (needs user action) from transient errors (retry helps).
+            let notify_expired = {
+                let mut state = lock_state();
+                let mut should_notify = false;
+                if let Some(s) = state.as_mut() {
+                    s.last_poll_ok = false;
+                    match e {
+                        poller::PollError::TokenExpired => {
+                            // Only show the balloon on the first failure so it doesn't spam.
+                            if s.retry_count == 0 {
+                                should_notify = true;
+                            }
+                            s.session_text = "auth?".to_string();
+                            s.weekly_text = "re-login".to_string();
+                            s.retry_count = s.retry_count.saturating_add(1);
+                            // Retry every 5 minutes — polling more often won't help until
+                            // the user re-authenticates via 'claude logout && claude login'.
+                            unsafe {
+                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                                SetTimer(hwnd, TIMER_POLL, 5 * 60 * 1000, None);
+                            }
+                        }
+                        _ => {
+                            // Transient network / credential-missing errors: exponential backoff.
+                            s.session_text = "...".to_string();
+                            s.weekly_text = "...".to_string();
+                            s.retry_count = s.retry_count.saturating_add(1);
+                            let backoff = RETRY_BASE_MS
+                                .saturating_mul(1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX));
+                            let retry_ms = backoff.min(s.poll_interval_ms);
+                            unsafe {
+                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                                SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+                            }
+                        }
+                    }
+                }
+                should_notify
+            };
 
-                // Exponential backoff retry: 30s, 60s, 120s, ... up to poll_interval
-                s.retry_count = s.retry_count.saturating_add(1);
-                let backoff = RETRY_BASE_MS
-                    .saturating_mul(1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX));
-                let retry_ms = backoff.min(s.poll_interval_ms);
-
-                unsafe {
-                    // Kill the 5-second reset poll so it doesn't bypass backoff
-                    let _ = KillTimer(hwnd, TIMER_RESET_POLL);
-                    SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+            if notify_expired {
+                let strings = {
+                    let state = lock_state();
+                    state.as_ref().map(|s| s.language.strings())
+                };
+                if let Some(strings) = strings {
+                    tray_icon::notify_balloon(
+                        hwnd,
+                        strings.token_expired_title,
+                        strings.token_expired_body,
+                    );
                 }
             }
 

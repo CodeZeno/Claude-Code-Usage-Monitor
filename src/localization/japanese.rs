@@ -34,5 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     day_suffix: "日",
     hour_suffix: "時間",
     minute_suffix: "分",
+    token_expired_title: "Claude token expired",
+    token_expired_body: "Your session has expired. Run 'claude logout' then 'claude login' in a terminal, then restart this app.",
     second_suffix: "秒",
 };
