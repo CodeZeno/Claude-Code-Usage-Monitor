@@ -34,7 +34,7 @@ pub(super) const STRINGS: Strings = Strings {
     day_suffix: "d",
     hour_suffix: "h",
     minute_suffix: "m",
-    token_expired_title: "Claude token expired",
-    token_expired_body: "Your session has expired. Run 'claude logout' then 'claude login' in a terminal, then restart this app.",
+    token_expired_title: "Error de autenticación",
+    token_expired_body: "Ejecuta 'claude' en una terminal, luego usa '/login' y sigue las indicaciones. Después, actualiza o reinicia esta aplicación.",
     second_suffix: "s",
 };

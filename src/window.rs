@@ -64,6 +64,10 @@ struct AppState {
 
     poll_interval_ms: u32,
     retry_count: u32,
+    force_notify_auth_error: bool,
+    auth_error_paused_polling: bool,
+    auth_watch_mode: poller::CredentialWatchMode,
+    auth_watch_snapshot: poller::CredentialWatchSnapshot,
     last_poll_ok: bool,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
@@ -855,6 +859,10 @@ pub fn run() {
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
+                force_notify_auth_error: false,
+                auth_error_paused_polling: false,
+                auth_watch_mode: poller::CredentialWatchMode::ActiveSource,
+                auth_watch_snapshot: Vec::new(),
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
@@ -1259,6 +1267,10 @@ fn do_poll(send_hwnd: SendHwnd) {
                         SetTimer(hwnd, TIMER_POLL, interval, None);
                     }
                 }
+                s.force_notify_auth_error = false;
+                s.auth_error_paused_polling = false;
+                s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
+                s.auth_watch_snapshot.clear();
             }
 
             unsafe {
@@ -1266,30 +1278,49 @@ fn do_poll(send_hwnd: SendHwnd) {
             }
         }
         Err(e) => {
-            // Distinguish token expiry (needs user action) from transient errors (retry helps).
-            let notify_expired = {
+            let auth_watch = match e {
+                poller::PollError::AuthRequired | poller::PollError::TokenExpired => Some((
+                    poller::CredentialWatchMode::ActiveSource,
+                    poller::credential_watch_snapshot(poller::CredentialWatchMode::ActiveSource),
+                )),
+                poller::PollError::NoCredentials => Some((
+                    poller::CredentialWatchMode::AllSources,
+                    poller::credential_watch_snapshot(poller::CredentialWatchMode::AllSources),
+                )),
+                poller::PollError::RequestFailed => None,
+            };
+            // Distinguish auth-required errors from transient errors.
+            let notify_auth_error = {
                 let mut state = lock_state();
                 let mut should_notify = false;
                 if let Some(s) = state.as_mut() {
                     s.last_poll_ok = false;
-                    match e {
-                        poller::PollError::TokenExpired => {
+                    match auth_watch {
+                        Some((watch_mode, watch_snapshot)) => {
                             // Only show the balloon on the first failure so it doesn't spam.
-                            if s.retry_count == 0 {
+                            if s.retry_count == 0 || s.force_notify_auth_error {
                                 should_notify = true;
                             }
-                            s.session_text = "auth?".to_string();
-                            s.weekly_text = "re-login".to_string();
+                            s.force_notify_auth_error = false;
+                            s.auth_error_paused_polling = true;
+                            s.auth_watch_mode = watch_mode;
+                            s.auth_watch_snapshot = watch_snapshot;
+                            s.session_text = "⚠".to_string();
+                            s.weekly_text = "⚠".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
-                            // Retry every 5 minutes — polling more often won't help until
-                            // the user re-authenticates via 'claude logout && claude login'.
                             unsafe {
+                                let _ = KillTimer(hwnd, TIMER_POLL);
                                 let _ = KillTimer(hwnd, TIMER_RESET_POLL);
-                                SetTimer(hwnd, TIMER_POLL, 5 * 60 * 1000, None);
+                                let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
+                                SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
                             }
                         }
                         _ => {
                             // Transient network / credential-missing errors: exponential backoff.
+                            s.force_notify_auth_error = false;
+                            s.auth_error_paused_polling = false;
+                            s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
+                            s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
@@ -1306,7 +1337,7 @@ fn do_poll(send_hwnd: SendHwnd) {
                 should_notify
             };
 
-            if notify_expired {
+            if notify_auth_error {
                 let strings = {
                     let state = lock_state();
                     state.as_ref().map(|s| s.language.strings())
@@ -1334,12 +1365,19 @@ fn schedule_countdown_timer() {
         None => return,
     };
 
+    let hwnd = s.hwnd.to_hwnd();
+    if !s.last_poll_ok {
+        unsafe {
+            let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
+            let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+        }
+        return;
+    }
+
     let data = match &s.data {
         Some(d) => d,
         None => return,
     };
-
-    let hwnd = s.hwnd.to_hwnd();
 
     // If a reset time has passed, poll every 5s to pick up fresh data
     if poller::is_past_reset(data) {
@@ -1570,10 +1608,44 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let sh = SendHwnd::from_hwnd(hwnd);
-                    std::thread::spawn(move || {
-                        do_poll(sh);
-                    });
+                    let auth_watch = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .map(|s| {
+                                (
+                                    s.auth_error_paused_polling,
+                                    s.auth_watch_mode,
+                                    s.auth_watch_snapshot.clone(),
+                                )
+                            })
+                    };
+                    match auth_watch {
+                        Some((true, watch_mode, previous_snapshot)) => {
+                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                            if current_snapshot != previous_snapshot {
+                                let mut state = lock_state();
+                                if let Some(s) = state.as_mut() {
+                                    if s.auth_error_paused_polling && s.auth_watch_mode == watch_mode
+                                    {
+                                        s.auth_watch_snapshot = current_snapshot;
+                                    }
+                                }
+                                drop(state);
+                                let sh = SendHwnd::from_hwnd(hwnd);
+                                std::thread::spawn(move || {
+                                    do_poll(sh);
+                                });
+                            }
+                        }
+                        Some((false, _, _)) => {
+                            let sh = SendHwnd::from_hwnd(hwnd);
+                            std::thread::spawn(move || {
+                                do_poll(sh);
+                            });
+                        }
+                        None => {}
+                    }
                 }
                 TIMER_COUNTDOWN => {
                     update_display();
@@ -1581,10 +1653,19 @@ unsafe extern "system" fn wnd_proc(
                     schedule_countdown_timer();
                 }
                 TIMER_RESET_POLL => {
-                    let sh = SendHwnd::from_hwnd(hwnd);
-                    std::thread::spawn(move || {
-                        do_poll(sh);
-                    });
+                    let should_poll = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .map(|s| !s.auth_error_paused_polling)
+                            .unwrap_or(false)
+                    };
+                    if should_poll {
+                        let sh = SendHwnd::from_hwnd(hwnd);
+                        std::thread::spawn(move || {
+                            do_poll(sh);
+                        });
+                    }
                 }
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
@@ -1775,6 +1856,7 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.force_notify_auth_error = true;
                         }
                     }
                     render_layered();

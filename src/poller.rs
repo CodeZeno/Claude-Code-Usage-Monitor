@@ -17,10 +17,19 @@ const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku
 
 #[derive(Debug)]
 pub enum PollError {
+    AuthRequired,
     NoCredentials,
     TokenExpired,
     RequestFailed,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialWatchMode {
+    ActiveSource,
+    AllSources,
+}
+
+pub type CredentialWatchSnapshot = Vec<String>;
 
 #[derive(Deserialize)]
 struct UsageResponse {
@@ -234,23 +243,112 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
         .build())
 }
 
+pub fn credential_watch_snapshot(mode: CredentialWatchMode) -> CredentialWatchSnapshot {
+    let sources = match mode {
+        CredentialWatchMode::ActiveSource => read_credentials()
+            .map(|creds| vec![creds.source])
+            .unwrap_or_else(all_known_credential_sources),
+        CredentialWatchMode::AllSources => all_known_credential_sources(),
+    };
+
+    let mut snapshot: CredentialWatchSnapshot = sources
+        .into_iter()
+        .filter_map(|source| credential_watch_signature(&source))
+        .collect();
+    snapshot.sort();
+    snapshot.dedup();
+    snapshot
+}
+
+fn all_known_credential_sources() -> Vec<CredentialSource> {
+    let mut sources = Vec::new();
+    if let Some(source) = windows_credential_source() {
+        sources.push(source);
+    }
+    for distro in list_wsl_distros() {
+        sources.push(CredentialSource::Wsl { distro });
+    }
+    sources
+}
+
+fn windows_credential_source() -> Option<CredentialSource> {
+    let home = dirs::home_dir()?;
+    Some(CredentialSource::Windows(
+        home.join(".claude").join(".credentials.json"),
+    ))
+}
+
+fn credential_watch_signature(source: &CredentialSource) -> Option<String> {
+    match source {
+        CredentialSource::Windows(path) => Some(windows_credential_watch_signature(path)),
+        CredentialSource::Wsl { distro } => wsl_credential_watch_signature(distro),
+    }
+}
+
+fn windows_credential_watch_signature(path: &PathBuf) -> String {
+    let key = format!("win:{}", path.display());
+    match std::fs::metadata(path) {
+        Ok(metadata) => {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                .map(|value| value.as_secs())
+                .unwrap_or(0);
+            format!("{key}|present|{}|{modified}", metadata.len())
+        }
+        Err(_) => format!("{key}|missing"),
+    }
+}
+
+fn wsl_credential_watch_signature(distro: &str) -> Option<String> {
+    let output = run_with_timeout(
+        Command::new("wsl.exe")
+            .arg("-d")
+            .arg(distro)
+            .arg("--")
+            .arg("sh")
+            .arg("-lc")
+            .arg(
+                "if [ -f ~/.claude/.credentials.json ]; then \
+                 stat -c 'present|%s|%Y' ~/.claude/.credentials.json; \
+                 else echo missing; fi",
+            )
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null()),
+        Duration::from_secs(5),
+    )?;
+
+    let state = if output.status.success() {
+        decode_wsl_text(&output.stdout).trim().to_string()
+    } else {
+        format!("status-{}", output.status)
+    };
+
+    Some(format!("wsl:{distro}|{state}"))
+}
+
 fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
     // Try the dedicated usage endpoint first
-    if let Some(data) = try_usage_endpoint(token) {
+    match try_usage_endpoint(token)? {
+        Some(data) => {
         // If reset timers are missing, fill them in from the Messages API
-        if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
-            if let Ok(fallback) = fetch_usage_via_messages(token) {
-                let mut merged = data;
-                if merged.session.resets_at.is_none() {
-                    merged.session.resets_at = fallback.session.resets_at;
+            if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
+                if let Ok(fallback) = fetch_usage_via_messages(token) {
+                    let mut merged = data;
+                    if merged.session.resets_at.is_none() {
+                        merged.session.resets_at = fallback.session.resets_at;
+                    }
+                    if merged.weekly.resets_at.is_none() {
+                        merged.weekly.resets_at = fallback.weekly.resets_at;
+                    }
+                    return Ok(merged);
                 }
-                if merged.weekly.resets_at.is_none() {
-                    merged.weekly.resets_at = fallback.weekly.resets_at;
-                }
-                return Ok(merged);
             }
+            return Ok(data);
         }
-        return Ok(data);
+        None => {}
     }
 
     // Fall back to Messages API with rate limit headers
@@ -261,8 +359,8 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
     result
 }
 
-fn try_usage_endpoint(token: &str) -> Option<UsageData> {
-    let agent = build_agent().ok()?;
+fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
+    let agent = build_agent()?;
 
     let resp = match agent
         .get(USAGE_URL)
@@ -271,10 +369,19 @@ fn try_usage_endpoint(token: &str) -> Option<UsageData> {
         .call()
     {
         Ok(resp) => resp,
-        _ => return None,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log(format!(
+                "usage endpoint returned auth error status {code}; re-login required"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(_) => return Ok(None),
     };
 
-    let response: UsageResponse = resp.into_json().ok()?;
+    let response: UsageResponse = match resp.into_json() {
+        Ok(response) => response,
+        Err(_) => return Ok(None),
+    };
     let mut data = UsageData::default();
 
     if let Some(bucket) = &response.five_hour {
@@ -287,7 +394,7 @@ fn try_usage_endpoint(token: &str) -> Option<UsageData> {
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
 
-    Some(data)
+    Ok(Some(data))
 }
 
 fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
@@ -308,6 +415,12 @@ fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
             .send_json(&body)
         {
             Ok(resp) => resp,
+            Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+                diagnose::log(format!(
+                    "messages endpoint returned auth error status {code}; re-login required"
+                ));
+                return Err(PollError::AuthRequired);
+            }
             Err(ureq::Error::Status(_code, resp)) => resp,
             Err(_) => continue,
         };
@@ -410,8 +523,9 @@ fn read_credentials() -> Option<Credentials> {
 }
 
 fn read_windows_credentials() -> Option<Credentials> {
-    let home = dirs::home_dir()?;
-    let cred_path = home.join(".claude").join(".credentials.json");
+    let CredentialSource::Windows(cred_path) = windows_credential_source()? else {
+        return None;
+    };
     let content = match std::fs::read_to_string(&cred_path) {
         Ok(content) => content,
         Err(error) => {
