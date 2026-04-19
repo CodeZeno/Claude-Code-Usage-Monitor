@@ -79,7 +79,7 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
     let text_col = Color::from_hex("#FFFFFF");
 
     let display_text = match percent {
-        Some(p) => format!("{}", p as u32),
+        Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
         None => String::new(),
     };
 
