@@ -1376,27 +1376,29 @@ fn update_display() {
 
 fn position_at_taskbar() {
     refresh_dpi();
-    let state = lock_state();
-    let s = match state.as_ref() {
-        Some(s) => s,
-        None => return,
-    };
+    // Drop the app-state lock before any Win32 call that may synchronously
+    // re-enter our window procedure.
+    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+        let state = lock_state();
+        let s = match state.as_ref() {
+            Some(s) => s,
+            None => return,
+        };
 
-    // Don't fight the user's drag
-    if s.dragging {
-        return;
-    }
-
-    let hwnd = s.hwnd.to_hwnd();
-    let embedded = s.embedded;
-    let tray_offset = s.tray_offset;
-
-    let taskbar_hwnd = match s.taskbar_hwnd {
-        Some(h) => h,
-        None => {
-            diagnose::log("position_at_taskbar skipped: no taskbar handle");
+        // Don't fight the user's drag
+        if s.dragging {
             return;
         }
+
+        let taskbar_hwnd = match s.taskbar_hwnd {
+            Some(h) => h,
+            None => {
+                diagnose::log("position_at_taskbar skipped: no taskbar handle");
+                return;
+            }
+        };
+
+        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
     };
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
@@ -1617,86 +1619,88 @@ unsafe extern "system" fn wnd_proc(
             if is_dragging {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
+                let move_target = {
+                    let mut state = lock_state();
+                    let s = match state.as_mut() {
+                        Some(s) => s,
+                        None => return LRESULT(0),
+                    };
 
-                let mut state = lock_state();
-                let s = match state.as_mut() {
-                    Some(s) => s,
-                    None => return LRESULT(0),
-                };
+                    // Moving mouse left = positive delta = larger offset (further left)
+                    let delta = s.drag_start_mouse_x - pt.x;
+                    let mut new_offset = s.drag_start_offset + delta;
 
-                // Moving mouse left = positive delta = larger offset (further left)
-                let delta = s.drag_start_mouse_x - pt.x;
-                let mut new_offset = s.drag_start_offset + delta;
-
-                // Clamp: offset >= 0 (can't go right of default)
-                if new_offset < 0 {
-                    new_offset = 0;
-                }
-
-                // Clamp: don't go past left edge of taskbar
-                if let Some(taskbar_hwnd) = s.taskbar_hwnd {
-                    if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                        let mut tray_left = taskbar_rect.right;
-                        if let Some(tray_hwnd) =
-                            native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                        {
-                            if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
-                            {
-                                tray_left = tray_rect.left;
-                            }
-                        }
-                        let widget_width = total_widget_width();
-                        let max_offset = if s.embedded {
-                            tray_left - taskbar_rect.left - widget_width
-                        } else {
-                            tray_left - taskbar_rect.left - widget_width
-                        };
-                        if new_offset > max_offset {
-                            new_offset = max_offset;
-                        }
+                    // Clamp: offset >= 0 (can't go right of default)
+                    if new_offset < 0 {
+                        new_offset = 0;
                     }
-                }
 
-                s.tray_offset = new_offset;
+                    let taskbar_hwnd = s.taskbar_hwnd;
+                    let embedded = s.embedded;
+                    let hwnd_val = s.hwnd.to_hwnd();
 
-                // Move window directly
-                let hwnd_val = s.hwnd.to_hwnd();
-                if let Some(taskbar_hwnd) = s.taskbar_hwnd {
-                    if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                        let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-                        let mut tray_left = taskbar_rect.right;
-                        let anchor_top = taskbar_rect.top;
-                        let anchor_height = taskbar_height;
-                        if let Some(tray_hwnd) =
-                            native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                        {
-                            if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
+                    // Clamp: don't go past left edge of taskbar
+                    if let Some(taskbar_hwnd) = taskbar_hwnd {
+                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                            let mut tray_left = taskbar_rect.right;
+                            if let Some(tray_hwnd) =
+                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                             {
-                                tray_left = tray_rect.left;
+                                if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
+                                {
+                                    tray_left = tray_rect.left;
+                                }
                             }
-                        }
-                        let widget_width = total_widget_width();
-                        let widget_height = sc(WIDGET_HEIGHT);
-                        let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
-                        if s.embedded {
-                            let x = tray_left - taskbar_rect.left - widget_width - new_offset;
-                            native_interop::move_window(
+                            let widget_width = total_widget_width();
+                            let max_offset = tray_left - taskbar_rect.left - widget_width;
+                            if new_offset > max_offset {
+                                new_offset = max_offset;
+                            }
+
+                            s.tray_offset = new_offset;
+
+                            let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
+                            let anchor_top = taskbar_rect.top;
+                            let anchor_height = taskbar_height;
+                            let widget_height = sc(WIDGET_HEIGHT);
+                            let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+                            let x = if embedded {
+                                tray_left - taskbar_rect.left - widget_width - new_offset
+                            } else {
+                                tray_left - widget_width - new_offset
+                            };
+                            Some((
                                 hwnd_val,
-                                x,
-                                y - taskbar_rect.top,
-                                widget_width,
-                                widget_height,
-                            );
-                        } else {
-                            let x = tray_left - widget_width - new_offset;
-                            native_interop::move_window(
-                                hwnd_val,
+                                embedded,
                                 x,
                                 y,
+                                taskbar_rect.top,
                                 widget_width,
                                 widget_height,
-                            );
+                            ))
+                        } else {
+                            s.tray_offset = new_offset;
+                            None
                         }
+                    } else {
+                        s.tray_offset = new_offset;
+                        None
+                    }
+                };
+
+                if let Some((hwnd_val, embedded, x, y, taskbar_top, widget_width, widget_height)) =
+                    move_target
+                {
+                    if embedded {
+                        native_interop::move_window(
+                            hwnd_val,
+                            x,
+                            y - taskbar_top,
+                            widget_width,
+                            widget_height,
+                        );
+                    } else {
+                        native_interop::move_window(hwnd_val, x, y, widget_width, widget_height);
                     }
                 }
             }
