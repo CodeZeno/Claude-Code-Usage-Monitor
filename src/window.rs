@@ -1502,9 +1502,9 @@ fn render_layered() {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
-                // Filter out pacing when actual usage exceeds the expected pace
-                let session_pacing = s.session_pacing_pct.filter(|&p| p > s.session_percent);
-                let weekly_pacing = s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent);
+                // Filter out pacing during quiet hours or when actual usage exceeds the expected pace
+                let session_pacing = if quiet { None } else { s.session_pacing_pct.filter(|&p| p > s.session_percent) };
+                let weekly_pacing = if quiet { None } else { s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent) };
                 (
                     s.hwnd,
                     s.is_dark,
@@ -2563,7 +2563,14 @@ unsafe extern "system" fn wnd_proc(
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             s.show_pacing = !s.show_pacing;
-                            if !s.show_pacing {
+                            if s.show_pacing {
+                                // Compute immediately from cached data so the indicator
+                                // appears at once without waiting for the next poll.
+                                if let Some(data) = &s.data {
+                                    s.session_pacing_pct = compute_pacing_pct(data.session.resets_at, 5.0 * 3600.0);
+                                    s.weekly_pacing_pct = compute_pacing_pct(data.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                                }
+                            } else {
                                 s.session_pacing_pct = None;
                                 s.weekly_pacing_pct = None;
                             }
@@ -2891,8 +2898,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
-                let session_pacing = s.session_pacing_pct.filter(|&p| p > s.session_percent);
-                let weekly_pacing = s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent);
+                let session_pacing = if quiet { None } else { s.session_pacing_pct.filter(|&p| p > s.session_percent) };
+                let weekly_pacing = if quiet { None } else { s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent) };
                 (
                     s.is_dark,
                     s.language.strings(),
