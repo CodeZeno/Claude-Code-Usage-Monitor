@@ -274,7 +274,7 @@ fn save_state_settings() {
     }
 }
 
-/// 解析 "HH:MM" 格式字串，傳回 (hour, minute)；格式錯誤或超出範圍傳回 None
+/// Parses an "HH:MM" string; returns (hour, minute) or None on invalid format/out-of-range.
 fn parse_hhmm(s: &str) -> Option<(u8, u8)> {
     let s = s.trim();
     if s.len() != 5 || s.as_bytes().get(2) != Some(&b':') {
@@ -288,7 +288,7 @@ fn parse_hhmm(s: &str) -> Option<(u8, u8)> {
     Some((h, m))
 }
 
-/// 從已持有的 AppState 判斷目前是否在安靜時刻（不取鎖）
+/// Checks whether we are in quiet hours given an already-held AppState (does not acquire the lock).
 fn quiet_now(s: &AppState) -> bool {
     let (start, end) = match (s.quiet_hours_start, s.quiet_hours_end) {
         (Some(st), Some(en)) => (st, en),
@@ -305,7 +305,7 @@ fn quiet_now(s: &AppState) -> bool {
     }
 }
 
-/// 檢查目前是否在安靜時刻範圍內（需自行取鎖，不可在持有鎖時呼叫）
+/// Checks whether we are currently in quiet hours (acquires the lock; must not be called while already holding it).
 fn is_quiet_time() -> bool {
     let (start, end) = {
         let state = lock_state();
@@ -329,23 +329,23 @@ fn is_quiet_time() -> bool {
     }
 }
 
-/// 安靜時刻輸入對話框的共享狀態（透過 GWLP_USERDATA 傳入視窗 proc）
+/// Shared state for the quiet-hours input dialog (passed into the window proc via GWLP_USERDATA).
 struct QuietDlgState {
-    start_h_edit: HWND,  // 開始時間「時」
-    start_m_edit: HWND,  // 開始時間「分」
-    end_h_edit: HWND,    // 結束時間「時」
-    end_m_edit: HWND,    // 結束時間「分」
+    start_h_edit: HWND,  // start-time hour field
+    start_m_edit: HWND,  // start-time minute field
+    end_h_edit: HWND,    // end-time hour field
+    end_m_edit: HWND,    // end-time minute field
     error_label: HWND,
     strings: crate::localization::Strings,
-    /// None = 使用者取消；Some((start, end)) = 確定，None 值代表清除
+    /// None = cancelled; Some((start, end)) = confirmed, inner None means clear
     result: Option<(Option<(u8, u8)>, Option<(u8, u8)>)>,
 }
 
-/// 用來通知外層訊息迴圈對話框已關閉
+/// Signals the outer message loop that the dialog has been closed.
 static QUIET_DLG_DONE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-/// 安靜時刻對話框的視窗 Proc
+/// Window proc for the quiet-hours dialog.
 unsafe extern "system" fn quiet_dlg_proc(
     hwnd: HWND,
     msg: u32,
@@ -362,20 +362,20 @@ unsafe extern "system" fn quiet_dlg_proc(
             let ctrl_id  = (wparam.0 & 0xFFFF) as i32;
             let notif    = ((wparam.0 >> 16) & 0xFFFF) as u16;
 
-            // EN_SETFOCUS (0x0100)：輸入框取得焦點時全選，方便直接覆蓋
+            // EN_SETFOCUS (0x0100): select all when an edit gains focus for easy overwrite
             if notif == 0x0100 && lparam.0 != 0 {
                 let edit = HWND(lparam.0 as *mut _);
                 SendMessageW(edit, 0x00B1u32, WPARAM(0), LPARAM(-1isize)); // EM_SETSEL(0,-1)
                 return LRESULT(0);
             }
 
-            // EN_CHANGE (0x0300)：輸入框內容變更時，若已達 2 位數且目前有焦點，自動跳下一格
+            // EN_CHANGE (0x0300): auto-advance to next field when 2 digits are entered and the control is focused
             if notif == 0x0300 && lparam.0 != 0 {
                 let state_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut QuietDlgState;
                 if !state_ptr.is_null() {
                     let s = &*state_ptr;
                     let edit = HWND(lparam.0 as *mut _);
-                    // 僅前 3 格需要自動跳（最後一格結束分不跳）
+                    // Only the first 3 fields auto-advance (the last field, end-minute, does not)
                     let order = [s.start_h_edit, s.start_m_edit, s.end_h_edit, s.end_m_edit];
                     if let Some(idx) = order.iter().position(|&h| h == edit) {
                         if idx < 3
@@ -456,7 +456,7 @@ unsafe extern "system" fn quiet_dlg_proc(
     }
 }
 
-/// 取得 EDIT 控制項的文字
+/// Gets the text from an EDIT control.
 unsafe fn get_edit_text(hwnd: HWND) -> String {
     let mut buf = [0u16; 16];
     let len = GetWindowTextW(hwnd, &mut buf);
@@ -467,22 +467,22 @@ unsafe fn get_edit_text(hwnd: HWND) -> String {
     }
 }
 
-/// 顯示安靜時刻輸入對話框；傳回 None 代表取消，Some((None,None)) 代表清除
+/// Shows the quiet-hours input dialog. Returns None if cancelled, Some((None, None)) if cleared.
 fn show_quiet_hours_dialog(
     parent: HWND,
     current_start: Option<(u8, u8)>,
     current_end: Option<(u8, u8)>,
     strings: crate::localization::Strings,
 ) -> Option<(Option<(u8, u8)>, Option<(u8, u8)>)> {
-    // 客戶區尺寸（96 DPI 基準）
+    // Client area size at 96 DPI base
     const CLIENT_W: i32 = 280;
     const CLIENT_H: i32 = 190;
 
-    // 縮放後客戶區尺寸
+    // Scaled client area size
     let cw = sc(CLIENT_W);
     let ch = sc(CLIENT_H);
 
-    // 用 AdjustWindowRectEx 計算含標題列/邊框的實際視窗尺寸
+    // Use AdjustWindowRectEx to compute the full window size including title bar and borders
     let (dw, dh) = unsafe {
         let mut r = RECT { left: 0, top: 0, right: cw, bottom: ch };
         let style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU;
@@ -491,7 +491,7 @@ fn show_quiet_hours_dialog(
         (r.right - r.left, r.bottom - r.top)
     };
 
-    // 以滑鼠所在螢幕的工作區置中
+    // Center on the working area of the monitor under the cursor
     let (cx, cy) = unsafe {
         let mut cursor = POINT::default();
         let _ = GetCursorPos(&mut cursor);
@@ -511,7 +511,7 @@ fn show_quiet_hours_dialog(
         )
     };
 
-    // 建立對話框狀態（Box 確保在對話框生命週期內有效）
+    // Heap-allocate dialog state so it outlives the stack frame
     let mut state = Box::new(QuietDlgState {
         start_h_edit: HWND::default(),
         start_m_edit: HWND::default(),
@@ -526,7 +526,7 @@ fn show_quiet_hours_dialog(
     unsafe {
         let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
 
-        // 一次性註冊視窗類別
+        // Register the window class exactly once
         static QUIET_DLG_CLASS_ONCE: std::sync::Once = std::sync::Once::new();
         let class_name = native_interop::wide_str("QuietHoursDlgCls");
         QUIET_DLG_CLASS_ONCE.call_once(|| {
@@ -542,7 +542,7 @@ fn show_quiet_hours_dialog(
             RegisterClassExW(&wc);
         });
 
-        // 建立對話框視窗
+        // Create the dialog window
         let title = native_interop::wide_str(strings.quiet_hours);
         let dlg_hwnd = CreateWindowExW(
             WS_EX_DLGMODALFRAME | WS_EX_TOPMOST,
@@ -561,10 +561,10 @@ fn show_quiet_hours_dialog(
             return None;
         }
 
-        // 取得預設 GUI 字型
+        // Get the default GUI font
         let gui_font = GetStockObject(DEFAULT_GUI_FONT);
 
-        // 輔助巨集：建立子控件並設字型
+        // Helper macro: create a child control and set its font
         macro_rules! make_ctrl {
             ($ex:expr, $cls:expr, $text:expr, $style:expr, $x:expr, $y:expr, $w:expr, $h:expr, $id:expr) => {{
                 let cls_w  = native_interop::wide_str($cls);
@@ -587,10 +587,10 @@ fn show_quiet_hours_dialog(
         let base_label_style = WS_CHILD | WS_VISIBLE | ss_left;
 
         let pad    = sc(12);
-        let lbl_w  = sc(80);   // "開始時間" 標籤寬
-        let h_w    = sc(44);   // 時輸入框
-        let colon  = sc(14);   // ":" 隔字
-        let m_w    = sc(44);   // 分輸入框
+        let lbl_w  = sc(80);   // label width
+        let h_w    = sc(44);   // hour input width
+        let colon  = sc(14);   // ":" separator width
+        let m_w    = sc(44);   // minute input width
         let row_h  = sc(22);
         let row1_y = sc(18);
         let row2_y = row1_y + row_h + sc(12);
@@ -600,12 +600,12 @@ fn show_quiet_hours_dialog(
         let btn_w  = sc(72);
         let btn_h  = sc(24);
 
-        // X 座標
+        // X coordinates
         let h_x = pad + lbl_w + sc(6);
         let colon_x = h_x + h_w;
         let m_x = colon_x + colon;
 
-        // ---- 開始時間 ----
+        // ---- Start time ----
         make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_start,
             base_label_style, pad, row1_y + sc(2), lbl_w, row_h, 0);
 
@@ -620,7 +620,7 @@ fn show_quiet_hours_dialog(
             base_edit_style, m_x, row1_y, m_w, row_h, IDC_QUIET_END_EDIT);
         SendMessageW(start_m_edit, 0x00C5u32, WPARAM(2), LPARAM(0));
 
-        // ---- 結束時間 ----
+        // ---- End time ----
         make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_end,
             base_label_style, pad, row2_y + sc(2), lbl_w, row_h, 0);
 
@@ -635,15 +635,15 @@ fn show_quiet_hours_dialog(
             base_edit_style, m_x, row2_y, m_w, row_h, 0);
         SendMessageW(end_m_edit, 0x00C5u32, WPARAM(2), LPARAM(0));
 
-        // ---- 提示文字 ----
+        // ---- Hint text ----
         make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", strings.quiet_time_hint,
             base_label_style, pad, hint_y, cw - pad * 2, sc(18), 0);
 
-        // ---- 錯誤訊息（初始隱藏）----
+        // ---- Error message (initially hidden) ----
         let error_lbl = make_ctrl!(WINDOW_EX_STYLE(0), "STATIC", "",
             WS_CHILD | ss_left, pad, err_y, cw - pad * 2, sc(18), IDC_QUIET_ERROR);
 
-        // ---- 確定 / 取消 ----
+        // ---- OK / Cancel ----
         make_ctrl!(WINDOW_EX_STYLE(0), "BUTTON", strings.ok,
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(0x0001), // BS_DEFPUSHBUTTON
             cw - (btn_w + sc(8)) * 2 - sc(4), btn_y, btn_w, btn_h, IDC_QUIET_OK);
@@ -652,7 +652,7 @@ fn show_quiet_hours_dialog(
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | WINDOW_STYLE(0x0000), // BS_PUSHBUTTON
             cw - btn_w - sc(8), btn_y, btn_w, btn_h, IDC_QUIET_CANCEL);
 
-        // ---- 預填目前值 ----
+        // ---- Pre-fill current values ----
         let fill = |hwnd: HWND, val: u8| {
             let s = native_interop::wide_str(&val.to_string());
             let _ = SetWindowTextW(hwnd, PCWSTR::from_raw(s.as_ptr()));
@@ -660,7 +660,7 @@ fn show_quiet_hours_dialog(
         if let Some((h, m)) = current_start { fill(start_h_edit, h); fill(start_m_edit, m); }
         if let Some((h, m)) = current_end   { fill(end_h_edit,   h); fill(end_m_edit,   m); }
 
-        // ---- 同步 HWND 到 state ----
+        // ---- Sync HWNDs into state ----
         (*state_ptr).start_h_edit = start_h_edit;
         (*state_ptr).start_m_edit = start_m_edit;
         (*state_ptr).end_h_edit   = end_h_edit;
@@ -672,7 +672,7 @@ fn show_quiet_hours_dialog(
         let _ = SetForegroundWindow(dlg_hwnd);
         let _ = SetFocus(start_h_edit);
 
-        // 巢狀訊息迴圈
+        // Nested message loop
         let tab_order = [start_h_edit, start_m_edit, end_h_edit, end_m_edit];
         let mut msg = MSG::default();
         loop {
@@ -681,14 +681,14 @@ fn show_quiet_hours_dialog(
             }
             let has_msg = PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool();
             if has_msg {
-                // Tab — 循環切換焦點
+                // Tab — cycle focus through fields
                 if msg.message == WM_KEYDOWN && msg.wParam.0 == 0x09 {
                     let focused = GetFocus();
                     let idx = tab_order.iter().position(|&h| h == focused).unwrap_or(0);
                     let _ = SetFocus(tab_order[(idx + 1) % tab_order.len()]);
                     continue;
                 }
-                // Enter — 觸發確定
+                // Enter — trigger OK
                 if msg.message == WM_KEYDOWN && msg.wParam.0 == 0x0D {
                     SendMessageW(dlg_hwnd, WM_COMMAND, WPARAM(IDC_QUIET_OK as usize), LPARAM(0));
                     continue;
@@ -706,8 +706,8 @@ fn show_quiet_hours_dialog(
     state.result
 }
 
-/// 傳回距下一個安靜時刻邊界（開始或結束）的毫秒數，
-/// 用以排程精確的畫面切換計時器。
+/// Returns milliseconds until the next quiet-hours boundary (start or end),
+/// used to schedule a precise redraw timer.
 fn ms_until_quiet_boundary(s: &AppState) -> Option<u32> {
     let start = s.quiet_hours_start?;
     let end   = s.quiet_hours_end?;
@@ -721,7 +721,7 @@ fn ms_until_quiet_boundary(s: &AppState) -> Option<u32> {
     let end_sec   = end.0   as u32 * 3600 + end.1   as u32 * 60;
     let day_sec: u32 = 24 * 3600;
 
-    // 距某整分邊界的剩餘秒數（已過則算明天）
+    // Seconds until a given minute boundary; if already past, wrap to next day
     let secs_until = |boundary: u32| -> u32 {
         if boundary > now_sec { boundary - now_sec }
         else { day_sec - now_sec + boundary }
@@ -731,7 +731,7 @@ fn ms_until_quiet_boundary(s: &AppState) -> Option<u32> {
     Some(until_next.max(1).saturating_mul(1000))
 }
 
-/// 設定安靜時刻邊界計時器（精確在開始/結束分鐘觸發重繪）
+/// Schedules the quiet-hours boundary timer to fire exactly at the next start/end minute.
 fn schedule_quiet_boundary_timer(hwnd: HWND) {
     let ms = {
         let state = lock_state();
@@ -1481,14 +1481,14 @@ fn render_layered() {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => {
-                // 在鎖內直接讀取安靜時刻狀態，避免再呼叫 is_quiet_time() 造成死結
+                // Read quiet-hours state while holding the lock to avoid a deadlock from calling is_quiet_time()
                 let quiet = quiet_now(s);
                 let session_text = if quiet {
                     s.language.strings().quiet_hours.to_string()
                 } else {
                     s.session_text.clone()
                 };
-                // weekly_text 保留最後一次 poll 的資料（不設空字串以避免 DrawTextW 收到空切片）
+                // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
                 (
                     s.hwnd,
@@ -2654,12 +2654,12 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
 
-        // Quiet Hours 子選單
+        // Quiet hours submenu
         let mut quiet_wide_strs: Vec<Vec<u16>> = Vec::new();
 
         let quiet_menu = CreatePopupMenu().unwrap();
 
-        // 狀態資訊列（灰色，不可點擊）
+        // Status row (greyed out, not clickable)
         let status_text = match (quiet_hours_start, quiet_hours_end) {
             (Some((sh, sm)), Some((eh, em))) => {
                 format!("{:02}:{:02} – {:02}:{:02}", sh, sm, eh, em)
@@ -2677,7 +2677,7 @@ fn show_context_menu(hwnd: HWND) {
 
         let _ = AppendMenuW(quiet_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
-        // 設定時間...
+        // Set time...
         let set_time_str = native_interop::wide_str(strings.quiet_set_time);
         let _ = AppendMenuW(
             quiet_menu,
@@ -2686,7 +2686,7 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(set_time_str.as_ptr()),
         );
 
-        // 清除（只有已設定時才啟用）
+        // Clear (enabled only when a time is already set)
         let clear_str = native_interop::wide_str(strings.quiet_clear);
         let clear_flags = if quiet_hours_start.is_some() {
             MENU_ITEM_FLAGS(0)
@@ -2819,7 +2819,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 } else {
                     s.session_text.clone()
                 };
-                // weekly_text 保留最後一次 poll 的資料（不設空字串以避免 DrawTextW 收到空切片）
+                // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
                 (
                     s.is_dark,

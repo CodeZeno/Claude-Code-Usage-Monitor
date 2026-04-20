@@ -97,14 +97,14 @@ impl LanguageId {
             "ja" => Some(Self::Japanese),
             "ko" => Some(Self::Korean),
             "zh" => {
-                // 細分繁體（zh-TW、zh-HK、zh-Hant）與簡體
+                // Distinguish Traditional Chinese (zh-TW, zh-HK, zh-Hant) from Simplified
                 if normalized.contains("tw")
                     || normalized.contains("hk")
                     || normalized.contains("hant")
                 {
                     Some(Self::TraditionalChinese)
                 } else {
-                    // 簡體中文目前不支援，fallback 至系統語言
+                    // Simplified Chinese is not supported; fall back to system language
                     None
                 }
             }
