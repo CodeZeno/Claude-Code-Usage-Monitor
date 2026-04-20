@@ -82,6 +82,10 @@ struct AppState {
 
     quiet_hours_start: Option<(u8, u8)>,
     quiet_hours_end: Option<(u8, u8)>,
+
+    show_pacing: bool,
+    session_pacing_pct: Option<f64>,
+    weekly_pacing_pct: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -119,6 +123,7 @@ const IDM_LANG_TRADITIONAL_CHINESE: u16 = 47;
 
 const IDM_QUIET_SET_TIME: u16 = 62;
 const IDM_QUIET_CLEAR: u16 = 63;
+const IDM_TOGGLE_PACING: u16 = 64;
 
 // Dialog control IDs
 const IDC_QUIET_START_EDIT: i32 = 201;
@@ -215,6 +220,8 @@ struct SettingsFile {
     quiet_time_start: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     quiet_time_end: Option<String>,
+    #[serde(default)]
+    show_pacing: bool,
 }
 
 impl Default for SettingsFile {
@@ -227,6 +234,7 @@ impl Default for SettingsFile {
             widget_visible: true,
             quiet_time_start: None,
             quiet_time_end: None,
+            show_pacing: false,
         }
     }
 }
@@ -270,6 +278,7 @@ fn save_state_settings() {
             widget_visible: s.widget_visible,
             quiet_time_start: s.quiet_hours_start.map(|(h, m)| format!("{:02}:{:02}", h, m)),
             quiet_time_end: s.quiet_hours_end.map(|(h, m)| format!("{:02}:{:02}", h, m)),
+            show_pacing: s.show_pacing,
         });
     }
 }
@@ -1366,6 +1375,9 @@ pub fn run() {
                 widget_visible: settings.widget_visible,
                 quiet_hours_start: settings.quiet_time_start.as_deref().and_then(parse_hhmm),
                 quiet_hours_end: settings.quiet_time_end.as_deref().and_then(parse_hhmm),
+                show_pacing: settings.show_pacing,
+                session_pacing_pct: None,
+                weekly_pacing_pct: None,
             });
         }
 
@@ -1477,7 +1489,7 @@ pub fn run() {
 /// ClearType sub-pixel font rendering can be used for crisp, OS-native text.
 fn render_layered() {
     refresh_dpi();
-    let (hwnd_val, is_dark, embedded, strings, session_pct, session_text, weekly_pct, weekly_text) = {
+    let (hwnd_val, is_dark, embedded, strings, session_pct, session_text, weekly_pct, weekly_text, session_pacing, weekly_pacing) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => {
@@ -1490,6 +1502,9 @@ fn render_layered() {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
+                // Filter out pacing when actual usage exceeds the expected pace
+                let session_pacing = s.session_pacing_pct.filter(|&p| p > s.session_percent);
+                let weekly_pacing = s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent);
                 (
                     s.hwnd,
                     s.is_dark,
@@ -1499,6 +1514,8 @@ fn render_layered() {
                     session_text,
                     s.weekly_percent,
                     weekly_text,
+                    session_pacing,
+                    weekly_pacing,
                 )
             }
             None => return,
@@ -1568,6 +1585,11 @@ fn render_layered() {
         // Render once with the actual taskbar background colour.
         // Using an opaque background lets us use CLEARTYPE_QUALITY for
         // sub-pixel font rendering that matches the rest of the OS.
+        let pacing_color = if is_dark {
+            Color::from_hex("#5BA05E")
+        } else {
+            Color::from_hex("#4A8C53")
+        };
         paint_content(
             mem_dc,
             width,
@@ -1577,11 +1599,14 @@ fn render_layered() {
             &text_color,
             &accent,
             &track,
+            &pacing_color,
             strings,
             session_pct,
             &session_text,
             weekly_pct,
             &weekly_text,
+            session_pacing,
+            weekly_pacing,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1640,11 +1665,14 @@ fn paint_content(
     text_color: &Color,
     accent: &Color,
     track: &Color,
+    pacing_color: &Color,
     strings: Strings,
     session_pct: f64,
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    session_pacing: Option<f64>,
+    weekly_pacing: Option<f64>,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1730,6 +1758,8 @@ fn paint_content(
             session_text,
             accent,
             track,
+            pacing_color,
+            session_pacing,
         );
         draw_row(
             hdc,
@@ -1740,11 +1770,21 @@ fn paint_content(
             weekly_text,
             accent,
             track,
+            pacing_color,
+            weekly_pacing,
         );
 
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
     }
+}
+
+/// Computes the expected-usage percentage based on elapsed time within a rolling window.
+/// Returns None if `resets_at` is unavailable or the window has not yet started.
+fn compute_pacing_pct(resets_at: Option<std::time::SystemTime>, window_secs: f64) -> Option<f64> {
+    let remaining = resets_at?.duration_since(std::time::SystemTime::now()).ok()?;
+    let elapsed = 1.0 - remaining.as_secs_f64() / window_secs;
+    Some((elapsed * 100.0).clamp(0.0, 100.0))
 }
 
 fn do_poll(send_hwnd: SendHwnd) {
@@ -1755,6 +1795,10 @@ fn do_poll(send_hwnd: SendHwnd) {
             if let Some(s) = state.as_mut() {
                 s.session_percent = data.session.percentage;
                 s.weekly_percent = data.weekly.percentage;
+                if s.show_pacing {
+                    s.session_pacing_pct = compute_pacing_pct(data.session.resets_at, 5.0 * 3600.0);
+                    s.weekly_pacing_pct = compute_pacing_pct(data.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                }
                 // Stop fast-poll if reset data is now fresh
                 if !poller::is_past_reset(&data) {
                     unsafe {
@@ -2514,6 +2558,20 @@ unsafe extern "system" fn wnd_proc(
                     render_layered();
                     schedule_quiet_boundary_timer(hwnd);
                 }
+                IDM_TOGGLE_PACING => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_pacing = !s.show_pacing;
+                            if !s.show_pacing {
+                                s.session_pacing_pct = None;
+                                s.weekly_pacing_pct = None;
+                            }
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                }
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
@@ -2561,6 +2619,7 @@ fn show_context_menu(hwnd: HWND) {
             widget_visible,
             quiet_hours_start,
             quiet_hours_end,
+            show_pacing,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2574,6 +2633,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.widget_visible,
                     s.quiet_hours_start,
                     s.quiet_hours_end,
+                    s.show_pacing,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2585,6 +2645,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     None::<(u8, u8)>,
                     None::<(u8, u8)>,
+                    false,
                 ),
             }
         };
@@ -2708,6 +2769,15 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(quiet_label_str.as_ptr()),
         );
 
+        let pacing_str = native_interop::wide_str(strings.show_pacing);
+        let pacing_flags = if show_pacing { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            settings_menu,
+            pacing_flags,
+            IDM_TOGGLE_PACING as usize,
+            PCWSTR::from_raw(pacing_str.as_ptr()),
+        );
+
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);
         let system_flags = if language_override.is_none() {
@@ -2809,7 +2879,7 @@ fn show_context_menu(hwnd: HWND) {
 
 /// Paint for non-embedded fallback (normal WM_PAINT path)
 fn paint(hdc: HDC, hwnd: HWND) {
-    let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text) = {
+    let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text, session_pacing, weekly_pacing) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => {
@@ -2821,6 +2891,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
+                let session_pacing = s.session_pacing_pct.filter(|&p| p > s.session_percent);
+                let weekly_pacing = s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent);
                 (
                     s.is_dark,
                     s.language.strings(),
@@ -2828,6 +2900,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
                     session_text,
                     s.weekly_percent,
                     weekly_text,
+                    session_pacing,
+                    weekly_pacing,
                 )
             }
             None => return,
@@ -2849,6 +2923,11 @@ fn paint(hdc: HDC, hwnd: HWND) {
         Color::from_hex("#1C1C1C")
     } else {
         Color::from_hex("#F3F3F3")
+    };
+    let pacing_color = if is_dark {
+        Color::from_hex("#5BA05E")
+    } else {
+        Color::from_hex("#4A8C53")
     };
 
     unsafe {
@@ -2874,11 +2953,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &text_color,
             &accent,
             &track,
+            &pacing_color,
             strings,
             session_pct,
             &session_text,
             weekly_pct,
             &weekly_text,
+            session_pacing,
+            weekly_pacing,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -2898,6 +2980,8 @@ fn draw_row(
     text: &str,
     accent: &Color,
     track: &Color,
+    pacing_color: &Color,
+    pacing_pct: Option<f64>,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -2920,7 +3004,9 @@ fn draw_row(
         );
 
         let bar_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
-        let percent_clamped = percent.clamp(0.0, 100.0);
+        let orange_end = percent.clamp(0.0, 100.0);
+        // pacing_pct is already filtered (None when orange >= pacing) by the caller
+        let green_end = pacing_pct.unwrap_or(orange_end);
 
         for i in 0..SEGMENT_COUNT {
             let seg_x = bar_x + i * (seg_w + seg_gap);
@@ -2934,36 +3020,49 @@ fn draw_row(
                 bottom: y + seg_h,
             };
 
-            if percent_clamped >= seg_end {
-                draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
-            } else if percent_clamped <= seg_start {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-            } else {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-                let fraction = (percent_clamped - seg_start) / 10.0;
-                let fill_width = (seg_w as f64 * fraction) as i32;
-                if fill_width > 0 {
-                    let fill_rect = RECT {
-                        left: seg_x,
-                        top: y,
-                        right: seg_x + fill_width,
-                        bottom: y + seg_h,
-                    };
-                    let rgn = CreateRoundRectRgn(
-                        seg_rect.left,
-                        seg_rect.top,
-                        seg_rect.right + 1,
-                        seg_rect.bottom + 1,
-                        corner_r * 2,
-                        corner_r * 2,
-                    );
-                    let _ = SelectClipRgn(hdc, rgn);
-                    let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                    FillRect(hdc, &fill_rect, brush);
-                    let _ = DeleteObject(brush);
-                    let _ = SelectClipRgn(hdc, HRGN::default());
-                    let _ = DeleteObject(rgn);
+            // Step 1: draw gray base for the entire segment
+            draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+
+            // Helper: clip-fill a horizontal slice of this segment with a given color
+            let clip_fill = |left_pct: f64, right_pct: f64, color: &Color| {
+                let left_px = (left_pct / 10.0 * seg_w as f64) as i32;
+                let right_px = (right_pct / 10.0 * seg_w as f64) as i32;
+                if right_px <= left_px {
+                    return;
                 }
+                let fill_rect = RECT {
+                    left: seg_x + left_px,
+                    top: y,
+                    right: seg_x + right_px,
+                    bottom: y + seg_h,
+                };
+                let rgn = CreateRoundRectRgn(
+                    seg_rect.left,
+                    seg_rect.top,
+                    seg_rect.right + 1,
+                    seg_rect.bottom + 1,
+                    corner_r * 2,
+                    corner_r * 2,
+                );
+                let _ = SelectClipRgn(hdc, rgn);
+                let brush = CreateSolidBrush(COLORREF(color.to_colorref()));
+                FillRect(hdc, &fill_rect, brush);
+                let _ = DeleteObject(brush);
+                let _ = SelectClipRgn(hdc, HRGN::default());
+                let _ = DeleteObject(rgn);
+            };
+
+            // Step 2: fill green zone (orange_end..green_end) if it overlaps this segment
+            if green_end > seg_start && orange_end < seg_end {
+                let left_pct = (orange_end - seg_start).max(0.0);
+                let right_pct = (green_end - seg_start).min(10.0);
+                clip_fill(left_pct, right_pct, pacing_color);
+            }
+
+            // Step 3: fill orange zone (0..orange_end) if it overlaps this segment
+            if orange_end > seg_start {
+                let right_pct = (orange_end - seg_start).min(10.0);
+                clip_fill(0.0, right_pct, accent);
             }
         }
 

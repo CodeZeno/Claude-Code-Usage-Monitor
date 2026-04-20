@@ -36,6 +36,7 @@ pub(super) const STRINGS: Strings = Strings {
     minute_suffix: "分",
     token_expired_title: "認証エラー",
     token_expired_body: "ターミナルで 'claude' を実行し、'/login' を使って案内に従ってください。その後、このアプリを更新するか再起動してください。",
+    show_pacing: "ペース表示",
     second_suffix: "秒",
     quiet_hours: "サイレント時間",
     quiet_start: "開始",

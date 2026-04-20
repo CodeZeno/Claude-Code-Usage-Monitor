@@ -36,6 +36,7 @@ pub(super) const STRINGS: Strings = Strings {
     minute_suffix: "m",
     token_expired_title: "Error de autenticación",
     token_expired_body: "Ejecuta 'claude' en una terminal, luego usa '/login' y sigue las indicaciones. Después, actualiza o reinicia esta aplicación.",
+    show_pacing: "Mostrar ritmo",
     second_suffix: "s",
     quiet_hours: "Quiet Hours",
     quiet_start: "Start",

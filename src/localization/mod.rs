@@ -149,6 +149,7 @@ pub struct Strings {
     pub second_suffix: &'static str,
     pub token_expired_title: &'static str,
     pub token_expired_body: &'static str,
+    pub show_pacing: &'static str,
     pub quiet_hours: &'static str,
     pub quiet_start: &'static str,
     pub quiet_end: &'static str,

@@ -24,3 +24,8 @@ workflow.cmd
 
 # Local WinGet manifest generation output
 /manifests/
+
+# Local Claude Code development files (not relevant to upstream)
+CLAUDE.md
+ARCHITECTURE.md
+.claude/
