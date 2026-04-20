@@ -2,8 +2,8 @@ use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NOTIFYICONDATAW, Shell_NotifyIconW,
+    ExtractIconExW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIIF_WARNING, NOTIFYICONDATAW, Shell_NotifyIconW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 use windows::core::PCWSTR;
@@ -247,6 +247,35 @@ fn load_embedded_app_icon() -> HICON {
             large_icon
         }
     }
+}
+
+/// Show a Windows balloon notification from the tray icon.
+/// Used to alert the user when re-authentication is required.
+pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = TRAY_ICON_ID;
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_WARNING;
+        copy_wide(title, &mut nid.szInfoTitle);
+        copy_wide_256(message, &mut nid.szInfo);
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Copy a string into a fixed-size wide buffer (truncates to fit).
+fn copy_wide<const N: usize>(s: &str, buf: &mut [u16; N]) {
+    let wide: Vec<u16> = s.encode_utf16().collect();
+    let len = wide.len().min(N - 1);
+    buf[..len].copy_from_slice(&wide[..len]);
+    buf[len] = 0;
+}
+
+/// Copy a string into a 256-wide buffer.
+fn copy_wide_256(s: &str, buf: &mut [u16; 256]) {
+    copy_wide(s, buf)
 }
 
 /// Register the tray icon with the shell.

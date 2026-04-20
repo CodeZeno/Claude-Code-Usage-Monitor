@@ -65,6 +65,10 @@ struct AppState {
 
     poll_interval_ms: u32,
     retry_count: u32,
+    force_notify_auth_error: bool,
+    auth_error_paused_polling: bool,
+    auth_watch_mode: poller::CredentialWatchMode,
+    auth_watch_snapshot: poller::CredentialWatchSnapshot,
     last_poll_ok: bool,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
@@ -1348,6 +1352,10 @@ pub fn run() {
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
+                force_notify_auth_error: false,
+                auth_error_paused_polling: false,
+                auth_watch_mode: poller::CredentialWatchMode::ActiveSource,
+                auth_watch_snapshot: Vec::new(),
                 last_poll_ok: false,
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
@@ -1766,30 +1774,87 @@ fn do_poll(send_hwnd: SendHwnd) {
                         SetTimer(hwnd, TIMER_POLL, interval, None);
                     }
                 }
+                s.force_notify_auth_error = false;
+                s.auth_error_paused_polling = false;
+                s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
+                s.auth_watch_snapshot.clear();
             }
 
             unsafe {
                 let _ = PostMessageW(hwnd, WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
         }
-        Err(_e) => {
-            // Show refresh indicator — retry will recover silently
-            let mut state = lock_state();
-            if let Some(s) = state.as_mut() {
-                s.session_text = "...".to_string();
-                s.weekly_text = "...".to_string();
-                s.last_poll_ok = false;
+        Err(e) => {
+            let auth_watch = match e {
+                poller::PollError::AuthRequired | poller::PollError::TokenExpired => Some((
+                    poller::CredentialWatchMode::ActiveSource,
+                    poller::credential_watch_snapshot(poller::CredentialWatchMode::ActiveSource),
+                )),
+                poller::PollError::NoCredentials => Some((
+                    poller::CredentialWatchMode::AllSources,
+                    poller::credential_watch_snapshot(poller::CredentialWatchMode::AllSources),
+                )),
+                poller::PollError::RequestFailed => None,
+            };
+            // Distinguish auth-required errors from transient errors.
+            let notify_auth_error = {
+                let mut state = lock_state();
+                let mut should_notify = false;
+                if let Some(s) = state.as_mut() {
+                    s.last_poll_ok = false;
+                    match auth_watch {
+                        Some((watch_mode, watch_snapshot)) => {
+                            // Only show the balloon on the first failure so it doesn't spam.
+                            if s.retry_count == 0 || s.force_notify_auth_error {
+                                should_notify = true;
+                            }
+                            s.force_notify_auth_error = false;
+                            s.auth_error_paused_polling = true;
+                            s.auth_watch_mode = watch_mode;
+                            s.auth_watch_snapshot = watch_snapshot;
+                            s.session_text = "⚠".to_string();
+                            s.weekly_text = "⚠".to_string();
+                            s.retry_count = s.retry_count.saturating_add(1);
+                            unsafe {
+                                let _ = KillTimer(hwnd, TIMER_POLL);
+                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                                let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
+                                SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
+                            }
+                        }
+                        _ => {
+                            // Transient network / credential-missing errors: exponential backoff.
+                            s.force_notify_auth_error = false;
+                            s.auth_error_paused_polling = false;
+                            s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
+                            s.auth_watch_snapshot.clear();
+                            s.session_text = "...".to_string();
+                            s.weekly_text = "...".to_string();
+                            s.retry_count = s.retry_count.saturating_add(1);
+                            let backoff = RETRY_BASE_MS
+                                .saturating_mul(1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX));
+                            let retry_ms = backoff.min(s.poll_interval_ms);
+                            unsafe {
+                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                                SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+                            }
+                        }
+                    }
+                }
+                should_notify
+            };
 
-                // Exponential backoff retry: 30s, 60s, 120s, ... up to poll_interval
-                s.retry_count = s.retry_count.saturating_add(1);
-                let backoff = RETRY_BASE_MS
-                    .saturating_mul(1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX));
-                let retry_ms = backoff.min(s.poll_interval_ms);
-
-                unsafe {
-                    // Kill the 5-second reset poll so it doesn't bypass backoff
-                    let _ = KillTimer(hwnd, TIMER_RESET_POLL);
-                    SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+            if notify_auth_error {
+                let strings = {
+                    let state = lock_state();
+                    state.as_ref().map(|s| s.language.strings())
+                };
+                if let Some(strings) = strings {
+                    tray_icon::notify_balloon(
+                        hwnd,
+                        strings.token_expired_title,
+                        strings.token_expired_body,
+                    );
                 }
             }
 
@@ -1807,12 +1872,19 @@ fn schedule_countdown_timer() {
         None => return,
     };
 
+    let hwnd = s.hwnd.to_hwnd();
+    if !s.last_poll_ok {
+        unsafe {
+            let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
+            let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+        }
+        return;
+    }
+
     let data = match &s.data {
         Some(d) => d,
         None => return,
     };
-
-    let hwnd = s.hwnd.to_hwnd();
 
     // If a reset time has passed, poll every 5s to pick up fresh data
     if poller::is_past_reset(data) {
@@ -1884,20 +1956,20 @@ fn update_display() {
 
 fn position_at_taskbar() {
     refresh_dpi();
-
-    // Extract everything we need from state, then DROP the lock before making
-    // any Win32 calls. MoveWindow dispatches WM_PAINT synchronously and our
-    // wnd_proc also calls lock_state() — Rust's Mutex is not reentrant,
-    // so holding it across Win32 calls causes a deadlock.
+    // Drop the app-state lock before any Win32 call that may synchronously
+    // re-enter our window procedure.
     let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
         let state = lock_state();
         let s = match state.as_ref() {
             Some(s) => s,
             None => return,
         };
+
+        // Don't fight the user's drag
         if s.dragging {
             return;
         }
+
         let taskbar_hwnd = match s.taskbar_hwnd {
             Some(h) => h,
             None => {
@@ -1905,6 +1977,7 @@ fn position_at_taskbar() {
                 return;
             }
         };
+
         (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
     };
 
@@ -2043,10 +2116,44 @@ unsafe extern "system" fn wnd_proc(
             match timer_id {
                 TIMER_POLL => {
                     if !is_quiet_time() {
-                        let sh = SendHwnd::from_hwnd(hwnd);
-                        std::thread::spawn(move || {
-                            do_poll(sh);
-                        });
+                        let auth_watch = {
+                            let state = lock_state();
+                            state
+                                .as_ref()
+                                .map(|s| {
+                                    (
+                                        s.auth_error_paused_polling,
+                                        s.auth_watch_mode,
+                                        s.auth_watch_snapshot.clone(),
+                                    )
+                                })
+                        };
+                        match auth_watch {
+                            Some((true, watch_mode, previous_snapshot)) => {
+                                let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                                if current_snapshot != previous_snapshot {
+                                    let mut state = lock_state();
+                                    if let Some(s) = state.as_mut() {
+                                        if s.auth_error_paused_polling && s.auth_watch_mode == watch_mode
+                                        {
+                                            s.auth_watch_snapshot = current_snapshot;
+                                        }
+                                    }
+                                    drop(state);
+                                    let sh = SendHwnd::from_hwnd(hwnd);
+                                    std::thread::spawn(move || {
+                                        do_poll(sh);
+                                    });
+                                }
+                            }
+                            Some((false, _, _)) => {
+                                let sh = SendHwnd::from_hwnd(hwnd);
+                                std::thread::spawn(move || {
+                                    do_poll(sh);
+                                });
+                            }
+                            None => {}
+                        }
                     }
                 }
                 TIMER_COUNTDOWN => {
@@ -2055,7 +2162,14 @@ unsafe extern "system" fn wnd_proc(
                     schedule_countdown_timer();
                 }
                 TIMER_RESET_POLL => {
-                    if !is_quiet_time() {
+                    let should_poll = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .map(|s| !s.auth_error_paused_polling)
+                            .unwrap_or(false)
+                    };
+                    if should_poll && !is_quiet_time() {
                         let sh = SendHwnd::from_hwnd(hwnd);
                         std::thread::spawn(move || {
                             do_poll(sh);
@@ -2063,7 +2177,6 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
                 TIMER_QUIET_BOUNDARY => {
-                    // 安靜時刻邊界到了，立即重繪並排程下一個邊界
                     render_layered();
                     schedule_quiet_boundary_timer(hwnd);
                 }
@@ -2135,86 +2248,88 @@ unsafe extern "system" fn wnd_proc(
             if is_dragging {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
+                let move_target = {
+                    let mut state = lock_state();
+                    let s = match state.as_mut() {
+                        Some(s) => s,
+                        None => return LRESULT(0),
+                    };
 
-                let mut state = lock_state();
-                let s = match state.as_mut() {
-                    Some(s) => s,
-                    None => return LRESULT(0),
-                };
+                    // Moving mouse left = positive delta = larger offset (further left)
+                    let delta = s.drag_start_mouse_x - pt.x;
+                    let mut new_offset = s.drag_start_offset + delta;
 
-                // Moving mouse left = positive delta = larger offset (further left)
-                let delta = s.drag_start_mouse_x - pt.x;
-                let mut new_offset = s.drag_start_offset + delta;
-
-                // Clamp: offset >= 0 (can't go right of default)
-                if new_offset < 0 {
-                    new_offset = 0;
-                }
-
-                // Clamp: don't go past left edge of taskbar
-                if let Some(taskbar_hwnd) = s.taskbar_hwnd {
-                    if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                        let mut tray_left = taskbar_rect.right;
-                        if let Some(tray_hwnd) =
-                            native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                        {
-                            if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
-                            {
-                                tray_left = tray_rect.left;
-                            }
-                        }
-                        let widget_width = total_widget_width();
-                        let max_offset = if s.embedded {
-                            tray_left - taskbar_rect.left - widget_width
-                        } else {
-                            tray_left - taskbar_rect.left - widget_width
-                        };
-                        if new_offset > max_offset {
-                            new_offset = max_offset;
-                        }
+                    // Clamp: offset >= 0 (can't go right of default)
+                    if new_offset < 0 {
+                        new_offset = 0;
                     }
-                }
 
-                s.tray_offset = new_offset;
+                    let taskbar_hwnd = s.taskbar_hwnd;
+                    let embedded = s.embedded;
+                    let hwnd_val = s.hwnd.to_hwnd();
 
-                // Move window directly
-                let hwnd_val = s.hwnd.to_hwnd();
-                if let Some(taskbar_hwnd) = s.taskbar_hwnd {
-                    if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                        let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-                        let mut tray_left = taskbar_rect.right;
-                        let anchor_top = taskbar_rect.top;
-                        let anchor_height = taskbar_height;
-                        if let Some(tray_hwnd) =
-                            native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                        {
-                            if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
+                    // Clamp: don't go past left edge of taskbar
+                    if let Some(taskbar_hwnd) = taskbar_hwnd {
+                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                            let mut tray_left = taskbar_rect.right;
+                            if let Some(tray_hwnd) =
+                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                             {
-                                tray_left = tray_rect.left;
+                                if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
+                                {
+                                    tray_left = tray_rect.left;
+                                }
                             }
-                        }
-                        let widget_width = total_widget_width();
-                        let widget_height = sc(WIDGET_HEIGHT);
-                        let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
-                        if s.embedded {
-                            let x = tray_left - taskbar_rect.left - widget_width - new_offset;
-                            native_interop::move_window(
+                            let widget_width = total_widget_width();
+                            let max_offset = tray_left - taskbar_rect.left - widget_width;
+                            if new_offset > max_offset {
+                                new_offset = max_offset;
+                            }
+
+                            s.tray_offset = new_offset;
+
+                            let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
+                            let anchor_top = taskbar_rect.top;
+                            let anchor_height = taskbar_height;
+                            let widget_height = sc(WIDGET_HEIGHT);
+                            let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+                            let x = if embedded {
+                                tray_left - taskbar_rect.left - widget_width - new_offset
+                            } else {
+                                tray_left - widget_width - new_offset
+                            };
+                            Some((
                                 hwnd_val,
-                                x,
-                                y - taskbar_rect.top,
-                                widget_width,
-                                widget_height,
-                            );
-                        } else {
-                            let x = tray_left - widget_width - new_offset;
-                            native_interop::move_window(
-                                hwnd_val,
+                                embedded,
                                 x,
                                 y,
+                                taskbar_rect.top,
                                 widget_width,
                                 widget_height,
-                            );
+                            ))
+                        } else {
+                            s.tray_offset = new_offset;
+                            None
                         }
+                    } else {
+                        s.tray_offset = new_offset;
+                        None
+                    }
+                };
+
+                if let Some((hwnd_val, embedded, x, y, taskbar_top, widget_width, widget_height)) =
+                    move_target
+                {
+                    if embedded {
+                        native_interop::move_window(
+                            hwnd_val,
+                            x,
+                            y - taskbar_top,
+                            widget_width,
+                            widget_height,
+                        );
+                    } else {
+                        native_interop::move_window(hwnd_val, x, y, widget_width, widget_height);
                     }
                 }
             }
@@ -2254,6 +2369,7 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.force_notify_auth_error = true;
                         }
                     }
                     render_layered();

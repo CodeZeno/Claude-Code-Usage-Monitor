@@ -34,6 +34,8 @@ pub(super) const STRINGS: Strings = Strings {
     day_suffix: "天",
     hour_suffix: "時",
     minute_suffix: "分",
+    token_expired_title: "驗證錯誤",
+    token_expired_body: "請在終端機中執行 'claude'，然後使用 '/login' 並依照提示操作。完成後，請重新整理或重新啟動此應用程式。",
     second_suffix: "秒",
     quiet_hours: "安靜時刻",
     quiet_start: "開始時間",
