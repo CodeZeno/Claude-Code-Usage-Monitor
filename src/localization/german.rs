@@ -11,6 +11,7 @@ pub(super) const STRINGS: Strings = Strings {
     fifteen_minutes: "15 Minuten",
     one_hour: "1 Stunde",
     settings: "Einstellungen",
+    show_decimals: "Dezimalstellen anzeigen",
     start_with_windows: "Mit Windows starten",
     reset_position: "Position zurücksetzen",
     language: "Sprache",

@@ -121,6 +121,7 @@ pub struct Strings {
     pub fifteen_minutes: &'static str,
     pub one_hour: &'static str,
     pub settings: &'static str,
+    pub show_decimals: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,
     pub language: &'static str,
