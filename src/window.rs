@@ -2217,7 +2217,7 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
-            let (was_dragging, overlays, taskbar_hwnd, snap_target, revert_offset) = {
+            let (was_dragging, overlays, taskbar_hwnd, snap_target, revert_offset, had_regions) = {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     if s.dragging {
@@ -2230,14 +2230,22 @@ unsafe extern "system" fn wnd_proc(
                         let snap = s
                             .hovered_region
                             .and_then(|i| s.overlay_regions.get(i).copied());
+                        let had = !s.overlay_regions.is_empty();
                         s.overlay_regions.clear();
                         s.hovered_region = None;
-                        (true, drained, s.taskbar_hwnd, snap, s.drag_start_offset)
+                        (
+                            true,
+                            drained,
+                            s.taskbar_hwnd,
+                            snap,
+                            s.drag_start_offset,
+                            had,
+                        )
                     } else {
-                        (false, Vec::new(), None, None, 0)
+                        (false, Vec::new(), None, None, 0, false)
                     }
                 } else {
-                    (false, Vec::new(), None, None, 0)
+                    (false, Vec::new(), None, None, 0, false)
                 }
             };
             if was_dragging {
@@ -2247,9 +2255,9 @@ unsafe extern "system" fn wnd_proc(
 
                 if let (Some(taskbar_hwnd), Some(region)) = (taskbar_hwnd, snap_target) {
                     snap_widget_to_region(taskbar_hwnd, &region);
-                } else {
-                    // No valid region under the cursor — revert to where the
-                    // drag started.
+                } else if had_regions {
+                    // Regions existed but the user released over none of them
+                    // — revert to where the drag started.
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -2259,6 +2267,9 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                 }
+                // No regions at all → keep the dragged position (legacy
+                // free-form behavior). `tray_offset` was already updated on
+                // every WM_MOUSEMOVE.
 
                 save_state_settings();
                 // Refresh the UIA cache off the UI thread so the next drag
