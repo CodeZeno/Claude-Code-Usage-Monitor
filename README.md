@@ -107,6 +107,7 @@ What the app sends over the network:
 
 - Requests to Anthropic's Claude endpoints to read your usage and rate-limit information
 - Requests to GitHub only if you use the app's update check / self-update feature
+- If proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` are set, those outbound requests may use that proxy
 
 What the app stores locally:
 
@@ -126,6 +127,7 @@ Notes:
 
 - If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
 - Portable installs can update themselves by downloading the latest release from this repository
+- Proxies should be trusted because proxied Claude requests include your OAuth bearer token inside the TLS connection
 
 ## How It Works
 
