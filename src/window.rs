@@ -106,12 +106,13 @@ const IDM_RESET_POSITION: u16 = 30;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
-const IDM_LANG_SPANISH: u16 = 42;
-const IDM_LANG_FRENCH: u16 = 43;
-const IDM_LANG_GERMAN: u16 = 44;
-const IDM_LANG_JAPANESE: u16 = 45;
-const IDM_LANG_KOREAN: u16 = 46;
-const IDM_LANG_TRADITIONAL_CHINESE: u16 = 47;
+const IDM_LANG_DUTCH: u16 = 42;
+const IDM_LANG_SPANISH: u16 = 43;
+const IDM_LANG_FRENCH: u16 = 44;
+const IDM_LANG_GERMAN: u16 = 45;
+const IDM_LANG_JAPANESE: u16 = 46;
+const IDM_LANG_KOREAN: u16 = 47;
+const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -1940,6 +1941,7 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
+                | IDM_LANG_DUTCH
                 | IDM_LANG_SPANISH
                 | IDM_LANG_FRENCH
                 | IDM_LANG_GERMAN
@@ -1949,6 +1951,7 @@ unsafe extern "system" fn wnd_proc(
                     let language_override = match id {
                         IDM_LANG_SYSTEM => None,
                         IDM_LANG_ENGLISH => Some(LanguageId::English),
+                        IDM_LANG_DUTCH => Some(LanguageId::Dutch),
                         IDM_LANG_SPANISH => Some(LanguageId::Spanish),
                         IDM_LANG_FRENCH => Some(LanguageId::French),
                         IDM_LANG_GERMAN => Some(LanguageId::German),
@@ -2117,6 +2120,7 @@ fn show_context_menu(hwnd: HWND) {
         for language in LanguageId::ALL {
             let id = match language {
                 LanguageId::English => IDM_LANG_ENGLISH,
+                LanguageId::Dutch => IDM_LANG_DUTCH,
                 LanguageId::Spanish => IDM_LANG_SPANISH,
                 LanguageId::French => IDM_LANG_FRENCH,
                 LanguageId::German => IDM_LANG_GERMAN,
