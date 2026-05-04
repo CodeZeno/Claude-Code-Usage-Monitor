@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
@@ -118,6 +118,9 @@ const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
+const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
+
+static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
@@ -1448,6 +1451,29 @@ fn update_display() {
     refresh_usage_texts(s);
 }
 
+fn suppress_tray_reposition_for(duration: Duration) {
+    let mut until = SUPPRESS_TRAY_REPOSITION_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *until = Some(Instant::now() + duration);
+}
+
+fn tray_reposition_is_suppressed() -> bool {
+    let now = Instant::now();
+    let mut until = SUPPRESS_TRAY_REPOSITION_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    match *until {
+        Some(deadline) if now < deadline => true,
+        Some(_) => {
+            *until = None;
+            false
+        }
+        None => false,
+    }
+}
+
 fn position_at_taskbar() {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
@@ -1543,6 +1569,10 @@ unsafe extern "system" fn on_tray_location_changed(
     };
 
     if is_tray {
+        if tray_reposition_is_suppressed() {
+            return;
+        }
+
         let should_reposition = {
             let mut last = LAST_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
             let now = std::time::Instant::now();
@@ -1681,6 +1711,9 @@ unsafe extern "system" fn wnd_proc(
             render_layered();
             schedule_countdown_timer();
             let (pct, tooltip) = tray_icon_data_from_state();
+            suppress_tray_reposition_for(Duration::from_millis(
+                TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS,
+            ));
             tray_icon::update(hwnd, pct, &tooltip);
             LRESULT(0)
         }
