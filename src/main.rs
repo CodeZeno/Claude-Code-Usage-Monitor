@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod diagnose;
+mod highlight;
 mod localization;
 mod models;
 mod native_interop;
@@ -13,6 +14,7 @@ mod window;
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let diagnose_enabled = args.iter().any(|arg| arg == "--diagnose");
+    let debug_render_enabled = args.iter().any(|arg| arg == "--debug-render");
     if diagnose_enabled {
         match diagnose::init() {
             Ok(path) => diagnose::log(format!(
@@ -24,6 +26,10 @@ fn main() {
                 let _ = error;
             }
         }
+    }
+    if debug_render_enabled {
+        highlight::DEBUG_RENDER_ENABLED
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     if let Some(exit_code) = updater::handle_cli_mode(&args) {
