@@ -44,7 +44,7 @@ struct UsageBucket {
 }
 
 pub fn poll() -> Result<UsageData, PollError> {
-    let mut creds = match read_credentials() {
+    let creds = match read_first_credentials() {
         Some(c) => c,
         None => {
             diagnose::log("poll failed: no Claude credentials found");
@@ -52,24 +52,35 @@ pub fn poll() -> Result<UsageData, PollError> {
         }
     };
 
-    if is_token_expired(creds.expires_at) {
-        cli_refresh_token(&creds.source);
-
-        match read_credentials_from_source(&creds.source) {
-            Some(refreshed) => creds = refreshed,
-            None => {
-                diagnose::log("poll failed: credentials still unavailable after refresh attempt");
-                return Err(PollError::NoCredentials);
-            }
-        }
-
-        if is_token_expired(creds.expires_at) {
-            diagnose::log("poll failed: token is still expired after refresh attempt");
-            return Err(PollError::TokenExpired);
-        }
-    }
+    let creds = refresh_or_fallback(creds)?;
 
     fetch_usage_with_fallback(&creds.access_token)
+}
+
+fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError> {
+    loop {
+        if !is_token_expired(creds.expires_at) {
+            return Ok(creds);
+        }
+
+        let source = creds.source.clone();
+        cli_refresh_token(&source);
+
+        match read_credentials_from_source(&source) {
+            Some(refreshed) if !is_token_expired(refreshed.expires_at) => return Ok(refreshed),
+            Some(_) => diagnose::log(format!(
+                "credentials from {source:?} still expired after refresh attempt"
+            )),
+            None => diagnose::log(format!(
+                "credentials from {source:?} unavailable after refresh attempt"
+            )),
+        }
+
+        match read_next_credentials_after(&source) {
+            Some(next) => creds = next,
+            None => return Err(PollError::TokenExpired),
+        }
+    }
 }
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
@@ -245,7 +256,7 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
 
 pub fn credential_watch_snapshot(mode: CredentialWatchMode) -> CredentialWatchSnapshot {
     let sources = match mode {
-        CredentialWatchMode::ActiveSource => read_credentials()
+        CredentialWatchMode::ActiveSource => read_first_credentials()
             .map(|creds| vec![creds.source])
             .unwrap_or_else(all_known_credential_sources),
         CredentialWatchMode::AllSources => all_known_credential_sources(),
@@ -506,20 +517,18 @@ enum CredentialSource {
     Wsl { distro: String },
 }
 
-fn read_credentials() -> Option<Credentials> {
-    let mut candidates = Vec::new();
-
+fn read_first_credentials() -> Option<Credentials> {
     if let Some(creds) = read_windows_credentials() {
-        candidates.push(creds);
+        return Some(creds);
     }
 
     for distro in list_wsl_distros() {
         if let Some(creds) = read_wsl_credentials(&distro) {
-            candidates.push(creds);
+            return Some(creds);
         }
     }
 
-    choose_best_credentials(candidates)
+    None
 }
 
 fn read_windows_credentials() -> Option<Credentials> {
@@ -600,13 +609,30 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
     })
 }
 
-fn choose_best_credentials(mut candidates: Vec<Credentials>) -> Option<Credentials> {
-    if candidates.is_empty() {
-        return None;
+fn read_next_credentials_after(source: &CredentialSource) -> Option<Credentials> {
+    match source {
+        CredentialSource::Windows(_) => {
+            for distro in list_wsl_distros() {
+                if let Some(creds) = read_wsl_credentials(&distro) {
+                    return Some(creds);
+                }
+            }
+        }
+        CredentialSource::Wsl { distro } => {
+            let mut past_current = false;
+            for candidate_distro in list_wsl_distros() {
+                if !past_current {
+                    past_current = candidate_distro == *distro;
+                    continue;
+                }
+                if let Some(creds) = read_wsl_credentials(&candidate_distro) {
+                    return Some(creds);
+                }
+            }
+        }
     }
 
-    candidates.sort_by_key(|creds| is_token_expired(creds.expires_at));
-    candidates.into_iter().next()
+    None
 }
 
 fn list_wsl_distros() -> Vec<String> {
