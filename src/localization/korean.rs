@@ -10,6 +10,9 @@ pub(super) const STRINGS: Strings = Strings {
     five_minutes: "5분",
     fifteen_minutes: "15분",
     one_hour: "1시간",
+    models: "모델",
+    claude_code_model: "Claude Code",
+    codex_model: "Codex",
     settings: "설정",
     start_with_windows: "Windows 시작 시 자동 실행",
     reset_position: "위치 초기화",
@@ -36,5 +39,8 @@ pub(super) const STRINGS: Strings = Strings {
     minute_suffix: "분",
     token_expired_title: "인증 오류",
     token_expired_body: "터미널에서 'claude'를 실행한 다음 '/login'을 사용하고 안내에 따라 진행하세요. 그런 다음 이 앱을 새로 고치거나 다시 시작하세요.",
+    codex_token_expired_title: "Codex 인증 오류",
+    codex_token_expired_body: "터미널에서 'codex'를 실행하고 로그인 안내를 따르세요. 그런 다음 이 앱을 새로 고치거나 다시 시작하세요.",
+    codex_window_title: "Codex 사용량 모니터",
     second_suffix: "초",
 };

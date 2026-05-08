@@ -10,6 +10,9 @@ pub(super) const STRINGS: Strings = Strings {
     five_minutes: "5 minutos",
     fifteen_minutes: "15 minutos",
     one_hour: "1 hora",
+    models: "Modelos",
+    claude_code_model: "Claude Code",
+    codex_model: "Codex",
     settings: "Configuración",
     start_with_windows: "Iniciar con Windows",
     reset_position: "Restablecer posición",
@@ -36,5 +39,8 @@ pub(super) const STRINGS: Strings = Strings {
     minute_suffix: "m",
     token_expired_title: "Error de autenticación",
     token_expired_body: "Ejecuta 'claude' en una terminal, luego usa '/login' y sigue las indicaciones. Después, actualiza o reinicia esta aplicación.",
+    codex_token_expired_title: "Error de autenticacion de Codex",
+    codex_token_expired_body: "Ejecuta 'codex' en una terminal y sigue las indicaciones de inicio de sesion. Despues, actualiza o reinicia esta aplicacion.",
+    codex_window_title: "Monitor de uso de Codex",
     second_suffix: "s",
 };

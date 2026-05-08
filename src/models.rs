@@ -11,3 +11,9 @@ pub struct UsageData {
     pub session: UsageSection,
     pub weekly: UsageSection,
 }
+
+#[derive(Clone, Debug, Default)]
+pub struct AppUsageData {
+    pub claude_code: Option<UsageData>,
+    pub codex: Option<UsageData>,
+}

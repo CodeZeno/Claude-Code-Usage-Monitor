@@ -10,6 +10,9 @@ pub(super) const STRINGS: Strings = Strings {
     five_minutes: "5 minuten",
     fifteen_minutes: "15 minuten",
     one_hour: "1 uur",
+    models: "Modellen",
+    claude_code_model: "Claude Code",
+    codex_model: "Codex",
     settings: "Instellingen",
     start_with_windows: "Opstarten met Windows",
     reset_position: "Positie herstellen",
@@ -36,5 +39,8 @@ pub(super) const STRINGS: Strings = Strings {
     minute_suffix: "m",
     token_expired_title: "Claude Code-authenticatiefout",
     token_expired_body: "Voer 'claude' uit in een terminal, gebruik daarna '/login' en volg de stappen. Ververs of herstart de app daarna.",
+    codex_token_expired_title: "Codex-authenticatiefout",
+    codex_token_expired_body: "Voer 'codex' uit in een terminal en volg de aanmeldstappen. Ververs of herstart de app daarna.",
+    codex_window_title: "Codex-gebruiksmonitor",
     second_suffix: "s",
 };
