@@ -96,6 +96,10 @@ struct AppState {
     weekly_pacing_pct: Option<f64>,
     session_resets_at: Option<std::time::SystemTime>,
     weekly_resets_at: Option<std::time::SystemTime>,
+    codex_session_resets_at: Option<std::time::SystemTime>,
+    codex_weekly_resets_at: Option<std::time::SystemTime>,
+    codex_session_pacing_pct: Option<f64>,
+    codex_weekly_pacing_pct: Option<f64>,
 }
 
 #[derive(Clone, Debug)]
@@ -1537,6 +1541,10 @@ pub fn run() {
                 weekly_pacing_pct: None,
                 session_resets_at: None,
                 weekly_resets_at: None,
+                codex_session_resets_at: None,
+                codex_weekly_resets_at: None,
+                codex_session_pacing_pct: None,
+                codex_weekly_pacing_pct: None,
             });
         }
 
@@ -1664,6 +1672,8 @@ fn render_layered() {
         show_codex,
         session_pacing,
         weekly_pacing,
+        codex_session_pacing,
+        codex_weekly_pacing,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1677,9 +1687,13 @@ fn render_layered() {
                 // If not reset: show frozen usage and time-based pacing.
                 let session_reset_done = quiet && s.session_resets_at.map(|t| t <= now).unwrap_or(false);
                 let weekly_reset_done = quiet && s.weekly_resets_at.map(|t| t <= now).unwrap_or(false);
+                let codex_session_reset_done = quiet && s.codex_session_resets_at.map(|t| t <= now).unwrap_or(false);
+                let codex_weekly_reset_done = quiet && s.codex_weekly_resets_at.map(|t| t <= now).unwrap_or(false);
 
                 let eff_session_pct = if session_reset_done { 0.0 } else { s.session_percent };
                 let eff_weekly_pct = if weekly_reset_done { 0.0 } else { s.weekly_percent };
+                let eff_codex_session_pct = if codex_session_reset_done { 0.0 } else { s.codex_session_percent };
+                let eff_codex_weekly_pct = if codex_weekly_reset_done { 0.0 } else { s.codex_weekly_percent };
 
                 let session_text = if quiet {
                     s.language.strings().quiet_hours.to_string()
@@ -1710,6 +1724,26 @@ fn render_layered() {
                 } else {
                     s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent)
                 };
+                let codex_session_pacing = if quiet {
+                    if !codex_session_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.codex_session_resets_at, 5.0 * 3600.0)
+                            .filter(|&p| p > eff_codex_session_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.codex_session_pacing_pct.filter(|&p| p > s.codex_session_percent)
+                };
+                let codex_weekly_pacing = if quiet {
+                    if !codex_weekly_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.codex_weekly_resets_at, 7.0 * 24.0 * 3600.0)
+                            .filter(|&p| p > eff_codex_weekly_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.codex_weekly_pacing_pct.filter(|&p| p > s.codex_weekly_percent)
+                };
                 (
                     s.hwnd,
                     s.is_dark,
@@ -1719,14 +1753,16 @@ fn render_layered() {
                     session_text,
                     eff_weekly_pct,
                     weekly_text,
-                    s.codex_session_percent,
+                    eff_codex_session_pct,
                     s.codex_session_text.clone(),
-                    s.codex_weekly_percent,
+                    eff_codex_weekly_pct,
                     s.codex_weekly_text.clone(),
                     s.show_claude_code,
                     s.show_codex,
                     session_pacing,
                     weekly_pacing,
+                    codex_session_pacing,
+                    codex_weekly_pacing,
                 )
             }
             None => return,
@@ -1826,6 +1862,8 @@ fn render_layered() {
             &codex_accent,
             session_pacing,
             weekly_pacing,
+            codex_session_pacing,
+            codex_weekly_pacing,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1899,6 +1937,8 @@ fn paint_content(
     codex_accent: &Color,
     session_pacing: Option<f64>,
     weekly_pacing: Option<f64>,
+    codex_session_pacing: Option<f64>,
+    codex_weekly_pacing: Option<f64>,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1993,6 +2033,7 @@ fn paint_content(
             track,
             pacing_color,
             session_pacing,
+            codex_session_pacing,
         );
         draw_row(
             hdc,
@@ -2012,6 +2053,7 @@ fn paint_content(
             track,
             pacing_color,
             weekly_pacing,
+            codex_weekly_pacing,
         );
 
         SelectObject(hdc, old_font);
@@ -2062,6 +2104,12 @@ fn do_poll(send_hwnd: SendHwnd) {
                 if let Some(codex) = data.codex.as_ref() {
                     s.codex_session_percent = codex.session.percentage;
                     s.codex_weekly_percent = codex.weekly.percentage;
+                    s.codex_session_resets_at = codex.session.resets_at;
+                    s.codex_weekly_resets_at = codex.weekly.resets_at;
+                    if s.show_pacing {
+                        s.codex_session_pacing_pct = compute_pacing_pct(codex.session.resets_at, 5.0 * 3600.0);
+                        s.codex_weekly_pacing_pct = compute_pacing_pct(codex.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                    }
                 } else if s.show_codex {
                     s.codex_session_percent = 0.0;
                     s.codex_weekly_percent = 0.0;
@@ -2984,10 +3032,16 @@ unsafe extern "system" fn wnd_proc(
                                         s.session_pacing_pct = compute_pacing_pct(claude_code.session.resets_at, 5.0 * 3600.0);
                                         s.weekly_pacing_pct = compute_pacing_pct(claude_code.weekly.resets_at, 7.0 * 24.0 * 3600.0);
                                     }
+                                    if let Some(codex) = data.codex.as_ref() {
+                                        s.codex_session_pacing_pct = compute_pacing_pct(codex.session.resets_at, 5.0 * 3600.0);
+                                        s.codex_weekly_pacing_pct = compute_pacing_pct(codex.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                                    }
                                 }
                             } else {
                                 s.session_pacing_pct = None;
                                 s.weekly_pacing_pct = None;
+                                s.codex_session_pacing_pct = None;
+                                s.codex_weekly_pacing_pct = None;
                             }
                         }
                     }
@@ -3365,6 +3419,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_codex,
         session_pacing,
         weekly_pacing,
+        codex_session_pacing,
+        codex_weekly_pacing,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3374,9 +3430,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
 
                 let session_reset_done = quiet && s.session_resets_at.map(|t| t <= now).unwrap_or(false);
                 let weekly_reset_done = quiet && s.weekly_resets_at.map(|t| t <= now).unwrap_or(false);
+                let codex_session_reset_done = quiet && s.codex_session_resets_at.map(|t| t <= now).unwrap_or(false);
+                let codex_weekly_reset_done = quiet && s.codex_weekly_resets_at.map(|t| t <= now).unwrap_or(false);
 
                 let eff_session_pct = if session_reset_done { 0.0 } else { s.session_percent };
                 let eff_weekly_pct = if weekly_reset_done { 0.0 } else { s.weekly_percent };
+                let eff_codex_session_pct = if codex_session_reset_done { 0.0 } else { s.codex_session_percent };
+                let eff_codex_weekly_pct = if codex_weekly_reset_done { 0.0 } else { s.codex_weekly_percent };
 
                 let session_text = if quiet {
                     s.language.strings().quiet_hours.to_string()
@@ -3405,6 +3465,26 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 } else {
                     s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent)
                 };
+                let codex_session_pacing = if quiet {
+                    if !codex_session_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.codex_session_resets_at, 5.0 * 3600.0)
+                            .filter(|&p| p > eff_codex_session_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.codex_session_pacing_pct.filter(|&p| p > s.codex_session_percent)
+                };
+                let codex_weekly_pacing = if quiet {
+                    if !codex_weekly_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.codex_weekly_resets_at, 7.0 * 24.0 * 3600.0)
+                            .filter(|&p| p > eff_codex_weekly_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.codex_weekly_pacing_pct.filter(|&p| p > s.codex_weekly_percent)
+                };
                 (
                     s.is_dark,
                     s.language.strings(),
@@ -3412,14 +3492,16 @@ fn paint(hdc: HDC, hwnd: HWND) {
                     session_text,
                     eff_weekly_pct,
                     weekly_text,
-                    s.codex_session_percent,
+                    eff_codex_session_pct,
                     s.codex_session_text.clone(),
-                    s.codex_weekly_percent,
+                    eff_codex_weekly_pct,
                     s.codex_weekly_text.clone(),
                     s.show_claude_code,
                     s.show_codex,
                     session_pacing,
                     weekly_pacing,
+                    codex_session_pacing,
+                    codex_weekly_pacing,
                 )
             }
             None => return,
@@ -3487,6 +3569,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &codex_accent,
             session_pacing,
             weekly_pacing,
+            codex_session_pacing,
+            codex_weekly_pacing,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3515,6 +3599,7 @@ fn draw_row(
     track: &Color,
     pacing_color: &Color,
     pacing_pct: Option<f64>,
+    codex_pacing_pct: Option<f64>,
 ) {
     let seg_h = sc(SEGMENT_H);
     let active_models = active_model_count(show_claude_code, show_codex);
@@ -3576,7 +3661,7 @@ fn draw_row(
                 track,
                 &codex_value_color,
                 pacing_color,
-                None,
+                codex_pacing_pct,
             );
         }
     }
