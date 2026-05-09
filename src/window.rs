@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
@@ -19,14 +19,14 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::UsageData;
+use crate::models::AppUsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_QUIET_BOUNDARY, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
     WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
-use crate::tray_icon;
 use crate::poller;
 use crate::theme;
+use crate::tray_icon;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
@@ -60,8 +60,14 @@ struct AppState {
     session_text: String,
     weekly_percent: f64,
     weekly_text: String,
+    codex_session_percent: f64,
+    codex_session_text: String,
+    codex_weekly_percent: f64,
+    codex_weekly_text: String,
+    show_claude_code: bool,
+    show_codex: bool,
 
-    data: Option<UsageData>,
+    data: Option<AppUsageData>,
 
     poll_interval_ms: u32,
     retry_count: u32,
@@ -114,12 +120,15 @@ const IDM_RESET_POSITION: u16 = 30;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
-const IDM_LANG_SPANISH: u16 = 42;
-const IDM_LANG_FRENCH: u16 = 43;
-const IDM_LANG_GERMAN: u16 = 44;
-const IDM_LANG_JAPANESE: u16 = 45;
-const IDM_LANG_KOREAN: u16 = 46;
-const IDM_LANG_TRADITIONAL_CHINESE: u16 = 47;
+const IDM_LANG_DUTCH: u16 = 42;
+const IDM_LANG_SPANISH: u16 = 43;
+const IDM_LANG_FRENCH: u16 = 44;
+const IDM_LANG_GERMAN: u16 = 45;
+const IDM_LANG_JAPANESE: u16 = 46;
+const IDM_LANG_KOREAN: u16 = 47;
+const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
+const IDM_MODEL_CLAUDE_CODE: u16 = 60;
+const IDM_MODEL_CODEX: u16 = 61;
 
 const IDM_QUIET_SET_TIME: u16 = 62;
 const IDM_QUIET_CLEAR: u16 = 63;
@@ -136,6 +145,9 @@ const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
+const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
+
+static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
@@ -222,6 +234,10 @@ struct SettingsFile {
     quiet_time_end: Option<String>,
     #[serde(default)]
     show_pacing: bool,
+    #[serde(default = "default_show_claude_code")]
+    show_claude_code: bool,
+    #[serde(default = "default_show_codex")]
+    show_codex: bool,
 }
 
 impl Default for SettingsFile {
@@ -235,6 +251,8 @@ impl Default for SettingsFile {
             quiet_time_start: None,
             quiet_time_end: None,
             show_pacing: false,
+            show_claude_code: true,
+            show_codex: false,
         }
     }
 }
@@ -247,12 +265,24 @@ fn default_widget_visible() -> bool {
     true
 }
 
+fn default_show_claude_code() -> bool {
+    true
+}
+
+fn default_show_codex() -> bool {
+    false
+}
+
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
-    serde_json::from_str(&content).unwrap_or_default()
+    let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
+    if !settings.show_claude_code && !settings.show_codex {
+        settings.show_claude_code = true;
+    }
+    settings
 }
 
 fn save_settings(settings: &SettingsFile) {
@@ -279,6 +309,8 @@ fn save_state_settings() {
             quiet_time_start: s.quiet_hours_start.map(|(h, m)| format!("{:02}:{:02}", h, m)),
             quiet_time_end: s.quiet_hours_end.map(|(h, m)| format!("{:02}:{:02}", h, m)),
             show_pacing: s.show_pacing,
+            show_claude_code: s.show_claude_code,
+            show_codex: s.show_codex,
         });
     }
 }
@@ -754,15 +786,62 @@ fn schedule_quiet_boundary_timer(hwnd: HWND) {
     }
 }
 
-fn tray_icon_data_from_state() -> (Option<f64>, String) {
+fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
         Some(s) if s.last_poll_ok => {
-            let tooltip = format!("5h: {} | 7d: {}", s.session_text, s.weekly_text);
-            (Some(s.session_percent), tooltip)
+            let mut icons = Vec::new();
+            if s.show_claude_code {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Claude,
+                    percent: Some(s.session_percent),
+                    tooltip: format!(
+                        "{} 5h: {} | 7d: {}",
+                        s.language.strings().claude_code_model,
+                        s.session_text,
+                        s.weekly_text
+                    ),
+                });
+            }
+            if s.show_codex {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Codex,
+                    percent: Some(s.codex_session_percent),
+                    tooltip: format!(
+                        "{} 5h: {} | 7d: {}",
+                        s.language.strings().codex_model,
+                        s.codex_session_text,
+                        s.codex_weekly_text
+                    ),
+                });
+            }
+            icons
         }
-        _ => (None, "Claude Code Usage Monitor".to_string()),
+        Some(s) => {
+            let mut icons = Vec::new();
+            if s.show_claude_code {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Claude,
+                    percent: None,
+                    tooltip: s.language.strings().window_title.to_string(),
+                });
+            }
+            if s.show_codex {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Codex,
+                    percent: None,
+                    tooltip: s.language.strings().codex_window_title.to_string(),
+                });
+            }
+            icons
+        }
+        None => Vec::new(),
     }
+}
+
+fn sync_tray_icons(hwnd: HWND) {
+    let icons = tray_icon_data_from_state();
+    tray_icon::sync(hwnd, &icons);
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
@@ -836,17 +915,25 @@ fn refresh_usage_texts(state: &mut AppState) {
     }
 
     let strings = state.language.strings();
-    let Some((session_text, weekly_text)) = state.data.as_ref().map(|data| {
-        (
-            poller::format_line(&data.session, strings),
-            poller::format_line(&data.weekly, strings),
-        )
-    }) else {
+    let Some(data) = state.data.as_ref() else {
         return;
     };
 
-    state.session_text = session_text;
-    state.weekly_text = weekly_text;
+    if let Some(claude_code) = data.claude_code.as_ref() {
+        state.session_text = poller::format_line(&claude_code.session, strings);
+        state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+    } else if state.show_claude_code {
+        state.session_text = "!".to_string();
+        state.weekly_text = "!".to_string();
+    }
+
+    if let Some(codex) = data.codex.as_ref() {
+        state.codex_session_text = poller::format_line(&codex.session, strings);
+        state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+    } else if state.show_codex {
+        state.codex_session_text = "!".to_string();
+        state.codex_weekly_text = "!".to_string();
+    }
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1231,19 +1318,74 @@ const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
 const TEXT_WIDTH: i32 = 62;
+const MODEL_RIGHT_MARGIN: i32 = 5;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
-fn total_widget_width() -> i32 {
+fn active_model_count(show_claude_code: bool, show_codex: bool) -> i32 {
+    (show_claude_code as i32 + show_codex as i32).max(1)
+}
+
+fn row_bar_segment_count(active_models: i32) -> i32 {
+    if active_models > 1 {
+        5
+    } else {
+        SEGMENT_COUNT
+    }
+}
+
+fn total_widget_width_for(active_models: i32) -> i32 {
+    let bar_segments = row_bar_segment_count(active_models);
+    let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
+        + sc(BAR_RIGHT_MARGIN)
+        + sc(TEXT_WIDTH);
+
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
         + sc(LABEL_WIDTH)
         + sc(LABEL_RIGHT_MARGIN)
-        + (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * SEGMENT_COUNT
-        - sc(SEGMENT_GAP)
-        + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
+        + model_width * active_models
+        + sc(MODEL_RIGHT_MARGIN) * (active_models - 1)
         + sc(RIGHT_MARGIN)
+}
+
+fn total_widget_width() -> i32 {
+    let active_models = {
+        let state = lock_state();
+        state
+            .as_ref()
+            .map(|s| active_model_count(s.show_claude_code, s.show_codex))
+            .unwrap_or(1)
+    };
+    total_widget_width_for(active_models)
+}
+
+fn claude_accent_color() -> Color {
+    Color::from_hex("#D97757")
+}
+
+fn codex_accent_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#F5F5F5")
+    } else {
+        Color::from_hex("#1F1F1F")
+    }
+}
+
+fn claude_usage_text_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#F09A7A")
+    } else {
+        Color::from_hex("#A94F32")
+    }
+}
+
+fn codex_usage_text_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#F5F5F5")
+    } else {
+        Color::from_hex("#1F1F1F")
+    }
 }
 
 pub fn run() {
@@ -1267,7 +1409,10 @@ pub fn run() {
                 h
             }
             Err(error) => {
-                diagnose::log_error("startup aborted: unable to create single-instance mutex", error);
+                diagnose::log_error(
+                    "startup aborted: unable to create single-instance mutex",
+                    error,
+                );
                 return;
             }
         }
@@ -1304,6 +1449,8 @@ pub fn run() {
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
+        let initial_model_count =
+            active_model_count(settings.show_claude_code, settings.show_codex);
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
             PCWSTR::from_raw(class_name.as_ptr()),
@@ -1311,7 +1458,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width(),
+            total_widget_width_for(initial_model_count),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1358,6 +1505,12 @@ pub fn run() {
                 session_text: "--".to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
+                codex_session_percent: 0.0,
+                codex_session_text: "--".to_string(),
+                codex_weekly_percent: 0.0,
+                codex_weekly_text: "--".to_string(),
+                show_claude_code: settings.show_claude_code,
+                show_codex: settings.show_codex,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1428,9 +1581,8 @@ pub fn run() {
             );
         }
 
-        // Register system tray icon
-        let (tray_pct, tray_tooltip) = tray_icon_data_from_state();
-        tray_icon::add(hwnd, tray_pct, &tray_tooltip);
+        // Register system tray icon(s)
+        sync_tray_icons(hwnd);
 
         // Position and show (only if widget_visible preference is true)
         position_at_taskbar();
@@ -1489,7 +1641,24 @@ pub fn run() {
 /// ClearType sub-pixel font rendering can be used for crisp, OS-native text.
 fn render_layered() {
     refresh_dpi();
-    let (hwnd_val, is_dark, embedded, strings, session_pct, session_text, weekly_pct, weekly_text, session_pacing, weekly_pacing) = {
+    let (
+        hwnd_val,
+        is_dark,
+        embedded,
+        strings,
+        session_pct,
+        session_text,
+        weekly_pct,
+        weekly_text,
+        codex_session_pct,
+        codex_session_text,
+        codex_weekly_pct,
+        codex_weekly_text,
+        show_claude_code,
+        show_codex,
+        session_pacing,
+        weekly_pacing,
+    ) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => {
@@ -1514,6 +1683,12 @@ fn render_layered() {
                     session_text,
                     s.weekly_percent,
                     weekly_text,
+                    s.codex_session_percent,
+                    s.codex_session_text.clone(),
+                    s.codex_weekly_percent,
+                    s.codex_weekly_text.clone(),
+                    s.show_claude_code,
+                    s.show_codex,
                     session_pacing,
                     weekly_pacing,
                 )
@@ -1535,7 +1710,8 @@ fn render_layered() {
     let width = total_widget_width();
     let height = sc(WIDGET_HEIGHT);
 
-    let accent = Color::from_hex("#D97757");
+    let accent = claude_accent_color();
+    let codex_accent = codex_accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1605,6 +1781,13 @@ fn render_layered() {
             &session_text,
             weekly_pct,
             &weekly_text,
+            codex_session_pct,
+            &codex_session_text,
+            codex_weekly_pct,
+            &codex_weekly_text,
+            show_claude_code,
+            show_codex,
+            &codex_accent,
             session_pacing,
             weekly_pacing,
         );
@@ -1671,6 +1854,13 @@ fn paint_content(
     session_text: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    codex_session_pct: f64,
+    codex_session_text: &str,
+    codex_weekly_pct: f64,
+    codex_weekly_text: &str,
+    show_claude_code: bool,
+    show_codex: bool,
+    codex_accent: &Color,
     session_pacing: Option<f64>,
     weekly_pacing: Option<f64>,
 ) {
@@ -1753,10 +1943,17 @@ fn paint_content(
             hdc,
             content_x,
             row1_y,
+            is_dark,
+            text_color,
             strings.session_window,
             session_pct,
             session_text,
+            codex_session_pct,
+            codex_session_text,
+            show_claude_code,
+            show_codex,
             accent,
+            codex_accent,
             track,
             pacing_color,
             session_pacing,
@@ -1765,10 +1962,17 @@ fn paint_content(
             hdc,
             content_x,
             row2_y,
+            is_dark,
+            text_color,
             strings.weekly_window,
             weekly_pct,
             weekly_text,
+            codex_weekly_pct,
+            codex_weekly_text,
+            show_claude_code,
+            show_codex,
             accent,
+            codex_accent,
             track,
             pacing_color,
             weekly_pacing,
@@ -1789,18 +1993,38 @@ fn compute_pacing_pct(resets_at: Option<std::time::SystemTime>, window_secs: f64
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    match poller::poll() {
+    let (show_claude_code, show_codex) = {
+        let state = lock_state();
+        state
+            .as_ref()
+            .map(|s| (s.show_claude_code, s.show_codex))
+            .unwrap_or((true, false))
+    };
+
+    match poller::poll(show_claude_code, show_codex) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
-                s.session_percent = data.session.percentage;
-                s.weekly_percent = data.weekly.percentage;
-                if s.show_pacing {
-                    s.session_pacing_pct = compute_pacing_pct(data.session.resets_at, 5.0 * 3600.0);
-                    s.weekly_pacing_pct = compute_pacing_pct(data.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                if let Some(claude_code) = data.claude_code.as_ref() {
+                    s.session_percent = claude_code.session.percentage;
+                    s.weekly_percent = claude_code.weekly.percentage;
+                    if s.show_pacing {
+                        s.session_pacing_pct = compute_pacing_pct(claude_code.session.resets_at, 5.0 * 3600.0);
+                        s.weekly_pacing_pct = compute_pacing_pct(claude_code.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                    }
+                } else if s.show_claude_code {
+                    s.session_percent = 0.0;
+                    s.weekly_percent = 0.0;
+                }
+                if let Some(codex) = data.codex.as_ref() {
+                    s.codex_session_percent = codex.session.percentage;
+                    s.codex_weekly_percent = codex.weekly.percentage;
+                } else if s.show_codex {
+                    s.codex_session_percent = 0.0;
+                    s.codex_weekly_percent = 0.0;
                 }
                 // Stop fast-poll if reset data is now fresh
-                if !poller::is_past_reset(&data) {
+                if !poller::app_is_past_reset(&data) {
                     unsafe {
                         let _ = KillTimer(hwnd, TIMER_RESET_POLL);
                     }
@@ -1856,8 +2080,10 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_error_paused_polling = true;
                             s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
-                            s.session_text = "⚠".to_string();
-                            s.weekly_text = "⚠".to_string();
+                            s.session_text = "!".to_string();
+                            s.weekly_text = "!".to_string();
+                            s.codex_session_text = "!".to_string();
+                            s.codex_weekly_text = "!".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1874,9 +2100,12 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot.clear();
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.codex_session_text = "...".to_string();
+                            s.codex_weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
-                            let backoff = RETRY_BASE_MS
-                                .saturating_mul(1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX));
+                            let backoff = RETRY_BASE_MS.saturating_mul(
+                                1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
+                            );
                             let retry_ms = backoff.min(s.poll_interval_ms);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_RESET_POLL);
@@ -1889,16 +2118,28 @@ fn do_poll(send_hwnd: SendHwnd) {
             };
 
             if notify_auth_error {
-                let strings = {
+                let balloon = {
                     let state = lock_state();
-                    state.as_ref().map(|s| s.language.strings())
+                    state.as_ref().map(|s| {
+                        if s.show_claude_code {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Claude,
+                                s.language.strings().token_expired_title,
+                                s.language.strings().token_expired_body,
+                            )
+                        } else {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Codex,
+                                s.language.strings().codex_token_expired_title,
+                                s.language.strings().codex_token_expired_body,
+                            )
+                        }
+                    })
                 };
-                if let Some(strings) = strings {
-                    tray_icon::notify_balloon(
-                        hwnd,
-                        strings.token_expired_title,
-                        strings.token_expired_body,
-                    );
+                if let Some((_strings, kind, title, body)) = balloon {
+                    tray_icon::notify_balloon(hwnd, kind, title, body);
                 }
             }
 
@@ -1931,21 +2172,27 @@ fn schedule_countdown_timer() {
     };
 
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if poller::is_past_reset(data) {
+    if poller::app_is_past_reset(data) {
         unsafe {
             SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
         }
     }
 
-    let session_delay = poller::time_until_display_change(data.session.resets_at);
-    let weekly_delay = poller::time_until_display_change(data.weekly.resets_at);
-
-    let min_delay = match (session_delay, weekly_delay) {
-        (Some(a), Some(b)) => Some(a.min(b)),
-        (Some(a), None) => Some(a),
-        (None, Some(b)) => Some(b),
-        (None, None) => None,
-    };
+    let delays = [
+        data.claude_code
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+        data.claude_code
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+        data.codex
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+        data.codex
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+    ];
+    let min_delay = delays.into_iter().flatten().min();
 
     let ms = min_delay
         .unwrap_or(Duration::from_secs(60))
@@ -1996,6 +2243,29 @@ fn update_display() {
     }
 
     refresh_usage_texts(s);
+}
+
+fn suppress_tray_reposition_for(duration: Duration) {
+    let mut until = SUPPRESS_TRAY_REPOSITION_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    *until = Some(Instant::now() + duration);
+}
+
+fn tray_reposition_is_suppressed() -> bool {
+    let now = Instant::now();
+    let mut until = SUPPRESS_TRAY_REPOSITION_UNTIL
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+
+    match *until {
+        Some(deadline) if now < deadline => true,
+        Some(_) => {
+            *until = None;
+            false
+        }
+        None => false,
+    }
 }
 
 fn position_at_taskbar() {
@@ -2093,6 +2363,10 @@ unsafe extern "system" fn on_tray_location_changed(
     };
 
     if is_tray {
+        if tray_reposition_is_suppressed() {
+            return;
+        }
+
         let should_reposition = {
             let mut last = LAST_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
             let now = std::time::Instant::now();
@@ -2162,15 +2436,13 @@ unsafe extern "system" fn wnd_proc(
                     if !is_quiet_time() {
                         let auth_watch = {
                             let state = lock_state();
-                            state
-                                .as_ref()
-                                .map(|s| {
-                                    (
-                                        s.auth_error_paused_polling,
-                                        s.auth_watch_mode,
-                                        s.auth_watch_snapshot.clone(),
-                                    )
-                                })
+                            state.as_ref().map(|s| {
+                                (
+                                    s.auth_error_paused_polling,
+                                    s.auth_watch_mode,
+                                    s.auth_watch_snapshot.clone(),
+                                )
+                            })
                         };
                         match auth_watch {
                             Some((true, watch_mode, previous_snapshot)) => {
@@ -2178,16 +2450,17 @@ unsafe extern "system" fn wnd_proc(
                                 if current_snapshot != previous_snapshot {
                                     let mut state = lock_state();
                                     if let Some(s) = state.as_mut() {
-                                        if s.auth_error_paused_polling && s.auth_watch_mode == watch_mode
+                                        if s.auth_error_paused_polling
+                                            && s.auth_watch_mode == watch_mode
                                         {
                                             s.auth_watch_snapshot = current_snapshot;
                                         }
+                                        drop(state);
+                                        let sh = SendHwnd::from_hwnd(hwnd);
+                                        std::thread::spawn(move || {
+                                            do_poll(sh);
+                                        });
                                     }
-                                    drop(state);
-                                    let sh = SendHwnd::from_hwnd(hwnd);
-                                    std::thread::spawn(move || {
-                                        do_poll(sh);
-                                    });
                                 }
                             }
                             Some((false, _, _)) => {
@@ -2236,8 +2509,10 @@ unsafe extern "system" fn wnd_proc(
             check_language_change();
             render_layered();
             schedule_countdown_timer();
-            let (pct, tooltip) = tray_icon_data_from_state();
-            tray_icon::update(hwnd, pct, &tooltip);
+            suppress_tray_reposition_for(Duration::from_millis(
+                TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS,
+            ));
+            sync_tray_icons(hwnd);
             LRESULT(0)
         }
         WM_APP_UPDATE_CHECK_COMPLETE => {
@@ -2319,7 +2594,8 @@ unsafe extern "system" fn wnd_proc(
                             if let Some(tray_hwnd) =
                                 native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
                             {
-                                if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd)
+                                if let Some(tray_rect) =
+                                    native_interop::get_window_rect_safe(tray_hwnd)
                                 {
                                     tray_left = tray_rect.left;
                                 }
@@ -2413,6 +2689,8 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.codex_session_text = "...".to_string();
+                            s.codex_weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
                         }
                     }
@@ -2495,8 +2773,41 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
+                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            match id {
+                                IDM_MODEL_CLAUDE_CODE => {
+                                    if s.show_codex || !s.show_claude_code {
+                                        s.show_claude_code = !s.show_claude_code;
+                                    }
+                                }
+                                IDM_MODEL_CODEX => {
+                                    if s.show_claude_code || !s.show_codex {
+                                        s.show_codex = !s.show_codex;
+                                    }
+                                }
+                                _ => {}
+                            }
+                            s.session_text = "...".to_string();
+                            s.weekly_text = "...".to_string();
+                            s.codex_session_text = "...".to_string();
+                            s.codex_weekly_text = "...".to_string();
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                    sync_tray_icons(hwnd);
+                    let sh = SendHwnd::from_hwnd(hwnd);
+                    std::thread::spawn(move || {
+                        do_poll(sh);
+                    });
+                }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
+                | IDM_LANG_DUTCH
                 | IDM_LANG_SPANISH
                 | IDM_LANG_FRENCH
                 | IDM_LANG_GERMAN
@@ -2506,6 +2817,7 @@ unsafe extern "system" fn wnd_proc(
                     let language_override = match id {
                         IDM_LANG_SYSTEM => None,
                         IDM_LANG_ENGLISH => Some(LanguageId::English),
+                        IDM_LANG_DUTCH => Some(LanguageId::Dutch),
                         IDM_LANG_SPANISH => Some(LanguageId::Spanish),
                         IDM_LANG_FRENCH => Some(LanguageId::French),
                         IDM_LANG_GERMAN => Some(LanguageId::German),
@@ -2567,8 +2879,10 @@ unsafe extern "system" fn wnd_proc(
                                 // Compute immediately from cached data so the indicator
                                 // appears at once without waiting for the next poll.
                                 if let Some(data) = &s.data {
-                                    s.session_pacing_pct = compute_pacing_pct(data.session.resets_at, 5.0 * 3600.0);
-                                    s.weekly_pacing_pct = compute_pacing_pct(data.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                                    if let Some(claude_code) = data.claude_code.as_ref() {
+                                        s.session_pacing_pct = compute_pacing_pct(claude_code.session.resets_at, 5.0 * 3600.0);
+                                        s.weekly_pacing_pct = compute_pacing_pct(claude_code.weekly.resets_at, 7.0 * 24.0 * 3600.0);
+                                    }
                                 }
                             } else {
                                 s.session_pacing_pct = None;
@@ -2606,7 +2920,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
-            tray_icon::remove(hwnd);
+            tray_icon::remove_all(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
         }
@@ -2627,6 +2941,8 @@ fn show_context_menu(hwnd: HWND) {
             quiet_hours_start,
             quiet_hours_end,
             show_pacing,
+            show_claude_code,
+            show_codex,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2641,6 +2957,8 @@ fn show_context_menu(hwnd: HWND) {
                     s.quiet_hours_start,
                     s.quiet_hours_end,
                     s.show_pacing,
+                    s.show_claude_code,
+                    s.show_codex,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2652,6 +2970,8 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     None::<(u8, u8)>,
                     None::<(u8, u8)>,
+                    false,
+                    true,
                     false,
                 ),
             }
@@ -2696,6 +3016,42 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             freq_menu.0 as usize,
             PCWSTR::from_raw(freq_label.as_ptr()),
+        );
+
+        // Models submenu
+        let models_menu = CreatePopupMenu().unwrap();
+        let claude_model = native_interop::wide_str(strings.claude_code_model);
+        let claude_flags = if show_claude_code {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            models_menu,
+            claude_flags,
+            IDM_MODEL_CLAUDE_CODE as usize,
+            PCWSTR::from_raw(claude_model.as_ptr()),
+        );
+
+        let codex_model = native_interop::wide_str(strings.codex_model);
+        let codex_flags = if show_codex {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            models_menu,
+            codex_flags,
+            IDM_MODEL_CODEX as usize,
+            PCWSTR::from_raw(codex_model.as_ptr()),
+        );
+
+        let models_label = native_interop::wide_str(strings.models);
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            models_menu.0 as usize,
+            PCWSTR::from_raw(models_label.as_ptr()),
         );
 
         // Settings submenu
@@ -2802,6 +3158,7 @@ fn show_context_menu(hwnd: HWND) {
         for lang in LanguageId::ALL {
             let id = match lang {
                 LanguageId::English => IDM_LANG_ENGLISH,
+                LanguageId::Dutch => IDM_LANG_DUTCH,
                 LanguageId::Spanish => IDM_LANG_SPANISH,
                 LanguageId::French => IDM_LANG_FRENCH,
                 LanguageId::German => IDM_LANG_GERMAN,
@@ -2836,8 +3193,10 @@ fn show_context_menu(hwnd: HWND) {
         let version_label =
             version_action_label(strings, language, install_channel, &update_status);
         let version_str = native_interop::wide_str(&version_label);
-        let version_flags = if matches!(update_status, UpdateStatus::Checking | UpdateStatus::Applying)
-        {
+        let version_flags = if matches!(
+            update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        ) {
             MF_GRAYED
         } else {
             MENU_ITEM_FLAGS(0)
@@ -2858,7 +3217,11 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         let widget_label = native_interop::wide_str(strings.show_widget);
-        let widget_flags = if widget_visible { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let widget_flags = if widget_visible {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
         let _ = AppendMenuW(
             menu,
             widget_flags,
@@ -2886,7 +3249,22 @@ fn show_context_menu(hwnd: HWND) {
 
 /// Paint for non-embedded fallback (normal WM_PAINT path)
 fn paint(hdc: HDC, hwnd: HWND) {
-    let (is_dark, strings, session_pct, session_text, weekly_pct, weekly_text, session_pacing, weekly_pacing) = {
+    let (
+        is_dark,
+        strings,
+        session_pct,
+        session_text,
+        weekly_pct,
+        weekly_text,
+        codex_session_pct,
+        codex_session_text,
+        codex_weekly_pct,
+        codex_weekly_text,
+        show_claude_code,
+        show_codex,
+        session_pacing,
+        weekly_pacing,
+    ) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => {
@@ -2907,6 +3285,12 @@ fn paint(hdc: HDC, hwnd: HWND) {
                     session_text,
                     s.weekly_percent,
                     weekly_text,
+                    s.codex_session_percent,
+                    s.codex_session_text.clone(),
+                    s.codex_weekly_percent,
+                    s.codex_weekly_text.clone(),
+                    s.show_claude_code,
+                    s.show_codex,
                     session_pacing,
                     weekly_pacing,
                 )
@@ -2915,7 +3299,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
         }
     };
 
-    let accent = Color::from_hex("#D97757");
+    let accent = claude_accent_color();
+    let codex_accent = codex_accent_color(is_dark);
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -2966,6 +3351,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &session_text,
             weekly_pct,
             &weekly_text,
+            codex_session_pct,
+            &codex_session_text,
+            codex_weekly_pct,
+            &codex_weekly_text,
+            show_claude_code,
+            show_codex,
+            &codex_accent,
             session_pacing,
             weekly_pacing,
         );
@@ -2982,20 +3374,38 @@ fn draw_row(
     hdc: HDC,
     x: i32,
     y: i32,
+    is_dark: bool,
+    text_color: &Color,
     label: &str,
-    percent: f64,
-    text: &str,
-    accent: &Color,
+    claude_percent: f64,
+    claude_text: &str,
+    codex_percent: f64,
+    codex_text: &str,
+    show_claude_code: bool,
+    show_codex: bool,
+    claude_accent: &Color,
+    codex_accent: &Color,
     track: &Color,
     pacing_color: &Color,
     pacing_pct: Option<f64>,
 ) {
-    let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
-    let seg_gap = sc(SEGMENT_GAP);
-    let corner_r = sc(CORNER_RADIUS);
+    let active_models = active_model_count(show_claude_code, show_codex);
+    let segment_count = row_bar_segment_count(active_models);
+    let use_model_text_colors = show_claude_code && show_codex;
+    let claude_value_color = if use_model_text_colors {
+        claude_usage_text_color(is_dark)
+    } else {
+        *text_color
+    };
+    let codex_value_color = if use_model_text_colors {
+        codex_usage_text_color(is_dark)
+    } else {
+        *text_color
+    };
 
     unsafe {
+        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
         let mut label_wide: Vec<u16> = label.encode_utf16().collect();
         let mut label_rect = RECT {
             left: x,
@@ -3010,15 +3420,73 @@ fn draw_row(
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
 
-        let bar_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
-        let orange_end = percent.clamp(0.0, 100.0);
-        // pacing_pct is already filtered (None when orange >= pacing) by the caller
-        let green_end = pacing_pct.unwrap_or(orange_end);
+        let mut model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
+        if show_claude_code {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                claude_percent,
+                claude_text,
+                claude_accent,
+                track,
+                &claude_value_color,
+                pacing_color,
+                pacing_pct,
+            );
+            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_codex {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                codex_percent,
+                codex_text,
+                codex_accent,
+                track,
+                &codex_value_color,
+                pacing_color,
+                None,
+            );
+        }
+    }
+}
 
-        for i in 0..SEGMENT_COUNT {
+fn model_usage_width(segment_count: i32) -> i32 {
+    (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
+        + sc(BAR_RIGHT_MARGIN)
+        + sc(TEXT_WIDTH)
+}
+
+fn draw_usage_bar(
+    hdc: HDC,
+    bar_x: i32,
+    y: i32,
+    segment_count: i32,
+    percent: f64,
+    text: &str,
+    accent: &Color,
+    track: &Color,
+    text_color: &Color,
+    pacing_color: &Color,
+    pacing_pct: Option<f64>,
+) {
+    let seg_w = sc(SEGMENT_W);
+    let seg_h = sc(SEGMENT_H);
+    let seg_gap = sc(SEGMENT_GAP);
+    let corner_r = sc(CORNER_RADIUS);
+
+    unsafe {
+        let percent_clamped = percent.clamp(0.0, 100.0);
+        let segment_percent = 100.0 / segment_count as f64;
+
+        for i in 0..segment_count {
             let seg_x = bar_x + i * (seg_w + seg_gap);
-            let seg_start = (i as f64) * 10.0;
-            let seg_end = seg_start + 10.0;
+            let seg_start = (i as f64) * segment_percent;
+            let seg_end = seg_start + segment_percent;
 
             let seg_rect = RECT {
                 left: seg_x,
@@ -3026,6 +3494,10 @@ fn draw_row(
                 right: seg_x + seg_w,
                 bottom: y + seg_h,
             };
+
+            let orange_end = percent_clamped;
+            // pacing_pct is already filtered (None when orange >= pacing) by the caller
+            let green_end = pacing_pct.unwrap_or(orange_end);
 
             // Step 1: draw gray base for the entire segment
             draw_rounded_rect(hdc, &seg_rect, track, corner_r);
@@ -3073,7 +3545,7 @@ fn draw_row(
             }
         }
 
-        let text_x = bar_x + SEGMENT_COUNT * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
+        let text_x = bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
         let mut text_wide: Vec<u16> = text.encode_utf16().collect();
         let mut text_rect = RECT {
             left: text_x,
@@ -3081,6 +3553,7 @@ fn draw_row(
             right: text_x + sc(TEXT_WIDTH),
             bottom: y + seg_h,
         };
+        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
         let _ = DrawTextW(
             hdc,
             &mut text_wide,

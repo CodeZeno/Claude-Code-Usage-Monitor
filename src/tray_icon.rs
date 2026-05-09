@@ -1,16 +1,17 @@
+use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NIIF_WARNING, NOTIFYICONDATAW, Shell_NotifyIconW,
+    ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING,
+    NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
-use windows::core::PCWSTR;
 
 use crate::native_interop::{self, Color, WM_APP_TRAY};
 
-const TRAY_ICON_ID: u32 = 1;
+const CLAUDE_TRAY_ICON_ID: u32 = 1;
+const CODEX_TRAY_ICON_ID: u32 = 2;
 
 /// Menu item ID for toggling widget visibility (used by window.rs context menu).
 pub const IDM_TOGGLE_WIDGET: u16 = 50;
@@ -20,6 +21,27 @@ pub enum TrayAction {
     None,
     ToggleWidget,
     ShowContextMenu,
+}
+
+#[derive(Clone, Copy)]
+pub enum TrayIconKind {
+    Claude,
+    Codex,
+}
+
+pub struct TrayIconData {
+    pub kind: TrayIconKind,
+    pub percent: Option<f64>,
+    pub tooltip: String,
+}
+
+impl TrayIconKind {
+    fn id(self) -> u32 {
+        match self {
+            Self::Claude => CLAUDE_TRAY_ICON_ID,
+            Self::Codex => CODEX_TRAY_ICON_ID,
+        }
+    }
 }
 
 fn lerp_channel(start: u8, end: u8, t: f64) -> u8 {
@@ -60,10 +82,19 @@ fn interpolated_fill(percent: f64) -> Color {
     stops[stops.len() - 1].1
 }
 
+fn codex_fill(percent: f64) -> Color {
+    if percent >= 90.0 {
+        Color::from_hex("#FFFFFF")
+    } else {
+        Color::from_hex("#111111")
+    }
+}
+
 /// Create a rounded-rectangle tray icon badge showing the usage percentage.
-/// `percent` = None means "no data/loading" and uses the embedded app icon.
-pub fn create_icon(percent: Option<f64>) -> HICON {
-    if percent.is_none() {
+/// For Claude, `percent` = None uses the embedded app icon as the loading state.
+/// For Codex, `percent` = None uses a black/white Codex placeholder badge.
+pub fn create_icon(kind: TrayIconKind, percent: Option<f64>) -> HICON {
+    if matches!(kind, TrayIconKind::Claude) && percent.is_none() {
         let app_icon = load_embedded_app_icon();
         if !app_icon.is_invalid() {
             return app_icon;
@@ -73,14 +104,33 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
     let size = 64_i32;
     let margin = 0_i32;
     let radius = 2_i32;
-    let outline = 0_i32;
+    let outline = if matches!(kind, TrayIconKind::Codex) {
+        3_i32
+    } else {
+        0_i32
+    };
 
-    let fill = interpolated_fill(percent.unwrap_or(0.0));
-    let text_col = Color::from_hex("#FFFFFF");
+    let fill = match kind {
+        TrayIconKind::Claude => interpolated_fill(percent.unwrap_or(0.0)),
+        TrayIconKind::Codex => codex_fill(percent.unwrap_or(0.0)),
+    };
+    let text_col = match kind {
+        TrayIconKind::Claude => Color::from_hex("#FFFFFF"),
+        TrayIconKind::Codex if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
+        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
+    };
+    let outline_col = match kind {
+        TrayIconKind::Claude => fill,
+        TrayIconKind::Codex if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
+        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
+    };
 
     let display_text = match percent {
         Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
-        None => String::new(),
+        None => match kind {
+            TrayIconKind::Claude => String::new(),
+            TrayIconKind::Codex => "C".to_string(),
+        },
     };
 
     let font_h = match display_text.len() {
@@ -107,8 +157,8 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         };
 
         let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let dib = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0)
-            .unwrap_or_default();
+        let dib =
+            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
 
         if dib.is_invalid() {
             let _ = DeleteDC(mem_dc);
@@ -119,8 +169,7 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         let old_bmp = SelectObject(mem_dc, dib);
 
         // Zero-fill (transparent background)
-        let pixel_data =
-            std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
+        let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
         for px in pixel_data.iter_mut() {
             *px = 0;
         }
@@ -129,7 +178,22 @@ pub fn create_icon(percent: Option<f64>) -> HICON {
         let null_pen = GetStockObject(NULL_PEN);
         let old_pen = SelectObject(mem_dc, null_pen);
 
-        // Fill rounded rect
+        if outline > 0 {
+            let br_outline = CreateSolidBrush(COLORREF(outline_col.to_colorref()));
+            let old_brush = SelectObject(mem_dc, br_outline);
+            let _ = RoundRect(
+                mem_dc,
+                margin,
+                margin,
+                size - margin + 1,
+                size - margin + 1,
+                (radius + 1) * 2,
+                (radius + 1) * 2,
+            );
+            SelectObject(mem_dc, old_brush);
+            let _ = DeleteObject(br_outline);
+        }
+
         let br_fill = CreateSolidBrush(COLORREF(fill.to_colorref()));
         let old_brush = SelectObject(mem_dc, br_fill);
         let _ = RoundRect(
@@ -251,12 +315,12 @@ fn load_embedded_app_icon() -> HICON {
 
 /// Show a Windows balloon notification from the tray icon.
 /// Used to alert the user when re-authentication is required.
-pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
+pub fn notify_balloon(hwnd: HWND, kind: TrayIconKind, title: &str, message: &str) {
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = TRAY_ICON_ID;
+        nid.uID = kind.id();
         nid.uFlags = NIF_INFO;
         nid.dwInfoFlags = NIIF_WARNING;
         copy_wide(title, &mut nid.szInfoTitle);
@@ -279,13 +343,13 @@ fn copy_wide_256(s: &str, buf: &mut [u16; 256]) {
 }
 
 /// Register the tray icon with the shell.
-pub fn add(hwnd: HWND, percent: Option<f64>, tooltip: &str) {
-    let hicon = create_icon(percent);
+pub fn add(hwnd: HWND, kind: TrayIconKind, percent: Option<f64>, tooltip: &str) {
+    let hicon = create_icon(kind, percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = TRAY_ICON_ID;
+        nid.uID = kind.id();
         nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_APP_TRAY;
         nid.hIcon = hicon;
@@ -298,13 +362,13 @@ pub fn add(hwnd: HWND, percent: Option<f64>, tooltip: &str) {
 }
 
 /// Update the tray icon colour and tooltip to reflect current usage.
-pub fn update(hwnd: HWND, percent: Option<f64>, tooltip: &str) {
-    let hicon = create_icon(percent);
+pub fn update(hwnd: HWND, kind: TrayIconKind, percent: Option<f64>, tooltip: &str) {
+    let hicon = create_icon(kind, percent);
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = TRAY_ICON_ID;
+        nid.uID = kind.id();
         nid.uFlags = NIF_ICON | NIF_TIP;
         nid.hIcon = hicon;
         copy_to_tip(tooltip, &mut nid.szTip);
@@ -316,14 +380,42 @@ pub fn update(hwnd: HWND, percent: Option<f64>, tooltip: &str) {
 }
 
 /// Remove the tray icon from the shell.
-pub fn remove(hwnd: HWND) {
+pub fn remove(hwnd: HWND, kind: TrayIconKind) {
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = TRAY_ICON_ID;
+        nid.uID = kind.id();
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
+}
+
+pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
+    let show_claude = icons
+        .iter()
+        .find(|icon| matches!(icon.kind, TrayIconKind::Claude));
+    let show_codex = icons
+        .iter()
+        .find(|icon| matches!(icon.kind, TrayIconKind::Codex));
+
+    if let Some(icon) = show_claude {
+        add(hwnd, icon.kind, icon.percent, &icon.tooltip);
+        update(hwnd, icon.kind, icon.percent, &icon.tooltip);
+    } else {
+        remove(hwnd, TrayIconKind::Claude);
+    }
+
+    if let Some(icon) = show_codex {
+        add(hwnd, icon.kind, icon.percent, &icon.tooltip);
+        update(hwnd, icon.kind, icon.percent, &icon.tooltip);
+    } else {
+        remove(hwnd, TrayIconKind::Codex);
+    }
+}
+
+pub fn remove_all(hwnd: HWND) {
+    remove(hwnd, TrayIconKind::Claude);
+    remove(hwnd, TrayIconKind::Codex);
 }
 
 /// Interpret a tray callback message and return the action to take.

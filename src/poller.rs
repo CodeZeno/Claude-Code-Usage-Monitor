@@ -7,10 +7,11 @@ use std::os::windows::process::CommandExt;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{UsageData, UsageSection};
+use crate::models::{AppUsageData, UsageData, UsageSection};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku-4-5-20251001"];
@@ -43,8 +44,58 @@ struct UsageBucket {
     resets_at: Option<String>,
 }
 
-pub fn poll() -> Result<UsageData, PollError> {
-    let mut creds = match read_credentials() {
+#[derive(Deserialize)]
+struct CodexAuthFile {
+    tokens: Option<CodexTokenData>,
+}
+
+#[derive(Clone, Deserialize)]
+struct CodexTokenData {
+    access_token: String,
+    account_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct CodexUsageResponse {
+    rate_limit: Option<Option<Box<CodexRateLimitDetails>>>,
+}
+
+#[derive(Deserialize)]
+struct CodexRateLimitDetails {
+    primary_window: Option<Option<Box<CodexRateLimitWindow>>>,
+    secondary_window: Option<Option<Box<CodexRateLimitWindow>>>,
+}
+
+#[derive(Deserialize)]
+struct CodexRateLimitWindow {
+    used_percent: f64,
+    reset_at: i64,
+}
+
+pub fn poll(show_claude_code: bool, show_codex: bool) -> Result<AppUsageData, PollError> {
+    let mut data = AppUsageData::default();
+
+    if show_claude_code {
+        data.claude_code = Some(poll_claude_code()?);
+    }
+
+    if show_codex {
+        match poll_codex() {
+            Ok(codex) => data.codex = Some(codex),
+            Err(error) if !show_claude_code => return Err(error),
+            Err(error) => diagnose::log(format!("Codex usage poll failed: {error:?}")),
+        }
+    }
+
+    if data.claude_code.is_none() && data.codex.is_none() {
+        Err(PollError::RequestFailed)
+    } else {
+        Ok(data)
+    }
+}
+
+fn poll_claude_code() -> Result<UsageData, PollError> {
+    let creds = match read_first_credentials() {
         Some(c) => c,
         None => {
             diagnose::log("poll failed: no Claude credentials found");
@@ -52,24 +103,55 @@ pub fn poll() -> Result<UsageData, PollError> {
         }
     };
 
-    if is_token_expired(creds.expires_at) {
-        cli_refresh_token(&creds.source);
-
-        match read_credentials_from_source(&creds.source) {
-            Some(refreshed) => creds = refreshed,
-            None => {
-                diagnose::log("poll failed: credentials still unavailable after refresh attempt");
-                return Err(PollError::NoCredentials);
-            }
-        }
-
-        if is_token_expired(creds.expires_at) {
-            diagnose::log("poll failed: token is still expired after refresh attempt");
-            return Err(PollError::TokenExpired);
-        }
-    }
+    let creds = refresh_or_fallback(creds)?;
 
     fetch_usage_with_fallback(&creds.access_token)
+}
+
+fn poll_codex() -> Result<UsageData, PollError> {
+    let creds = match read_codex_credentials() {
+        Some(creds) => creds,
+        None => {
+            diagnose::log("Codex usage poll failed: no Codex credentials found");
+            return Err(PollError::NoCredentials);
+        }
+    };
+
+    match fetch_codex_usage(&creds.access_token, creds.account_id.as_deref()) {
+        Ok(data) => Ok(data),
+        Err(PollError::AuthRequired) => {
+            cli_refresh_codex_token();
+            let refreshed = read_codex_credentials().ok_or(PollError::TokenExpired)?;
+            fetch_codex_usage(&refreshed.access_token, refreshed.account_id.as_deref())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError> {
+    loop {
+        if !is_token_expired(creds.expires_at) {
+            return Ok(creds);
+        }
+
+        let source = creds.source.clone();
+        cli_refresh_token(&source);
+
+        match read_credentials_from_source(&source) {
+            Some(refreshed) if !is_token_expired(refreshed.expires_at) => return Ok(refreshed),
+            Some(_) => diagnose::log(format!(
+                "credentials from {source:?} still expired after refresh attempt"
+            )),
+            None => diagnose::log(format!(
+                "credentials from {source:?} unavailable after refresh attempt"
+            )),
+        }
+
+        match read_next_credentials_after(&source) {
+            Some(next) => creds = next,
+            None => return Err(PollError::TokenExpired),
+        }
+    }
 }
 
 /// Invoke the Claude CLI with a minimal prompt to force its internal
@@ -160,6 +242,50 @@ fn cli_refresh_wsl_token(distro: &str) {
     wait_for_refresh(&mut child);
 }
 
+fn cli_refresh_codex_token() {
+    let codex_path = resolve_windows_codex_path();
+    let is_cmd = codex_path.to_lowercase().ends_with(".cmd");
+    let is_ps1 = codex_path.to_lowercase().ends_with(".ps1");
+    diagnose::log(format!(
+        "attempting Windows Codex token refresh via {codex_path}"
+    ));
+
+    let args: &[&str] = &["exec", "."];
+
+    let mut cmd = if is_cmd {
+        let mut c = Command::new("cmd.exe");
+        c.arg("/c").arg(&codex_path).args(args);
+        c
+    } else if is_ps1 {
+        let mut c = Command::new("powershell.exe");
+        c.arg("-NoProfile")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(&codex_path)
+            .args(args);
+        c
+    } else {
+        let mut c = Command::new(&codex_path);
+        c.args(args);
+        c
+    };
+    cmd.creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
+        Err(error) => {
+            diagnose::log_error("unable to spawn Windows Codex token refresh", error);
+            return;
+        }
+    };
+
+    wait_for_refresh(&mut child);
+}
+
 /// Spawn a command and wait up to `timeout` for it to finish.
 /// Returns None if the process fails to start or exceeds the deadline.
 fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
@@ -235,6 +361,41 @@ fn resolve_windows_claude_path() -> String {
     "claude.cmd".to_string()
 }
 
+fn resolve_windows_codex_path() -> String {
+    for name in &["codex.cmd", "codex.ps1", "codex.exe", "codex"] {
+        if Command::new(name)
+            .arg("--version")
+            .creation_flags(CREATE_NO_WINDOW)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+        {
+            return name.to_string();
+        }
+    }
+
+    for name in &["codex.cmd", "codex.ps1", "codex.exe", "codex"] {
+        if let Ok(output) = Command::new("where.exe")
+            .arg(name)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if let Some(first_line) = stdout.lines().next() {
+                    let path = first_line.trim().to_string();
+                    if !path.is_empty() {
+                        return path;
+                    }
+                }
+            }
+        }
+    }
+
+    "codex.cmd".to_string()
+}
+
 fn build_agent() -> Result<ureq::Agent, PollError> {
     let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
     Ok(ureq::AgentBuilder::new()
@@ -245,7 +406,7 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
 
 pub fn credential_watch_snapshot(mode: CredentialWatchMode) -> CredentialWatchSnapshot {
     let sources = match mode {
-        CredentialWatchMode::ActiveSource => read_credentials()
+        CredentialWatchMode::ActiveSource => read_first_credentials()
             .map(|creds| vec![creds.source])
             .unwrap_or_else(all_known_credential_sources),
         CredentialWatchMode::AllSources => all_known_credential_sources(),
@@ -333,7 +494,7 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
     // Try the dedicated usage endpoint first
     match try_usage_endpoint(token)? {
         Some(data) => {
-        // If reset timers are missing, fill them in from the Messages API
+            // If reset timers are missing, fill them in from the Messages API
             if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
                 if let Ok(fallback) = fetch_usage_via_messages(token) {
                     let mut merged = data;
@@ -475,6 +636,64 @@ fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
     data
 }
 
+fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData, PollError> {
+    let agent = build_agent()?;
+    let mut request = agent
+        .get(CODEX_USAGE_URL)
+        .set("Authorization", &format!("Bearer {token}"))
+        .set("User-Agent", "codex-cli");
+
+    if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
+        request = request.set("ChatGPT-Account-Id", account_id);
+    }
+
+    let resp = match request.call() {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log(format!(
+                "Codex usage endpoint returned auth error status {code}; refresh required"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(error) => {
+            diagnose::log_error("Codex usage endpoint request failed", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let response: CodexUsageResponse = match resp.into_json() {
+        Ok(response) => response,
+        Err(error) => {
+            diagnose::log_error("unable to parse Codex usage response", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    codex_usage_from_response(response).ok_or(PollError::RequestFailed)
+}
+
+fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> {
+    let details = *response.rate_limit.flatten()?;
+    let mut data = UsageData::default();
+
+    if let Some(window) = details.primary_window.flatten() {
+        data.session = codex_section_from_window(&window);
+    }
+
+    if let Some(window) = details.secondary_window.flatten() {
+        data.weekly = codex_section_from_window(&window);
+    }
+
+    Some(data)
+}
+
+fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
+    UsageSection {
+        percentage: window.used_percent,
+        resets_at: unix_to_system_time(Some(window.reset_at)),
+    }
+}
+
 fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {
     response
         .header(name)
@@ -506,20 +725,18 @@ enum CredentialSource {
     Wsl { distro: String },
 }
 
-fn read_credentials() -> Option<Credentials> {
-    let mut candidates = Vec::new();
-
+fn read_first_credentials() -> Option<Credentials> {
     if let Some(creds) = read_windows_credentials() {
-        candidates.push(creds);
+        return Some(creds);
     }
 
     for distro in list_wsl_distros() {
         if let Some(creds) = read_wsl_credentials(&distro) {
-            candidates.push(creds);
+            return Some(creds);
         }
     }
 
-    choose_best_credentials(candidates)
+    None
 }
 
 fn read_windows_credentials() -> Option<Credentials> {
@@ -531,7 +748,10 @@ fn read_windows_credentials() -> Option<Credentials> {
         Err(error) => {
             if diagnose::is_enabled() {
                 diagnose::log_error(
-                    &format!("unable to read Windows credentials at {}", cred_path.display()),
+                    &format!(
+                        "unable to read Windows credentials at {}",
+                        cred_path.display()
+                    ),
                     error,
                 );
             }
@@ -549,6 +769,34 @@ fn read_credentials_from_source(source: &CredentialSource) -> Option<Credentials
         }
         CredentialSource::Wsl { distro } => read_wsl_credentials(distro),
     }
+}
+
+fn codex_auth_path() -> Option<PathBuf> {
+    if let Some(codex_home) = std::env::var_os("CODEX_HOME").map(PathBuf::from) {
+        return Some(codex_home.join("auth.json"));
+    }
+
+    Some(dirs::home_dir()?.join(".codex").join("auth.json"))
+}
+
+fn read_codex_credentials() -> Option<CodexTokenData> {
+    let auth_path = codex_auth_path()?;
+    let content = match std::fs::read_to_string(&auth_path) {
+        Ok(content) => content,
+        Err(error) => {
+            diagnose::log_error(
+                &format!(
+                    "unable to read Codex credentials at {}",
+                    auth_path.display()
+                ),
+                error,
+            );
+            return None;
+        }
+    };
+
+    let auth: CodexAuthFile = serde_json::from_str(&content).ok()?;
+    auth.tokens.filter(|tokens| !tokens.access_token.is_empty())
 }
 
 fn read_wsl_credentials(distro: &str) -> Option<Credentials> {
@@ -600,13 +848,30 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
     })
 }
 
-fn choose_best_credentials(mut candidates: Vec<Credentials>) -> Option<Credentials> {
-    if candidates.is_empty() {
-        return None;
+fn read_next_credentials_after(source: &CredentialSource) -> Option<Credentials> {
+    match source {
+        CredentialSource::Windows(_) => {
+            for distro in list_wsl_distros() {
+                if let Some(creds) = read_wsl_credentials(&distro) {
+                    return Some(creds);
+                }
+            }
+        }
+        CredentialSource::Wsl { distro } => {
+            let mut past_current = false;
+            for candidate_distro in list_wsl_distros() {
+                if !past_current {
+                    past_current = candidate_distro == *distro;
+                    continue;
+                }
+                if let Some(creds) = read_wsl_credentials(&candidate_distro) {
+                    return Some(creds);
+                }
+            }
+        }
     }
 
-    candidates.sort_by_key(|creds| is_token_expired(creds.expires_at));
-    candidates.into_iter().next()
+    None
 }
 
 fn list_wsl_distros() -> Vec<String> {
@@ -826,4 +1091,9 @@ pub fn is_past_reset(data: &UsageData) -> bool {
     let now = SystemTime::now();
     let past = |s: &UsageSection| matches!(s.resets_at, Some(t) if now.duration_since(t).is_ok());
     past(&data.session) || past(&data.weekly)
+}
+
+pub fn app_is_past_reset(data: &AppUsageData) -> bool {
+    data.claude_code.as_ref().is_some_and(is_past_reset)
+        || data.codex.as_ref().is_some_and(is_past_reset)
 }

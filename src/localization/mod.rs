@@ -1,3 +1,4 @@
+mod dutch;
 mod english;
 mod french;
 mod german;
@@ -15,6 +16,7 @@ use windows::Win32::Globalization::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum LanguageId {
     English,
+    Dutch,
     Spanish,
     French,
     German,
@@ -24,8 +26,9 @@ pub enum LanguageId {
 }
 
 impl LanguageId {
-    pub const ALL: [LanguageId; 7] = [
+    pub const ALL: [LanguageId; 8] = [
         LanguageId::English,
+        LanguageId::Dutch,
         LanguageId::Spanish,
         LanguageId::French,
         LanguageId::German,
@@ -37,6 +40,7 @@ impl LanguageId {
     pub fn code(self) -> &'static str {
         match self {
             Self::English => "en",
+            Self::Dutch => "nl",
             Self::Spanish => "es",
             Self::French => "fr",
             Self::German => "de",
@@ -49,6 +53,7 @@ impl LanguageId {
     pub fn native_name(self) -> &'static str {
         match self {
             Self::English => "English",
+            Self::Dutch => "Nederlands",
             Self::Spanish => "Español",
             Self::French => "Français",
             Self::German => "Deutsch",
@@ -61,6 +66,7 @@ impl LanguageId {
     pub fn strings(self) -> Strings {
         match self {
             Self::English => english::STRINGS,
+            Self::Dutch => dutch::STRINGS,
             Self::Spanish => spanish::STRINGS,
             Self::French => french::STRINGS,
             Self::German => german::STRINGS,
@@ -73,6 +79,7 @@ impl LanguageId {
     pub fn update_via_winget_label(self) -> &'static str {
         match self {
             Self::English => english::UPDATE_VIA_WINGET_LABEL,
+            Self::Dutch => dutch::UPDATE_VIA_WINGET_LABEL,
             Self::Spanish => spanish::UPDATE_VIA_WINGET_LABEL,
             Self::French => french::UPDATE_VIA_WINGET_LABEL,
             Self::German => german::UPDATE_VIA_WINGET_LABEL,
@@ -91,6 +98,7 @@ impl LanguageId {
         let prefix = normalized.split('-').next().unwrap_or_default();
         match prefix {
             "en" => Some(Self::English),
+            "nl" => Some(Self::Dutch),
             "es" => Some(Self::Spanish),
             "fr" => Some(Self::French),
             "de" => Some(Self::German),
@@ -122,6 +130,9 @@ pub struct Strings {
     pub five_minutes: &'static str,
     pub fifteen_minutes: &'static str,
     pub one_hour: &'static str,
+    pub models: &'static str,
+    pub claude_code_model: &'static str,
+    pub codex_model: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,
@@ -159,6 +170,9 @@ pub struct Strings {
     pub cancel: &'static str,
     pub quiet_time_hint: &'static str,
     pub quiet_time_error: &'static str,
+    pub codex_token_expired_title: &'static str,
+    pub codex_token_expired_body: &'static str,
+    pub codex_window_title: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {
