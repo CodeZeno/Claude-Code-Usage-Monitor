@@ -44,7 +44,7 @@ pub(super) const STRINGS: Strings = Strings {
     codex_window_title: "Codex-gebruiksmonitor",
     second_suffix: "s",
     show_pacing: "Pacingindicator tonen",
-    quiet_hours: "Stille uren",
+    quiet_hours: "Inactieve uren",
     quiet_start: "Begin",
     quiet_end: "Einde",
     quiet_set_time: "Tijd instellen...",

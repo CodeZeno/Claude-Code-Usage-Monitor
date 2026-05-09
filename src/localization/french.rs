@@ -44,7 +44,7 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body: "Executez 'codex' dans un terminal et suivez les instructions de connexion. Ensuite, actualisez ou redemarrez cette application.",
     codex_window_title: "Moniteur d'utilisation Codex",
     second_suffix: "s",
-    quiet_hours: "Quiet Hours",
+    quiet_hours: "Heures inactives",
     quiet_start: "Start",
     quiet_end: "End",
     quiet_set_time: "Définir l'heure...",

@@ -44,7 +44,7 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body: "터미널에서 'codex'를 실행하고 로그인 안내를 따르세요. 그런 다음 이 앱을 새로 고치거나 다시 시작하세요.",
     codex_window_title: "Codex 사용량 모니터",
     second_suffix: "초",
-    quiet_hours: "조용한 시간",
+    quiet_hours: "유휴 시간",
     quiet_start: "시작",
     quiet_end: "종료",
     quiet_set_time: "시간 설정...",
