@@ -13,7 +13,9 @@ use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::System::SystemInformation::GetLocalTime;
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetFocus, ReleaseCapture, SetCapture, SetFocus};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetFocus, GetKeyState, ReleaseCapture, SetCapture, SetFocus, VK_LBUTTON,
+};
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -92,6 +94,8 @@ struct AppState {
     show_pacing: bool,
     session_pacing_pct: Option<f64>,
     weekly_pacing_pct: Option<f64>,
+    session_resets_at: Option<std::time::SystemTime>,
+    weekly_resets_at: Option<std::time::SystemTime>,
 }
 
 #[derive(Clone, Debug)]
@@ -1531,6 +1535,8 @@ pub fn run() {
                 show_pacing: settings.show_pacing,
                 session_pacing_pct: None,
                 weekly_pacing_pct: None,
+                session_resets_at: None,
+                weekly_resets_at: None,
             });
         }
 
@@ -1664,6 +1670,17 @@ fn render_layered() {
             Some(s) => {
                 // Read quiet-hours state while holding the lock to avoid a deadlock from calling is_quiet_time()
                 let quiet = quiet_now(s);
+                let now = std::time::SystemTime::now();
+
+                // During quiet hours, check if each window has already reset.
+                // If reset: show 0% usage and no pacing (window restarted, no conversation yet).
+                // If not reset: show frozen usage and time-based pacing.
+                let session_reset_done = quiet && s.session_resets_at.map(|t| t <= now).unwrap_or(false);
+                let weekly_reset_done = quiet && s.weekly_resets_at.map(|t| t <= now).unwrap_or(false);
+
+                let eff_session_pct = if session_reset_done { 0.0 } else { s.session_percent };
+                let eff_weekly_pct = if weekly_reset_done { 0.0 } else { s.weekly_percent };
+
                 let session_text = if quiet {
                     s.language.strings().quiet_hours.to_string()
                 } else {
@@ -1671,17 +1688,36 @@ fn render_layered() {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
-                // Filter out pacing during quiet hours or when actual usage exceeds the expected pace
-                let session_pacing = if quiet { None } else { s.session_pacing_pct.filter(|&p| p > s.session_percent) };
-                let weekly_pacing = if quiet { None } else { s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent) };
+
+                let session_pacing = if quiet {
+                    // Show pacing only before the window resets (time-based, no poll needed)
+                    if !session_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.session_resets_at, 5.0 * 3600.0)
+                            .filter(|&p| p > eff_session_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.session_pacing_pct.filter(|&p| p > s.session_percent)
+                };
+                let weekly_pacing = if quiet {
+                    if !weekly_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.weekly_resets_at, 7.0 * 24.0 * 3600.0)
+                            .filter(|&p| p > eff_weekly_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent)
+                };
                 (
                     s.hwnd,
                     s.is_dark,
                     s.embedded,
                     s.language.strings(),
-                    s.session_percent,
+                    eff_session_pct,
                     session_text,
-                    s.weekly_percent,
+                    eff_weekly_pct,
                     weekly_text,
                     s.codex_session_percent,
                     s.codex_session_text.clone(),
@@ -1985,6 +2021,11 @@ fn paint_content(
 
 /// Computes the expected-usage percentage based on elapsed time within a rolling window.
 /// Returns None if `resets_at` is unavailable or the window has not yet started.
+/// Returns true if the left mouse button is physically held down right now.
+fn left_button_held() -> bool {
+    unsafe { (GetKeyState(VK_LBUTTON.0 as i32) & 0x8000u16 as i16) != 0 }
+}
+
 fn compute_pacing_pct(resets_at: Option<std::time::SystemTime>, window_secs: f64) -> Option<f64> {
     let remaining = resets_at?.duration_since(std::time::SystemTime::now()).ok()?;
     let elapsed = 1.0 - remaining.as_secs_f64() / window_secs;
@@ -2008,6 +2049,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                 if let Some(claude_code) = data.claude_code.as_ref() {
                     s.session_percent = claude_code.session.percentage;
                     s.weekly_percent = claude_code.weekly.percentage;
+                    s.session_resets_at = claude_code.session.resets_at;
+                    s.weekly_resets_at = claude_code.weekly.resets_at;
                     if s.show_pacing {
                         s.session_pacing_pct = compute_pacing_pct(claude_code.session.resets_at, 5.0 * 3600.0);
                         s.weekly_pacing_pct = compute_pacing_pct(claude_code.weekly.resets_at, 7.0 * 24.0 * 3600.0);
@@ -2521,8 +2564,18 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_SETCURSOR => {
             let is_dragging = {
-                let state = lock_state();
-                state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    // If we think we're dragging but the button is no longer held,
+                    // the WM_LBUTTONUP was missed — cancel the drag immediately.
+                    if s.dragging && !left_button_held() {
+                        s.dragging = false;
+                        let _ = ReleaseCapture();
+                    }
+                    s.dragging
+                } else {
+                    false
+                }
             };
             // Always show resize cursor while dragging or when hovering divider zone
             let hit_test = (lparam.0 & 0xFFFF) as u16;
@@ -2565,6 +2618,19 @@ unsafe extern "system" fn wnd_proc(
                 state.as_ref().map(|s| s.dragging).unwrap_or(false)
             };
             if is_dragging {
+                // If the button was released outside our window, WM_LBUTTONUP may
+                // have been missed. Detect this here and cancel the drag.
+                if !left_button_held() {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.dragging = false;
+                        }
+                    }
+                    let _ = ReleaseCapture();
+                    save_state_settings();
+                    return LRESULT(0);
+                }
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
                 let move_target = {
@@ -2600,7 +2666,11 @@ unsafe extern "system" fn wnd_proc(
                                     tray_left = tray_rect.left;
                                 }
                             }
-                            let widget_width = total_widget_width();
+                            // Use _for() variant to avoid re-acquiring the state lock
+                            // while we already hold it (total_widget_width calls lock_state).
+                            let widget_width = total_widget_width_for(
+                                active_model_count(s.show_claude_code, s.show_codex),
+                            );
                             let max_offset = tray_left - taskbar_rect.left - widget_width;
                             if new_offset > max_offset {
                                 new_offset = max_offset;
@@ -2674,6 +2744,37 @@ unsafe extern "system" fn wnd_proc(
                 let _ = ReleaseCapture();
                 save_state_settings();
             }
+            LRESULT(0)
+        }
+        // WM_CAPTURECHANGED fires whenever mouse capture is transferred away from this
+        // window (including when we call ReleaseCapture ourselves). Resetting dragging
+        // here ensures the resize cursor never gets stuck if WM_LBUTTONUP is missed.
+        WM_CAPTURECHANGED => {
+            let was_dragging = {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    let was = s.dragging;
+                    s.dragging = false;
+                    was
+                } else {
+                    false
+                }
+            };
+            if was_dragging {
+                save_state_settings();
+            }
+            LRESULT(0)
+        }
+        // WM_CANCELMODE is sent when a modal operation begins (e.g. Alt+Tab, context
+        // menu on another window). Cancel the drag and release capture immediately.
+        WM_CANCELMODE => {
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.dragging = false;
+                }
+            }
+            let _ = ReleaseCapture();
             LRESULT(0)
         }
         WM_RBUTTONUP => {
@@ -3269,6 +3370,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
         match state.as_ref() {
             Some(s) => {
                 let quiet = quiet_now(s);
+                let now = std::time::SystemTime::now();
+
+                let session_reset_done = quiet && s.session_resets_at.map(|t| t <= now).unwrap_or(false);
+                let weekly_reset_done = quiet && s.weekly_resets_at.map(|t| t <= now).unwrap_or(false);
+
+                let eff_session_pct = if session_reset_done { 0.0 } else { s.session_percent };
+                let eff_weekly_pct = if weekly_reset_done { 0.0 } else { s.weekly_percent };
+
                 let session_text = if quiet {
                     s.language.strings().quiet_hours.to_string()
                 } else {
@@ -3276,14 +3385,32 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 };
                 // weekly_text retains the last polled value (never empty to avoid passing an empty slice to DrawTextW)
                 let weekly_text = s.weekly_text.clone();
-                let session_pacing = if quiet { None } else { s.session_pacing_pct.filter(|&p| p > s.session_percent) };
-                let weekly_pacing = if quiet { None } else { s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent) };
+                let session_pacing = if quiet {
+                    if !session_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.session_resets_at, 5.0 * 3600.0)
+                            .filter(|&p| p > eff_session_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.session_pacing_pct.filter(|&p| p > s.session_percent)
+                };
+                let weekly_pacing = if quiet {
+                    if !weekly_reset_done && s.show_pacing {
+                        compute_pacing_pct(s.weekly_resets_at, 7.0 * 24.0 * 3600.0)
+                            .filter(|&p| p > eff_weekly_pct)
+                    } else {
+                        None
+                    }
+                } else {
+                    s.weekly_pacing_pct.filter(|&p| p > s.weekly_percent)
+                };
                 (
                     s.is_dark,
                     s.language.strings(),
-                    s.session_percent,
+                    eff_session_pct,
                     session_text,
-                    s.weekly_percent,
+                    eff_weekly_pct,
                     weekly_text,
                     s.codex_session_percent,
                     s.codex_session_text.clone(),
