@@ -847,6 +847,10 @@ fn total_widget_width_for(active_models: i32) -> i32 {
         + sc(RIGHT_MARGIN)
 }
 
+fn total_widget_width_for_state(state: &AppState) -> i32 {
+    total_widget_width_for(active_model_count(state.show_claude_code, state.show_codex))
+}
+
 fn total_widget_width() -> i32 {
     let active_models = {
         let state = lock_state();
@@ -2041,8 +2045,8 @@ unsafe extern "system" fn wnd_proc(
                                     tray_left = tray_rect.left;
                                 }
                             }
-                            let widget_width = total_widget_width();
-                            let max_offset = tray_left - taskbar_rect.left - widget_width;
+                            let widget_width = total_widget_width_for_state(s);
+                            let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
                             if new_offset > max_offset {
                                 new_offset = max_offset;
                             }
