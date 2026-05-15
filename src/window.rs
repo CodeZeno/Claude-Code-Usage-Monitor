@@ -816,12 +816,21 @@ const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
 const TEXT_WIDTH: i32 = 62;
+const TEXT_WIDTH_DETAILED: i32 = 95;
 const MODEL_RIGHT_MARGIN: i32 = 5;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
 fn active_model_count(show_claude_code: bool, show_codex: bool) -> i32 {
     (show_claude_code as i32 + show_codex as i32).max(1)
+}
+
+fn text_width_for(detailed: bool) -> i32 {
+    if detailed {
+        TEXT_WIDTH_DETAILED
+    } else {
+        TEXT_WIDTH
+    }
 }
 
 fn row_bar_segment_count(active_models: i32) -> i32 {
@@ -832,11 +841,11 @@ fn row_bar_segment_count(active_models: i32) -> i32 {
     }
 }
 
-fn total_widget_width_for(active_models: i32) -> i32 {
+fn total_widget_width_for(active_models: i32, detailed: bool) -> i32 {
     let bar_segments = row_bar_segment_count(active_models);
     let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH);
+        + sc(text_width_for(detailed));
 
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
@@ -848,7 +857,10 @@ fn total_widget_width_for(active_models: i32) -> i32 {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(active_model_count(state.show_claude_code, state.show_codex))
+    total_widget_width_for(
+        active_model_count(state.show_claude_code, state.show_codex),
+        false,
+    )
 }
 
 fn total_widget_width() -> i32 {
@@ -859,7 +871,7 @@ fn total_widget_width() -> i32 {
             .map(|s| active_model_count(s.show_claude_code, s.show_codex))
             .unwrap_or(1)
     };
-    total_widget_width_for(active_models)
+    total_widget_width_for(active_models, false)
 }
 
 fn claude_accent_color() -> Color {
@@ -960,7 +972,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count),
+            total_widget_width_for(initial_model_count, false),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1260,6 +1272,7 @@ fn render_layered() {
             show_claude_code,
             show_codex,
             &codex_accent,
+            false,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1330,6 +1343,7 @@ fn paint_content(
     show_claude_code: bool,
     show_codex: bool,
     codex_accent: &Color,
+    detailed: bool,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1422,6 +1436,7 @@ fn paint_content(
             accent,
             codex_accent,
             track,
+            detailed,
         );
         draw_row(
             hdc,
@@ -1439,6 +1454,7 @@ fn paint_content(
             accent,
             codex_accent,
             track,
+            detailed,
         );
 
         SelectObject(hdc, old_font);
@@ -2651,6 +2667,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_claude_code,
             show_codex,
             &codex_accent,
+            false,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -2677,6 +2694,7 @@ fn draw_row(
     claude_accent: &Color,
     codex_accent: &Color,
     track: &Color,
+    detailed: bool,
 ) {
     let seg_h = sc(SEGMENT_H);
     let active_models = active_model_count(show_claude_code, show_codex);
@@ -2721,8 +2739,9 @@ fn draw_row(
                 claude_accent,
                 track,
                 &claude_value_color,
+                detailed,
             );
-            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+            model_x += model_usage_width(segment_count, detailed) + sc(MODEL_RIGHT_MARGIN);
         }
         if show_codex {
             draw_usage_bar(
@@ -2735,15 +2754,16 @@ fn draw_row(
                 codex_accent,
                 track,
                 &codex_value_color,
+                detailed,
             );
         }
     }
 }
 
-fn model_usage_width(segment_count: i32) -> i32 {
+fn model_usage_width(segment_count: i32, detailed: bool) -> i32 {
     (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
+        + sc(text_width_for(detailed))
 }
 
 fn draw_usage_bar(
@@ -2756,6 +2776,7 @@ fn draw_usage_bar(
     accent: &Color,
     track: &Color,
     text_color: &Color,
+    detailed: bool,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -2816,7 +2837,7 @@ fn draw_usage_bar(
         let mut text_rect = RECT {
             left: text_x,
             top: y,
-            right: text_x + sc(TEXT_WIDTH),
+            right: text_x + sc(text_width_for(detailed)),
             bottom: y + seg_h,
         };
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
