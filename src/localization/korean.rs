@@ -16,6 +16,7 @@ pub(super) const STRINGS: Strings = Strings {
     settings: "설정",
     start_with_windows: "Windows 시작 시 자동 실행",
     reset_position: "위치 초기화",
+    show_detailed_remaining: "남은 시간 상세 표시",
     language: "언어",
     system_default: "시스템 기본값",
     check_for_updates: "업데이트 확인",
