@@ -418,16 +418,16 @@ fn refresh_usage_texts(state: &mut AppState) {
     };
 
     if let Some(claude_code) = data.claude_code.as_ref() {
-        state.session_text = poller::format_line(&claude_code.session, strings);
-        state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+        state.session_text = poller::format_line(&claude_code.session, strings, false);
+        state.weekly_text = poller::format_line(&claude_code.weekly, strings, false);
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+        state.codex_session_text = poller::format_line(&codex.session, strings, false);
+        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, false);
     } else if state.show_codex {
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
@@ -1632,16 +1632,16 @@ fn schedule_countdown_timer() {
     let delays = [
         data.claude_code
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, false)),
         data.claude_code
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, false)),
         data.codex
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, false)),
         data.codex
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, false)),
     ];
     let min_delay = delays.into_iter().flatten().min();
 
