@@ -65,6 +65,7 @@ struct AppState {
     codex_weekly_text: String,
     show_claude_code: bool,
     show_codex: bool,
+    show_detailed_remaining: bool,
 
     data: Option<AppUsageData>,
 
@@ -121,6 +122,7 @@ const IDM_LANG_KOREAN: u16 = 47;
 const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
+const IDM_SHOW_DETAILED_REMAINING: u16 = 70;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
 
@@ -213,6 +215,8 @@ struct SettingsFile {
     show_claude_code: bool,
     #[serde(default = "default_show_codex")]
     show_codex: bool,
+    #[serde(default)]
+    show_detailed_remaining: bool,
 }
 
 impl Default for SettingsFile {
@@ -225,6 +229,7 @@ impl Default for SettingsFile {
             widget_visible: true,
             show_claude_code: true,
             show_codex: false,
+            show_detailed_remaining: false,
         }
     }
 }
@@ -280,6 +285,7 @@ fn save_state_settings() {
             widget_visible: s.widget_visible,
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
+            show_detailed_remaining: s.show_detailed_remaining,
         });
     }
 }
@@ -413,21 +419,22 @@ fn refresh_usage_texts(state: &mut AppState) {
     }
 
     let strings = state.language.strings();
+    let detailed = state.show_detailed_remaining;
     let Some(data) = state.data.as_ref() else {
         return;
     };
 
     if let Some(claude_code) = data.claude_code.as_ref() {
-        state.session_text = poller::format_line(&claude_code.session, strings, false);
-        state.weekly_text = poller::format_line(&claude_code.weekly, strings, false);
+        state.session_text = poller::format_line(&claude_code.session, strings, detailed);
+        state.weekly_text = poller::format_line(&claude_code.weekly, strings, detailed);
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings, false);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, false);
+        state.codex_session_text = poller::format_line(&codex.session, strings, detailed);
+        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, detailed);
     } else if state.show_codex {
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
@@ -859,19 +866,24 @@ fn total_widget_width_for(active_models: i32, detailed: bool) -> i32 {
 fn total_widget_width_for_state(state: &AppState) -> i32 {
     total_widget_width_for(
         active_model_count(state.show_claude_code, state.show_codex),
-        false,
+        state.show_detailed_remaining,
     )
 }
 
 fn total_widget_width() -> i32 {
-    let active_models = {
+    let (active_models, detailed) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_claude_code, s.show_codex))
-            .unwrap_or(1)
+            .map(|s| {
+                (
+                    active_model_count(s.show_claude_code, s.show_codex),
+                    s.show_detailed_remaining,
+                )
+            })
+            .unwrap_or((1, false))
     };
-    total_widget_width_for(active_models, false)
+    total_widget_width_for(active_models, detailed)
 }
 
 fn claude_accent_color() -> Color {
@@ -972,7 +984,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count, false),
+            total_widget_width_for(initial_model_count, settings.show_detailed_remaining),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1025,6 +1037,7 @@ pub fn run() {
                 codex_weekly_text: "--".to_string(),
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
+                show_detailed_remaining: settings.show_detailed_remaining,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1164,6 +1177,7 @@ fn render_layered() {
         codex_weekly_text,
         show_claude_code,
         show_codex,
+        show_detailed_remaining,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1182,6 +1196,7 @@ fn render_layered() {
                 s.codex_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
+                s.show_detailed_remaining,
             ),
             None => return,
         }
@@ -1272,7 +1287,7 @@ fn render_layered() {
             show_claude_code,
             show_codex,
             &codex_accent,
-            false,
+            show_detailed_remaining,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1645,19 +1660,20 @@ fn schedule_countdown_timer() {
         }
     }
 
+    let detailed = s.show_detailed_remaining;
     let delays = [
         data.claude_code
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, false)),
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, detailed)),
         data.claude_code
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, false)),
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, detailed)),
         data.codex
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, false)),
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at, detailed)),
         data.codex
             .as_ref()
-            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, false)),
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at, detailed)),
     ];
     let min_delay = delays.into_iter().flatten().min();
 
@@ -2234,6 +2250,19 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
+                IDM_SHOW_DETAILED_REMAINING => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_detailed_remaining = !s.show_detailed_remaining;
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                    schedule_countdown_timer();
+                }
                 IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX => {
                     {
                         let mut state = lock_state();
@@ -2343,6 +2372,7 @@ fn show_context_menu(hwnd: HWND) {
             widget_visible,
             show_claude_code,
             show_codex,
+            show_detailed_remaining,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2356,6 +2386,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.widget_visible,
                     s.show_claude_code,
                     s.show_codex,
+                    s.show_detailed_remaining,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2366,6 +2397,7 @@ fn show_context_menu(hwnd: HWND) {
                     UpdateStatus::Idle,
                     true,
                     true,
+                    false,
                     false,
                 ),
             }
@@ -2470,6 +2502,19 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        let detailed_str = native_interop::wide_str(strings.show_detailed_remaining);
+        let detailed_flags = if show_detailed_remaining {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            detailed_flags,
+            IDM_SHOW_DETAILED_REMAINING as usize,
+            PCWSTR::from_raw(detailed_str.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
@@ -2593,6 +2638,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         codex_weekly_text,
         show_claude_code,
         show_codex,
+        show_detailed_remaining,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -2609,6 +2655,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.codex_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
+                s.show_detailed_remaining,
             ),
             None => return,
         }
@@ -2667,7 +2714,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_claude_code,
             show_codex,
             &codex_accent,
-            false,
+            show_detailed_remaining,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
