@@ -79,11 +79,41 @@ struct AppState {
     last_update_check_unix: Option<u64>,
 
     tray_offset: i32,
+    widget_position: WidgetPosition,
+    widget_design: WidgetDesign,
+    show_remaining: bool,
     dragging: bool,
     drag_start_mouse_x: i32,
-    drag_start_offset: i32,
+    drag_start_widget_x: i32,
 
     widget_visible: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum WidgetPosition {
+    Right,
+    Center,
+    Left,
+}
+
+impl Default for WidgetPosition {
+    fn default() -> Self {
+        Self::Right
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum WidgetDesign {
+    Classic,
+    Card,
+}
+
+impl Default for WidgetDesign {
+    fn default() -> Self {
+        Self::Classic
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -110,6 +140,12 @@ const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_RESET_POSITION: u16 = 30;
 const IDM_VERSION_ACTION: u16 = 31;
+const IDM_POSITION_RIGHT: u16 = 32;
+const IDM_POSITION_CENTER: u16 = 33;
+const IDM_POSITION_LEFT: u16 = 34;
+const IDM_DESIGN_CLASSIC: u16 = 35;
+const IDM_DESIGN_CARD: u16 = 36;
+const IDM_SHOW_REMAINING: u16 = 37;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
 const IDM_LANG_DUTCH: u16 = 42;
@@ -125,6 +161,7 @@ const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 
 const DIVIDER_HIT_ZONE: i32 = 13; // LEFT_DIVIDER_W + DIVIDER_RIGHT_MARGIN
+const LEFT_POSITION_RESERVED_WIDTH: i32 = 160;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -203,6 +240,12 @@ fn settings_path() -> PathBuf {
 struct SettingsFile {
     #[serde(default)]
     tray_offset: i32,
+    #[serde(default)]
+    widget_position: WidgetPosition,
+    #[serde(default)]
+    widget_design: WidgetDesign,
+    #[serde(default)]
+    show_remaining: bool,
     #[serde(default = "default_poll_interval")]
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -221,6 +264,9 @@ impl Default for SettingsFile {
     fn default() -> Self {
         Self {
             tray_offset: 0,
+            widget_position: WidgetPosition::default(),
+            widget_design: WidgetDesign::default(),
+            show_remaining: false,
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
@@ -274,6 +320,9 @@ fn save_state_settings() {
     if let Some(s) = state.as_ref() {
         save_settings(&SettingsFile {
             tray_offset: s.tray_offset,
+            widget_position: s.widget_position,
+            widget_design: s.widget_design,
+            show_remaining: s.show_remaining,
             poll_interval_ms: s.poll_interval_ms,
             language: s
                 .language_override
@@ -415,25 +464,57 @@ fn refresh_usage_texts(state: &mut AppState) {
     }
 
     let strings = state.language.strings();
+    let show_remaining = state.show_remaining;
     let Some(data) = state.data.as_ref() else {
         return;
     };
 
     if let Some(claude_code) = data.claude_code.as_ref() {
-        state.session_text = poller::format_line(&claude_code.session, strings);
-        state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+        state.session_percent = display_percentage(claude_code.session.percentage, show_remaining);
+        state.weekly_percent = display_percentage(claude_code.weekly.percentage, show_remaining);
+        state.session_text = format_display_line(&claude_code.session, strings, show_remaining);
+        state.weekly_text = format_display_line(&claude_code.weekly, strings, show_remaining);
     } else if state.show_claude_code {
+        state.session_percent = 0.0;
+        state.weekly_percent = 0.0;
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+        state.codex_session_percent = display_percentage(codex.session.percentage, show_remaining);
+        state.codex_weekly_percent = display_percentage(codex.weekly.percentage, show_remaining);
+        state.codex_session_text = format_display_line(&codex.session, strings, show_remaining);
+        state.codex_weekly_text = format_display_line(&codex.weekly, strings, show_remaining);
     } else if state.show_codex {
+        state.codex_session_percent = 0.0;
+        state.codex_weekly_percent = 0.0;
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
     }
+}
+
+fn display_percentage(used_percent: f64, show_remaining: bool) -> f64 {
+    let used = used_percent.clamp(0.0, 100.0);
+    if show_remaining {
+        100.0 - used
+    } else {
+        used
+    }
+}
+
+fn format_display_line(
+    section: &crate::models::UsageSection,
+    strings: Strings,
+    show_remaining: bool,
+) -> String {
+    if !show_remaining {
+        return poller::format_line(section, strings);
+    }
+
+    let mut display = section.clone();
+    display.percentage = display_percentage(section.percentage, true);
+    poller::format_line(&display, strings)
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -821,6 +902,13 @@ const TEXT_WIDTH: i32 = 62;
 const MODEL_RIGHT_MARGIN: i32 = 5;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
+const CARD_SEGMENT_W: i32 = 8;
+const CARD_SEGMENT_H: i32 = 8;
+const CARD_SEGMENT_GAP: i32 = 4;
+const CARD_LABEL_WIDTH: i32 = 24;
+const CARD_MODEL_WIDTH: i32 = 190;
+const CARD_INSET_X: i32 = 12;
+const CARD_MODEL_GAP: i32 = 8;
 
 fn active_model_count(show_claude_code: bool, show_codex: bool) -> i32 {
     (show_claude_code as i32 + show_codex as i32).max(1)
@@ -834,7 +922,17 @@ fn row_bar_segment_count(active_models: i32) -> i32 {
     }
 }
 
-fn total_widget_width_for(active_models: i32) -> i32 {
+fn total_widget_width_for_design(active_models: i32, design: WidgetDesign) -> i32 {
+    if design == WidgetDesign::Card {
+        return sc(CARD_INSET_X) * 2
+            + sc(LEFT_DIVIDER_W)
+            + sc(8)
+            + sc(CARD_LABEL_WIDTH)
+            + sc(8)
+            + sc(CARD_MODEL_WIDTH) * active_models
+            + sc(CARD_MODEL_GAP) * (active_models - 1);
+    }
+
     let bar_segments = row_bar_segment_count(active_models);
     let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
@@ -850,18 +948,26 @@ fn total_widget_width_for(active_models: i32) -> i32 {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(active_model_count(state.show_claude_code, state.show_codex))
+    total_widget_width_for_design(
+        active_model_count(state.show_claude_code, state.show_codex),
+        state.widget_design,
+    )
 }
 
 fn total_widget_width() -> i32 {
-    let active_models = {
+    let (active_models, design) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_claude_code, s.show_codex))
-            .unwrap_or(1)
+            .map(|s| {
+                (
+                    active_model_count(s.show_claude_code, s.show_codex),
+                    s.widget_design,
+                )
+            })
+            .unwrap_or((1, WidgetDesign::Classic))
     };
-    total_widget_width_for(active_models)
+    total_widget_width_for_design(active_models, design)
 }
 
 fn claude_accent_color() -> Color {
@@ -962,7 +1068,7 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count),
+            total_widget_width_for_design(initial_model_count, settings.widget_design),
             sc(WIDGET_HEIGHT),
             HWND::default(),
             HMENU::default(),
@@ -1026,9 +1132,12 @@ pub fn run() {
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 tray_offset: settings.tray_offset,
+                widget_position: settings.widget_position,
+                widget_design: settings.widget_design,
+                show_remaining: settings.show_remaining,
                 dragging: false,
                 drag_start_mouse_x: 0,
-                drag_start_offset: 0,
+                drag_start_widget_x: 0,
                 widget_visible: settings.widget_visible,
             });
         }
@@ -1154,6 +1263,7 @@ fn render_layered() {
         codex_weekly_text,
         show_claude_code,
         show_codex,
+        widget_design,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1172,6 +1282,7 @@ fn render_layered() {
                 s.codex_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
+                s.widget_design,
             ),
             None => return,
         }
@@ -1262,6 +1373,7 @@ fn render_layered() {
             show_claude_code,
             show_codex,
             &codex_accent,
+            widget_design,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1332,7 +1444,34 @@ fn paint_content(
     show_claude_code: bool,
     show_codex: bool,
     codex_accent: &Color,
+    widget_design: WidgetDesign,
 ) {
+    if widget_design == WidgetDesign::Card {
+        paint_card_content(
+            hdc,
+            width,
+            height,
+            is_dark,
+            bg,
+            text_color,
+            accent,
+            track,
+            strings,
+            session_pct,
+            session_text,
+            weekly_pct,
+            weekly_text,
+            codex_session_pct,
+            codex_session_text,
+            codex_weekly_pct,
+            codex_weekly_text,
+            show_claude_code,
+            show_codex,
+            codex_accent,
+        );
+        return;
+    }
+
     unsafe {
         let client_rect = RECT {
             left: 0,
@@ -1446,6 +1585,280 @@ fn paint_content(
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
     }
+}
+
+fn paint_card_content(
+    hdc: HDC,
+    width: i32,
+    height: i32,
+    is_dark: bool,
+    bg: &Color,
+    text_color: &Color,
+    _accent: &Color,
+    _track: &Color,
+    strings: Strings,
+    session_pct: f64,
+    session_text: &str,
+    weekly_pct: f64,
+    weekly_text: &str,
+    codex_session_pct: f64,
+    codex_session_text: &str,
+    codex_weekly_pct: f64,
+    codex_weekly_text: &str,
+    show_claude_code: bool,
+    show_codex: bool,
+    _codex_accent: &Color,
+) {
+    unsafe {
+        let client_rect = RECT {
+            left: 0,
+            top: 0,
+            right: width,
+            bottom: height,
+        };
+
+        let bg_brush = CreateSolidBrush(COLORREF(bg.to_colorref()));
+        FillRect(hdc, &client_rect, bg_brush);
+        let _ = DeleteObject(bg_brush);
+
+        let divider = if is_dark {
+            Color::from_hex("#5A5D63")
+        } else {
+            Color::from_hex("#8E98A6")
+        };
+        let divider_rect = RECT {
+            left: sc(CARD_INSET_X),
+            top: sc(8),
+            right: sc(CARD_INSET_X + 2),
+            bottom: height - sc(8),
+        };
+        draw_rounded_rect(hdc, &divider_rect, &divider, sc(1));
+
+        let _ = SetBkMode(hdc, TRANSPARENT);
+
+        let label_font_name = native_interop::wide_str("Segoe UI");
+        let label_font = CreateFontW(
+            sc(-13),
+            0,
+            0,
+            0,
+            FW_NORMAL.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_TT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            PCWSTR::from_raw(label_font_name.as_ptr()),
+        );
+        let old_font = SelectObject(hdc, label_font);
+
+        let label_color = if is_dark {
+            Color::from_hex("#D7DAE0")
+        } else {
+            *text_color
+        };
+        let track = if is_dark {
+            Color::from_hex("#53575F")
+        } else {
+            Color::from_hex("#B7C0CB")
+        };
+        let session_color = Color::from_hex("#1E6BE6");
+        let weekly_color = Color::from_hex("#009A9A");
+        let value_muted = if is_dark {
+            Color::from_hex("#A6AAB2")
+        } else {
+            Color::from_hex("#5F6874")
+        };
+
+        let content_x = sc(CARD_INSET_X + LEFT_DIVIDER_W + 8);
+        let row1_y = sc(9);
+        let row2_y = sc(28);
+
+        draw_card_row(
+            hdc,
+            content_x,
+            row1_y,
+            strings.session_window,
+            session_pct,
+            session_text,
+            codex_session_pct,
+            codex_session_text,
+            show_claude_code,
+            show_codex,
+            &label_color,
+            &session_color,
+            &track,
+            &value_muted,
+        );
+        draw_card_row(
+            hdc,
+            content_x,
+            row2_y,
+            strings.weekly_window,
+            weekly_pct,
+            weekly_text,
+            codex_weekly_pct,
+            codex_weekly_text,
+            show_claude_code,
+            show_codex,
+            &label_color,
+            &weekly_color,
+            &track,
+            &value_muted,
+        );
+
+        SelectObject(hdc, old_font);
+        let _ = DeleteObject(label_font);
+    }
+}
+
+fn draw_card_row(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    label: &str,
+    claude_percent: f64,
+    claude_text: &str,
+    codex_percent: f64,
+    codex_text: &str,
+    show_claude_code: bool,
+    show_codex: bool,
+    label_color: &Color,
+    accent: &Color,
+    track: &Color,
+    muted: &Color,
+) {
+    unsafe {
+        let mut label_wide: Vec<u16> = label.encode_utf16().collect();
+        let mut label_rect = RECT {
+            left: x,
+            top: y - sc(8),
+            right: x + sc(CARD_LABEL_WIDTH),
+            bottom: y + sc(CARD_SEGMENT_H) + sc(4),
+        };
+        let _ = SetTextColor(hdc, COLORREF(label_color.to_colorref()));
+        let _ = DrawTextW(
+            hdc,
+            &mut label_wide,
+            &mut label_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE,
+        );
+
+        let mut model_x = x + sc(CARD_LABEL_WIDTH) + sc(8);
+        if show_claude_code {
+            draw_card_usage(
+                hdc,
+                model_x,
+                y,
+                claude_percent,
+                claude_text,
+                accent,
+                track,
+                muted,
+            );
+            model_x += sc(CARD_MODEL_WIDTH) + sc(CARD_MODEL_GAP);
+        }
+        if show_codex {
+            draw_card_usage(
+                hdc,
+                model_x,
+                y,
+                codex_percent,
+                codex_text,
+                accent,
+                track,
+                muted,
+            );
+        }
+    }
+}
+
+fn draw_card_usage(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    percent: f64,
+    text: &str,
+    accent: &Color,
+    track: &Color,
+    muted: &Color,
+) {
+    let seg_w = sc(CARD_SEGMENT_W);
+    let seg_h = sc(CARD_SEGMENT_H);
+    let seg_gap = sc(CARD_SEGMENT_GAP);
+    let corner_r = sc(2);
+
+    let percent_clamped = percent.clamp(0.0, 100.0);
+    let segment_percent = 100.0 / SEGMENT_COUNT as f64;
+    for i in 0..SEGMENT_COUNT {
+        let seg_x = x + i * (seg_w + seg_gap);
+        let seg_end = (i + 1) as f64 * segment_percent;
+        let rect = RECT {
+            left: seg_x,
+            top: y,
+            right: seg_x + seg_w,
+            bottom: y + seg_h,
+        };
+        let color = if percent_clamped >= seg_end {
+            accent
+        } else {
+            track
+        };
+        draw_rounded_rect(hdc, &rect, color, corner_r);
+    }
+
+    let value_x = x + SEGMENT_COUNT * (seg_w + seg_gap) - seg_gap + sc(6);
+    draw_card_value_text(hdc, value_x, y - sc(7), text, accent, muted);
+}
+
+fn draw_card_value_text(hdc: HDC, x: i32, y: i32, text: &str, accent: &Color, muted: &Color) {
+    let (percent, rest) = split_usage_value(text);
+    unsafe {
+        draw_text_at(hdc, x, y, sc(42), sc(18), &percent, accent, DT_RIGHT);
+        if let Some(rest) = rest {
+            draw_text_at(hdc, x + sc(42), y, sc(10), sc(18), "•", muted, DT_CENTER);
+            draw_text_at(hdc, x + sc(53), y, sc(42), sc(18), rest, muted, DT_LEFT);
+        }
+    }
+}
+
+fn split_usage_value(text: &str) -> (String, Option<&str>) {
+    if let Some((left, right)) = text.split_once('·') {
+        return (left.trim().to_string(), Some(right.trim()));
+    }
+    if let Some((left, right)) = text.split_once('•') {
+        return (left.trim().to_string(), Some(right.trim()));
+    }
+    (text.trim().to_string(), None)
+}
+
+unsafe fn draw_text_at(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    text: &str,
+    color: &Color,
+    align: DRAW_TEXT_FORMAT,
+) {
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = RECT {
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+    };
+    let _ = SetTextColor(hdc, COLORREF(color.to_colorref()));
+    let _ = DrawTextW(
+        hdc,
+        &mut wide,
+        &mut rect,
+        align | DT_VCENTER | DT_SINGLELINE,
+    );
 }
 
 fn do_poll(send_hwnd: SendHwnd) {
@@ -1721,11 +2134,53 @@ fn tray_reposition_is_suppressed() -> bool {
     }
 }
 
+fn widget_x_for_position(
+    position: WidgetPosition,
+    offset: i32,
+    taskbar_left: i32,
+    taskbar_right: i32,
+    tray_left: i32,
+    widget_width: i32,
+) -> i32 {
+    let available_left = taskbar_left;
+    let available_right = tray_left.min(taskbar_right);
+    let max_x = (available_right - widget_width).max(available_left);
+    let left_anchor_x = taskbar_left + sc(LEFT_POSITION_RESERVED_WIDTH);
+    let base_x = match position {
+        WidgetPosition::Right => available_right - widget_width - offset,
+        WidgetPosition::Center => {
+            available_left + ((available_right - available_left - widget_width) / 2) + offset
+        }
+        WidgetPosition::Left => left_anchor_x + offset,
+    };
+
+    base_x.clamp(available_left, max_x)
+}
+
+fn offset_for_widget_x(
+    position: WidgetPosition,
+    widget_x: i32,
+    taskbar_left: i32,
+    taskbar_right: i32,
+    tray_left: i32,
+    widget_width: i32,
+) -> i32 {
+    let available_right = tray_left.min(taskbar_right);
+    match position {
+        WidgetPosition::Right => available_right - widget_width - widget_x,
+        WidgetPosition::Center => {
+            let centered_x = taskbar_left + ((available_right - taskbar_left - widget_width) / 2);
+            widget_x - centered_x
+        }
+        WidgetPosition::Left => widget_x - (taskbar_left + sc(LEFT_POSITION_RESERVED_WIDTH)),
+    }
+}
+
 fn position_at_taskbar() {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
-    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+    let (hwnd, embedded, tray_offset, widget_position, taskbar_hwnd) = {
         let state = lock_state();
         let s = match state.as_ref() {
             Some(s) => s,
@@ -1745,7 +2200,13 @@ fn position_at_taskbar() {
             }
         };
 
-        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
+        (
+            s.hwnd.to_hwnd(),
+            s.embedded,
+            s.tray_offset,
+            s.widget_position,
+            taskbar_hwnd,
+        )
     };
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
@@ -1768,12 +2229,20 @@ fn position_at_taskbar() {
     }
 
     let widget_width = total_widget_width();
+    let screen_x = widget_x_for_position(
+        widget_position,
+        tray_offset,
+        taskbar_rect.left,
+        taskbar_rect.right,
+        tray_left,
+        widget_width,
+    );
 
     let widget_height = sc(WIDGET_HEIGHT);
     let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
-        let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
+        let x = screen_x - taskbar_rect.left;
         native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
         diagnose::log(format!(
             "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
@@ -1781,7 +2250,7 @@ fn position_at_taskbar() {
         ));
     } else {
         // Topmost popup: screen coordinates
-        let x = tray_left - widget_width - tray_offset;
+        let x = screen_x;
         native_interop::move_window(hwnd, x, y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
@@ -2000,7 +2469,32 @@ unsafe extern "system" fn wnd_proc(
                 if let Some(s) = state.as_mut() {
                     s.dragging = true;
                     s.drag_start_mouse_x = pt.x;
-                    s.drag_start_offset = s.tray_offset;
+                    s.drag_start_widget_x = if let Some(taskbar_hwnd) = s.taskbar_hwnd {
+                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                            let mut tray_left = taskbar_rect.right;
+                            if let Some(tray_hwnd) =
+                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
+                            {
+                                if let Some(tray_rect) =
+                                    native_interop::get_window_rect_safe(tray_hwnd)
+                                {
+                                    tray_left = tray_rect.left;
+                                }
+                            }
+                            widget_x_for_position(
+                                s.widget_position,
+                                s.tray_offset,
+                                taskbar_rect.left,
+                                taskbar_rect.right,
+                                tray_left,
+                                total_widget_width_for_state(s),
+                            )
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
                 }
                 SetCapture(hwnd);
             }
@@ -2021,14 +2515,7 @@ unsafe extern "system" fn wnd_proc(
                         None => return LRESULT(0),
                     };
 
-                    // Moving mouse left = positive delta = larger offset (further left)
-                    let delta = s.drag_start_mouse_x - pt.x;
-                    let mut new_offset = s.drag_start_offset + delta;
-
-                    // Clamp: offset >= 0 (can't go right of default)
-                    if new_offset < 0 {
-                        new_offset = 0;
-                    }
+                    let desired_x = s.drag_start_widget_x + (pt.x - s.drag_start_mouse_x);
 
                     let taskbar_hwnd = s.taskbar_hwnd;
                     let embedded = s.embedded;
@@ -2048,10 +2535,22 @@ unsafe extern "system" fn wnd_proc(
                                 }
                             }
                             let widget_width = total_widget_width_for_state(s);
-                            let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-                            if new_offset > max_offset {
-                                new_offset = max_offset;
-                            }
+                            let new_x = widget_x_for_position(
+                                WidgetPosition::Left,
+                                desired_x - taskbar_rect.left,
+                                taskbar_rect.left,
+                                taskbar_rect.right,
+                                tray_left,
+                                widget_width,
+                            );
+                            let new_offset = offset_for_widget_x(
+                                s.widget_position,
+                                new_x,
+                                taskbar_rect.left,
+                                taskbar_rect.right,
+                                tray_left,
+                                widget_width,
+                            );
 
                             s.tray_offset = new_offset;
 
@@ -2061,9 +2560,9 @@ unsafe extern "system" fn wnd_proc(
                             let widget_height = sc(WIDGET_HEIGHT);
                             let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
                             let x = if embedded {
-                                tray_left - taskbar_rect.left - widget_width - new_offset
+                                new_x - taskbar_rect.left
                             } else {
-                                tray_left - widget_width - new_offset
+                                new_x
                             };
                             Some((
                                 hwnd_val,
@@ -2075,11 +2574,9 @@ unsafe extern "system" fn wnd_proc(
                                 widget_height,
                             ))
                         } else {
-                            s.tray_offset = new_offset;
                             None
                         }
                     } else {
-                        s.tray_offset = new_offset;
                         None
                     }
                 };
@@ -2198,6 +2695,50 @@ unsafe extern "system" fn wnd_proc(
                     }
                     save_state_settings();
                     position_at_taskbar();
+                }
+                IDM_POSITION_RIGHT | IDM_POSITION_CENTER | IDM_POSITION_LEFT => {
+                    let position = match id {
+                        IDM_POSITION_CENTER => WidgetPosition::Center,
+                        IDM_POSITION_LEFT => WidgetPosition::Left,
+                        _ => WidgetPosition::Right,
+                    };
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.widget_position = position;
+                            s.tray_offset = 0;
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                }
+                IDM_DESIGN_CLASSIC | IDM_DESIGN_CARD => {
+                    let design = match id {
+                        IDM_DESIGN_CARD => WidgetDesign::Card,
+                        _ => WidgetDesign::Classic,
+                    };
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.widget_design = design;
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                }
+                IDM_SHOW_REMAINING => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_remaining = !s.show_remaining;
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icons(hwnd);
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
@@ -2333,6 +2874,9 @@ fn show_context_menu(hwnd: HWND) {
             widget_visible,
             show_claude_code,
             show_codex,
+            widget_position,
+            widget_design,
+            show_remaining,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2346,6 +2890,9 @@ fn show_context_menu(hwnd: HWND) {
                     s.widget_visible,
                     s.show_claude_code,
                     s.show_codex,
+                    s.widget_position,
+                    s.widget_design,
+                    s.show_remaining,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2356,6 +2903,9 @@ fn show_context_menu(hwnd: HWND) {
                     UpdateStatus::Idle,
                     true,
                     true,
+                    false,
+                    WidgetPosition::Right,
+                    WidgetDesign::Classic,
                     false,
                 ),
             }
@@ -2460,6 +3010,92 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        let position_menu = CreatePopupMenu().unwrap();
+        let position_items = [
+            (
+                IDM_POSITION_RIGHT,
+                WidgetPosition::Right,
+                strings.position_right,
+            ),
+            (
+                IDM_POSITION_CENTER,
+                WidgetPosition::Center,
+                strings.position_center,
+            ),
+            (
+                IDM_POSITION_LEFT,
+                WidgetPosition::Left,
+                strings.position_left,
+            ),
+        ];
+        for (id, position, label) in position_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if position == widget_position {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                position_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+
+        let position_label = native_interop::wide_str(strings.position);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            position_menu.0 as usize,
+            PCWSTR::from_raw(position_label.as_ptr()),
+        );
+
+        let design_menu = CreatePopupMenu().unwrap();
+        let design_items = [
+            (
+                IDM_DESIGN_CLASSIC,
+                WidgetDesign::Classic,
+                strings.design_classic,
+            ),
+            (IDM_DESIGN_CARD, WidgetDesign::Card, strings.design_card),
+        ];
+        for (id, design, label) in design_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if design == widget_design {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                design_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+
+        let design_label = native_interop::wide_str(strings.design);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            design_menu.0 as usize,
+            PCWSTR::from_raw(design_label.as_ptr()),
+        );
+
+        let remaining_label = native_interop::wide_str(strings.show_remaining);
+        let remaining_flags = if show_remaining {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            remaining_flags,
+            IDM_SHOW_REMAINING as usize,
+            PCWSTR::from_raw(remaining_label.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
@@ -2585,6 +3221,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         codex_weekly_text,
         show_claude_code,
         show_codex,
+        widget_design,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -2601,6 +3238,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.codex_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
+                s.widget_design,
             ),
             None => return,
         }
@@ -2659,6 +3297,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_claude_code,
             show_codex,
             &codex_accent,
+            widget_design,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);

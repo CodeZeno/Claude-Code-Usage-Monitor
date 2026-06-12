@@ -4,10 +4,10 @@ mod french;
 mod german;
 mod japanese;
 mod korean;
+mod portuguese_brazil;
+mod russian;
 mod spanish;
 mod traditional_chinese;
-mod russian;
-mod portuguese_brazil;
 
 use windows::core::PWSTR;
 use windows::Win32::Globalization::{
@@ -150,6 +150,14 @@ pub struct Strings {
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,
+    pub position: &'static str,
+    pub position_right: &'static str,
+    pub position_center: &'static str,
+    pub position_left: &'static str,
+    pub design: &'static str,
+    pub design_classic: &'static str,
+    pub design_card: &'static str,
+    pub show_remaining: &'static str,
     pub language: &'static str,
     pub system_default: &'static str,
     pub check_for_updates: &'static str,
