@@ -1602,6 +1602,24 @@ fn do_poll(send_hwnd: SendHwnd) {
     }
 }
 
+fn begin_manual_refresh(hwnd: HWND) {
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.session_text = "...".to_string();
+            s.weekly_text = "...".to_string();
+            s.codex_session_text = "...".to_string();
+            s.codex_weekly_text = "...".to_string();
+            s.force_notify_auth_error = true;
+        }
+    }
+    render_layered();
+    let sh = SendHwnd::from_hwnd(hwnd);
+    std::thread::spawn(move || {
+        do_poll(sh);
+    });
+}
+
 fn schedule_countdown_timer() {
     let state = lock_state();
     let s = match state.as_ref() {
@@ -2119,6 +2137,11 @@ unsafe extern "system" fn wnd_proc(
             if was_dragging.is_some() {
                 let _ = ReleaseCapture();
                 save_state_settings();
+            } else {
+                let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+                if client_x >= sc(DIVIDER_HIT_ZONE) {
+                    begin_manual_refresh(hwnd);
+                }
             }
             LRESULT(0)
         }
@@ -2130,21 +2153,7 @@ unsafe extern "system" fn wnd_proc(
             let id = wparam.0 as u16;
             match id {
                 1 => {
-                    {
-                        let mut state = lock_state();
-                        if let Some(s) = state.as_mut() {
-                            s.session_text = "...".to_string();
-                            s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
-                            s.force_notify_auth_error = true;
-                        }
-                    }
-                    render_layered();
-                    let sh = SendHwnd::from_hwnd(hwnd);
-                    std::thread::spawn(move || {
-                        do_poll(sh);
-                    });
+                    begin_manual_refresh(hwnd);
                 }
                 IDM_VERSION_ACTION => {
                     let (install_channel, release) = {
