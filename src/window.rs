@@ -57,8 +57,10 @@ struct AppState {
 
     session_percent: f64,
     session_text: String,
+    session_label: String,
     weekly_percent: f64,
     weekly_text: String,
+    weekly_label: String,
     codex_session_percent: f64,
     codex_session_text: String,
     codex_weekly_percent: f64,
@@ -405,9 +407,11 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Claude,
                     percent: Some(s.session_percent),
                     tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
+                        "{} {}: {} | {}: {}",
                         s.language.strings().claude_code_model,
+                        s.session_label,
                         s.session_text,
+                        s.weekly_label,
                         s.weekly_text
                     ),
                 });
@@ -644,9 +648,39 @@ fn refresh_usage_texts(state: &mut AppState) {
         return;
     };
 
+    // Reset labels to defaults before potentially overriding below
+    state.session_label = strings.session_window.to_string();
+    state.weekly_label = strings.weekly_window.to_string();
+
     if let Some(claude_code) = data.claude_code.as_ref() {
+        state.session_percent = claude_code.session.percentage;
+        state.weekly_percent = claude_code.weekly.percentage;
         state.session_text = poller::format_line(&claude_code.session, strings);
         state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+
+        // When the usage endpoint returned no rate-limit buckets (enterprise), show account rows
+        let has_rate_limit = claude_code.session.has_bucket || claude_code.weekly.has_bucket;
+
+        diagnose::log(format!("refresh_usage_texts: has_rate_limit={has_rate_limit} account={}", data.account.is_some()));
+        if !has_rate_limit {
+            if let Some(account) = data.account.as_ref() {
+                diagnose::log(format!("refresh_usage_texts: setting Cr/Sp rows credit_pct={}", account.credit_pct));
+                state.session_percent = account.credit_pct;
+                state.session_text =
+                    poller::format_credit_text(account.credit_pct, account.credit_expiry);
+                state.session_label = "Cr".to_string();
+
+                let spend_pct = if account.spend_limit > 0.0 {
+                    (account.spend_used / account.spend_limit * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+                state.weekly_percent = spend_pct;
+                state.weekly_text =
+                    poller::format_spend_text(account.spend_used, account.spend_limit);
+                state.weekly_label = "Sp".to_string();
+            }
+        }
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
@@ -1297,8 +1331,10 @@ pub fn run() {
                 install_channel,
                 session_percent: 0.0,
                 session_text: "--".to_string(),
+                session_label: language.strings().session_window.to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
+                weekly_label: language.strings().weekly_window.to_string(),
                 codex_session_percent: 0.0,
                 codex_session_text: "--".to_string(),
                 codex_weekly_percent: 0.0,
@@ -1350,10 +1386,14 @@ pub fn run() {
         }
 
         // Register system tray icon(s)
+        diagnose::log("before sync_tray_icons");
         sync_tray_icons(hwnd);
+        diagnose::log("after sync_tray_icons");
 
         // Position and show (only if widget_visible preference is true)
+        diagnose::log("before position_at_taskbar");
         position_at_taskbar();
+        diagnose::log("before ShowWindow");
         if settings.widget_visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
@@ -1422,8 +1462,10 @@ fn render_layered() {
         strings,
         session_pct,
         session_text,
+        session_label,
         weekly_pct,
         weekly_text,
+        weekly_label,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
@@ -1445,8 +1487,10 @@ fn render_layered() {
                 s.language.strings(),
                 s.session_percent,
                 s.session_text.clone(),
+                s.session_label.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                s.weekly_label.clone(),
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_weekly_percent,
@@ -1540,8 +1584,10 @@ fn render_layered() {
             strings,
             session_pct,
             &session_text,
+            &session_label,
             weekly_pct,
             &weekly_text,
+            &weekly_label,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
@@ -1613,11 +1659,13 @@ fn paint_content(
     text_color: &Color,
     accent: &Color,
     track: &Color,
-    strings: Strings,
+    _strings: Strings,
     session_pct: f64,
     session_text: &str,
+    session_label: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    weekly_label: &str,
     codex_session_pct: f64,
     codex_session_text: &str,
     codex_weekly_pct: f64,
@@ -1713,7 +1761,7 @@ fn paint_content(
             row1_y,
             is_dark,
             text_color,
-            strings.session_window,
+            session_label,
             session_pct,
             session_text,
             codex_session_pct,
@@ -1734,7 +1782,7 @@ fn paint_content(
             row2_y,
             is_dark,
             text_color,
-            strings.weekly_window,
+            weekly_label,
             weekly_pct,
             weekly_text,
             codex_weekly_pct,
@@ -1857,6 +1905,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.auth_watch_snapshot = watch_snapshot;
                             s.session_text = "!".to_string();
                             s.weekly_text = "!".to_string();
+                            s.session_label = s.language.strings().session_window.to_string();
+                            s.weekly_label = s.language.strings().weekly_window.to_string();
                             s.codex_session_text = "!".to_string();
                             s.codex_weekly_text = "!".to_string();
                             s.antigravity_session_text = "!".to_string();
@@ -2510,6 +2560,8 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.session_label = s.language.strings().session_window.to_string();
+                            s.weekly_label = s.language.strings().weekly_window.to_string();
                             s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
@@ -2974,8 +3026,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
         strings,
         session_pct,
         session_text,
+        session_label,
         weekly_pct,
         weekly_text,
+        weekly_label,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
@@ -2995,8 +3049,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.language.strings(),
                 s.session_percent,
                 s.session_text.clone(),
+                s.session_label.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                s.weekly_label.clone(),
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_weekly_percent,
@@ -3058,8 +3114,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
             strings,
             session_pct,
             &session_text,
+            &session_label,
             weekly_pct,
             &weekly_text,
+            &weekly_label,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,

@@ -6,12 +6,86 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{AppUsageData, UsageData, UsageSection};
+use crate::models::{AccountUsage, AppUsageData, UsageData, UsageSection};
+
+// In-memory cache: survives transient 429s within a single session.
+static LAST_KNOWN_ACCOUNT: Mutex<Option<AccountUsage>> = Mutex::new(None);
+// Ensures disk cache is read at most once per process lifetime.
+static DISK_CACHE_LOADED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize, Deserialize, Default)]
+struct CachedAccountDisk {
+    credit_pct: f64,
+    credit_expiry_unix: Option<u64>,
+    spend_used: f64,
+    spend_limit: f64,
+}
+
+fn account_cache_path() -> PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(appdata)
+        .join("ClaudeCodeUsageMonitor")
+        .join("account_cache.json")
+}
+
+fn save_account_to_disk(account: &AccountUsage) {
+    let path = account_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let credit_expiry_unix = account
+        .credit_expiry
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let disk = CachedAccountDisk {
+        credit_pct: account.credit_pct,
+        credit_expiry_unix,
+        spend_used: account.spend_used,
+        spend_limit: account.spend_limit,
+    };
+    if let Ok(json) = serde_json::to_string(&disk) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn load_account_from_disk() -> Option<AccountUsage> {
+    let content = std::fs::read_to_string(account_cache_path()).ok()?;
+    let disk: CachedAccountDisk = serde_json::from_str(&content).ok()?;
+    let credit_expiry = disk.credit_expiry_unix.filter(|&s| s > 0).map(|secs| {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    });
+    Some(AccountUsage {
+        credit_pct: disk.credit_pct,
+        credit_expiry,
+        spend_used: disk.spend_used,
+        spend_limit: disk.spend_limit,
+    })
+}
+
+/// Pre-populate in-memory cache from disk on first call (no-op afterwards).
+fn ensure_disk_cache_loaded() {
+    if DISK_CACHE_LOADED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if let Some(account) = load_account_from_disk() {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            if cached.is_none() {
+                diagnose::log(format!(
+                    "loaded account cache from disk credit_pct={}",
+                    account.credit_pct
+                ));
+                *cached = Some(account);
+            }
+        }
+    }
+}
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -47,6 +121,20 @@ pub type CredentialWatchSnapshot = Vec<String>;
 struct UsageResponse {
     five_hour: Option<UsageBucket>,
     seven_day: Option<UsageBucket>,
+    cinder_cove: Option<UsageBucket>,
+    spend: Option<SpendData>,
+}
+
+#[derive(Deserialize)]
+struct SpendData {
+    used: SpendAmount,
+    limit: SpendAmount,
+}
+
+#[derive(Deserialize)]
+struct SpendAmount {
+    amount_minor: i64,
+    exponent: u32,
 }
 
 #[derive(Deserialize)]
@@ -190,7 +278,7 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
-    mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_claude_code: impl FnMut() -> Result<(UsageData, Option<AccountUsage>), PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
@@ -200,7 +288,10 @@ fn poll_with(
 
     if show_claude_code {
         match poll_claude_code() {
-            Ok(claude_code) => data.claude_code = Some(claude_code),
+            Ok((usage, account)) => {
+                data.claude_code = Some(usage);
+                data.account = account;
+            }
             Err(error) => {
                 if active_provider_count > 1 {
                     diagnose::log(format!("Claude Code usage poll failed: {error:?}"));
@@ -241,7 +332,7 @@ fn poll_with(
     }
 }
 
-fn poll_claude_code() -> Result<UsageData, PollError> {
+fn poll_claude_code() -> Result<(UsageData, Option<AccountUsage>), PollError> {
     let creds = match read_first_credentials() {
         Some(c) => c,
         None => {
@@ -654,10 +745,10 @@ fn wsl_credential_watch_signature(distro: &str) -> Option<String> {
     Some(format!("wsl:{distro}|{state}"))
 }
 
-fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
+fn fetch_usage_with_fallback(token: &str) -> Result<(UsageData, Option<AccountUsage>), PollError> {
     // Try the dedicated usage endpoint first
     match try_usage_endpoint(token)? {
-        Some(data) => {
+        Some((data, account)) => {
             // If reset timers are missing, fill them in from the Messages API
             if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
                 if let Ok(fallback) = fetch_usage_via_messages(token) {
@@ -668,10 +759,10 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
                     if merged.weekly.resets_at.is_none() {
                         merged.weekly.resets_at = fallback.weekly.resets_at;
                     }
-                    return Ok(merged);
+                    return Ok((merged, account));
                 }
             }
-            return Ok(data);
+            return Ok((data, account));
         }
         None => {}
     }
@@ -679,12 +770,26 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
     // Fall back to Messages API with rate limit headers
     let result = fetch_usage_via_messages(token);
     if result.is_err() {
-        diagnose::log("usage endpoint and Messages API fallback both failed");
+        diagnose::log("usage endpoint and messages API both unavailable");
     }
-    result
+    // Load disk cache once per process, then use in-memory cache
+    ensure_disk_cache_loaded();
+    let cached_account = LAST_KNOWN_ACCOUNT.lock().ok().and_then(|g| g.clone());
+    match result {
+        Ok(d) => Ok((d, cached_account)),
+        // Both endpoints down but we have cached enterprise data: return it with empty
+        // UsageData so refresh_usage_texts can still render the Cr/Sp rows.  This keeps
+        // poll() returning Ok and prevents the transient-error handler from wiping
+        // session_text / weekly_text with "...".
+        Err(_) if cached_account.is_some() => {
+            diagnose::log("using cached account data (usage endpoint unavailable)");
+            Ok((UsageData::default(), cached_account))
+        }
+        Err(e) => Err(e),
+    }
 }
 
-fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
+fn try_usage_endpoint(token: &str) -> Result<Option<(UsageData, Option<AccountUsage>)>, PollError> {
     let agent = build_agent()?;
 
     let resp = match agent
@@ -700,26 +805,79 @@ fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
             ));
             return Err(PollError::AuthRequired);
         }
-        Err(_) => return Ok(None),
+        Err(ureq::Error::Status(code, _)) => {
+            diagnose::log(format!("usage endpoint returned non-auth error status {code}"));
+            return Ok(None);
+        }
+        Err(e) => {
+            diagnose::log(format!("usage endpoint request failed: {e}"));
+            return Ok(None);
+        }
     };
 
     let response: UsageResponse = match resp.into_json() {
         Ok(response) => response,
-        Err(_) => return Ok(None),
+        Err(e) => {
+            diagnose::log(format!("usage endpoint json parse failed: {e}"));
+            return Ok(None);
+        }
     };
+    diagnose::log("usage endpoint json parsed ok");
     let mut data = UsageData::default();
 
     if let Some(bucket) = &response.five_hour {
         data.session.percentage = bucket.utilization;
         data.session.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+        data.session.has_bucket = true;
     }
 
     if let Some(bucket) = &response.seven_day {
         data.weekly.percentage = bucket.utilization;
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+        data.weekly.has_bucket = true;
     }
 
-    Ok(Some(data))
+    let account = extract_account_usage(&response);
+    // Update both in-memory cache and disk to reflect the current plan.
+    // When account is None (non-enterprise plan), clear the disk cache too so
+    // stale enterprise rows don't reappear after a 429 later in the session.
+    if let Some(ref a) = account {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            *cached = Some(a.clone());
+        }
+        save_account_to_disk(a);
+    } else {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            *cached = None;
+        }
+        let _ = std::fs::remove_file(account_cache_path());
+    }
+    Ok(Some((data, account)))
+}
+
+fn extract_account_usage(response: &UsageResponse) -> Option<AccountUsage> {
+    diagnose::log(format!(
+        "extract_account_usage: cinder_cove={} spend={}",
+        response.cinder_cove.is_some(),
+        response.spend.is_some()
+    ));
+    let credit_bucket = response.cinder_cove.as_ref()?;
+    let spend = response.spend.as_ref()?;
+
+    let used_divisor = 10f64.powi(spend.used.exponent as i32);
+    let limit_divisor = 10f64.powi(spend.limit.exponent as i32);
+
+    let result = Some(AccountUsage {
+        credit_pct: credit_bucket.utilization,
+        credit_expiry: parse_iso8601(credit_bucket.resets_at.as_deref()),
+        spend_used: spend.used.amount_minor as f64 / used_divisor,
+        spend_limit: spend.limit.amount_minor as f64 / limit_divisor,
+    });
+    diagnose::log(format!(
+        "extract_account_usage: returning Some with credit_pct={}",
+        credit_bucket.utilization
+    ));
+    result
 }
 
 fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
@@ -855,6 +1013,7 @@ fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
     UsageSection {
         percentage: window.used_percent,
         resets_at: unix_to_system_time(Some(window.reset_at)),
+        has_bucket: true,
     }
 }
 
@@ -1047,6 +1206,7 @@ fn antigravity_section_from_quota(quota: AntigravityQuotaInfo) -> Option<UsageSe
     Some(UsageSection {
         percentage: (1.0 - remaining) * 100.0,
         resets_at: parse_iso8601(quota.reset_time.as_deref()),
+        has_bucket: true,
     })
 }
 
@@ -1057,6 +1217,7 @@ fn antigravity_section_from_summary_bucket(
     Some(UsageSection {
         percentage: (1.0 - remaining) * 100.0,
         resets_at: parse_iso8601(bucket.reset_time.as_deref()),
+        has_bucket: true,
     })
 }
 
@@ -1460,10 +1621,18 @@ fn is_token_expired(expires_at: Option<i64>) -> bool {
 /// Parse an ISO 8601 timestamp string into a SystemTime.
 fn parse_iso8601(s: Option<&str>) -> Option<SystemTime> {
     let s = s?;
-    // Strip timezone offset to get "YYYY-MM-DDTHH:MM:SS" or with fractional seconds
-    // The API returns formats like "2026-03-05T08:00:00.321598+00:00"
-    let datetime_part = s.split('+').next().unwrap_or(s);
-    let datetime_part = datetime_part.split('Z').next().unwrap_or(datetime_part);
+    // Strip timezone: "2026-03-05T08:00:00.321598+00:00" or "-05:00"
+    // First strip trailing 'Z', then find +/- timezone offset after the 'T' separator.
+    let datetime_part = s.split('Z').next().unwrap_or(s);
+    let datetime_part = if let Some(t_pos) = datetime_part.find('T') {
+        let after_t = &datetime_part[t_pos + 1..];
+        match after_t.find(|c: char| c == '+' || c == '-') {
+            Some(tz) => &datetime_part[..t_pos + 1 + tz],
+            None => datetime_part,
+        }
+    } else {
+        datetime_part
+    };
 
     // Try parsing with and without fractional seconds
     let formats = ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"];
@@ -1731,5 +1900,94 @@ mod tests {
         assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
         assert!(usage.weekly.resets_at.is_some());
         assert!(usage.session.resets_at.is_some());
+    }
+}
+
+pub fn format_credit_text(credit_pct: f64, expiry: Option<std::time::SystemTime>) -> String {
+    match expiry {
+        Some(t) => {
+            let suffix = format_expiry_locale(t);
+            if suffix.is_empty() {
+                // Expiry in the past or invalid — show percentage only
+                format!("{:.0}%", credit_pct)
+            } else {
+                // Drop decimal when expiry suffix present: "NN%·D/M" must fit 62px
+                format!("{:.0}%\u{00b7}{}", credit_pct, suffix)
+            }
+        }
+        // No expiry: keep one decimal for sub-10% precision
+        None => {
+            if credit_pct < 10.0 {
+                format!("{:.1}%", credit_pct)
+            } else {
+                format!("{:.0}%", credit_pct)
+            }
+        }
+    }
+}
+
+pub fn format_spend_text(spend_used: f64, spend_limit: f64) -> String {
+    if spend_limit <= 0.0 {
+        return format_usd(spend_used);
+    }
+    format!("{}/{}", format_usd(spend_used), format_usd(spend_limit))
+}
+
+fn format_expiry_locale(t: std::time::SystemTime) -> String {
+    let secs = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(_) => return String::new(),
+    };
+    let (month, day) = unix_secs_to_month_day(secs);
+    crate::native_interop::format_month_day_locale(month, day)
+}
+
+fn unix_secs_to_month_day(secs: u64) -> (u8, u8) {
+    let days = secs / 86400;
+    let mut remaining = days;
+    let mut year = 1970u32;
+    loop {
+        let year_days = if is_leap_year(year) { 366u64 } else { 365u64 };
+        if remaining < year_days {
+            break;
+        }
+        remaining -= year_days;
+        year += 1;
+    }
+    let month_lengths: [u64; 12] = [
+        31, if is_leap_year(year) { 29 } else { 28 },
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+    let mut month = 1u8;
+    let mut rem = remaining;
+    for &days_in_month in &month_lengths {
+        if rem < days_in_month {
+            break;
+        }
+        rem -= days_in_month;
+        month += 1;
+    }
+    let month = month.min(12);
+    let day = (rem + 1).min(31) as u8;
+    (month, day)
+}
+
+fn is_leap_year(year: u32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+fn format_usd(amount: f64) -> String {
+    let dollars = amount as u64;
+    if dollars >= 10_000 {
+        format!("${:.0}K", amount / 1000.0)
+    } else if dollars >= 1_000 {
+        let k = amount / 1000.0;
+        if (k - k.floor()).abs() < 0.05 {
+            format!("${:.0}K", k)
+        } else {
+            format!("${:.1}K", k)
+        }
+    } else {
+        format!("${}", dollars)
     }
 }
