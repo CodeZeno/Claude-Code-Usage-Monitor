@@ -256,12 +256,14 @@ pub fn create_icon(kind: TrayIconKind, percent: Option<f64>) -> HICON {
             bottom: size - margin,
         };
         let mut text_wide: Vec<u16> = display_text.encode_utf16().collect();
-        let _ = DrawTextW(
-            mem_dc,
-            &mut text_wide,
-            &mut text_rect,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
+        if !text_wide.is_empty() {
+            let _ = DrawTextW(
+                mem_dc,
+                &mut text_wide,
+                &mut text_rect,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+            );
+        }
 
         SelectObject(mem_dc, old_font);
         let _ = DeleteObject(font);

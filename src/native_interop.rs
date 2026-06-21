@@ -1,8 +1,13 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Globalization::GetLocaleInfoW;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
+
+const LOCALE_USER_DEFAULT: u32 = 0x0400;
+// Short date format pattern (e.g. "M/d/yyyy")
+const LOCALE_SSHORTDATE: u32 = 0x001F;
 
 // Window style constants
 pub const WS_POPUP_STYLE: u32 = 0x80000000;
@@ -179,6 +184,41 @@ pub fn unhook_win_event(hook: HWINEVENTHOOK) {
 /// Convert a Rust string to a null-terminated wide string
 pub fn wide_str(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Format a month/day pair respecting the Windows system locale
+/// (separator, and whether day or month comes first).
+/// Returns e.g. "9/15" (en-US), "15/9" (en-GB), "15.9" (de-DE).
+pub fn format_month_day_locale(month: u8, day: u8) -> String {
+    if let Some(pattern) = locale_short_date_pattern() {
+        let lower = pattern.to_lowercase();
+        // Find the separator: first non-alphabetic, non-quote character
+        let sep = lower
+            .chars()
+            .find(|c| !c.is_alphabetic() && *c != '\'')
+            .unwrap_or('/');
+        // day-first when 'd' appears before 'm' in the pattern (e.g. "dd/MM/yyyy")
+        let d_pos = lower.find('d');
+        let m_pos = lower.find('m');
+        return match (d_pos, m_pos) {
+            (Some(d), Some(m)) if d < m => format!("{}{}{}", day, sep, month),
+            (Some(_), Some(_)) => format!("{}{}{}", month, sep, day),
+            _ => format!("{}/{}", month, day), // malformed pattern — safe fallback
+        };
+    }
+    format!("{}/{}", month, day)
+}
+
+fn locale_short_date_pattern() -> Option<String> {
+    unsafe {
+        let mut buf = [0u16; 256];
+        let len = GetLocaleInfoW(LOCALE_USER_DEFAULT, LOCALE_SSHORTDATE, Some(&mut buf));
+        if len > 1 && (len as usize) <= buf.len() {
+            Some(String::from_utf16_lossy(&buf[..len as usize - 1]).to_string())
+        } else {
+            None
+        }
+    }
 }
 
 /// COLORREF wrapper (RGB packed into u32)
