@@ -11,7 +11,7 @@ use std::os::windows::process::CommandExt;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{AppUsageData, UsageData, UsageSection};
+use crate::models::{AppUsageData, UsageData, UsageDisplayMode, UsageSection};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -1522,8 +1522,15 @@ fn is_leap(y: u64) -> bool {
 }
 
 /// Format a usage section as "X% · Yh" style text
-pub fn format_line(section: &UsageSection, strings: Strings) -> String {
-    let pct = format!("{:.0}%", section.percentage);
+pub fn format_line(
+    section: &UsageSection,
+    strings: Strings,
+    usage_display: UsageDisplayMode,
+) -> String {
+    let pct = format!(
+        "{:.0}%",
+        usage_display.display_percentage(section.percentage)
+    );
     let cd = format_countdown(section.resets_at, strings);
     if cd.is_empty() {
         pct
@@ -1603,6 +1610,7 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::localization::LanguageId;
 
     fn usage_with_session_percent(percentage: f64) -> UsageData {
         UsageData {
@@ -1612,6 +1620,23 @@ mod tests {
             },
             weekly: UsageSection::default(),
         }
+    }
+
+    #[test]
+    fn format_line_respects_usage_display_mode_and_preserves_countdown() {
+        let section = UsageSection {
+            percentage: 42.0,
+            resets_at: Some(SystemTime::now() + Duration::from_secs(7_201)),
+        };
+        let strings = LanguageId::English.strings();
+
+        let used = format_line(&section, strings, UsageDisplayMode::Used);
+        let remaining = format_line(&section, strings, UsageDisplayMode::Remaining);
+
+        assert!(used.starts_with("42% · "));
+        assert!(remaining.starts_with("58% · "));
+        assert_eq!(used.split_once(" · ").unwrap().1, "2h");
+        assert_eq!(remaining.split_once(" · ").unwrap().1, "2h");
     }
 
     #[test]

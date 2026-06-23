@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::AppUsageData;
+use crate::models::{AppUsageData, UsageDisplayMode};
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
@@ -70,6 +70,7 @@ struct AppState {
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    usage_display: UsageDisplayMode,
 
     data: Option<AppUsageData>,
 
@@ -91,6 +92,52 @@ struct AppState {
     drag_start_offset: i32,
 
     widget_visible: bool,
+}
+
+impl AppState {
+    fn display_percentage(&self, used_percentage: f64, available: bool) -> f64 {
+        display_percentage_for_availability(self.usage_display, used_percentage, available)
+    }
+
+    fn claude_code_usage_available(&self) -> bool {
+        self.data
+            .as_ref()
+            .and_then(|data| data.claude_code.as_ref())
+            .is_some()
+    }
+
+    fn codex_usage_available(&self) -> bool {
+        self.data
+            .as_ref()
+            .and_then(|data| data.codex.as_ref())
+            .is_some()
+    }
+
+    fn antigravity_usage_available(&self) -> bool {
+        self.data
+            .as_ref()
+            .and_then(|data| data.antigravity.as_ref())
+            .is_some()
+    }
+
+    fn antigravity_weekly_usage_available(&self) -> bool {
+        self.data
+            .as_ref()
+            .and_then(|data| data.antigravity.as_ref())
+            .is_some_and(|usage| usage.weekly.resets_at.is_some() || usage.weekly.percentage != 0.0)
+    }
+}
+
+fn display_percentage_for_availability(
+    usage_display: UsageDisplayMode,
+    used_percentage: f64,
+    available: bool,
+) -> f64 {
+    if available {
+        usage_display.display_percentage(used_percentage)
+    } else {
+        used_percentage.clamp(0.0, 100.0)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +178,8 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_USAGE_DISPLAY_USED: u16 = 80;
+const IDM_USAGE_DISPLAY_REMAINING: u16 = 81;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -316,6 +365,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default)]
+    usage_display: UsageDisplayMode,
 }
 
 impl Default for SettingsFile {
@@ -330,6 +381,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            usage_display: UsageDisplayMode::Used,
         }
     }
 }
@@ -391,6 +443,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            usage_display: s.usage_display,
         });
     }
 }
@@ -403,7 +456,10 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             if s.show_claude_code {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Claude,
-                    percent: Some(s.session_percent),
+                    used_percent: Some(s.session_percent),
+                    display_percent: Some(
+                        s.display_percentage(s.session_percent, s.claude_code_usage_available()),
+                    ),
                     tooltip: format!(
                         "{} 5h: {} | 7d: {}",
                         s.language.strings().claude_code_model,
@@ -415,7 +471,10 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             if s.show_codex {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Codex,
-                    percent: Some(s.codex_session_percent),
+                    used_percent: Some(s.codex_session_percent),
+                    display_percent: Some(
+                        s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
+                    ),
                     tooltip: format!(
                         "{} 5h: {} | 7d: {}",
                         s.language.strings().codex_model,
@@ -427,7 +486,11 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             if s.show_antigravity {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Antigravity,
-                    percent: Some(s.antigravity_session_percent),
+                    used_percent: Some(s.antigravity_session_percent),
+                    display_percent: Some(s.display_percentage(
+                        s.antigravity_session_percent,
+                        s.antigravity_usage_available(),
+                    )),
                     tooltip: format!(
                         "{} 5h: {} | 7d: {}",
                         s.language.strings().antigravity_model,
@@ -443,21 +506,24 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             if s.show_claude_code {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Claude,
-                    percent: None,
+                    used_percent: None,
+                    display_percent: None,
                     tooltip: s.language.strings().window_title.to_string(),
                 });
             }
             if s.show_codex {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Codex,
-                    percent: None,
+                    used_percent: None,
+                    display_percent: None,
                     tooltip: s.language.strings().codex_window_title.to_string(),
                 });
             }
             if s.show_antigravity {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Antigravity,
-                    percent: None,
+                    used_percent: None,
+                    display_percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
                 });
             }
@@ -645,28 +711,31 @@ fn refresh_usage_texts(state: &mut AppState) {
     };
 
     if let Some(claude_code) = data.claude_code.as_ref() {
-        state.session_text = poller::format_line(&claude_code.session, strings);
-        state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+        state.session_text =
+            poller::format_line(&claude_code.session, strings, state.usage_display);
+        state.weekly_text = poller::format_line(&claude_code.weekly, strings, state.usage_display);
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+        state.codex_session_text =
+            poller::format_line(&codex.session, strings, state.usage_display);
+        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, state.usage_display);
     } else if state.show_codex {
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
     }
 
     if let Some(antigravity) = data.antigravity.as_ref() {
-        state.antigravity_session_text = poller::format_line(&antigravity.session, strings);
+        state.antigravity_session_text =
+            poller::format_line(&antigravity.session, strings, state.usage_display);
         state.antigravity_weekly_text =
             if antigravity.weekly.resets_at.is_none() && antigravity.weekly.percentage == 0.0 {
                 "--".to_string()
             } else {
-                poller::format_line(&antigravity.weekly, strings)
+                poller::format_line(&antigravity.weekly, strings, state.usage_display)
             };
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
@@ -1310,6 +1379,7 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                usage_display: settings.usage_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1443,17 +1513,23 @@ fn render_layered() {
                 s.is_dark,
                 s.embedded,
                 s.language.strings(),
-                s.session_percent,
+                s.display_percentage(s.session_percent, s.claude_code_usage_available()),
                 s.session_text.clone(),
-                s.weekly_percent,
+                s.display_percentage(s.weekly_percent, s.claude_code_usage_available()),
                 s.weekly_text.clone(),
-                s.codex_session_percent,
+                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
                 s.codex_session_text.clone(),
-                s.codex_weekly_percent,
+                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
                 s.codex_weekly_text.clone(),
-                s.antigravity_session_percent,
+                s.display_percentage(
+                    s.antigravity_session_percent,
+                    s.antigravity_usage_available(),
+                ),
                 s.antigravity_session_text.clone(),
-                s.antigravity_weekly_percent,
+                s.display_percentage(
+                    s.antigravity_weekly_percent,
+                    s.antigravity_weekly_usage_available(),
+                ),
                 s.antigravity_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
@@ -2633,6 +2709,22 @@ unsafe extern "system" fn wnd_proc(
                         do_poll(sh);
                     });
                 }
+                IDM_USAGE_DISPLAY_USED | IDM_USAGE_DISPLAY_REMAINING => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.usage_display = if id == IDM_USAGE_DISPLAY_REMAINING {
+                                UsageDisplayMode::Remaining
+                            } else {
+                                UsageDisplayMode::Used
+                            };
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icons(hwnd);
+                }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
                 | IDM_LANG_DUTCH
@@ -2715,6 +2807,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            usage_display,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2729,6 +2822,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.usage_display,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2741,6 +2835,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     false,
+                    UsageDisplayMode::Used,
                 ),
             }
         };
@@ -2833,6 +2928,42 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             models_menu.0 as usize,
             PCWSTR::from_raw(models_label.as_ptr()),
+        );
+
+        // Usage display submenu
+        let usage_display_menu = CreatePopupMenu().unwrap();
+        let used_usage_label = native_interop::wide_str(strings.used_usage);
+        let used_usage_flags = if usage_display == UsageDisplayMode::Used {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            usage_display_menu,
+            used_usage_flags,
+            IDM_USAGE_DISPLAY_USED as usize,
+            PCWSTR::from_raw(used_usage_label.as_ptr()),
+        );
+
+        let remaining_usage_label = native_interop::wide_str(strings.remaining_usage);
+        let remaining_usage_flags = if usage_display == UsageDisplayMode::Remaining {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            usage_display_menu,
+            remaining_usage_flags,
+            IDM_USAGE_DISPLAY_REMAINING as usize,
+            PCWSTR::from_raw(remaining_usage_label.as_ptr()),
+        );
+
+        let usage_display_label = native_interop::wide_str(strings.usage_display);
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            usage_display_menu.0 as usize,
+            PCWSTR::from_raw(usage_display_label.as_ptr()),
         );
 
         // Settings submenu
@@ -2993,17 +3124,23 @@ fn paint(hdc: HDC, hwnd: HWND) {
             Some(s) => (
                 s.is_dark,
                 s.language.strings(),
-                s.session_percent,
+                s.display_percentage(s.session_percent, s.claude_code_usage_available()),
                 s.session_text.clone(),
-                s.weekly_percent,
+                s.display_percentage(s.weekly_percent, s.claude_code_usage_available()),
                 s.weekly_text.clone(),
-                s.codex_session_percent,
+                s.display_percentage(s.codex_session_percent, s.codex_usage_available()),
                 s.codex_session_text.clone(),
-                s.codex_weekly_percent,
+                s.display_percentage(s.codex_weekly_percent, s.codex_usage_available()),
                 s.codex_weekly_text.clone(),
-                s.antigravity_session_percent,
+                s.display_percentage(
+                    s.antigravity_session_percent,
+                    s.antigravity_usage_available(),
+                ),
                 s.antigravity_session_text.clone(),
-                s.antigravity_weekly_percent,
+                s.display_percentage(
+                    s.antigravity_weekly_percent,
+                    s.antigravity_weekly_usage_available(),
+                ),
                 s.antigravity_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
@@ -3288,5 +3425,44 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
         let _ = FillRgn(hdc, rgn, brush);
         let _ = DeleteObject(rgn);
         let _ = DeleteObject(brush);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_without_usage_display_defaults_to_used() {
+        let settings: SettingsFile = serde_json::from_str(r#"{"tray_offset": 12}"#).unwrap();
+
+        assert_eq!(settings.tray_offset, 12);
+        assert_eq!(settings.usage_display, UsageDisplayMode::Used);
+    }
+
+    #[test]
+    fn unavailable_usage_is_not_inverted_in_remaining_mode() {
+        assert_eq!(
+            display_percentage_for_availability(UsageDisplayMode::Remaining, 0.0, false),
+            0.0
+        );
+        assert_eq!(
+            display_percentage_for_availability(UsageDisplayMode::Remaining, 42.0, true),
+            58.0
+        );
+    }
+
+    #[test]
+    fn remaining_usage_display_round_trips_through_settings_json() {
+        let settings = SettingsFile {
+            usage_display: UsageDisplayMode::Remaining,
+            ..SettingsFile::default()
+        };
+
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains(r#""usage_display":"remaining""#));
+
+        let decoded: SettingsFile = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.usage_display, UsageDisplayMode::Remaining);
     }
 }

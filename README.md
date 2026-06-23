@@ -63,7 +63,7 @@ Once running, it will appear in your taskbar and as one or more tray icons in th
 
 - Drag the left divider to move the taskbar widget
 - On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen
-- Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, language, updates, and exit
+- Right-click the taskbar widget or tray icon for refresh, displayed models, usage display mode, update frequency, Start with Windows, reset position, language, updates, and exit
 - Left-click the tray icon to toggle the taskbar widget on or off
 - Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
 
@@ -77,9 +77,15 @@ Use the right-click **Models** menu to choose what the widget displays:
 
 When multiple models are shown, each model has its own usage bar and matching usage text color. Antigravity prefers Google's Gemini quota summary when available and falls back to model quota data when needed.
 
+### Usage Display
+
+Use the top-level **Usage Display** menu below **Models** to choose whether percentages show usage as **Used** or **Remaining**. **Used** remains the default for existing and new installations.
+
+The selected mode applies to the widget text and bars, tray icon badges, and tray tooltips for every enabled provider. Tray warning colors always reflect used quota so that low remaining quota still keeps the high-usage warning style.
+
 ### System Tray Icon
 
-The tray icon shows your current 5-hour usage as a percentage badge.
+The tray icon shows your current 5-hour usage as a percentage badge using the selected usage display mode.
 
 If multiple providers are enabled, the app shows one tray icon per provider. If only one model is enabled, it shows one tray icon.
 
@@ -146,6 +152,7 @@ What the app stores locally:
 - Language preference
 - Last update check time
 - Displayed model preferences
+- Usage display preference
 
 What it does **not** do:
 
