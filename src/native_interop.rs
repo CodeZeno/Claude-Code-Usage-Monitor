@@ -21,6 +21,7 @@ pub const TIMER_POLL: usize = 1;
 pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
+pub const TIMER_ATTACH_RETRY: usize = 5;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -31,18 +32,10 @@ pub const WM_APP_TRAY: u32 = WM_APP + 3;
 pub struct TaskbarWindow {
     pub hwnd: HWND,
     pub rect: RECT,
-    /// Monitor identity (e.g. "\\\\.\\DISPLAY1"). Best-effort anchor across
-    /// topology changes. NOTE: \\.\DISPLAYn numbers can be reassigned when
-    /// monitors are connected/disconnected, so this is not a fully stable id —
-    /// `primary` is the reliable fallback.
     pub device: String,
-    /// True for the primary taskbar (`Shell_TrayWnd`). Secondary-monitor
-    /// taskbars are `Shell_SecondaryTrayWnd`. The primary taskbar always lives
-    /// on the primary monitor, so it is the safe default/fallback target.
     pub primary: bool,
 }
 
-/// Stable identifier of the monitor a window currently lives on.
 pub fn monitor_device_name(hwnd: HWND) -> String {
     unsafe {
         let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);

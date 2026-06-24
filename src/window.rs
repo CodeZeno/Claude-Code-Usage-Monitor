@@ -20,8 +20,8 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    self, Color, TIMER_ATTACH_RETRY, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL,
+    TIMER_UPDATE_CHECK, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::theme;
@@ -172,6 +172,7 @@ fn refresh_dpi() {
 /// crash-looping); when detected we back off instead of spawning in a tight loop.
 const RELAUNCH_THROTTLE_SECS: u64 = 10;
 const RELAUNCH_BACKOFF_SECS: u64 = 30;
+const ATTACH_RETRY_MS: u32 = 1000;
 /// Environment flag set on a relaunched child so it waits for the previous
 /// instance's single-instance mutex instead of exiting immediately.
 const ENV_RELAUNCH: &str = "CCUM_RELAUNCH";
@@ -510,22 +511,29 @@ fn attach_to_taskbar(
         return false;
     }
 
-    // Selection priority:
-    //   1. The taskbar on the monitor we were last anchored to (device match).
-    //   2. The PRIMARY taskbar (Shell_TrayWnd). Critically NOT geometric index
-    //      0: find_taskbars sorts by rect.top/left, so a secondary monitor
-    //      placed above/left of the primary sorts first — falling back to
-    //      index 0 is exactly how the widget "randomly" jumped to the second
-    //      monitor. \\.\DISPLAYn device numbers can also be reassigned across
-    //      connect/disconnect, breaking the device match, so the primary
-    //      taskbar is the reliable fallback.
-    //   3. As a last resort, the saved index (legacy / no primary found).
+    // We attach ONLY to the taskbar we want, and never auto-switch monitors:
+    //   1. The taskbar on the monitor we are pinned to (device match).
+    //   2. If we have no pin yet (first run), the PRIMARY taskbar
+    //      (Shell_TrayWnd) — its monitor is the stable default home.
+    //
+    // If the wanted taskbar is NOT currently enumerable — e.g. explorer is
+    // mid-rebuild during a display change and find_taskbars() momentarily
+    // returns only the secondary taskbar — we DO NOT grab whatever happens to
+    // be present. That transient grab is exactly how the widget "randomly"
+    // jumped to the second monitor. Instead we bail and let the retry timer
+    // re-attach once the correct taskbar reappears.
+    let _ = requested_index;
     let device_match = requested_device
         .filter(|d| !d.is_empty())
         .and_then(|device| taskbars.iter().position(|t| t.device == device));
-    let index = device_match
-        .or_else(|| taskbars.iter().position(|t| t.primary))
-        .unwrap_or_else(|| requested_index.min(taskbars.len().saturating_sub(1)));
+    let want = device_match.or_else(|| taskbars.iter().position(|t| t.primary));
+    let Some(index) = want else {
+        diagnose::log(format!(
+            "attach: wanted taskbar not present (requested_device={requested_device:?} count={}); will retry",
+            taskbars.len()
+        ));
+        return false;
+    };
     let taskbar = taskbars[index].clone();
     diagnose::log(format!(
         "attach: requested_device={requested_device:?} device_match={device_match:?} -> index={index} primary={}",
@@ -1391,6 +1399,7 @@ pub fn run() {
                 0,
                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
             );
+            SetTimer(hwnd, TIMER_ATTACH_RETRY, ATTACH_RETRY_MS, None);
         }
 
         // Register system tray icon(s)
@@ -2286,6 +2295,21 @@ unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             let timer_id = wparam.0;
             match timer_id {
+                TIMER_ATTACH_RETRY => {
+                    let (idx, dev) = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .map(|s| (s.taskbar_index, s.taskbar_device.clone()))
+                            .unwrap_or((0, None))
+                    };
+                    if attach_to_taskbar(hwnd, idx, dev.as_deref()) {
+                        let _ = KillTimer(hwnd, TIMER_ATTACH_RETRY);
+                        position_at_taskbar();
+                        render_layered();
+                        diagnose::log("attach retry succeeded; re-homed to pinned taskbar");
+                    }
+                }
                 TIMER_POLL => {
                     let auth_watch = {
                         let state = lock_state();
