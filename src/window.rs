@@ -70,6 +70,7 @@ struct AppState {
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    reset_time_display: poller::ResetTimeDisplay,
 
     data: Option<AppUsageData>,
 
@@ -316,6 +317,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default)]
+    reset_time_display: poller::ResetTimeDisplay,
 }
 
 impl Default for SettingsFile {
@@ -330,6 +333,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            reset_time_display: poller::ResetTimeDisplay::default(),
         }
     }
 }
@@ -391,6 +395,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            reset_time_display: s.reset_time_display,
         });
     }
 }
@@ -640,33 +645,36 @@ fn refresh_usage_texts(state: &mut AppState) {
     }
 
     let strings = state.language.strings();
+    let reset_time_display = state.reset_time_display;
     let Some(data) = state.data.as_ref() else {
         return;
     };
 
     if let Some(claude_code) = data.claude_code.as_ref() {
-        state.session_text = poller::format_line(&claude_code.session, strings);
-        state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+        state.session_text =
+            poller::format_line(&claude_code.session, strings, reset_time_display);
+        state.weekly_text = poller::format_line(&claude_code.weekly, strings, reset_time_display);
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
     }
 
     if let Some(codex) = data.codex.as_ref() {
-        state.codex_session_text = poller::format_line(&codex.session, strings);
-        state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+        state.codex_session_text = poller::format_line(&codex.session, strings, reset_time_display);
+        state.codex_weekly_text = poller::format_line(&codex.weekly, strings, reset_time_display);
     } else if state.show_codex {
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
     }
 
     if let Some(antigravity) = data.antigravity.as_ref() {
-        state.antigravity_session_text = poller::format_line(&antigravity.session, strings);
+        state.antigravity_session_text =
+            poller::format_line(&antigravity.session, strings, reset_time_display);
         state.antigravity_weekly_text =
             if antigravity.weekly.resets_at.is_none() && antigravity.weekly.percentage == 0.0 {
                 "--".to_string()
             } else {
-                poller::format_line(&antigravity.weekly, strings)
+                poller::format_line(&antigravity.weekly, strings, reset_time_display)
             };
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
@@ -1079,6 +1087,74 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
+fn cursor_is_on_reset_time_toggle(hwnd: HWND) -> bool {
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_err() || !ScreenToClient(hwnd, &mut pt).as_bool() {
+            return false;
+        }
+
+        let state = lock_state();
+        state
+            .as_ref()
+            .is_some_and(|s| is_reset_time_toggle_point(s, pt.x, pt.y))
+    }
+}
+
+fn is_reset_time_toggle_point(state: &AppState, client_x: i32, client_y: i32) -> bool {
+    let height = sc(WIDGET_HEIGHT);
+    let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
+    let row2_y = height - sc(5) - sc(SEGMENT_H);
+    let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+    let active_models = active_model_count(
+        state.show_claude_code,
+        state.show_codex,
+        state.show_antigravity,
+    );
+    let segment_count = row_bar_segment_count(active_models);
+
+    reset_text_hit_row(state, content_x, row1_y, segment_count, client_x, client_y)
+        || reset_text_hit_row(state, content_x, row2_y, segment_count, client_x, client_y)
+}
+
+fn reset_text_hit_row(
+    state: &AppState,
+    x: i32,
+    y: i32,
+    segment_count: i32,
+    client_x: i32,
+    client_y: i32,
+) -> bool {
+    if client_y < y || client_y >= y + sc(SEGMENT_H) {
+        return false;
+    }
+
+    let mut model_x = x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
+    for visible in [
+        state.show_claude_code,
+        state.show_codex,
+        state.show_antigravity,
+    ] {
+        if visible {
+            if reset_text_hit_model(model_x, segment_count, client_x) {
+                return true;
+            }
+            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+        }
+    }
+
+    false
+}
+
+fn reset_text_hit_model(bar_x: i32, segment_count: i32, client_x: i32) -> bool {
+    let text_x = bar_x
+        + segment_count * (sc(SEGMENT_W) + sc(SEGMENT_GAP))
+        - sc(SEGMENT_GAP)
+        + sc(BAR_RIGHT_MARGIN);
+
+    client_x >= text_x && client_x < text_x + sc(TEXT_WIDTH)
+}
+
 fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> i32 {
     (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
 }
@@ -1310,6 +1386,7 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                reset_time_display: settings.reset_time_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -2338,6 +2415,11 @@ unsafe extern "system" fn wnd_proc(
                 SetCursor(cursor);
                 return LRESULT(1);
             }
+            if cursor_is_on_reset_time_toggle(hwnd) {
+                let cursor = LoadCursorW(HINSTANCE::default(), IDC_HAND).unwrap_or_default();
+                SetCursor(cursor);
+                return LRESULT(1);
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONDOWN => {
@@ -2456,6 +2538,29 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
+            let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let toggled_reset_time = {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    if !s.dragging && is_reset_time_toggle_point(s, client_x, client_y) {
+                        s.reset_time_display = s.reset_time_display.toggled();
+                        refresh_usage_texts(s);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            };
+            if toggled_reset_time {
+                save_state_settings();
+                schedule_countdown_timer();
+                render_layered();
+                return LRESULT(0);
+            }
+
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
             let drag_result = {
