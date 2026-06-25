@@ -6,8 +6,10 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
+use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 
 use crate::diagnose;
 use crate::localization::Strings;
@@ -42,6 +44,23 @@ pub enum CredentialWatchMode {
 }
 
 pub type CredentialWatchSnapshot = Vec<String>;
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResetTimeDisplay {
+    #[default]
+    Relative,
+    Clock,
+}
+
+impl ResetTimeDisplay {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Relative => Self::Clock,
+            Self::Clock => Self::Relative,
+        }
+    }
+}
 
 #[derive(Deserialize)]
 struct UsageResponse {
@@ -1522,13 +1541,29 @@ fn is_leap(y: u64) -> bool {
 }
 
 /// Format a usage section as "X% · Yh" style text
-pub fn format_line(section: &UsageSection, strings: Strings) -> String {
+pub fn format_line(
+    section: &UsageSection,
+    strings: Strings,
+    reset_time_display: ResetTimeDisplay,
+) -> String {
     let pct = format!("{:.0}%", section.percentage);
-    let cd = format_countdown(section.resets_at, strings);
+    let cd = format_reset_time(section.resets_at, strings, reset_time_display);
     if cd.is_empty() {
         pct
     } else {
         format!("{pct} \u{00b7} {cd}")
+    }
+}
+
+fn format_reset_time(
+    resets_at: Option<SystemTime>,
+    strings: Strings,
+    reset_time_display: ResetTimeDisplay,
+) -> String {
+    match reset_time_display {
+        ResetTimeDisplay::Relative => format_countdown(resets_at, strings),
+        ResetTimeDisplay::Clock => format_clock_time(resets_at)
+            .unwrap_or_else(|| format_countdown(resets_at, strings)),
     }
 }
 
@@ -1544,6 +1579,48 @@ fn format_countdown(resets_at: Option<SystemTime>, strings: Strings) -> String {
     };
 
     format_countdown_from_secs(remaining.as_secs(), strings)
+}
+
+fn format_clock_time(resets_at: Option<SystemTime>) -> Option<String> {
+    let reset = resets_at?;
+    reset.duration_since(SystemTime::now()).ok()?;
+
+    let local_time = local_system_time(reset)?;
+    Some(format_clock_time_parts(local_time.wHour, local_time.wMinute))
+}
+
+fn format_clock_time_parts(hour_24: u16, minute: u16) -> String {
+    let hour_12 = match hour_24 % 12 {
+        0 => 12,
+        hour => hour,
+    };
+    format!("{hour_12}:{minute:02}")
+}
+
+fn local_system_time(time: SystemTime) -> Option<SYSTEMTIME> {
+    const WINDOWS_EPOCH_OFFSET_SECS: u64 = 11_644_473_600;
+    const WINDOWS_TICKS_PER_SEC: u64 = 10_000_000;
+
+    let duration = time.duration_since(UNIX_EPOCH).ok()?;
+    let ticks = duration
+        .as_secs()
+        .checked_add(WINDOWS_EPOCH_OFFSET_SECS)?
+        .checked_mul(WINDOWS_TICKS_PER_SEC)?
+        .checked_add(u64::from(duration.subsec_nanos() / 100))?;
+
+    let file_time = FILETIME {
+        dwLowDateTime: ticks as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+
+    let mut utc_time = SYSTEMTIME::default();
+    let mut local_time = SYSTEMTIME::default();
+    unsafe {
+        FileTimeToSystemTime(&file_time, &mut utc_time).ok()?;
+        SystemTimeToTzSpecificLocalTime(None, &utc_time, &mut local_time).ok()?;
+    }
+
+    Some(local_time)
 }
 
 /// Calculate how long until the display text would change
@@ -1612,6 +1689,13 @@ mod tests {
             },
             weekly: UsageSection::default(),
         }
+    }
+
+    #[test]
+    fn clock_display_uses_twelve_hour_time_without_suffix() {
+        assert_eq!(format_clock_time_parts(14, 20), "2:20");
+        assert_eq!(format_clock_time_parts(0, 20), "12:20");
+        assert_eq!(format_clock_time_parts(12, 5), "12:05");
     }
 
     #[test]
