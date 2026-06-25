@@ -6,6 +6,7 @@ mod japanese;
 mod korean;
 mod portuguese_brazil;
 mod russian;
+mod simplified_chinese;
 mod spanish;
 mod traditional_chinese;
 
@@ -25,12 +26,13 @@ pub enum LanguageId {
     Japanese,
     Korean,
     TraditionalChinese,
+    SimplifiedChinese,
     Russian,
     PortugueseBrazil,
 }
 
 impl LanguageId {
-    pub const ALL: [LanguageId; 10] = [
+    pub const ALL: [LanguageId; 11] = [
         LanguageId::English,
         LanguageId::Dutch,
         LanguageId::Spanish,
@@ -39,6 +41,7 @@ impl LanguageId {
         LanguageId::Japanese,
         LanguageId::Korean,
         LanguageId::TraditionalChinese,
+        LanguageId::SimplifiedChinese,
         LanguageId::Russian,
         LanguageId::PortugueseBrazil,
     ];
@@ -53,6 +56,7 @@ impl LanguageId {
             Self::Japanese => "ja",
             Self::Korean => "ko",
             Self::TraditionalChinese => "zh-TW",
+            Self::SimplifiedChinese => "zh-CN",
             Self::Russian => "ru",
             Self::PortugueseBrazil => "pt-BR",
         }
@@ -68,6 +72,7 @@ impl LanguageId {
             Self::Japanese => "日本語",
             Self::Korean => "한국어",
             Self::TraditionalChinese => "繁體中文",
+            Self::SimplifiedChinese => "简体中文",
             Self::Russian => "Русский",
             Self::PortugueseBrazil => "Português (Brasil)",
         }
@@ -83,6 +88,7 @@ impl LanguageId {
             Self::Japanese => japanese::STRINGS,
             Self::Korean => korean::STRINGS,
             Self::TraditionalChinese => traditional_chinese::STRINGS,
+            Self::SimplifiedChinese => simplified_chinese::STRINGS,
             Self::Russian => russian::STRINGS,
             Self::PortugueseBrazil => portuguese_brazil::STRINGS,
         }
@@ -98,6 +104,7 @@ impl LanguageId {
             Self::Japanese => japanese::UPDATE_VIA_WINGET_LABEL,
             Self::Korean => korean::UPDATE_VIA_WINGET_LABEL,
             Self::TraditionalChinese => traditional_chinese::UPDATE_VIA_WINGET_LABEL,
+            Self::SimplifiedChinese => simplified_chinese::UPDATE_VIA_WINGET_LABEL,
             Self::Russian => russian::UPDATE_VIA_WINGET_LABEL,
             Self::PortugueseBrazil => portuguese_brazil::UPDATE_VIA_WINGET_LABEL,
         }
@@ -121,11 +128,12 @@ impl LanguageId {
             "zh" => {
                 if normalized.contains("tw")
                     || normalized.contains("hk")
+                    || normalized.contains("mo")
                     || normalized.contains("hant")
                 {
                     Some(Self::TraditionalChinese)
                 } else {
-                    None
+                    Some(Self::SimplifiedChinese)
                 }
             }
             "ru" => Some(Self::Russian),
