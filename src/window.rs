@@ -173,6 +173,12 @@ fn refresh_dpi() {
 const RELAUNCH_THROTTLE_SECS: u64 = 10;
 const RELAUNCH_BACKOFF_SECS: u64 = 30;
 const ATTACH_RETRY_MS: u32 = 1000;
+/// After this many failed 1s retries (~5s) of finding the pinned/primary
+/// taskbar, give up insisting on it and attach to any available taskbar so the
+/// widget is never left permanently invisible.
+const ATTACH_RETRY_FALLBACK_AFTER: u32 = 5;
+/// Count of consecutive failed attach retries; gates the fallback above.
+static ATTACH_RETRY_ATTEMPTS: AtomicU32 = AtomicU32::new(0);
 /// Environment flag set on a relaunched child so it waits for the previous
 /// instance's single-instance mutex instead of exiting immediately.
 const ENV_RELAUNCH: &str = "CCUM_RELAUNCH";
@@ -504,6 +510,7 @@ fn attach_to_taskbar(
     hwnd: HWND,
     requested_index: usize,
     requested_device: Option<&str>,
+    allow_fallback: bool,
 ) -> bool {
     let taskbars = native_interop::find_taskbars();
     if taskbars.is_empty() {
@@ -518,15 +525,22 @@ fn attach_to_taskbar(
     //
     // If the wanted taskbar is NOT currently enumerable — e.g. explorer is
     // mid-rebuild during a display change and find_taskbars() momentarily
-    // returns only the secondary taskbar — we DO NOT grab whatever happens to
-    // be present. That transient grab is exactly how the widget "randomly"
-    // jumped to the second monitor. Instead we bail and let the retry timer
-    // re-attach once the correct taskbar reappears.
+    // returns only the secondary taskbar — we normally bail and let the retry
+    // timer re-attach once the correct taskbar reappears. That transient grab
+    // is exactly how the widget "randomly" jumped to the second monitor.
+    //
+    // BUT if the wanted taskbar never comes back (e.g. the primary
+    // Shell_TrayWnd's SHAppBarMessage keeps failing, leaving only the secondary
+    // enumerable), bailing forever leaves the widget permanently invisible.
+    // `allow_fallback` is set by the retry timer after a few failed attempts so
+    // we attach to whatever taskbar exists rather than disappear for good.
     let _ = requested_index;
     let device_match = requested_device
         .filter(|d| !d.is_empty())
         .and_then(|device| taskbars.iter().position(|t| t.device == device));
-    let want = device_match.or_else(|| taskbars.iter().position(|t| t.primary));
+    let want = device_match
+        .or_else(|| taskbars.iter().position(|t| t.primary))
+        .or_else(|| allow_fallback.then_some(0));
     let Some(index) = want else {
         diagnose::log(format!(
             "attach: wanted taskbar not present (requested_device={requested_device:?} count={}); will retry",
@@ -534,6 +548,12 @@ fn attach_to_taskbar(
         ));
         return false;
     };
+    if device_match.is_none() && !taskbars[index].primary {
+        diagnose::log(format!(
+            "attach: falling back to non-pinned taskbar index={index} device={} after exhausting retries",
+            taskbars[index].device
+        ));
+    }
     let taskbar = taskbars[index].clone();
     diagnose::log(format!(
         "attach: requested_device={requested_device:?} device_match={device_match:?} -> index={index} primary={}",
@@ -1383,7 +1403,12 @@ pub fn run() {
         }
 
         // Try to embed in taskbar
-        if attach_to_taskbar(hwnd, settings.taskbar_index, settings.taskbar_device.as_deref()) {
+        if attach_to_taskbar(
+            hwnd,
+            settings.taskbar_index,
+            settings.taskbar_device.as_deref(),
+            false,
+        ) {
             embedded = true;
         }
 
@@ -2303,11 +2328,18 @@ unsafe extern "system" fn wnd_proc(
                             .map(|s| (s.taskbar_index, s.taskbar_device.clone()))
                             .unwrap_or((0, None))
                     };
-                    if attach_to_taskbar(hwnd, idx, dev.as_deref()) {
+                    // Prefer the pinned/primary taskbar for the first few
+                    // retries (transient explorer rebuild). If it still hasn't
+                    // come back, allow attaching to any taskbar so the widget is
+                    // never left permanently invisible.
+                    let attempts = ATTACH_RETRY_ATTEMPTS.fetch_add(1, Ordering::Relaxed) + 1;
+                    let allow_fallback = attempts >= ATTACH_RETRY_FALLBACK_AFTER;
+                    if attach_to_taskbar(hwnd, idx, dev.as_deref(), allow_fallback) {
                         let _ = KillTimer(hwnd, TIMER_ATTACH_RETRY);
+                        ATTACH_RETRY_ATTEMPTS.store(0, Ordering::Relaxed);
                         position_at_taskbar();
                         render_layered();
-                        diagnose::log("attach retry succeeded; re-homed to pinned taskbar");
+                        diagnose::log("attach retry succeeded; re-homed to taskbar");
                     }
                 }
                 TIMER_POLL => {
@@ -2555,7 +2587,7 @@ unsafe extern "system" fn wnd_proc(
                                 s.tray_offset = new_offset;
                             }
                         }
-                        if attach_to_taskbar(hwnd, target_index, Some(&target_taskbar.device)) {
+                        if attach_to_taskbar(hwnd, target_index, Some(&target_taskbar.device), true) {
                             position_at_taskbar();
                             render_layered();
                         }
