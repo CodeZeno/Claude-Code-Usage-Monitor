@@ -1586,7 +1586,15 @@ fn format_clock_time(resets_at: Option<SystemTime>) -> Option<String> {
     reset.duration_since(SystemTime::now()).ok()?;
 
     let local_time = local_system_time(reset)?;
-    Some(format!("{}:{:02}", local_time.wHour, local_time.wMinute))
+    Some(format_clock_time_parts(local_time.wHour, local_time.wMinute))
+}
+
+fn format_clock_time_parts(hour_24: u16, minute: u16) -> String {
+    let hour_12 = match hour_24 % 12 {
+        0 => 12,
+        hour => hour,
+    };
+    format!("{hour_12}:{minute:02}")
 }
 
 fn local_system_time(time: SystemTime) -> Option<SYSTEMTIME> {
@@ -1681,6 +1689,13 @@ mod tests {
             },
             weekly: UsageSection::default(),
         }
+    }
+
+    #[test]
+    fn clock_display_uses_twelve_hour_time_without_suffix() {
+        assert_eq!(format_clock_time_parts(14, 20), "2:20");
+        assert_eq!(format_clock_time_parts(0, 20), "12:20");
+        assert_eq!(format_clock_time_parts(12, 5), "12:05");
     }
 
     #[test]
