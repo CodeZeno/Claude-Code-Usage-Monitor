@@ -548,7 +548,12 @@ fn attach_to_taskbar(
         ));
         return false;
     };
-    if device_match.is_none() && !taskbars[index].primary {
+    // A fallback attach (neither the pinned device nor the primary taskbar) is a
+    // degraded "don't disappear" state, not a deliberate re-home. Keep it
+    // session-only: show the widget here but do NOT overwrite the user's saved
+    // pin, so the next launch still retries the real pinned/primary taskbar.
+    let is_fallback = device_match.is_none() && !taskbars[index].primary;
+    if is_fallback {
         diagnose::log(format!(
             "attach: falling back to non-pinned taskbar index={index} device={} after exhausting retries",
             taskbars[index].device
@@ -600,15 +605,21 @@ fn attach_to_taskbar(
     let device_changed = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
-            let changed = s.taskbar_device.as_deref() != Some(taskbar.device.as_str())
-                || s.taskbar_index != index;
             s.taskbar_hwnd = Some(taskbar.hwnd);
             s.tray_notify_hwnd = tray_notify;
             s.win_event_hook = hook;
-            s.taskbar_index = index;
-            s.taskbar_device = Some(taskbar.device.clone());
             s.embedded = true;
-            changed
+            // Only re-pin (and persist) when this is the wanted taskbar. A
+            // fallback attach must not overwrite the user's saved monitor pin.
+            if is_fallback {
+                false
+            } else {
+                let changed = s.taskbar_device.as_deref() != Some(taskbar.device.as_str())
+                    || s.taskbar_index != index;
+                s.taskbar_index = index;
+                s.taskbar_device = Some(taskbar.device.clone());
+                changed
+            }
         } else {
             false
         }
