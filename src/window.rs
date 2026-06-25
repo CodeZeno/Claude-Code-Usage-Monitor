@@ -21,7 +21,7 @@ use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
     self, Color, TIMER_ATTACH_RETRY, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL,
-    TIMER_UPDATE_CHECK, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    TIMER_UPDATE_CHECK, TIMER_ZGUARD, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::theme;
@@ -49,6 +49,7 @@ struct AppState {
     taskbar_hwnd: Option<HWND>,
     tray_notify_hwnd: Option<HWND>,
     win_event_hook: Option<HWINEVENTHOOK>,
+    foreground_hook: Option<HWINEVENTHOOK>,
     is_dark: bool,
     embedded: bool,
     language_override: Option<LanguageId>,
@@ -600,6 +601,25 @@ fn attach_to_taskbar(
         diagnose::log("tray event hook installed");
     } else {
         diagnose::log("tray event hook could not be installed");
+    }
+
+    // A system-wide foreground hook lets us recover when the shell buries our
+    // embedded child behind the taskbar backdrop after a Start menu / taskbar
+    // flyout opens or closes. Installed once; reused across re-attaches.
+    let need_foreground_hook = {
+        let state = lock_state();
+        state.as_ref().map(|s| s.foreground_hook.is_none()).unwrap_or(false)
+    };
+    if need_foreground_hook {
+        if let Some(fg_hook) = native_interop::set_foreground_event_hook(on_foreground_changed) {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.foreground_hook = Some(fg_hook);
+            }
+            diagnose::log("foreground event hook installed");
+        } else {
+            diagnose::log("foreground event hook could not be installed");
+        }
     }
 
     let device_changed = {
@@ -1372,6 +1392,7 @@ pub fn run() {
                 taskbar_hwnd: None,
                 tray_notify_hwnd: None,
                 win_event_hook: None,
+                foreground_hook: None,
                 is_dark,
                 embedded: false,
                 language_override,
@@ -1460,6 +1481,13 @@ pub fn run() {
                 .unwrap_or(POLL_15_MIN)
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
+
+        // Z-order guard: while embedded, the shell intermittently buries our
+        // child behind the taskbar backdrop (e.g. after opening the Start menu
+        // or clicking the taskbar) without sending us any window message. A
+        // light periodic re-raise keeps the widget on top; raise_to_top does not
+        // repaint, so this is cheap.
+        SetTimer(hwnd, TIMER_ZGUARD, 200, None);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
         // icon (the shell discards tray registrations when it restarts). This
@@ -2221,6 +2249,7 @@ fn position_at_taskbar() {
         // Child window: coordinates relative to parent (taskbar)
         let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
         native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
+        native_interop::raise_to_top(hwnd);
         diagnose::log(format!(
             "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
             y - taskbar_rect.top
@@ -2286,6 +2315,109 @@ unsafe extern "system" fn on_tray_location_changed(
     }
 }
 
+/// Periodic z-order guard. While embedded, keep the widget on top of its
+/// taskbar siblings so the shell can't leave it buried behind the taskbar
+/// backdrop. `raise_to_top` does not repaint, so the steady-state cost is a
+/// single SetWindowPos per tick. Diagnostic logging fires only when the
+/// window's visibility or rectangle actually changes.
+fn z_guard_tick(_hwnd: HWND) {
+    static LAST: Mutex<Option<(bool, i32, i32, i32, i32)>> = Mutex::new(None);
+
+    let (hwnd, embedded) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) if s.embedded => (s.hwnd.to_hwnd(), true),
+            _ => return,
+        }
+    };
+    if !embedded {
+        return;
+    }
+
+    native_interop::raise_to_top(hwnd);
+
+    let visible = unsafe { IsWindowVisible(hwnd).as_bool() };
+    if !visible {
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+    }
+
+    // DIAGNOSTIC: re-push our layered content every tick. If this stops the
+    // vanish, the cause is the shell compositing its taskbar backdrop over our
+    // child (DirectComposition), not HWND z-order.
+    render_layered();
+
+    let rect = native_interop::get_window_rect_safe(hwnd)
+        .map(|r| (r.left, r.top, r.right, r.bottom))
+        .unwrap_or((0, 0, 0, 0));
+    let snapshot = (visible, rect.0, rect.1, rect.2, rect.3);
+    let changed = {
+        let mut last = LAST.lock().unwrap_or_else(|e| e.into_inner());
+        if last.as_ref() != Some(&snapshot) {
+            *last = Some(snapshot);
+            true
+        } else {
+            false
+        }
+    };
+    let _ = changed;
+    diagnose::log(format!(
+        "zguard tick: visible={visible} rect=({}, {}, {}, {})",
+        rect.0, rect.1, rect.2, rect.3
+    ));
+}
+
+/// WinEvent callback for system foreground changes. When the Start menu or a
+/// taskbar flyout opens/closes the shell reorders its taskbar children and our
+/// embedded widget gets buried behind the taskbar backdrop (it "disappears").
+/// Re-raising it to the top of the sibling z-order and re-rendering restores it.
+unsafe extern "system" fn on_foreground_changed(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    static LAST_RAISE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+    let (hwnd, embedded) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) if s.embedded => (s.hwnd.to_hwnd(), true),
+            _ => return,
+        }
+    };
+    if !embedded {
+        return;
+    }
+
+    // Foreground changes fire frequently; debounce so we don't thrash.
+    let should_raise = {
+        let mut last = LAST_RAISE.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if last
+            .map(|t| now.duration_since(t).as_millis() > 150)
+            .unwrap_or(true)
+        {
+            *last = Some(now);
+            true
+        } else {
+            false
+        }
+    };
+    if should_raise {
+        let visible_before = unsafe { IsWindowVisible(hwnd).as_bool() };
+        native_interop::raise_to_top(hwnd);
+        let _ = unsafe { ShowWindow(hwnd, SW_SHOWNOACTIVATE) };
+        position_at_taskbar();
+        render_layered();
+        diagnose::log(format!(
+            "foreground change: raised+repositioned widget (visible_before={visible_before})"
+        ));
+    }
+}
+
 /// Main window procedure
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
@@ -2331,6 +2463,9 @@ unsafe extern "system" fn wnd_proc(
         WM_TIMER => {
             let timer_id = wparam.0;
             match timer_id {
+                TIMER_ZGUARD => {
+                    z_guard_tick(hwnd);
+                }
                 TIMER_ATTACH_RETRY => {
                     let (idx, dev) = {
                         let state = lock_state();
@@ -2798,11 +2933,17 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_DESTROY => {
-            let hook = {
+            let (hook, fg_hook) = {
                 let state = lock_state();
-                state.as_ref().and_then(|s| s.win_event_hook)
+                state
+                    .as_ref()
+                    .map(|s| (s.win_event_hook, s.foreground_hook))
+                    .unwrap_or((None, None))
             };
             if let Some(h) = hook {
+                native_interop::unhook_win_event(h);
+            }
+            if let Some(h) = fg_hook {
                 native_interop::unhook_win_event(h);
             }
             tray_icon::remove_all(hwnd);

@@ -13,6 +13,7 @@ pub const WS_CHILD_STYLE: u32 = 0x40000000;
 pub const WS_CLIPSIBLINGS_STYLE: u32 = 0x04000000;
 
 // Win event constants
+pub const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
 pub const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
 pub const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
 
@@ -22,6 +23,7 @@ pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
 pub const TIMER_ATTACH_RETRY: usize = 5;
+pub const TIMER_ZGUARD: usize = 6;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -192,6 +194,47 @@ pub fn set_tray_event_hook(
         } else {
             Some(hook)
         }
+    }
+}
+
+/// Set up a system-wide WinEvent hook for foreground changes (e.g. the Start
+/// menu or a taskbar flyout opening/closing). Delivered on the installing
+/// thread's message loop (OUTOFCONTEXT), so the callback runs on our UI thread.
+pub fn set_foreground_event_hook(
+    callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+) -> Option<HWINEVENTHOOK> {
+    unsafe {
+        let hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(callback),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT,
+        );
+        if hook.is_invalid() {
+            None
+        } else {
+            Some(hook)
+        }
+    }
+}
+
+/// Re-assert the window to the top of its sibling z-order without moving,
+/// resizing or activating it. Used to recover after the shell buries our
+/// taskbar-embedded child behind the taskbar backdrop.
+pub fn raise_to_top(hwnd: HWND) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
     }
 }
 
