@@ -65,6 +65,7 @@ Once running, it will appear in your taskbar and as one or more tray icons in th
 - On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen
 - Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, language, updates, and exit
 - Left-click the tray icon to toggle the taskbar widget on or off
+- Enable `Show detailed remaining time` under right-click `Settings` to add minutes alongside hours (5h window) and hours alongside days (7d window)
 - Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
 
 ### Models

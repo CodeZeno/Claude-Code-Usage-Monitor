@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -70,6 +70,7 @@ struct AppState {
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_detailed_remaining: bool,
 
     data: Option<AppUsageData>,
 
@@ -131,6 +132,7 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_SHOW_DETAILED_REMAINING: u16 = 70;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -316,6 +318,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default)]
+    show_detailed_remaining: bool,
 }
 
 impl Default for SettingsFile {
@@ -330,6 +334,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            show_detailed_remaining: false,
         }
     }
 }
@@ -391,6 +396,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            show_detailed_remaining: s.show_detailed_remaining,
         });
     }
 }
@@ -672,6 +678,8 @@ fn refresh_usage_texts(state: &mut AppState) {
         state.antigravity_session_text = "!".to_string();
         state.antigravity_weekly_text = "!".to_string();
     }
+
+    update_measured_text_width(state);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1083,6 +1091,76 @@ fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity
     (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
 }
 
+/// Small trailing padding (device px, unscaled) added after measured text.
+const TEXT_MEASURE_PAD: i32 = 6;
+
+/// Width (device px, already DPI-scaled) of the widest usage-cell text actually
+/// shown, recomputed whenever the texts change. The cell column sizes to real
+/// content (detailed time / ETD suffix only when present) instead of a fixed
+/// worst-case reservation. Falls back to the base column before first measure.
+static MEASURED_TEXT_WIDTH: AtomicI32 = AtomicI32::new(0);
+
+fn current_text_width() -> i32 {
+    MEASURED_TEXT_WIDTH.load(Ordering::Relaxed).max(sc(TEXT_WIDTH))
+}
+
+/// Measure a string's pixel width in the same font the widget renders with.
+fn measure_text_px(text: &str) -> i32 {
+    if text.is_empty() {
+        return 0;
+    }
+    unsafe {
+        let hdc = GetDC(HWND::default());
+        let mem = CreateCompatibleDC(hdc);
+        let font_name = native_interop::wide_str("Segoe UI");
+        let font = CreateFontW(
+            sc(-12),
+            0,
+            0,
+            0,
+            FW_MEDIUM.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_TT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            PCWSTR::from_raw(font_name.as_ptr()),
+        );
+        let old = SelectObject(mem, font);
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let mut size = SIZE::default();
+        let _ = GetTextExtentPoint32W(mem, &wide, &mut size);
+        SelectObject(mem, old);
+        let _ = DeleteObject(font);
+        let _ = DeleteDC(mem);
+        ReleaseDC(HWND::default(), hdc);
+        size.cx
+    }
+}
+
+/// Recompute the measured cell-text width from the currently-visible texts.
+fn update_measured_text_width(state: &AppState) {
+    let mut max_w = 0;
+    if state.show_claude_code {
+        max_w = max_w.max(measure_text_px(&state.session_text));
+        max_w = max_w.max(measure_text_px(&state.weekly_text));
+    }
+    if state.show_codex {
+        max_w = max_w.max(measure_text_px(&state.codex_session_text));
+        max_w = max_w.max(measure_text_px(&state.codex_weekly_text));
+    }
+    if state.show_antigravity {
+        max_w = max_w.max(measure_text_px(&state.antigravity_session_text));
+        max_w = max_w.max(measure_text_px(&state.antigravity_weekly_text));
+    }
+    if max_w > 0 {
+        MEASURED_TEXT_WIDTH.store(max_w + sc(TEXT_MEASURE_PAD), Ordering::Relaxed);
+    }
+}
+
 fn row_bar_segment_count(active_models: i32) -> i32 {
     match active_models {
         1 => SEGMENT_COUNT,
@@ -1091,11 +1169,20 @@ fn row_bar_segment_count(active_models: i32) -> i32 {
     }
 }
 
+/// Whether the detailed remaining-time display is enabled, read from shared
+/// state. Returns false when state is not yet populated (startup) or the lock
+/// cannot be acquired. Callers must not hold the state lock.
+fn show_detailed_remaining_enabled() -> bool {
+    lock_state()
+        .as_ref()
+        .map_or(false, |s| s.show_detailed_remaining)
+}
+
 fn total_widget_width_for(active_models: i32) -> i32 {
     let bar_segments = row_bar_segment_count(active_models);
     let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH);
+        + current_text_width();
 
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
@@ -1310,6 +1397,7 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                show_detailed_remaining: settings.show_detailed_remaining,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1329,6 +1417,10 @@ pub fn run() {
                 widget_visible: settings.widget_visible,
             });
         }
+
+        // Mirror the detailed-remaining flag into the poller, which reads it
+        // lock-free while formatting countdowns (avoids re-locking shared state).
+        poller::set_detailed_remaining(settings.show_detailed_remaining);
 
         // Try to embed in taskbar
         if attach_to_taskbar(hwnd, settings.taskbar_index) {
@@ -2594,6 +2686,20 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
+                IDM_SHOW_DETAILED_REMAINING => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_detailed_remaining = !s.show_detailed_remaining;
+                            poller::set_detailed_remaining(s.show_detailed_remaining);
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                    schedule_countdown_timer();
+                }
                 IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY => {
                     {
                         let mut state = lock_state();
@@ -2857,6 +2963,19 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        let detailed_str = native_interop::wide_str(strings.show_detailed_remaining);
+        let detailed_flags = if show_detailed_remaining_enabled() {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            detailed_flags,
+            IDM_SHOW_DETAILED_REMAINING as usize,
+            PCWSTR::from_raw(detailed_str.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
@@ -3188,7 +3307,7 @@ fn draw_row(
 fn model_usage_width(segment_count: i32) -> i32 {
     (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
+        + current_text_width()
 }
 
 fn draw_usage_bar(
@@ -3261,7 +3380,7 @@ fn draw_usage_bar(
         let mut text_rect = RECT {
             left: text_x,
             top: y,
-            right: text_x + sc(TEXT_WIDTH),
+            right: text_x + current_text_width(),
             bottom: y + seg_h,
         };
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
