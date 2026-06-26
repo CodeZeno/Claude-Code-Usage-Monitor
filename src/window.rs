@@ -145,6 +145,10 @@ const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 /// recreates the taskbar and wipes our tray-icon registration).
 const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;
 
+/// Consecutive watchdog ticks the stored taskbar handle must be gone before we
+/// treat it as a real explorer restart (rather than a transient enumeration miss).
+const TASKBAR_MISSING_TICKS: u32 = 2;
+
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
@@ -237,21 +241,42 @@ fn relaunch_self() {
 /// dedicated thread (independent of the dead message loop) polls the taskbar
 /// handle and, when it changes, relaunches the widget as a fresh process.
 fn spawn_taskbar_watchdog() {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
-        let stored = {
-            let state = lock_state();
-            state.as_ref().and_then(|s| s.taskbar_hwnd)
-        };
-        // Only relevant once we have embedded into a taskbar at least once.
-        let Some(old) = stored else {
-            continue;
-        };
-        let taskbars = native_interop::find_taskbars();
-        if !taskbars.is_empty() && !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
+    std::thread::spawn(move || {
+        let mut missing_streak = 0u32;
+        loop {
+            std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
+            let stored = {
+                let state = lock_state();
+                state.as_ref().and_then(|s| s.taskbar_hwnd)
+            };
+            // Only relevant once we have embedded into a taskbar at least once.
+            let Some(old) = stored else {
+                missing_streak = 0;
+                continue;
+            };
+            // Opening the Start menu/search makes the taskbar briefly drop out of
+            // EnumWindows (~5s) even though its HWND is still valid. The old check
+            // read that as an explorer restart and relaunched, wiping the widget.
+            // If the handle still exists it is a transient blip, so skip.
+            if native_interop::window_exists(old) {
+                missing_streak = 0;
+                continue;
+            }
+            let taskbars = native_interop::find_taskbars();
+            if taskbars.is_empty() || taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
+                missing_streak = 0;
+                continue;
+            }
+            // Only relaunch once the handle is truly gone for several consecutive
+            // checks (a real explorer restart), not a one-off enumeration miss.
+            missing_streak += 1;
+            if missing_streak < TASKBAR_MISSING_TICKS {
+                continue;
+            }
+            missing_streak = 0;
             let new = taskbars[0].hwnd;
             diagnose::log(format!(
-                "watchdog: taskbar changed old={:?} new={:?} -> relaunching",
+                "watchdog: taskbar destroyed old={:?} new={:?} -> relaunching",
                 old.0, new.0
             ));
             relaunch_self();
