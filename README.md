@@ -66,6 +66,7 @@ Once running, it will appear in your taskbar and as one or more tray icons in th
 - Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, language, updates, and exit
 - Left-click the tray icon to toggle the taskbar widget on or off
 - Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
+- Under right-click `Settings` → `Show pace indicator`, pick a `Tick` or `Solid` style to mark where your usage should be for the time elapsed: green means you have headroom to ramp up, red means you are on a trajectory to exceed your quota before it resets (stop work or pay for extra usage); pick `Off` to turn it off
 
 ### Models
 
