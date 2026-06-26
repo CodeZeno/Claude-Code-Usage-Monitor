@@ -45,6 +45,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity-authenticatiefout",
     antigravity_token_expired_body: "Open Antigravity en meld je opnieuw aan. Ververs of herstart de app daarna.",
     codex_window_title: "Codex-gebruiksmonitor",
+    show_etd: "Toon ETD",
+    etd_suffix: "ETD",
+    rem: "rem",
     antigravity_window_title: "Antigravity-gebruiksmonitor",
     second_suffix: "s",
 };

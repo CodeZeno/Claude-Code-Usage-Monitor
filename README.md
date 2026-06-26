@@ -87,6 +87,14 @@ The Claude Code tray icon uses the same warm usage colors as the Claude bar. The
 
 Hovering over a tray icon shows the usage values for that model.
 
+### Estimated Time to Depletion (ETD)
+
+Enable **Show ETD** from the right-click menu (off by default) to see how long until you run out at your current pace. When a usage bar is on track to deplete before its window resets, the cell appends the estimate after the remaining time — for example `90% · 1d rem · 13h ETD` means roughly one day until the weekly window resets, but at the current burn rate you would run out in about 13 hours. Cells that are pacing safely show nothing extra.
+
+![ETD](.github/screenshots/etd.png)
+
+Inspired by [issue #21](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/21).
+
 ## Diagnostics
 
 If you need to troubleshoot startup or visibility issues, run:

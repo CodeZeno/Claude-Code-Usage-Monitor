@@ -45,6 +45,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity 認証エラー",
     antigravity_token_expired_body: "Antigravity を開いて再度サインインしてください。その後、このアプリを更新するか再起動してください。",
     codex_window_title: "Codex 使用量モニター",
+    show_etd: "ETD を表示",
+    etd_suffix: "ETD",
+    rem: "rem",
     antigravity_window_title: "Antigravity 使用量モニター",
     second_suffix: "秒",
 };

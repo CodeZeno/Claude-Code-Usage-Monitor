@@ -45,6 +45,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity 驗證錯誤",
     antigravity_token_expired_body: "請開啟 Antigravity 並重新登入。完成後，請重新整理或重新啟動此應用程式。",
     codex_window_title: "Codex 使用量監控",
+    show_etd: "顯示 ETD",
+    etd_suffix: "ETD",
+    rem: "rem",
     antigravity_window_title: "Antigravity 使用量監控",
     second_suffix: "秒",
 };
