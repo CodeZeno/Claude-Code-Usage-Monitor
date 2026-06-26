@@ -45,6 +45,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity Auth Error",
     antigravity_token_expired_body: "Open Antigravity and sign in again. After that, refresh or restart this app.",
     codex_window_title: "Codex Usage Monitor",
+    show_etd: "Show ETD",
+    etd_suffix: "ETD",
+    rem: "rem",
     antigravity_window_title: "Antigravity Usage Monitor",
     second_suffix: "s",
 };

@@ -1733,3 +1733,138 @@ mod tests {
         assert!(usage.session.resets_at.is_some());
     }
 }
+
+/// Rolling-quota window lengths, in seconds (5 hours and 7 days). Kept here,
+/// next to the formatting that consumes them, so the ETD feature is
+/// self-contained and does not depend on constants defined elsewhere.
+pub const SESSION_WINDOW_SECS: u64 = 5 * 3600;
+pub const WEEKLY_WINDOW_SECS: u64 = 7 * 86400;
+
+/// Estimated seconds until the quota is fully consumed, assuming the current
+/// burn rate (quota-so-far / time-so-far) holds. Returns `None` unless the
+/// projection lands *before* the window resets — i.e. only when the user is
+/// genuinely on pace to deplete early.
+fn etd_secs(actual_pct: f64, remaining_secs: u64, window_secs: u64) -> Option<u64> {
+    if actual_pct <= 0.0 || actual_pct >= 100.0 {
+        return None;
+    }
+    if remaining_secs == 0 || window_secs == 0 {
+        return None;
+    }
+    let elapsed_secs = window_secs.saturating_sub(remaining_secs);
+    if elapsed_secs == 0 {
+        return None;
+    }
+    let secs = (100.0 - actual_pct) * (elapsed_secs as f64) / actual_pct;
+    if !secs.is_finite() || secs < 0.0 {
+        return None;
+    }
+    let secs = secs as u64;
+    (secs < remaining_secs).then_some(secs)
+}
+
+/// The trailing " rem · 45m ETD" segment for a usage cell, or `None` when the
+/// section is not on pace to deplete before reset. The leading `rem` labels the
+/// preceding countdown (which `format_line` left unlabeled) so the remaining
+/// time and the depletion estimate are distinguishable. Reuses the same coarse,
+/// single-unit duration format as the countdown.
+pub fn etd_suffix(section: &UsageSection, window_secs: u64, strings: Strings) -> Option<String> {
+    let reset = section.resets_at?;
+    let remaining_secs = reset.duration_since(SystemTime::now()).ok()?.as_secs();
+    let secs = etd_secs(section.percentage, remaining_secs, window_secs)?;
+    let dur = format_countdown_from_secs(secs, strings);
+    Some(format!(
+        " {} \u{00b7} {dur} {}",
+        strings.rem, strings.etd_suffix
+    ))
+}
+
+#[cfg(test)]
+mod etd_tests {
+    use super::*;
+    use crate::localization::LanguageId;
+    use std::time::Duration;
+
+    fn section(pct: f64, remaining: Duration) -> UsageSection {
+        UsageSection {
+            percentage: pct,
+            resets_at: Some(SystemTime::now() + remaining),
+        }
+    }
+
+    #[test]
+    fn etd_suffix_present_when_at_risk() {
+        // 60% used, 1h remaining of a 2h window → at risk.
+        let s = section(60.0, Duration::from_secs(3600));
+        let out = etd_suffix(&s, 2 * 3600, LanguageId::English.strings());
+        let out = out.expect("expected a suffix when at risk");
+        assert!(out.contains("ETD"), "suffix was: {out}");
+        // Labels the preceding countdown with "rem", then the ETD segment.
+        assert!(out.starts_with(" rem \u{00b7} "), "suffix was: {out}");
+    }
+
+    #[test]
+    fn etd_suffix_absent_when_safe() {
+        // 10% used, 4h remaining of a 5h window → safe.
+        let s = section(10.0, Duration::from_secs(4 * 3600));
+        assert_eq!(etd_suffix(&s, 5 * 3600, LanguageId::English.strings()), None);
+    }
+
+    #[test]
+    fn etd_suffix_absent_without_reset() {
+        let s = UsageSection { percentage: 60.0, resets_at: None };
+        assert_eq!(etd_suffix(&s, 2 * 3600, LanguageId::English.strings()), None);
+    }
+
+    #[test]
+    fn etd_none_when_on_safe_pace() {
+        // 10% used, 1h elapsed of a 5h window (4h remaining): steady pace at 1h
+        // is 20%, so 10% is UNDER pace → would not deplete before reset.
+        // (50% in the first hour would be at-risk, not safe — see the invariant.)
+        assert_eq!(etd_secs(10.0, 4 * 3600, 5 * 3600), None);
+    }
+
+    #[test]
+    fn etd_some_when_at_risk() {
+        // 60% used, 1h elapsed of a 2h window (1h remaining).
+        // Remaining 40% at 60%/h needs 40 min < 60 min remaining → at risk.
+        assert_eq!(etd_secs(60.0, 3600, 2 * 3600), Some(2400));
+    }
+
+    #[test]
+    fn etd_none_at_boundaries() {
+        assert_eq!(etd_secs(0.0, 3600, 5 * 3600), None); // nothing used
+        assert_eq!(etd_secs(100.0, 3600, 5 * 3600), None); // already full
+        assert_eq!(etd_secs(50.0, 5 * 3600, 5 * 3600), None); // elapsed = 0
+        assert_eq!(etd_secs(50.0, 0, 5 * 3600), None); // no remaining
+        assert_eq!(etd_secs(50.0, 3600, 0), None); // no window
+    }
+
+    #[test]
+    fn etd_invariant_matches_at_risk_rule() {
+        // etd_secs is Some iff burn rate exceeds steady pace:
+        //   actual_pct > 100 * elapsed / window.
+        // Skip a small band around the exact boundary to avoid float flakiness.
+        let window = 5 * 3600u64;
+        for remaining in (0..=window).step_by(600) {
+            let elapsed = window - remaining;
+            for pct_x10 in 1..1000u64 {
+                let actual = pct_x10 as f64 / 10.0;
+                if elapsed == 0 || remaining == 0 {
+                    assert_eq!(etd_secs(actual, remaining, window), None);
+                    continue;
+                }
+                let boundary = 100.0 * elapsed as f64 / window as f64;
+                if (actual - boundary).abs() < 0.05 {
+                    continue; // razor's edge — covered by explicit boundary test
+                }
+                let at_risk = actual > boundary;
+                assert_eq!(
+                    etd_secs(actual, remaining, window).is_some(),
+                    at_risk,
+                    "actual={actual} remaining={remaining} window={window}"
+                );
+            }
+        }
+    }
+}

@@ -180,6 +180,9 @@ pub struct Strings {
     pub antigravity_token_expired_title: &'static str,
     pub antigravity_token_expired_body: &'static str,
     pub codex_window_title: &'static str,
+    pub show_etd: &'static str,
+    pub etd_suffix: &'static str,
+    pub rem: &'static str,
     pub antigravity_window_title: &'static str,
 }
 

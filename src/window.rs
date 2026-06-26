@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -91,6 +91,7 @@ struct AppState {
     drag_start_offset: i32,
 
     widget_visible: bool,
+    show_etd: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -129,6 +130,7 @@ const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
 const IDM_LANG_RUSSIAN: u16 = 49;
 const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
+const IDM_SHOW_ETD: u16 = 74;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
 
@@ -310,6 +312,8 @@ struct SettingsFile {
     last_update_check_unix: Option<u64>,
     #[serde(default = "default_widget_visible")]
     widget_visible: bool,
+    #[serde(default)]
+    show_etd: bool,
     #[serde(default = "default_show_claude_code")]
     show_claude_code: bool,
     #[serde(default = "default_show_codex")]
@@ -327,6 +331,7 @@ impl Default for SettingsFile {
             language: None,
             last_update_check_unix: None,
             widget_visible: true,
+            show_etd: false,
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
@@ -388,6 +393,7 @@ fn save_state_settings() {
                 .map(|language| language.code().to_string()),
             last_update_check_unix: s.last_update_check_unix,
             widget_visible: s.widget_visible,
+            show_etd: s.show_etd,
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
@@ -647,6 +653,18 @@ fn refresh_usage_texts(state: &mut AppState) {
     if let Some(claude_code) = data.claude_code.as_ref() {
         state.session_text = poller::format_line(&claude_code.session, strings);
         state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+        if state.show_etd {
+            if let Some(s) =
+                poller::etd_suffix(&claude_code.session, poller::SESSION_WINDOW_SECS, strings)
+            {
+                state.session_text.push_str(&s);
+            }
+            if let Some(s) =
+                poller::etd_suffix(&claude_code.weekly, poller::WEEKLY_WINDOW_SECS, strings)
+            {
+                state.weekly_text.push_str(&s);
+            }
+        }
     } else if state.show_claude_code {
         state.session_text = "!".to_string();
         state.weekly_text = "!".to_string();
@@ -655,6 +673,18 @@ fn refresh_usage_texts(state: &mut AppState) {
     if let Some(codex) = data.codex.as_ref() {
         state.codex_session_text = poller::format_line(&codex.session, strings);
         state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
+        if state.show_etd {
+            if let Some(s) =
+                poller::etd_suffix(&codex.session, poller::SESSION_WINDOW_SECS, strings)
+            {
+                state.codex_session_text.push_str(&s);
+            }
+            if let Some(s) =
+                poller::etd_suffix(&codex.weekly, poller::WEEKLY_WINDOW_SECS, strings)
+            {
+                state.codex_weekly_text.push_str(&s);
+            }
+        }
     } else if state.show_codex {
         state.codex_session_text = "!".to_string();
         state.codex_weekly_text = "!".to_string();
@@ -668,10 +698,24 @@ fn refresh_usage_texts(state: &mut AppState) {
             } else {
                 poller::format_line(&antigravity.weekly, strings)
             };
+        if state.show_etd {
+            if let Some(s) =
+                poller::etd_suffix(&antigravity.session, poller::SESSION_WINDOW_SECS, strings)
+            {
+                state.antigravity_session_text.push_str(&s);
+            }
+            if let Some(s) =
+                poller::etd_suffix(&antigravity.weekly, poller::WEEKLY_WINDOW_SECS, strings)
+            {
+                state.antigravity_weekly_text.push_str(&s);
+            }
+        }
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
         state.antigravity_weekly_text = "!".to_string();
     }
+
+    update_measured_text_width(state);
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -1083,6 +1127,76 @@ fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity
     (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
 }
 
+/// Small trailing padding (device px, unscaled) added after measured text.
+const TEXT_MEASURE_PAD: i32 = 6;
+
+/// Width (device px, already DPI-scaled) of the widest usage-cell text actually
+/// shown, recomputed whenever the texts change. The cell column sizes to real
+/// content (detailed time / ETD suffix only when present) instead of a fixed
+/// worst-case reservation. Falls back to the base column before first measure.
+static MEASURED_TEXT_WIDTH: AtomicI32 = AtomicI32::new(0);
+
+fn current_text_width() -> i32 {
+    MEASURED_TEXT_WIDTH.load(Ordering::Relaxed).max(sc(TEXT_WIDTH))
+}
+
+/// Measure a string's pixel width in the same font the widget renders with.
+fn measure_text_px(text: &str) -> i32 {
+    if text.is_empty() {
+        return 0;
+    }
+    unsafe {
+        let hdc = GetDC(HWND::default());
+        let mem = CreateCompatibleDC(hdc);
+        let font_name = native_interop::wide_str("Segoe UI");
+        let font = CreateFontW(
+            sc(-12),
+            0,
+            0,
+            0,
+            FW_MEDIUM.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_TT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            PCWSTR::from_raw(font_name.as_ptr()),
+        );
+        let old = SelectObject(mem, font);
+        let wide: Vec<u16> = text.encode_utf16().collect();
+        let mut size = SIZE::default();
+        let _ = GetTextExtentPoint32W(mem, &wide, &mut size);
+        SelectObject(mem, old);
+        let _ = DeleteObject(font);
+        let _ = DeleteDC(mem);
+        ReleaseDC(HWND::default(), hdc);
+        size.cx
+    }
+}
+
+/// Recompute the measured cell-text width from the currently-visible texts.
+fn update_measured_text_width(state: &AppState) {
+    let mut max_w = 0;
+    if state.show_claude_code {
+        max_w = max_w.max(measure_text_px(&state.session_text));
+        max_w = max_w.max(measure_text_px(&state.weekly_text));
+    }
+    if state.show_codex {
+        max_w = max_w.max(measure_text_px(&state.codex_session_text));
+        max_w = max_w.max(measure_text_px(&state.codex_weekly_text));
+    }
+    if state.show_antigravity {
+        max_w = max_w.max(measure_text_px(&state.antigravity_session_text));
+        max_w = max_w.max(measure_text_px(&state.antigravity_weekly_text));
+    }
+    if max_w > 0 {
+        MEASURED_TEXT_WIDTH.store(max_w + sc(TEXT_MEASURE_PAD), Ordering::Relaxed);
+    }
+}
+
 fn row_bar_segment_count(active_models: i32) -> i32 {
     match active_models {
         1 => SEGMENT_COUNT,
@@ -1095,7 +1209,7 @@ fn total_widget_width_for(active_models: i32) -> i32 {
     let bar_segments = row_bar_segment_count(active_models);
     let model_width = (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * bar_segments - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH);
+        + current_text_width();
 
     sc(LEFT_DIVIDER_W)
         + sc(DIVIDER_RIGHT_MARGIN)
@@ -1123,6 +1237,13 @@ fn total_widget_width() -> i32 {
             .unwrap_or(1)
     };
     total_widget_width_for(active_models)
+}
+
+/// Whether the ETD suffix is enabled, read from shared state. Returns false
+/// when state is not yet populated (startup) or the lock cannot be acquired.
+/// Callers must not hold the state lock.
+fn show_etd_enabled() -> bool {
+    lock_state().as_ref().map_or(false, |s| s.show_etd)
 }
 
 fn claude_accent_color() -> Color {
@@ -1327,6 +1448,7 @@ pub fn run() {
                 drag_start_client_x: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
+                show_etd: settings.show_etd,
             });
         }
 
@@ -2633,6 +2755,18 @@ unsafe extern "system" fn wnd_proc(
                         do_poll(sh);
                     });
                 }
+                IDM_SHOW_ETD => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_etd = !s.show_etd;
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
                 | IDM_LANG_DUTCH
@@ -2906,6 +3040,19 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             language_menu.0 as usize,
             PCWSTR::from_raw(language_label.as_ptr()),
+        );
+
+        let etd_str = native_interop::wide_str(strings.show_etd);
+        let etd_flags = if show_etd_enabled() {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            settings_menu,
+            etd_flags,
+            IDM_SHOW_ETD as usize,
+            PCWSTR::from_raw(etd_str.as_ptr()),
         );
 
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -3188,7 +3335,7 @@ fn draw_row(
 fn model_usage_width(segment_count: i32) -> i32 {
     (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
-        + sc(TEXT_WIDTH)
+        + current_text_width()
 }
 
 fn draw_usage_bar(
@@ -3261,7 +3408,7 @@ fn draw_usage_bar(
         let mut text_rect = RECT {
             left: text_x,
             top: y,
-            right: text_x + sc(TEXT_WIDTH),
+            right: text_x + current_text_width(),
             bottom: y + seg_h,
         };
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
