@@ -84,6 +84,7 @@ struct AppState {
     last_update_check_unix: Option<u64>,
 
     taskbar_index: usize,
+    taskbar_monitor: Option<String>,
     tray_offset: i32,
     dragging: bool,
     drag_start_mouse_x: i32,
@@ -302,6 +303,8 @@ struct SettingsFile {
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taskbar_monitor: Option<String>,
     #[serde(default = "default_poll_interval")]
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -323,6 +326,7 @@ impl Default for SettingsFile {
         Self {
             tray_offset: 0,
             taskbar_index: 0,
+            taskbar_monitor: None,
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
@@ -382,6 +386,7 @@ fn save_state_settings() {
         save_settings(&SettingsFile {
             tray_offset: s.tray_offset,
             taskbar_index: s.taskbar_index,
+            taskbar_monitor: s.taskbar_monitor.clone(),
             poll_interval_ms: s.poll_interval_ms,
             language: s
                 .language_override
@@ -494,19 +499,67 @@ fn toggle_widget_visibility(hwnd: HWND) {
     }
 }
 
-fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
-    let taskbars = native_interop::find_taskbars();
+/// Pick which enumerated taskbar to attach to. A previously chosen monitor
+/// (by stable device name) wins over the positional index, so the widget stays
+/// on the same physical monitor even when the taskbar enumeration order changes
+/// (multi-monitor setups, explorer restarts, DPI/display changes).
+///
+/// When no remembered monitor matches, prefer the primary monitor's taskbar
+/// rather than a geometric index. The sorted index 0 is the taskbar with the
+/// smallest `top`, which on a setup with a vertical secondary monitor is often
+/// that secondary screen — the exact source of the widget landing on the wrong
+/// monitor (issue #43).
+fn resolve_taskbar_index(
+    taskbars: &[native_interop::TaskbarWindow],
+    preferred_monitor: Option<&str>,
+    fallback_index: usize,
+) -> usize {
+    if let Some(monitor) = preferred_monitor {
+        if let Some(index) = taskbars
+            .iter()
+            .position(|taskbar| taskbar.monitor == monitor)
+        {
+            return index;
+        }
+    }
+    if let Some(index) = taskbars.iter().position(|taskbar| taskbar.is_primary) {
+        return index;
+    }
+    fallback_index.min(taskbars.len().saturating_sub(1))
+}
+
+fn attach_to_taskbar(hwnd: HWND, requested_index: usize, preferred_monitor: Option<&str>) -> bool {
+    let mut taskbars = native_interop::find_taskbars();
+
+    // When we already know which monitor the widget belongs on but its taskbar
+    // is not present yet (e.g. a secondary taskbar still coming up after an
+    // explorer restart or display change), briefly wait for it instead of
+    // falling back to the wrong monitor's taskbar.
+    if let Some(monitor) = preferred_monitor {
+        let mut attempts = 0;
+        while attempts < 10
+            && !taskbars
+                .iter()
+                .any(|taskbar| taskbar.monitor == monitor)
+        {
+            std::thread::sleep(Duration::from_millis(200));
+            taskbars = native_interop::find_taskbars();
+            attempts += 1;
+        }
+    }
+
     if taskbars.is_empty() {
         diagnose::log("taskbar not found; using fallback popup window");
         return false;
     }
 
-    let index = requested_index.min(taskbars.len().saturating_sub(1));
-    let taskbar = taskbars[index];
+    let index = resolve_taskbar_index(&taskbars, preferred_monitor, requested_index);
+    let taskbar = taskbars[index].clone();
     diagnose::log(format!(
-        "taskbar selected index={index} count={} hwnd={:?} rect=({}, {}, {}, {})",
+        "taskbar selected index={index} count={} hwnd={:?} monitor={} rect=({}, {}, {}, {})",
         taskbars.len(),
         taskbar.hwnd,
+        taskbar.monitor,
         taskbar.rect.left,
         taskbar.rect.top,
         taskbar.rect.right,
@@ -546,6 +599,9 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         s.tray_notify_hwnd = tray_notify;
         s.win_event_hook = hook;
         s.taskbar_index = index;
+        if !taskbar.monitor.is_empty() {
+            s.taskbar_monitor = Some(taskbar.monitor.clone());
+        }
         s.embedded = true;
     }
     true
@@ -1321,6 +1377,7 @@ pub fn run() {
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
+                taskbar_monitor: settings.taskbar_monitor.clone(),
                 tray_offset: settings.tray_offset,
                 dragging: false,
                 drag_start_mouse_x: 0,
@@ -1331,7 +1388,11 @@ pub fn run() {
         }
 
         // Try to embed in taskbar
-        if attach_to_taskbar(hwnd, settings.taskbar_index) {
+        if attach_to_taskbar(
+            hwnd,
+            settings.taskbar_index,
+            settings.taskbar_monitor.as_deref(),
+        ) {
             embedded = true;
         }
 
@@ -2487,7 +2548,14 @@ unsafe extern "system" fn wnd_proc(
                                 s.tray_offset = new_offset;
                             }
                         }
-                        if attach_to_taskbar(hwnd, target_index) {
+                        // Honor the dropped monitor explicitly; otherwise the
+                        // primary-monitor fallback would override the user's drop.
+                        let preferred = if target_taskbar.monitor.is_empty() {
+                            None
+                        } else {
+                            Some(target_taskbar.monitor.clone())
+                        };
+                        if attach_to_taskbar(hwnd, target_index, preferred.as_deref()) {
                             position_at_taskbar();
                             render_layered();
                         }
@@ -2568,10 +2636,17 @@ unsafe extern "system" fn wnd_proc(
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             s.tray_offset = 0;
+                            // Forget the remembered monitor so the widget falls
+                            // back to the primary monitor's taskbar.
+                            s.taskbar_monitor = None;
                         }
                     }
+                    // Re-attach with no monitor preference: this resolves to the
+                    // primary monitor and re-stores it as the remembered monitor.
+                    attach_to_taskbar(hwnd, 0, None);
                     save_state_settings();
                     position_at_taskbar();
+                    render_layered();
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());

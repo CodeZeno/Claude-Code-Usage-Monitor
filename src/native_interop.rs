@@ -1,5 +1,12 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONULL,
+};
+
+/// `MONITORINFOF_PRIMARY` flag (not re-exported by the `windows` crate version
+/// in use). Set in `MONITORINFO::dwFlags` for the primary monitor.
+const MONITORINFOF_PRIMARY: u32 = 0x0000_0001;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -24,10 +31,48 @@ pub const WM_APP: u32 = 0x8000;
 pub const WM_APP_USAGE_UPDATED: u32 = WM_APP + 1;
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct TaskbarWindow {
     pub hwnd: HWND,
     pub rect: RECT,
+    /// Stable display device name (e.g. `\\.\DISPLAY1`) of the monitor this
+    /// taskbar lives on. Empty if it could not be resolved. Unlike a positional
+    /// index, this survives explorer restarts and monitor reordering, so it is
+    /// used to re-attach to the same physical monitor across sessions.
+    pub monitor: String,
+    /// Whether this taskbar lives on the primary monitor. Used as the fallback
+    /// target when no remembered monitor matches, since a geometric index can
+    /// point at the wrong screen on multi-monitor setups (issue #43).
+    pub is_primary: bool,
+}
+
+/// Resolve the stable display device name and primary-monitor flag for the
+/// monitor a window sits on.
+pub fn monitor_info_for_window(hwnd: HWND) -> Option<(String, bool)> {
+    unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL);
+        if monitor.is_invalid() {
+            return None;
+        }
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if GetMonitorInfoW(monitor, &mut info.monitorInfo as *mut MONITORINFO).as_bool() {
+            let len = info
+                .szDevice
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(info.szDevice.len());
+            let name = String::from_utf16_lossy(&info.szDevice[..len]);
+            let is_primary = (info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+            if name.is_empty() {
+                None
+            } else {
+                Some((name, is_primary))
+            }
+        } else {
+            None
+        }
+    }
 }
 
 pub fn find_taskbars() -> Vec<TaskbarWindow> {
@@ -39,7 +84,14 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
                 if let Some(rect) = get_taskbar_rect(hwnd).or_else(|| get_window_rect_safe(hwnd)) {
-                    taskbars.push(TaskbarWindow { hwnd, rect });
+                    let (monitor, is_primary) =
+                        monitor_info_for_window(hwnd).unwrap_or_default();
+                    taskbars.push(TaskbarWindow {
+                        hwnd,
+                        rect,
+                        monitor,
+                        is_primary,
+                    });
                 }
             }
         }
