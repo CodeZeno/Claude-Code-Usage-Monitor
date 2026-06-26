@@ -31,6 +31,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_available: "有可用更新",
     update_prompt_now: "版本 {version} 已可用。是否立即更新？",
     exit: "結束",
+    show_detailed_remaining: "顯示詳細剩餘時間",
     show_widget: "顯示小工具",
     session_window: "5h",
     weekly_window: "7d",

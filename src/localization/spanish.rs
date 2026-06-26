@@ -31,6 +31,7 @@ pub(super) const STRINGS: Strings = Strings {
     update_available: "Actualización disponible",
     update_prompt_now: "La versión {version} está disponible. ¿Quieres actualizar ahora?",
     exit: "Salir",
+    show_detailed_remaining: "Mostrar tiempo restante detallado",
     show_widget: "Mostrar widget",
     session_window: "5h",
     weekly_window: "7d",
