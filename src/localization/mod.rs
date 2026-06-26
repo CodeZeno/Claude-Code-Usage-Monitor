@@ -181,6 +181,8 @@ pub struct Strings {
     pub antigravity_token_expired_body: &'static str,
     pub codex_window_title: &'static str,
     pub antigravity_window_title: &'static str,
+    pub monitor: &'static str,
+    pub primary_monitor: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

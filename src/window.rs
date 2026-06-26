@@ -132,6 +132,10 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+/// Base id for the dynamic per-monitor menu entries. Entry `IDM_MONITOR_BASE + i`
+/// selects the `i`-th taskbar in `find_taskbars()` order.
+const IDM_MONITOR_BASE: u16 = 200;
+const IDM_MONITOR_MAX: u16 = 215;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -2648,6 +2652,29 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                 }
+                id if (IDM_MONITOR_BASE..=IDM_MONITOR_MAX).contains(&id) => {
+                    let target = (id - IDM_MONITOR_BASE) as usize;
+                    let taskbars = native_interop::find_taskbars();
+                    if let Some(taskbar) = taskbars.get(target) {
+                        let preferred = if taskbar.monitor.is_empty() {
+                            None
+                        } else {
+                            Some(taskbar.monitor.clone())
+                        };
+                        {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.taskbar_monitor = preferred.clone();
+                                s.tray_offset = 0;
+                            }
+                        }
+                        if attach_to_taskbar(hwnd, target, preferred.as_deref()) {
+                            save_state_settings();
+                            position_at_taskbar();
+                            render_layered();
+                        }
+                    }
+                }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
@@ -2790,6 +2817,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            taskbar_monitor,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2804,6 +2832,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.taskbar_monitor.clone(),
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2816,6 +2845,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     false,
+                    None,
                 ),
             }
         };
@@ -2933,6 +2963,46 @@ fn show_context_menu(hwnd: HWND) {
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
+
+        // Monitor submenu: one entry per detected taskbar. Only shown when more
+        // than one taskbar exists (i.e. a real multi-monitor setup).
+        let taskbars = native_interop::find_taskbars();
+        if taskbars.len() > 1 {
+            let monitor_menu = CreatePopupMenu().unwrap();
+            for (index, taskbar) in taskbars.iter().enumerate() {
+                if index >= (IDM_MONITOR_MAX - IDM_MONITOR_BASE) as usize {
+                    break;
+                }
+                let selected = match taskbar_monitor.as_deref() {
+                    Some(name) => !name.is_empty() && name == taskbar.monitor,
+                    // No explicit choice yet: reflect the primary-monitor default.
+                    None => taskbar.is_primary,
+                };
+                let mut label = format!("{} {}", strings.monitor, index + 1);
+                if taskbar.is_primary {
+                    label.push_str(&format!(" ({})", strings.primary_monitor));
+                }
+                let label_wide = native_interop::wide_str(&label);
+                let flags = if selected {
+                    MF_CHECKED
+                } else {
+                    MENU_ITEM_FLAGS(0)
+                };
+                let _ = AppendMenuW(
+                    monitor_menu,
+                    flags,
+                    (IDM_MONITOR_BASE as usize) + index,
+                    PCWSTR::from_raw(label_wide.as_ptr()),
+                );
+            }
+            let monitor_label = native_interop::wide_str(strings.monitor);
+            let _ = AppendMenuW(
+                settings_menu,
+                MF_POPUP,
+                monitor_menu.0 as usize,
+                PCWSTR::from_raw(monitor_label.as_ptr()),
+            );
+        }
 
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);

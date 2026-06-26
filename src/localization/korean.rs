@@ -46,5 +46,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Antigravity를 열고 다시 로그인하세요. 그런 다음 이 앱을 새로 고치거나 다시 시작하세요.",
     codex_window_title: "Codex 사용량 모니터",
     antigravity_window_title: "Antigravity 사용량 모니터",
+    monitor: "모니터",
+    primary_monitor: "기본",
     second_suffix: "초",
 };
