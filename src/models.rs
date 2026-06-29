@@ -22,9 +22,33 @@ pub struct AccountUsage {
 }
 
 #[derive(Clone, Debug, Default)]
+pub struct SpendPaceSlots {
+    pub month_actual: f64,
+    pub month_cap: f64,
+    pub month_expected: f64,
+    pub month_level: u8,
+    pub week_actual: f64,
+    pub week_cap: f64,
+    pub week_expected: f64,
+    pub week_level: u8,
+    pub day_actual: f64,
+    pub day_cap: f64,
+    pub day_expected: f64,
+    pub day_level: u8,
+}
+
+#[derive(Clone, Debug)]
+pub struct SpendPaceView {
+    pub credit_pct: f64,
+    pub credit_expiry: Option<SystemTime>,
+    pub slots: SpendPaceSlots,
+}
+
+#[derive(Clone, Debug, Default)]
 pub struct AppUsageData {
     pub claude_code: Option<UsageData>,
     pub codex: Option<UsageData>,
     pub antigravity: Option<UsageData>,
     pub account: Option<AccountUsage>,
+    pub spend_pace: Option<SpendPaceView>,
 }

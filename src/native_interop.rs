@@ -23,6 +23,7 @@ pub const TIMER_POLL: usize = 1;
 pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
+pub const TIMER_DRAG: usize = 5;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -139,10 +140,61 @@ pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
     }
 }
 
+/// Detach our window from the taskbar, restoring popup style and topmost z-order
+pub fn detach_from_taskbar(hwnd: HWND) {
+    unsafe {
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let new_style = (style & !(WS_CHILD_STYLE | WS_CLIPSIBLINGS_STYLE)) | WS_POPUP_STYLE;
+        let _ = SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
+        let _ = SetParent(hwnd, None);
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Re-assert HWND_TOPMOST so the window sits above Shell_TrayWnd (which is also topmost).
+/// MoveWindow preserves z-order but doesn't lift us to the front of the topmost band.
+pub fn raise_above_taskbar(hwnd: HWND) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
 /// Move the window
 pub fn move_window(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         let _ = MoveWindow(hwnd, x, y, w, h, true);
+    }
+}
+
+/// Move the window asynchronously — posts a move request to the owning thread's queue
+/// instead of blocking cross-process. Required for WS_CHILD windows embedded in Explorer.
+pub fn move_window_async(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND::default(),
+            x,
+            y,
+            w,
+            h,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+        );
     }
 }
 

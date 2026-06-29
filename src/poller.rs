@@ -291,6 +291,9 @@ fn poll_with(
             Ok((usage, account)) => {
                 data.claude_code = Some(usage);
                 data.account = account;
+                if let Some(ref account) = data.account {
+                    data.spend_pace = crate::spend_pace::compute_spend_pace(account);
+                }
             }
             Err(error) => {
                 if active_provider_count > 1 {
