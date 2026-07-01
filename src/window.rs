@@ -84,6 +84,7 @@ struct AppState {
     last_update_check_unix: Option<u64>,
 
     taskbar_index: usize,
+    taskbar_device: Option<String>,
     tray_offset: i32,
     dragging: bool,
     drag_start_mouse_x: i32,
@@ -131,6 +132,10 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+// Base ID for the dynamically-built Monitor submenu. Item `n` selects the
+// n-th taskbar returned by `find_taskbars()`. Reserve a generous range.
+const IDM_MONITOR_BASE: u16 = 70;
+const IDM_MONITOR_MAX: u16 = 99;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -139,6 +144,8 @@ const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 /// How often the watchdog thread polls for an explorer.exe restart (which
 /// recreates the taskbar and wipes our tray-icon registration).
 const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;
+
+const TASKBAR_MISSING_TICKS: u32 = 2;
 
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
@@ -232,21 +239,35 @@ fn relaunch_self() {
 /// dedicated thread (independent of the dead message loop) polls the taskbar
 /// handle and, when it changes, relaunches the widget as a fresh process.
 fn spawn_taskbar_watchdog() {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
-        let stored = {
-            let state = lock_state();
-            state.as_ref().and_then(|s| s.taskbar_hwnd)
-        };
-        // Only relevant once we have embedded into a taskbar at least once.
-        let Some(old) = stored else {
-            continue;
-        };
-        let taskbars = native_interop::find_taskbars();
-        if !taskbars.is_empty() && !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
+    std::thread::spawn(move || {
+        let mut missing_streak = 0u32;
+        loop {
+            std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
+            let stored = {
+                let state = lock_state();
+                state.as_ref().and_then(|s| s.taskbar_hwnd)
+            };
+            let Some(old) = stored else {
+                missing_streak = 0;
+                continue;
+            };
+            if native_interop::window_exists(old) {
+                missing_streak = 0;
+                continue;
+            }
+            let taskbars = native_interop::find_taskbars();
+            if taskbars.is_empty() || taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
+                missing_streak = 0;
+                continue;
+            }
+            missing_streak += 1;
+            if missing_streak < TASKBAR_MISSING_TICKS {
+                continue;
+            }
+            missing_streak = 0;
             let new = taskbars[0].hwnd;
             diagnose::log(format!(
-                "watchdog: taskbar changed old={:?} new={:?} -> relaunching",
+                "watchdog: taskbar destroyed old={:?} new={:?} -> relaunching",
                 old.0, new.0
             ));
             relaunch_self();
@@ -302,6 +323,8 @@ struct SettingsFile {
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taskbar_device: Option<String>,
     #[serde(default = "default_poll_interval")]
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -323,6 +346,7 @@ impl Default for SettingsFile {
         Self {
             tray_offset: 0,
             taskbar_index: 0,
+            taskbar_device: None,
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
@@ -382,6 +406,7 @@ fn save_state_settings() {
         save_settings(&SettingsFile {
             tray_offset: s.tray_offset,
             taskbar_index: s.taskbar_index,
+            taskbar_device: s.taskbar_device.clone(),
             poll_interval_ms: s.poll_interval_ms,
             language: s
                 .language_override
@@ -494,17 +519,60 @@ fn toggle_widget_visibility(hwnd: HWND) {
     }
 }
 
-fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
-    let taskbars = native_interop::find_taskbars();
+/// Friendly menu label for a monitor device, e.g. "\\.\DISPLAY2" -> "Monitor 2".
+/// Falls back to a 1-based index when the device name has no trailing number.
+fn monitor_display_name(device: &str, index: usize, monitor_word: &str) -> String {
+    let number: String = device.chars().rev().take_while(|c| c.is_ascii_digit()).collect();
+    let number: String = number.chars().rev().collect();
+    if number.is_empty() {
+        format!("{} {}", monitor_word, index + 1)
+    } else {
+        format!("{} {}", monitor_word, number)
+    }
+}
+
+fn attach_to_taskbar(
+    hwnd: HWND,
+    requested_index: usize,
+    requested_device: Option<&str>,
+    allow_wait: bool,
+) -> bool {
+    let wanted = requested_device.filter(|d| !d.is_empty());
+
+    // On startup the secondary taskbars can appear a beat after our window, so
+    // the remembered monitor may not be enumerable yet. Briefly retry rather
+    // than falling back and snapping the widget to the wrong monitor.
+    let mut taskbars = native_interop::find_taskbars();
+    if allow_wait {
+        if let Some(device) = wanted {
+            let mut waited = 0;
+            while waited < 2000 && !taskbars.iter().any(|t| t.device == device) {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                waited += 200;
+                taskbars = native_interop::find_taskbars();
+            }
+        }
+    }
+
     if taskbars.is_empty() {
         diagnose::log("taskbar not found; using fallback popup window");
         return false;
     }
 
-    let index = requested_index.min(taskbars.len().saturating_sub(1));
-    let taskbar = taskbars[index];
+    // Prefer the taskbar on the same physical monitor we were last anchored to.
+    // The geometric index is unstable across monitor connect/disconnect/reorder,
+    // so matching by device name keeps the widget on the user's chosen monitor.
+    // When the remembered device is gone, anchor to the primary monitor before
+    // the geometric index: index 0 is the topmost taskbar, which on setups with
+    // a vertical secondary monitor is often the secondary screen (the #43 bug).
+    let index = wanted
+        .and_then(|device| taskbars.iter().position(|t| t.device == device))
+        .or_else(|| taskbars.iter().position(|t| t.is_primary))
+        .unwrap_or_else(|| requested_index.min(taskbars.len().saturating_sub(1)));
+    let taskbar = taskbars[index].clone();
     diagnose::log(format!(
-        "taskbar selected index={index} count={} hwnd={:?} rect=({}, {}, {}, {})",
+        "taskbar selected index={index} device={} count={} hwnd={:?} rect=({}, {}, {}, {})",
+        taskbar.device,
         taskbars.len(),
         taskbar.hwnd,
         taskbar.rect.left,
@@ -546,6 +614,7 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         s.tray_notify_hwnd = tray_notify;
         s.win_event_hook = hook;
         s.taskbar_index = index;
+        s.taskbar_device = Some(taskbar.device.clone());
         s.embedded = true;
     }
     true
@@ -1321,6 +1390,7 @@ pub fn run() {
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
+                taskbar_device: settings.taskbar_device.clone(),
                 tray_offset: settings.tray_offset,
                 dragging: false,
                 drag_start_mouse_x: 0,
@@ -1331,7 +1401,12 @@ pub fn run() {
         }
 
         // Try to embed in taskbar
-        if attach_to_taskbar(hwnd, settings.taskbar_index) {
+        if attach_to_taskbar(
+            hwnd,
+            settings.taskbar_index,
+            settings.taskbar_device.as_deref(),
+            true,
+        ) {
             embedded = true;
         }
 
@@ -2487,7 +2562,8 @@ unsafe extern "system" fn wnd_proc(
                                 s.tray_offset = new_offset;
                             }
                         }
-                        if attach_to_taskbar(hwnd, target_index) {
+                        if attach_to_taskbar(hwnd, target_index, Some(&target_taskbar.device), false)
+                        {
                             position_at_taskbar();
                             render_layered();
                         }
@@ -2568,13 +2644,32 @@ unsafe extern "system" fn wnd_proc(
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             s.tray_offset = 0;
+                            // Forget the remembered monitor so we fall back to the
+                            // primary taskbar — an escape hatch if the widget ever
+                            // gets stuck on a monitor that is gone or wrong.
+                            s.taskbar_device = None;
                         }
                     }
+                    // Re-anchor to the primary monitor's taskbar (device is now None).
+                    attach_to_taskbar(hwnd, 0, None, false);
                     save_state_settings();
                     position_at_taskbar();
+                    render_layered();
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
+                }
+                _ if id >= IDM_MONITOR_BASE && id <= IDM_MONITOR_MAX => {
+                    let idx = (id - IDM_MONITOR_BASE) as usize;
+                    let taskbars = native_interop::find_taskbars();
+                    if let Some(target) = taskbars.get(idx) {
+                        let device = target.device.clone();
+                        if attach_to_taskbar(hwnd, idx, Some(&device), false) {
+                            save_state_settings();
+                            position_at_taskbar();
+                            render_layered();
+                        }
+                    }
                 }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
@@ -2858,6 +2953,46 @@ fn show_context_menu(hwnd: HWND) {
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
+
+        // Monitor submenu — one entry per detected taskbar, so the user can move
+        // the widget between monitors without dragging. Only shown when there is
+        // more than one (single-monitor setups have nothing to choose).
+        let taskbars = native_interop::find_taskbars();
+        if taskbars.len() > 1 {
+            let current_device = {
+                let state = lock_state();
+                state.as_ref().and_then(|s| s.taskbar_device.clone())
+            };
+            let monitor_menu = CreatePopupMenu().unwrap();
+            for (i, taskbar) in taskbars.iter().enumerate() {
+                if i > (IDM_MONITOR_MAX - IDM_MONITOR_BASE) as usize {
+                    break;
+                }
+                let mut label = monitor_display_name(&taskbar.device, i, strings.monitor);
+                if taskbar.is_primary {
+                    label.push_str(" \u{2605}"); // ★ marks the primary monitor
+                }
+                let flags = if current_device.as_deref() == Some(taskbar.device.as_str()) {
+                    MF_CHECKED
+                } else {
+                    MENU_ITEM_FLAGS(0)
+                };
+                let label_w = native_interop::wide_str(&label);
+                let _ = AppendMenuW(
+                    monitor_menu,
+                    flags,
+                    (IDM_MONITOR_BASE as usize) + i,
+                    PCWSTR::from_raw(label_w.as_ptr()),
+                );
+            }
+            let monitor_label = native_interop::wide_str(strings.monitor);
+            let _ = AppendMenuW(
+                settings_menu,
+                MF_POPUP,
+                monitor_menu.0 as usize,
+                PCWSTR::from_raw(monitor_label.as_ptr()),
+            );
+        }
 
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);
