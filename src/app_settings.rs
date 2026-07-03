@@ -50,6 +50,8 @@ pub struct SettingsFile {
     show_codex: bool,
     #[serde(default)]
     show_antigravity: bool,
+    #[serde(default)]
+    show_opencode: bool,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -74,6 +76,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            show_opencode: false,
             custom_theme_enabled: true,
             active_theme_path: None,
             dashboard_width: None,
@@ -146,6 +149,7 @@ impl SettingsFile {
             ProviderId::Claude => self.show_claude_code,
             ProviderId::Codex => self.show_codex,
             ProviderId::Antigravity => self.show_antigravity,
+            ProviderId::OpenCode => self.show_opencode,
         }
     }
 
@@ -154,6 +158,7 @@ impl SettingsFile {
             ProviderId::Claude => self.show_claude_code = enabled,
             ProviderId::Codex => self.show_codex = enabled,
             ProviderId::Antigravity => self.show_antigravity = enabled,
+            ProviderId::OpenCode => self.show_opencode = enabled,
         }
     }
 

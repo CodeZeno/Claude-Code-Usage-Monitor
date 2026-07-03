@@ -293,6 +293,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
                 resets_at: None,
             },
             weekly: crate::models::UsageSection::default(),
+            weekly_label: None,
         },
     )]);
     let ready = DataContext::from_usage_with_runtime(
@@ -351,7 +352,7 @@ fn starter_theme_round_trips_and_validates() {
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring.
-    assert_eq!(segments, vec![10; 12]);
+    assert_eq!(segments, vec![10; 16]);
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -461,6 +462,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
                 resets_at: Some(reset),
             },
             weekly: crate::models::UsageSection::default(),
+            weekly_label: None,
         },
     )]);
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());
@@ -851,7 +853,7 @@ fn starter_has_a_taskbar_widget_and_provider_tray_icons() {
         theme.surfaces[0].placement.reference.region,
         ReferenceRegion::SystemTray
     );
-    assert_eq!(theme.surfaces.len(), 4);
+    assert_eq!(theme.surfaces.len(), 5);
     assert!(theme.surfaces[1..]
         .iter()
         .all(|surface| surface.placement.nest == SurfaceNest::TrayIcon));

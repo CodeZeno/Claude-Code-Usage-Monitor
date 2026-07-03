@@ -290,6 +290,7 @@ pub fn rendered_label(
         "Claude Code" => language.text("Claude Code"),
         "Codex" => language.text("Codex"),
         "Antigravity" => language.text("Antigravity"),
+        "OpenCode" => language.text("OpenCode"),
         "Open Dashboard" => language.text("Open Dashboard"),
         "Every minute" => language.text("Every minute"),
         "Every 5 minutes" => language.text("Every 5 minutes"),
@@ -364,6 +365,13 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 "Antigravity",
                 Action::ToggleProvider {
                     provider: Provider::Antigravity,
+                },
+            ),
+            ContextMenuItem::action(
+                "provider-opencode",
+                "OpenCode",
+                Action::ToggleProvider {
+                    provider: Provider::OpenCode,
                 },
             ),
         ],

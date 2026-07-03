@@ -16,6 +16,8 @@ pub struct UsageSection {
 pub struct UsageData {
     pub session: UsageSection,
     pub weekly: UsageSection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

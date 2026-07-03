@@ -120,6 +120,7 @@ impl LanguageId {
             "Claude Code" => return strings.claude_code_model,
             "Codex" => return strings.codex_model,
             "Antigravity" => return strings.antigravity_model,
+            "OpenCode" => return strings.opencode_model,
             _ => {}
         }
         if let Some(translation) = helper_translations::text(self, english) {
@@ -167,6 +168,10 @@ impl LanguageId {
             ProviderId::Antigravity => (
                 strings.antigravity_token_expired_title,
                 strings.antigravity_token_expired_body,
+            ),
+            ProviderId::OpenCode => (
+                strings.opencode_token_expired_title,
+                strings.opencode_token_expired_body,
             ),
         }
     }
@@ -217,6 +222,7 @@ pub struct Strings {
     pub claude_code_model: &'static str,
     pub codex_model: &'static str,
     pub antigravity_model: &'static str,
+    pub opencode_model: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub language: &'static str,
@@ -246,8 +252,11 @@ pub struct Strings {
     pub codex_token_expired_body: &'static str,
     pub antigravity_token_expired_title: &'static str,
     pub antigravity_token_expired_body: &'static str,
+    pub opencode_token_expired_title: &'static str,
+    pub opencode_token_expired_body: &'static str,
     pub codex_window_title: &'static str,
     pub antigravity_window_title: &'static str,
+    pub opencode_window_title: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

@@ -167,7 +167,11 @@ pub(super) fn fetch_antigravity_usage_from_endpoint(
     let session = fetch_antigravity_model_quota(base_url, token, project.as_deref())?;
     let weekly = UsageSection::default();
 
-    Ok(UsageData { session, weekly })
+    Ok(UsageData {
+        session,
+        weekly,
+        weekly_label: None,
+    })
 }
 
 pub(super) fn fetch_antigravity_project(

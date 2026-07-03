@@ -66,6 +66,7 @@ fn poll_with(
 mod antigravity;
 mod claude;
 mod codex;
+mod opencode;
 
 struct ProviderPoller {
     id: ProviderId,
@@ -73,7 +74,7 @@ struct ProviderPoller {
     credential_watch: fn(bool) -> CredentialWatchSnapshot,
 }
 
-const PROVIDER_POLLERS: [ProviderPoller; 3] = [
+const PROVIDER_POLLERS: [ProviderPoller; 4] = [
     ProviderPoller {
         id: ProviderId::Claude,
         poll: claude::poll_claude_code,
@@ -88,6 +89,11 @@ const PROVIDER_POLLERS: [ProviderPoller; 3] = [
         id: ProviderId::Antigravity,
         poll: antigravity::poll_antigravity,
         credential_watch: antigravity_credential_watch_snapshot,
+    },
+    ProviderPoller {
+        id: ProviderId::OpenCode,
+        poll: opencode::poll_opencode,
+        credential_watch: opencode::credential_watch_snapshot,
     },
 ];
 

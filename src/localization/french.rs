@@ -166,6 +166,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    opencode_model: "OpenCode",
     settings: "Paramètres",
     start_with_windows: "Démarrer avec Windows",
     language: "Langue",
@@ -194,7 +195,10 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body: "Executez 'codex' dans un terminal et suivez les instructions de connexion. Ensuite, actualisez ou redemarrez cette application.",
     antigravity_token_expired_title: "Erreur d'authentification Antigravity",
     antigravity_token_expired_body: "Ouvrez Antigravity et reconnectez-vous. Ensuite, actualisez ou redemarrez cette application.",
+    opencode_token_expired_title: "OpenCode introuvable",
+    opencode_token_expired_body: "Lancez OpenCode au moins une fois pour que la base locale existe, ou definissez OPENCODE_GO_WORKSPACE_ID et OPENCODE_GO_AUTH_COOKIE pour le suivi complet de l'abonnement. Consultez le README. Ensuite, actualisez ou redemarrez cette application.",
     codex_window_title: "Moniteur d'utilisation Codex",
     antigravity_window_title: "Moniteur d'utilisation Antigravity",
+    opencode_window_title: "Moniteur d'utilisation OpenCode",
     second_suffix: "s",
 };

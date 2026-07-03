@@ -315,7 +315,10 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     let provider = parts.next()?;
     let window = parts.next()?;
     if parts.next().is_some()
-        || !matches!(provider, "active" | "claude" | "codex" | "antigravity")
+        || !matches!(
+            provider,
+            "active" | "claude" | "codex" | "antigravity" | "opencode"
+        )
         || !matches!(window, "session" | "weekly")
     {
         return None;
