@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    opencode_model: "OpenCode",
     settings: "Instellingen",
     start_with_windows: "Opstarten met Windows",
     reset_position: "Positie herstellen",
@@ -44,7 +45,10 @@ pub(super) const STRINGS: Strings = Strings {
     codex_token_expired_body: "Voer 'codex' uit in een terminal en volg de aanmeldstappen. Ververs of herstart de app daarna.",
     antigravity_token_expired_title: "Antigravity-authenticatiefout",
     antigravity_token_expired_body: "Open Antigravity en meld je opnieuw aan. Ververs of herstart de app daarna.",
+    opencode_token_expired_title: "OpenCode niet gevonden",
+    opencode_token_expired_body: "Voer OpenCode minstens één keer uit zodat de lokale database bestaat, of stel OPENCODE_GO_WORKSPACE_ID en OPENCODE_GO_AUTH_COOKIE in voor volledige abonnementsregistratie. Zie de README. Ververs of herstart de app daarna.",
     codex_window_title: "Codex-gebruiksmonitor",
     antigravity_window_title: "Antigravity-gebruiksmonitor",
+    opencode_window_title: "OpenCode-gebruiksmonitor",
     second_suffix: "s",
 };

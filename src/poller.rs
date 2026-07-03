@@ -22,6 +22,20 @@ const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
     "https://cloudcode-pa.googleapis.com",
 ];
+const OPENCODE_GO_DASHBOARD_URL_PREFIX: &str = "https://opencode.ai/workspace/";
+const OPENCODE_GO_DASHBOARD_URL_SUFFIX: &str = "/go";
+const OPENCODE_GO_USER_AGENT: &str =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 \
+     (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
+const OPENCODE_GO_WORKSPACE_ID_ENV: &str = "OPENCODE_GO_WORKSPACE_ID";
+const OPENCODE_GO_AUTH_COOKIE_ENV: &str = "OPENCODE_GO_AUTH_COOKIE";
+const OPENCODE_GO_CONFIG_FILE_ENV: &str = "OPENCODE_GO_CONFIG_FILE";
+const OPENCODE_PROVIDER_ID: &str = "opencode-go";
+const OPENCODE_FIVE_HOUR_LIMIT_USD: f64 = 12.0;
+const OPENCODE_WEEKLY_LIMIT_USD: f64 = 30.0;
+const OPENCODE_FIVE_HOUR_WINDOW_MS: i64 = 5 * 60 * 60 * 1000;
+const OPENCODE_WEEKLY_WINDOW_MS: i64 = 7 * 24 * 60 * 60 * 1000;
+const OPENCODE_DB_ENV: &str = "OPENCODE_DB";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku-4-5-20251001"];
@@ -39,6 +53,7 @@ pub enum CredentialWatchMode {
     ActiveSource,
     AllSources,
     Antigravity,
+    Opencode,
 }
 
 pub type CredentialWatchSnapshot = Vec<String>;
@@ -175,14 +190,17 @@ pub fn poll(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
 ) -> Result<AppUsageData, PollError> {
     poll_with(
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_opencode,
         poll_claude_code,
         poll_codex,
         poll_antigravity,
+        poll_opencode,
     )
 }
 
@@ -190,13 +208,18 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
     mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_opencode: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
     let mut data = AppUsageData::default();
     let mut first_error = None;
-    let active_provider_count = show_claude_code as u8 + show_codex as u8 + show_antigravity as u8;
+    let active_provider_count = show_claude_code as u8
+        + show_codex as u8
+        + show_antigravity as u8
+        + show_opencode as u8;
 
     if show_claude_code {
         match poll_claude_code() {
@@ -234,7 +257,23 @@ fn poll_with(
         }
     }
 
-    if data.claude_code.is_none() && data.codex.is_none() && data.antigravity.is_none() {
+    if show_opencode {
+        match poll_opencode() {
+            Ok(opencode) => data.opencode = Some(opencode),
+            Err(error) => {
+                if active_provider_count > 1 {
+                    diagnose::log(format!("OpenCode usage poll failed: {error:?}"));
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if data.claude_code.is_none()
+        && data.codex.is_none()
+        && data.antigravity.is_none()
+        && data.opencode.is_none()
+    {
         Err(first_error.unwrap_or(PollError::RequestFailed))
     } else {
         Ok(data)
@@ -287,6 +326,464 @@ fn poll_antigravity() -> Result<UsageData, PollError> {
     fetch_antigravity_usage(&creds.access_token)
 }
 
+fn poll_opencode() -> Result<UsageData, PollError> {
+    if let Some(credentials) = read_opencode_dashboard_credentials() {
+        return poll_opencode_dashboard(&credentials);
+    }
+
+    if let Some(db_path) = opencode_db_path() {
+        return poll_opencode_local_db(&db_path);
+    }
+
+    diagnose::log(
+        "OpenCode usage poll failed: no dashboard credentials and no local database found",
+    );
+    Err(PollError::NoCredentials)
+}
+
+fn poll_opencode_dashboard(credentials: &OpencodeDashboardCredentials) -> Result<UsageData, PollError> {
+    let usage = match fetch_opencode_dashboard_usage(credentials) {
+        Ok(usage) => usage,
+        Err(error) => {
+            diagnose::log(format!(
+                "OpenCode dashboard poll failed via {}: {error:?}",
+                credentials.source
+            ));
+            return Err(error);
+        }
+    };
+
+    if usage.rolling.is_none() && usage.weekly.is_none() && usage.monthly.is_none() {
+        diagnose::log(format!(
+            "OpenCode dashboard returned no usage windows from {}",
+            credentials.source
+        ));
+        return Err(PollError::RequestFailed);
+    }
+
+    let now = SystemTime::now();
+    let section = |window: &Option<OpencodeUsageWindow>| -> UsageSection {
+        match window {
+            Some(w) => UsageSection {
+                percentage: w.usage_percent.clamp(0.0, 100.0),
+                resets_at: now.checked_add(Duration::from_secs(w.reset_in_sec.max(0) as u64)),
+            },
+            None => UsageSection::default(),
+        }
+    };
+
+    let (second_section, second_label) = pick_opencode_second_window(&usage);
+
+    Ok(UsageData {
+        session: section(&usage.rolling),
+        weekly: second_section,
+        weekly_label: second_label,
+    })
+}
+
+/// Pick which window (weekly or monthly) to surface as the second gauge.
+///
+/// The OpenCode Go dashboard exposes both a 7-day and a 30-day window. The
+/// second gauge shows whichever is currently more used so the user always
+/// sees the most constrained limit.
+fn pick_opencode_second_window(usage: &OpencodeDashboardUsage) -> (UsageSection, Option<&'static str>) {
+    let now = SystemTime::now();
+    let to_section = |w: &OpencodeUsageWindow| UsageSection {
+        percentage: w.usage_percent.clamp(0.0, 100.0),
+        resets_at: now.checked_add(Duration::from_secs(w.reset_in_sec.max(0) as u64)),
+    };
+
+    match (&usage.weekly, &usage.monthly) {
+        (Some(weekly), Some(monthly)) => {
+            if monthly.usage_percent > weekly.usage_percent {
+                (to_section(monthly), Some("30d"))
+            } else {
+                (to_section(weekly), Some("7d"))
+            }
+        }
+        (Some(weekly), None) => (to_section(weekly), Some("7d")),
+        (None, Some(monthly)) => (to_section(monthly), Some("30d")),
+        (None, None) => (UsageSection::default(), None),
+    }
+}
+
+fn poll_opencode_local_db(db_path: &std::path::Path) -> Result<UsageData, PollError> {
+    let (used_5h, used_weekly) = match fetch_opencode_local_db_usage(db_path) {
+        Ok(totals) => totals,
+        Err(error) => {
+            diagnose::log(format!(
+                "OpenCode local DB poll failed at {}: {error:?}",
+                db_path.display()
+            ));
+            return Err(error);
+        }
+    };
+
+    let pct_5h = (used_5h / OPENCODE_FIVE_HOUR_LIMIT_USD) * 100.0;
+    let pct_weekly = (used_weekly / OPENCODE_WEEKLY_LIMIT_USD) * 100.0;
+
+    let now = SystemTime::now();
+    let resets_5h = now.checked_add(Duration::from_millis(OPENCODE_FIVE_HOUR_WINDOW_MS as u64));
+    let resets_weekly = now.checked_add(Duration::from_millis(OPENCODE_WEEKLY_WINDOW_MS as u64));
+
+    Ok(UsageData {
+        session: UsageSection {
+            percentage: pct_5h.clamp(0.0, 100.0),
+            resets_at: resets_5h,
+        },
+        weekly: UsageSection {
+            percentage: pct_weekly.clamp(0.0, 100.0),
+            resets_at: resets_weekly,
+        },
+        weekly_label: None,
+    })
+}
+
+type OpencodeLocalTotals = (f64, f64);
+
+fn fetch_opencode_local_db_usage(db_path: &std::path::Path) -> Result<OpencodeLocalTotals, PollError> {
+    let now_ms: i64 = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    let cutoff_5h = now_ms.saturating_sub(OPENCODE_FIVE_HOUR_WINDOW_MS);
+    let cutoff_weekly = now_ms.saturating_sub(OPENCODE_WEEKLY_WINDOW_MS);
+
+    let conn = rusqlite::Connection::open_with_flags(
+        db_path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .map_err(|error| {
+        diagnose::log_error("unable to open OpenCode database", error);
+        PollError::RequestFailed
+    })?;
+
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|error| {
+            diagnose::log_error("unable to set OpenCode busy timeout", error);
+            PollError::RequestFailed
+        })?;
+
+    let mut stmt = match conn.prepare(
+        "SELECT \
+             COALESCE(SUM(CASE WHEN time_updated >= ?1 THEN cost ELSE 0 END), 0), \
+             COALESCE(SUM(CASE WHEN time_updated >= ?2 THEN cost ELSE 0 END), 0) \
+         FROM session \
+         WHERE json_extract(model, '$.providerID') = ?3 \
+           AND time_archived IS NULL",
+    ) {
+        Ok(stmt) => stmt,
+        Err(error) => {
+            diagnose::log_error("unable to query OpenCode session usage", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let totals: OpencodeLocalTotals = stmt
+        .query_row(
+            rusqlite::params![cutoff_5h, cutoff_weekly, OPENCODE_PROVIDER_ID],
+            |row| Ok((row.get::<_, f64>(0)?, row.get::<_, f64>(1)?)),
+        )
+        .map_err(|error| {
+            diagnose::log_error("unable to read OpenCode session totals", error);
+            PollError::RequestFailed
+        })?;
+
+    Ok(totals)
+}
+
+fn opencode_db_path() -> Option<std::path::PathBuf> {
+    if let Some(env_path) = std::env::var_os(OPENCODE_DB_ENV).map(std::path::PathBuf::from) {
+        if env_path.exists() {
+            return Some(env_path);
+        }
+    }
+
+    if let Some(xdg_path) = opencode_xdg_data_path() {
+        let candidate = xdg_path.join("opencode").join("opencode.db");
+        if candidate.exists() {
+            return Some(candidate);
+        }
+    }
+
+    let data_dir = dirs::data_dir()?;
+    let default_path = data_dir.join("opencode").join("opencode.db");
+    if default_path.exists() {
+        return Some(default_path);
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn opencode_xdg_data_path() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        if !xdg.as_os_str().is_empty() {
+            return Some(xdg);
+        }
+    }
+    let home = dirs::home_dir()?;
+    Some(home.join(".local").join("share"))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn opencode_xdg_data_path() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from) {
+        if !xdg.as_os_str().is_empty() {
+            return Some(xdg);
+        }
+    }
+    std::env::var_os("HOME").map(PathBuf::from)
+}
+
+#[derive(Deserialize)]
+struct OpencodeAuthFile {
+    #[serde(rename = "opencode-go")]
+    opencode_go: Option<OpencodeApiKey>,
+    #[serde(alias = "opencodeGo", alias = "opencode_go")]
+    opencode_go_alt: Option<OpencodeApiKey>,
+}
+
+#[derive(Deserialize)]
+struct OpencodeApiKey {
+    key: String,
+}
+
+#[derive(Deserialize)]
+struct OpencodeDashboardConfig {
+    #[serde(alias = "workspaceId", alias = "workspace_id", alias = "workspaceID")]
+    workspace_id: String,
+    #[serde(alias = "auth_cookie", alias = "cookie")]
+    auth_cookie: String,
+}
+
+struct OpencodeDashboardCredentials {
+    workspace_id: String,
+    auth_cookie: String,
+    source: String,
+}
+
+struct OpencodeUsageWindow {
+    usage_percent: f64,
+    reset_in_sec: i64,
+}
+
+struct OpencodeDashboardUsage {
+    rolling: Option<OpencodeUsageWindow>,
+    weekly: Option<OpencodeUsageWindow>,
+    #[allow(dead_code)]
+    monthly: Option<OpencodeUsageWindow>,
+}
+
+fn opencode_api_key() -> Option<String> {
+    let path = opencode_auth_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let auth: OpencodeAuthFile = serde_json::from_str(&content).ok()?;
+    let key = auth
+        .opencode_go
+        .or(auth.opencode_go_alt)?
+        .key
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        None
+    } else {
+        Some(key)
+    }
+}
+
+fn opencode_auth_path() -> Option<PathBuf> {
+    if let Some(xdg) = std::env::var_os("XDG_DATA_HOME")
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+    {
+        let path = xdg.join("opencode").join("auth.json");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+
+    let home = dirs::home_dir()?;
+    let path = home.join(".local").join("share").join("opencode").join("auth.json");
+    if path.exists() {
+        return Some(path);
+    }
+
+    None
+}
+
+fn read_opencode_dashboard_credentials() -> Option<OpencodeDashboardCredentials> {
+    if let (Some(workspace_id), Some(auth_cookie)) = (
+        non_empty_env(OPENCODE_GO_WORKSPACE_ID_ENV),
+        non_empty_env(OPENCODE_GO_AUTH_COOKIE_ENV),
+    ) {
+        return Some(OpencodeDashboardCredentials {
+            workspace_id,
+            auth_cookie,
+            source: "Environment".to_string(),
+        });
+    }
+
+    for path in opencode_dashboard_config_paths() {
+        if let Some(creds) = read_opencode_dashboard_config_from_path(&path) {
+            return Some(creds);
+        }
+    }
+
+    None
+}
+
+fn non_empty_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn opencode_dashboard_config_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+
+    if let Some(p) = non_empty_env(OPENCODE_GO_CONFIG_FILE_ENV).map(PathBuf::from) {
+        paths.push(p);
+    }
+
+    if let Some(xdg) = non_empty_env("XDG_CONFIG_HOME").map(PathBuf::from) {
+        paths.push(xdg.join("opencode-bar").join("opencode-go.json"));
+        paths.push(xdg.join("opencode-quota").join("opencode-go.json"));
+    }
+
+    if let Some(home) = dirs::home_dir() {
+        paths.push(home.join(".config").join("opencode-bar").join("opencode-go.json"));
+        paths.push(home.join(".config").join("opencode-quota").join("opencode-go.json"));
+    }
+
+    if let Some(appdata) = non_empty_env("APPDATA").map(PathBuf::from) {
+        paths.push(appdata.join("opencode-go").join("config.json"));
+    }
+
+    paths
+}
+
+fn read_opencode_dashboard_config_from_path(
+    path: &std::path::Path,
+) -> Option<OpencodeDashboardCredentials> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let config: OpencodeDashboardConfig = serde_json::from_str(&content).ok()?;
+    let workspace_id = config.workspace_id.trim().to_string();
+    let auth_cookie = config.auth_cookie.trim().to_string();
+    if workspace_id.is_empty() || auth_cookie.is_empty() {
+        return None;
+    }
+    Some(OpencodeDashboardCredentials {
+        workspace_id,
+        auth_cookie,
+        source: path.display().to_string(),
+    })
+}
+
+fn fetch_opencode_dashboard_usage(
+    credentials: &OpencodeDashboardCredentials,
+) -> Result<OpencodeDashboardUsage, PollError> {
+    let url = format!(
+        "{}{}{}",
+        OPENCODE_GO_DASHBOARD_URL_PREFIX, credentials.workspace_id, OPENCODE_GO_DASHBOARD_URL_SUFFIX
+    );
+    let cookie_header = if credentials.auth_cookie.contains("auth=") {
+        credentials.auth_cookie.clone()
+    } else {
+        format!("auth={}", credentials.auth_cookie)
+    };
+
+    let agent = build_agent()?;
+    let resp = agent
+        .get(&url)
+        .set("Accept", "text/html,application/xhtml+xml")
+        .set("Cookie", &cookie_header)
+        .set("User-Agent", OPENCODE_GO_USER_AGENT)
+        .call();
+
+    let resp = match resp {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log("OpenCode Go dashboard rejected the session cookie");
+            return Err(PollError::AuthRequired);
+        }
+        Err(error) => {
+            diagnose::log_error("OpenCode Go dashboard request failed", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let html = resp
+        .into_string()
+        .map_err(|error| {
+            diagnose::log_error("OpenCode Go dashboard response is not UTF-8", error);
+            PollError::RequestFailed
+        })?;
+
+    Ok(parse_opencode_dashboard_html(&html))
+}
+
+fn parse_opencode_dashboard_html(html: &str) -> OpencodeDashboardUsage {
+    let text = normalize_opencode_dashboard_html(html);
+    OpencodeDashboardUsage {
+        rolling: parse_opencode_window("rollingUsage", &text),
+        weekly: parse_opencode_window("weeklyUsage", &text),
+        monthly: parse_opencode_window("monthlyUsage", &text),
+    }
+}
+
+fn normalize_opencode_dashboard_html(html: &str) -> String {
+    html.replace("&quot;", "\"")
+        .replace("&#34;", "\"")
+        .replace("&#x27;", "'")
+        .replace("&#39;", "'")
+        .replace("&amp;", "&")
+        .replace("\\\"", "\"")
+        .replace("\\u0022", "\"")
+}
+
+fn parse_opencode_window(field_name: &str, text: &str) -> Option<OpencodeUsageWindow> {
+    use std::sync::OnceLock;
+
+    static WINDOW_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static PCT_RE: OnceLock<regex::Regex> = OnceLock::new();
+    static RESET_RE: OnceLock<regex::Regex> = OnceLock::new();
+
+    let window_re = WINDOW_RE.get_or_init(|| {
+        regex::Regex::new(
+            r#"["']?(rollingUsage|weeklyUsage|monthlyUsage)["']?\s*:\s*(?:\$R\[\d+\]\s*=\s*)?\{(?P<body>[^{}]*)\}"#,
+        )
+        .expect("OpenCode window regex")
+    });
+    let pct_re = PCT_RE.get_or_init(|| {
+        regex::Regex::new(r#"["']?usagePercent["']?\s*:\s*"?(-?\d+(?:\.\d+)?)"?"#)
+            .expect("OpenCode usagePercent regex")
+    });
+    let reset_re = RESET_RE.get_or_init(|| {
+        regex::Regex::new(r#"["']?resetInSec["']?\s*:\s*"?(-?\d+(?:\.\d+)?)"?"#)
+            .expect("OpenCode resetInSec regex")
+    });
+
+    let body = window_re
+        .captures_iter(text)
+        .find(|c| c.get(1).map(|m| m.as_str() == field_name).unwrap_or(false))
+        .and_then(|c| c.name("body").map(|m| m.as_str()))?;
+
+    let usage_percent: f64 = pct_re
+        .captures(body)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse().ok())?;
+    let reset_in_sec: i64 = reset_re
+        .captures(body)
+        .and_then(|c| c.get(1))
+        .and_then(|m| m.as_str().parse().ok())?;
+
+    Some(OpencodeUsageWindow {
+        usage_percent,
+        reset_in_sec: reset_in_sec.max(0),
+    })
+}
 fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError> {
     loop {
         if !is_token_expired(creds.expires_at) {
@@ -568,12 +1065,17 @@ pub fn credential_watch_snapshot(mode: CredentialWatchMode) -> CredentialWatchSn
         return vec![antigravity_credential_watch_signature()];
     }
 
+    if mode == CredentialWatchMode::Opencode {
+        return vec![opencode_credential_watch_signature()];
+    }
+
     let sources = match mode {
         CredentialWatchMode::ActiveSource => read_first_credentials()
             .map(|creds| vec![creds.source])
             .unwrap_or_else(all_known_credential_sources),
         CredentialWatchMode::AllSources => all_known_credential_sources(),
         CredentialWatchMode::Antigravity => unreachable!(),
+        CredentialWatchMode::Opencode => unreachable!(),
     };
 
     let mut snapshot: CredentialWatchSnapshot = sources
@@ -872,6 +1374,55 @@ fn antigravity_credential_watch_signature() -> String {
     )
 }
 
+fn opencode_credential_watch_signature() -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    if let Some(api_key) = opencode_api_key() {
+        let mut hasher = DefaultHasher::new();
+        api_key.hash(&mut hasher);
+        parts.push(format!("api|present|{}|{:x}", api_key.len(), hasher.finish()));
+    } else {
+        parts.push("api|missing".to_string());
+    }
+
+    match read_opencode_dashboard_credentials() {
+        Some(creds) => {
+            let mut hasher = DefaultHasher::new();
+            creds.workspace_id.hash(&mut hasher);
+            creds.auth_cookie.hash(&mut hasher);
+            parts.push(format!(
+                "dashboard|present|{}|{}|{:x}|{}",
+                creds.workspace_id.len(),
+                creds.auth_cookie.len(),
+                hasher.finish(),
+                creds.source
+            ));
+        }
+        None => parts.push("dashboard|missing".to_string()),
+    }
+
+    match opencode_db_path() {
+        Some(path) => {
+            let key = format!("db:{}", path.display());
+            match std::fs::metadata(&path) {
+                Ok(metadata) => {
+                    let modified = metadata
+                        .modified()
+                        .ok()
+                        .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
+                        .map(|value| value.as_secs())
+                        .unwrap_or(0);
+                    parts.push(format!("{key}|present|{}|{modified}", metadata.len()));
+                }
+                Err(_) => parts.push(format!("{key}|missing")),
+            }
+        }
+        None => parts.push("db|missing".to_string()),
+    }
+
+    parts.join(";;")
+}
+
 fn fetch_antigravity_usage(token: &str) -> Result<UsageData, PollError> {
     let mut auth_error = false;
     let mut last_error = PollError::RequestFailed;
@@ -909,7 +1460,11 @@ fn fetch_antigravity_usage_from_endpoint(
     let session = fetch_antigravity_model_quota(base_url, token, project.as_deref())?;
     let weekly = UsageSection::default();
 
-    Ok(UsageData { session, weekly })
+    Ok(UsageData {
+        session,
+        weekly,
+        weekly_label: None,
+    })
 }
 
 fn fetch_antigravity_project(base_url: &str, token: &str) -> Result<Option<String>, PollError> {
@@ -1598,6 +2153,7 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
     data.claude_code.as_ref().is_some_and(is_past_reset)
         || data.codex.as_ref().is_some_and(is_past_reset)
         || data.antigravity.as_ref().is_some_and(is_past_reset)
+        || data.opencode.as_ref().is_some_and(is_past_reset)
 }
 
 #[cfg(test)]
@@ -1611,6 +2167,7 @@ mod tests {
                 resets_at: None,
             },
             weekly: UsageSection::default(),
+            weekly_label: None,
         }
     }
 
@@ -1620,9 +2177,11 @@ mod tests {
             true,
             true,
             false,
+            false,
             || Err(PollError::AuthRequired),
             || Ok(usage_with_session_percent(42.0)),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("opencode is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
@@ -1636,9 +2195,11 @@ mod tests {
             true,
             true,
             false,
+            false,
             || Ok(usage_with_session_percent(64.0)),
             || Err(PollError::RequestFailed),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("opencode is disabled"),
         )
         .expect("claude data should keep the poll successful");
 
@@ -1652,9 +2213,11 @@ mod tests {
             true,
             true,
             true,
+            false,
             || Err(PollError::AuthRequired),
             || Err(PollError::RequestFailed),
             || Err(PollError::NoCredentials),
+            || unreachable!("opencode is disabled"),
         )
         .expect_err("all-provider failure should return an error");
 
@@ -1667,13 +2230,33 @@ mod tests {
             false,
             true,
             true,
+            false,
             || unreachable!("claude code is disabled"),
             || Ok(usage_with_session_percent(42.0)),
             || Err(PollError::NoCredentials),
+            || unreachable!("opencode is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
         assert!(data.antigravity.is_none());
+        assert_eq!(data.codex.unwrap().session.percentage, 42.0);
+    }
+
+    #[test]
+    fn opencode_failure_does_not_block_codex_when_both_are_enabled() {
+        let data = poll_with(
+            false,
+            true,
+            false,
+            true,
+            || unreachable!("claude code is disabled"),
+            || Ok(usage_with_session_percent(42.0)),
+            || unreachable!("antigravity is disabled"),
+            || Err(PollError::NoCredentials),
+        )
+        .expect("codex data should keep the poll successful");
+
+        assert!(data.opencode.is_none());
         assert_eq!(data.codex.unwrap().session.percentage, 42.0);
     }
 

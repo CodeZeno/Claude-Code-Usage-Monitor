@@ -5,9 +5,9 @@
 
 ![Screenshot](.github/animation.gif)
 
-A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex and Google Antigravity usage display.
+A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex, Google Antigravity, and OpenCode Go usage display.
 
-It sits in your taskbar and shows how much of your Claude Code, Codex, and/or Antigravity usage window you have left, without needing to open the terminal or the provider site.
+It sits in your taskbar and shows how much of your Claude Code, Codex, Antigravity, and/or OpenCode Go usage window you have left, without needing to open the terminal or the provider site.
 
 ## What You Get
 
@@ -15,6 +15,7 @@ It sits in your taskbar and shows how much of your Claude Code, Codex, and/or An
 - A **7d** bar for your current 7-day window
 - Optional Codex usage bars alongside Claude Code
 - Optional Antigravity model usage bars for Google's 5-hour and weekly Gemini quota windows
+- Optional OpenCode Go usage bars for your local 5-hour and weekly dollar limits
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
 - System tray icon badges showing your enabled model usage percentage
@@ -30,6 +31,41 @@ Codex support is optional. To show Codex usage, install and sign in to the Codex
 
 Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable the **Antigravity** model from the right-click **Models** menu.
 
+OpenCode Go support is also optional. To show OpenCode Go usage, install [OpenCode](https://opencode.ai) and sign in to a [Go](https://opencode.ai/go) subscription. Then enable **OpenCode** from the right-click **Models** menu.
+
+**Recommended — dashboard credentials (server-side accuracy):** the monitor reads your real Go usage (5h and weekly windows, with server-side reset times) from the OpenCode dashboard at `https://opencode.ai/workspace/<wrk_id>/go`. To do this it needs the `auth` cookie from an `opencode.ai` browser session and the workspace ID shown in the dashboard URL.
+
+Provide them in one of these ways (highest priority first):
+
+1. Environment variables:
+
+   ```powershell
+   setx OPENCODE_GO_WORKSPACE_ID "wrk_01..."
+   setx OPENCODE_GO_AUTH_COOKIE "eyJhbGciOi..."
+   ```
+
+2. A config file at any of these paths (the first one that exists is used):
+
+   - `%APPDATA%\opencode-go\config.json` (Windows-friendly default)
+   - `%XDG_CONFIG_HOME%\opencode-bar\opencode-go.json`
+   - `%XDG_CONFIG_HOME%\opencode-quota\opencode-go.json`
+   - `~\.config\opencode-bar\opencode-go.json`
+   - `~\.config\opencode-quota\opencode-go.json`
+   - `%OPENCODE_GO_CONFIG_FILE%` (override)
+
+   The file is JSON with these keys (aliases accepted: `workspaceId`/`workspaceID`/`workspace_id` and `authCookie`/`auth_cookie`/`cookie`):
+
+   ```json
+   {
+     "workspaceId": "wrk_01...",
+     "authCookie": "eyJhbGciOi..."
+   }
+   ```
+
+To grab the values: sign in to `https://opencode.ai/go` in your browser, copy the `auth` cookie (DevTools → Application → Cookies → `https://opencode.ai`), and copy the workspace ID from the URL (`/workspace/<wrk_id>/go`).
+
+**Fallback — local SQLite (no setup required):** if the dashboard credentials above are not configured, the monitor falls back to reading the local OpenCode SQLite database at `$OPENCODE_DB` (if set), then `%USERPROFILE%\.local\share\opencode\opencode.db`, then `%APPDATA%\opencode\opencode.db`. The database is opened in `SQLITE_OPEN_READ_ONLY` mode and never written to. This reflects only this machine's session costs, not your full Go subscription across devices, and the reset countdowns show 5h and 7d windows from the current poll time (since the local DB has no server-side reset signal).
+
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
 ## Requirements
@@ -38,6 +74,7 @@ It works best if you want a simple "how close am I to the limit?" display that i
 - Claude Code (CLI or App) installed and authenticated
 - Optional: Codex CLI installed and authenticated, if you want Codex usage
 - Optional: Google Antigravity installed and authenticated, if you want Antigravity usage
+- Optional: OpenCode installed and signed in to a Go subscription, if you want OpenCode Go usage
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
@@ -74,6 +111,7 @@ Use the right-click **Models** menu to choose what the widget displays:
 - **Claude Code** is enabled by default
 - **Codex** can be enabled alongside Claude Code or shown by itself
 - **Antigravity** can be enabled alongside the other providers or shown by itself as its own model column
+- **OpenCode** can be enabled alongside the other providers. With dashboard credentials configured, the bars reflect your full Go subscription with server-side reset times. Without dashboard credentials, the monitor falls back to this machine's local OpenCode sessions (5h and weekly windows from the current poll time, since the local DB has no server-side reset signal).
 
 When multiple models are shown, each model has its own usage bar and matching usage text color. Antigravity prefers Google's Gemini quota summary when available and falls back to model quota data when needed.
 
@@ -83,7 +121,7 @@ The tray icon shows your current 5-hour usage as a percentage badge.
 
 If multiple providers are enabled, the app shows one tray icon per provider. If only one model is enabled, it shows one tray icon.
 
-The Claude Code tray icon uses the same warm usage colors as the Claude bar. The Codex tray icon uses a black and white badge style. The Antigravity tray icon uses a blue badge style.
+The Claude Code tray icon uses the same warm usage colors as the Claude bar. The Codex tray icon uses a black and white badge style. The Antigravity tray icon uses a blue badge style. The OpenCode tray icon uses a green badge style.
 
 Hovering over a tray icon shows the usage values for that model.
 
@@ -128,6 +166,7 @@ What the app reads:
 - If needed, the same credentials file inside an installed WSL distro
 - If Codex is enabled, your local Codex credentials from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`
 - If Antigravity is enabled, your local Antigravity OAuth token from Windows Credential Manager target `gemini:antigravity`
+- If OpenCode Go is enabled, either your OpenCode Go usage from the `https://opencode.ai/workspace/<wrk_id>/go` dashboard (with a session cookie), or, as a fallback, your local OpenCode SQLite session database (read-only) to compute local Go spend. The dashboard path uses server-side reset times; the local path opens the database in `SQLITE_OPEN_READ_ONLY` mode and never writes to it.
 
 What the app sends over the network:
 
@@ -154,12 +193,14 @@ What it does **not** do:
 - It does not collect analytics or telemetry
 - It does not upload your project files
 - It does not directly edit your Codex credentials file
+- It does not write to your OpenCode account or any local files; OpenCode Go usage is fetched read-only from the public OpenCode dashboard, or read directly from the local OpenCode SQLite database in read-only mode
 
 Notes:
 
 - If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
 - If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
+- OpenCode Go usage is read from the OpenCode dashboard and reflects your full Go subscription, not just this machine's local sessions.
 - Portable installs can update themselves by downloading the latest release from this repository
 - Proxies should be trusted because proxied usage requests include your OAuth bearer token inside the TLS connection
 
@@ -167,8 +208,8 @@ Notes:
 
 The monitor:
 
-1. Finds your enabled model login credentials
-2. Reads your current usage from Anthropic, ChatGPT, and/or Google's Antigravity endpoints
+1. Finds your enabled model login credentials (or, for OpenCode Go, your dashboard session cookie and workspace ID, or the local database)
+2. Reads your current usage from Anthropic, ChatGPT, Google's Antigravity endpoints, the OpenCode Go dashboard, and/or the local OpenCode database
 3. Shows the result directly in the Windows taskbar
 4. Keeps the widget aligned with the selected taskbar and tray area
 5. Refreshes periodically in the background

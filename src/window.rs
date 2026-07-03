@@ -67,9 +67,15 @@ struct AppState {
     antigravity_session_text: String,
     antigravity_weekly_percent: f64,
     antigravity_weekly_text: String,
+    opencode_session_percent: f64,
+    opencode_session_text: String,
+    opencode_weekly_percent: f64,
+    opencode_weekly_text: String,
+    opencode_weekly_label: &'static str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
 
     data: Option<AppUsageData>,
 
@@ -131,6 +137,7 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_MODEL_OPENCODE: u16 = 63;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -316,6 +323,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default = "default_show_opencode")]
+    show_opencode: bool,
 }
 
 impl Default for SettingsFile {
@@ -330,6 +339,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            show_opencode: false,
         }
     }
 }
@@ -354,13 +364,21 @@ fn default_show_antigravity() -> bool {
     false
 }
 
+fn default_show_opencode() -> bool {
+    false
+}
+
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
     let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
-    if !settings.show_claude_code && !settings.show_codex && !settings.show_antigravity {
+    if !settings.show_claude_code
+        && !settings.show_codex
+        && !settings.show_antigravity
+        && !settings.show_opencode
+    {
         settings.show_claude_code = true;
     }
     settings
@@ -391,6 +409,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            show_opencode: s.show_opencode,
         });
     }
 }
@@ -436,6 +455,18 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     ),
                 });
             }
+            if s.show_opencode {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Opencode,
+                    percent: Some(s.opencode_session_percent),
+                    tooltip: format!(
+                        "{} 5h: {} | 7d: {}",
+                        s.language.strings().opencode_model,
+                        s.opencode_session_text,
+                        s.opencode_weekly_text
+                    ),
+                });
+            }
             icons
         }
         Some(s) => {
@@ -459,6 +490,13 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
+                });
+            }
+            if s.show_opencode {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Opencode,
+                    percent: None,
+                    tooltip: s.language.strings().opencode_window_title.to_string(),
                 });
             }
             icons
@@ -671,6 +709,22 @@ fn refresh_usage_texts(state: &mut AppState) {
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
         state.antigravity_weekly_text = "!".to_string();
+    }
+
+    if let Some(opencode) = data.opencode.as_ref() {
+        state.opencode_session_text = poller::format_line(&opencode.session, strings);
+        let label = opencode.weekly_label.unwrap_or(strings.weekly_window);
+        state.opencode_weekly_label = label;
+        let inner = poller::format_line(&opencode.weekly, strings);
+        state.opencode_weekly_text = if label == strings.weekly_window {
+            inner
+        } else {
+            format!("{label} {inner}")
+        };
+    } else if state.show_opencode {
+        state.opencode_session_text = "!".to_string();
+        state.opencode_weekly_text = "!".to_string();
+        state.opencode_weekly_label = strings.weekly_window;
     }
 }
 
@@ -1079,8 +1133,17 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> i32 {
-    (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
+fn active_model_count(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_opencode: bool,
+) -> i32 {
+    (show_claude_code as i32
+        + show_codex as i32
+        + show_antigravity as i32
+        + show_opencode as i32)
+        .max(1)
 }
 
 fn row_bar_segment_count(active_models: i32) -> i32 {
@@ -1111,6 +1174,7 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
         state.show_claude_code,
         state.show_codex,
         state.show_antigravity,
+        state.show_opencode,
     ))
 }
 
@@ -1119,7 +1183,14 @@ fn total_widget_width() -> i32 {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_claude_code, s.show_codex, s.show_antigravity))
+            .map(|s| {
+                active_model_count(
+                    s.show_claude_code,
+                    s.show_codex,
+                    s.show_antigravity,
+                    s.show_opencode,
+                )
+            })
             .unwrap_or(1)
     };
     total_widget_width_for(active_models)
@@ -1162,6 +1233,18 @@ fn antigravity_usage_text_color(is_dark: bool) -> Color {
         Color::from_hex("#8AB4F8")
     } else {
         Color::from_hex("#1967D2")
+    }
+}
+
+fn opencode_accent_color() -> Color {
+    Color::from_hex("#2EBD85")
+}
+
+fn opencode_usage_text_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#5DD6A1")
+    } else {
+        Color::from_hex("#1F8A5C")
     }
 }
 
@@ -1244,6 +1327,7 @@ pub fn run() {
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
+            settings.show_opencode,
         );
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -1307,9 +1391,15 @@ pub fn run() {
                 antigravity_session_text: "--".to_string(),
                 antigravity_weekly_percent: 0.0,
                 antigravity_weekly_text: "--".to_string(),
+                opencode_session_percent: 0.0,
+                opencode_session_text: "--".to_string(),
+                opencode_weekly_percent: 0.0,
+                opencode_weekly_text: "--".to_string(),
+                opencode_weekly_label: language.strings().weekly_window,
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                show_opencode: settings.show_opencode,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1432,9 +1522,14 @@ fn render_layered() {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        opencode_session_pct,
+        opencode_session_text,
+        opencode_weekly_pct,
+        opencode_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_opencode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1455,9 +1550,14 @@ fn render_layered() {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.opencode_session_percent,
+                s.opencode_session_text.clone(),
+                s.opencode_weekly_percent,
+                s.opencode_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_opencode,
             ),
             None => return,
         }
@@ -1479,6 +1579,7 @@ fn render_layered() {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let opencode_accent = opencode_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1550,11 +1651,17 @@ fn render_layered() {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            opencode_session_pct,
+            &opencode_session_text,
+            opencode_weekly_pct,
+            &opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             &codex_accent,
             &antigravity_accent,
+            &opencode_accent,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1626,11 +1733,17 @@ fn paint_content(
     antigravity_session_text: &str,
     antigravity_weekly_pct: f64,
     antigravity_weekly_text: &str,
+    opencode_session_pct: f64,
+    opencode_session_text: &str,
+    opencode_weekly_pct: f64,
+    opencode_weekly_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    opencode_accent: &Color,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1720,12 +1833,16 @@ fn paint_content(
             codex_session_text,
             antigravity_session_pct,
             antigravity_session_text,
+            opencode_session_pct,
+            opencode_session_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             accent,
             codex_accent,
             antigravity_accent,
+            opencode_accent,
             track,
         );
         draw_row(
@@ -1741,12 +1858,16 @@ fn paint_content(
             codex_weekly_text,
             antigravity_weekly_pct,
             antigravity_weekly_text,
+            opencode_weekly_pct,
+            opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             accent,
             codex_accent,
             antigravity_accent,
+            opencode_accent,
             track,
         );
 
@@ -1757,15 +1878,22 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_claude_code, show_codex, show_antigravity) = {
+    let (show_claude_code, show_codex, show_antigravity, show_opencode) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| (s.show_claude_code, s.show_codex, s.show_antigravity))
-            .unwrap_or((true, false, false))
+            .map(|s| {
+                (
+                    s.show_claude_code,
+                    s.show_codex,
+                    s.show_antigravity,
+                    s.show_opencode,
+                )
+            })
+            .unwrap_or((true, false, false, false))
     };
 
-    match poller::poll(show_claude_code, show_codex, show_antigravity) {
+    match poller::poll(show_claude_code, show_codex, show_antigravity, show_opencode) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
@@ -1789,6 +1917,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                 } else if s.show_antigravity {
                     s.antigravity_session_percent = 0.0;
                     s.antigravity_weekly_percent = 0.0;
+                }
+                if let Some(opencode) = data.opencode.as_ref() {
+                    s.opencode_session_percent = opencode.session.percentage;
+                    s.opencode_weekly_percent = opencode.weekly.percentage;
+                } else if s.show_opencode {
+                    s.opencode_session_percent = 0.0;
+                    s.opencode_weekly_percent = 0.0;
                 }
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
@@ -1821,6 +1956,17 @@ fn do_poll(send_hwnd: SendHwnd) {
         }
         Err(e) => {
             let auth_watch = match e {
+                poller::PollError::AuthRequired | poller::PollError::TokenExpired
+                    if show_opencode
+                        && !show_claude_code
+                        && !show_codex
+                        && !show_antigravity =>
+                {
+                    Some((
+                        poller::CredentialWatchMode::Opencode,
+                        poller::credential_watch_snapshot(poller::CredentialWatchMode::Opencode),
+                    ))
+                }
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired
                     if show_antigravity && !show_claude_code && !show_codex =>
                 {
@@ -1861,6 +2007,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "!".to_string();
                             s.antigravity_session_text = "!".to_string();
                             s.antigravity_weekly_text = "!".to_string();
+                            s.opencode_session_text = "!".to_string();
+                            s.opencode_weekly_text = "!".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1881,6 +2030,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -1914,12 +2066,19 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 s.language.strings().codex_token_expired_title,
                                 s.language.strings().codex_token_expired_body,
                             )
-                        } else {
+                        } else if s.show_antigravity {
                             (
                                 s.language.strings(),
                                 tray_icon::TrayIconKind::Antigravity,
                                 s.language.strings().antigravity_token_expired_title,
                                 s.language.strings().antigravity_token_expired_body,
+                            )
+                        } else {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Opencode,
+                                s.language.strings().opencode_token_expired_title,
+                                s.language.strings().opencode_token_expired_body,
                             )
                         }
                     })
@@ -1981,6 +2140,12 @@ fn schedule_countdown_timer() {
             .as_ref()
             .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
         data.antigravity
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+        data.opencode
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+        data.opencode
             .as_ref()
             .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
     ];
@@ -2512,6 +2677,11 @@ unsafe extern "system" fn wnd_proc(
                             s.weekly_text = "...".to_string();
                             s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
+                            s.antigravity_session_text = "...".to_string();
+                            s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.force_notify_auth_error = true;
                         }
                     }
@@ -2594,24 +2764,44 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY => {
+                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY
+                | IDM_MODEL_OPENCODE => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             match id {
                                 IDM_MODEL_CLAUDE_CODE => {
-                                    if s.show_codex || s.show_antigravity || !s.show_claude_code {
+                                    if s.show_codex || s.show_antigravity || s.show_opencode
+                                        || !s.show_claude_code
+                                    {
                                         s.show_claude_code = !s.show_claude_code;
                                     }
                                 }
                                 IDM_MODEL_CODEX => {
-                                    if s.show_claude_code || s.show_antigravity || !s.show_codex {
+                                    if s.show_claude_code
+                                        || s.show_antigravity
+                                        || s.show_opencode
+                                        || !s.show_codex
+                                    {
                                         s.show_codex = !s.show_codex;
                                     }
                                 }
                                 IDM_MODEL_ANTIGRAVITY => {
-                                    if s.show_claude_code || s.show_codex || !s.show_antigravity {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_opencode
+                                        || !s.show_antigravity
+                                    {
                                         s.show_antigravity = !s.show_antigravity;
+                                    }
+                                }
+                                IDM_MODEL_OPENCODE => {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_antigravity
+                                        || !s.show_opencode
+                                    {
+                                        s.show_opencode = !s.show_opencode;
                                     }
                                 }
                                 _ => {}
@@ -2622,6 +2812,9 @@ unsafe extern "system" fn wnd_proc(
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                         }
                     }
                     save_state_settings();
@@ -2715,6 +2908,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2729,6 +2923,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.show_opencode,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2739,6 +2934,7 @@ fn show_context_menu(hwnd: HWND) {
                     UpdateStatus::Idle,
                     true,
                     true,
+                    false,
                     false,
                     false,
                 ),
@@ -2825,6 +3021,19 @@ fn show_context_menu(hwnd: HWND) {
             antigravity_flags,
             IDM_MODEL_ANTIGRAVITY as usize,
             PCWSTR::from_raw(antigravity_model.as_ptr()),
+        );
+
+        let opencode_model = native_interop::wide_str(strings.opencode_model);
+        let opencode_flags = if show_opencode {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            models_menu,
+            opencode_flags,
+            IDM_MODEL_OPENCODE as usize,
+            PCWSTR::from_raw(opencode_model.as_ptr()),
         );
 
         let models_label = native_interop::wide_str(strings.models);
@@ -2984,9 +3193,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        opencode_session_pct,
+        opencode_session_text,
+        opencode_weekly_pct,
+        opencode_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_opencode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3005,9 +3219,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.opencode_session_percent,
+                s.opencode_session_text.clone(),
+                s.opencode_weekly_percent,
+                s.opencode_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_opencode,
             ),
             None => return,
         }
@@ -3016,6 +3235,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let opencode_accent = opencode_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -3068,11 +3288,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            opencode_session_pct,
+            &opencode_session_text,
+            opencode_weekly_pct,
+            &opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             &codex_accent,
             &antigravity_accent,
+            &opencode_accent,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3096,16 +3322,25 @@ fn draw_row(
     codex_text: &str,
     antigravity_percent: f64,
     antigravity_text: &str,
+    opencode_percent: f64,
+    opencode_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
     claude_accent: &Color,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    opencode_accent: &Color,
     track: &Color,
 ) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
+    let active_models = active_model_count(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_opencode,
+    );
     let segment_count = row_bar_segment_count(active_models);
     let use_model_text_colors = active_models > 1;
     let claude_value_color = if use_model_text_colors {
@@ -3120,6 +3355,11 @@ fn draw_row(
     };
     let antigravity_value_color = if use_model_text_colors {
         antigravity_usage_text_color(is_dark)
+    } else {
+        *text_color
+    };
+    let opencode_value_color = if use_model_text_colors {
+        opencode_usage_text_color(is_dark)
     } else {
         *text_color
     };
@@ -3180,6 +3420,20 @@ fn draw_row(
                 antigravity_accent,
                 track,
                 &antigravity_value_color,
+            );
+            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_opencode {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                opencode_percent,
+                opencode_text,
+                opencode_accent,
+                track,
+                &opencode_value_color,
             );
         }
     }
