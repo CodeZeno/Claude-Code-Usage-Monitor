@@ -13,7 +13,6 @@ const MESSANGI_DEFAULT_BASE_URL: &str = "https://elastic.messangi.me";
 const MESSANGI_NOTIFY_PATH: &str = "/oberyn/v2/notification";
 const MESSANGI_EMAIL_PATH: &str = "/crowsnest/v2/emails";
 const MESSANGI_WHATSAPP_PATH: &str = "/balerion/v3/messages";
-const DEFAULT_KEEP_ALIVE_HOURS: u64 = 23;
 const DEFAULT_MIN_ALERT_SECS: u64 = 60;
 const HTTP_TIMEOUT_SECS: u64 = 15;
 
@@ -32,7 +31,7 @@ pub struct NotifierConfig {
     #[serde(default)]
     pub thresholds: HashMap<String, ProviderThresholds>,
     #[serde(default)]
-    pub keep_alive_hours: Option<u64>,
+    pub keep_alive: Option<String>,
     #[serde(default)]
     pub min_alert_interval_secs: Option<u64>,
 }
@@ -81,6 +80,8 @@ pub struct NotifierState {
     pub whatsapp_opted_in_at: Option<i64>,
     #[serde(default)]
     pub whatsapp_last_message_at: Option<i64>,
+    #[serde(default)]
+    pub whatsapp_last_keep_alive_date: Option<u32>,
     #[serde(default)]
     pub last_alert_at: Option<i64>,
 }
@@ -288,8 +289,12 @@ impl Notifier {
                     .unwrap_or(false);
                 let t = threshold as f64;
                 if current >= t && !was_notified {
-                    self.tracker.notified.insert(notify_key, true);
-                    self.maybe_dispatch_alert(provider_id, window_name, threshold, current);
+                    // Try to dispatch, and only mark the threshold as notified if
+                    // the dispatch was actually attempted (not rate-limited). If
+                    // the rate limit blocked us, the next poll will retry.
+                    if self.maybe_dispatch_alert(provider_id, window_name, threshold, current) {
+                        self.tracker.notified.insert(notify_key, true);
+                    }
                 } else if current < t && was_notified {
                     self.tracker.notified.remove(&notify_key);
                 }
@@ -301,13 +306,18 @@ impl Notifier {
 
     /// Dispatch an alert to all enabled channels, gated by the
     /// `min_alert_interval_secs` rate limit.
+    ///
+    /// Returns `true` when the dispatch was actually attempted (i.e. the rate
+    /// limit allowed it through), so the caller can mark the threshold as
+    /// notified. Returns `false` when the rate limit blocked the dispatch —
+    /// the next poll will retry the same threshold.
     fn maybe_dispatch_alert(
         &mut self,
         provider_id: &str,
         window_name: &str,
         threshold: u8,
         current: f64,
-    ) {
+    ) -> bool {
         let min_interval = Duration::from_secs(
             self.config
                 .min_alert_interval_secs
@@ -316,13 +326,14 @@ impl Notifier {
         if let Some(last) = self.state.last_alert_at {
             let elapsed = now_unix_secs().saturating_sub(last);
             if elapsed < min_interval.as_secs() as i64 {
-                return;
+                return false;
             }
         }
         if self.dispatch_alert(provider_id, window_name, threshold, current) {
             self.state.last_alert_at = Some(now_unix_secs());
             self.save();
         }
+        true
     }
 
     /// Send a notification to all enabled channels. Returns true if at least one
@@ -384,25 +395,35 @@ impl Notifier {
     }
 
     fn maybe_send_whatsapp_keep_alive(&mut self) {
-        let keep_alive_hours = self
-            .config
-            .keep_alive_hours
-            .unwrap_or(DEFAULT_KEEP_ALIVE_HOURS);
-        let now = now_unix_secs();
-        let last = self
-            .state
-            .whatsapp_last_message_at
-            .unwrap_or(self.state.whatsapp_opted_in_at.unwrap_or(now));
-        let elapsed_hours = (now - last) / 3600;
-        if elapsed_hours < keep_alive_hours as i64 {
+        let Some(keep_alive) = self.config.keep_alive.as_deref() else {
+            return;
+        };
+        let Some((target_hour, target_minute)) = parse_clock_time(keep_alive) else {
+            diagnose::log(format!(
+                "WhatsApp keep-alive: invalid keep_alive value '{keep_alive}', expected HH:MM"
+            ));
+            return;
+        };
+
+        let Some((year, month, day, hour, minute)) = current_local_time() else {
+            diagnose::log("WhatsApp keep-alive: unable to read local time");
+            return;
+        };
+        let date_key = date_key(year, month, day);
+        if self.state.whatsapp_last_keep_alive_date == Some(date_key) {
             return;
         }
-        let body = format!(
-            "Claude Code Usage Monitor keep-alive. Reply with any message to confirm you still want alerts."
-        );
-        match self.send_whatsapp_session(&body) {
+        let now_minutes = hour as i32 * 60 + minute as i32;
+        let target_minutes = target_hour as i32 * 60 + target_minute as i32;
+        if now_minutes < target_minutes {
+            return;
+        }
+
+        let body = "Claude Code Usage Monitor keep-alive. Reply with any message to confirm you still want alerts.";
+        match self.send_whatsapp_session(body) {
             Ok(_) => {
-                self.state.whatsapp_last_message_at = Some(now);
+                self.state.whatsapp_last_message_at = Some(now_unix_secs());
+                self.state.whatsapp_last_keep_alive_date = Some(date_key);
                 self.save();
             }
             Err(NotifError::SessionExpired) => {
@@ -659,6 +680,48 @@ fn humanize_provider(provider_id: &str) -> &'static str {
     }
 }
 
+/// Parse a "HH:MM" string into (hour, minute). Accepts "H", "H:MM", "HH:MM",
+/// and "HH:MM:SS" (the seconds are ignored). Returns None for invalid input.
+fn parse_clock_time(value: &str) -> Option<(u32, u32)> {
+    let mut parts = value.split(':');
+    let hour: u32 = parts.next()?.trim().parse().ok()?;
+    let minute: u32 = parts.next()?.trim().parse().ok()?;
+    if parts.next().is_some() {
+        // Discard the seconds component if the user passed "HH:MM:SS".
+    }
+    if hour > 23 || minute > 59 {
+        return None;
+    }
+    Some((hour, minute))
+}
+
+/// Returns the current local time as (year, month, day, hour, minute).
+/// Uses GetLocalTime on Windows; falls back to None on other platforms.
+fn current_local_time() -> Option<(u32, u32, u32, u32, u32)> {
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::System::SystemInformation::GetLocalTime;
+        unsafe {
+            let st = GetLocalTime();
+            Some((
+                st.wYear as u32,
+                st.wMonth as u32,
+                st.wDay as u32,
+                st.wHour as u32,
+                st.wMinute as u32,
+            ))
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+fn date_key(year: u32, month: u32, day: u32) -> u32 {
+    year * 10000 + month * 100 + day
+}
+
 // Quiet the "unused" warning for the poller import alias; kept in case we
 // reuse poll-level helpers later.
 #[allow(dead_code)]
@@ -736,6 +799,48 @@ mod tests {
     }
 
     #[test]
+    fn rate_limited_alert_is_retried_on_next_poll() {
+        // With a 60s rate limit, when a single poll crosses multiple
+        // thresholds, only the first one dispatches. The others stay
+        // un-notified and are retried on the next poll. After the rate
+        // limit expires, all of them should be flagged as notified.
+        let mut n = make_notifier_with_thresholds();
+        // Set three thresholds at 80, 90, 100 with a long rate limit so
+        // the second/third are guaranteed to be rate-limited on the first
+        // poll, then allowed on the second.
+        n.config.min_alert_interval_secs = Some(3600);
+        n.config
+            .thresholds
+            .get_mut("claude_code")
+            .unwrap()
+            .session = vec![80, 90, 100];
+
+        // Pretend an alert was just sent so the rate limit is active.
+        n.state.last_alert_at = Some(now_unix_secs());
+
+        // Poll 1: usage jumps from 50% to 95% (crosses 80 and 90, not 100).
+        n.check_and_notify(&make_data(95.0));
+        // Both crossings were detected but rate-limited, so neither flag is set.
+        assert!(n.tracker.notified.is_empty(), "rate-limited alerts must not mark notified");
+
+        // Simulate the rate limit expiring.
+        n.state.last_alert_at = Some(now_unix_secs() - 3601);
+
+        // Poll 2: usage is still 95%. The 80 and 90 flags are still not set,
+        // so they should be detected again and dispatched.
+        n.check_and_notify(&make_data(95.0));
+        // After the rate limit expires, both 80 and 90 should be marked notified.
+        let notified: std::collections::HashSet<(String, String, u8)> = n
+            .tracker
+            .notified
+            .keys()
+            .cloned()
+            .collect();
+        assert!(notified.contains(&("claude_code".to_string(), "session".to_string(), 80)));
+        assert!(notified.contains(&("claude_code".to_string(), "session".to_string(), 90)));
+    }
+
+    #[test]
     fn no_alerts_without_api_key() {
         let mut n = make_notifier_with_thresholds();
         n.config.messangi_api_key = None;
@@ -752,6 +857,7 @@ mod tests {
             state: NotifierState {
                 whatsapp_opted_in_at: Some(1234),
                 whatsapp_last_message_at: Some(5678),
+                whatsapp_last_keep_alive_date: None,
                 last_alert_at: None,
             },
             notify_sms: true,

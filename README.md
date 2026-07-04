@@ -206,14 +206,17 @@ The file is created with sensible defaults the first time you open
     "antigravity": { "session": [80],      "weekly": [100] },
     "opencode":    { "session": [80],      "weekly": [100] }
   },
-  "keepAliveHours": 23,
-  "minAlertIntervalSecs": 60
+  "minAlertIntervalSecs": 60,
+  "keepAlive": "23:00"
 }
 ```
 
 The `messangiApiKey` is your **JWT** (Preferences → API in the Messangi
-admin UI). `keepAliveHours` controls how often the widget sends a
-keep-alive to your WhatsApp number to hold the 24 h session open.
+admin UI). `keepAlive` is the local time of day (24-hour `HH:MM`) at
+which the widget sends a daily keep-alive message to your WhatsApp
+number to hold the 24 h session open. Set it to a quiet hour (e.g.
+`"23:00"`) and reply to the keep-alive within 24 h to keep the window
+alive. Omit the field to disable keep-alives entirely.
 
 ### Context menu
 

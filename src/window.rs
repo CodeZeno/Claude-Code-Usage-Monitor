@@ -2246,7 +2246,10 @@ fn show_balloon(hwnd: HWND, title: &str, body: &str) {
 
 fn default_notifier_json() -> String {
     serde_json::to_string_pretty(&notifier::NotifierFile {
-        config: notifier::NotifierConfig::default(),
+        config: notifier::NotifierConfig {
+            keep_alive: Some("23:00".to_string()),
+            ..Default::default()
+        },
         state: notifier::NotifierState::default(),
         notify_sms: Some(false),
         notify_email: Some(false),
