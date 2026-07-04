@@ -4,6 +4,7 @@ mod diagnose;
 mod localization;
 mod models;
 mod native_interop;
+mod notifier;
 mod poller;
 mod theme;
 mod tray_icon;

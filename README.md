@@ -145,6 +145,108 @@ Settings are saved to:
 %APPDATA%\ClaudeCodeUsageMonitor\settings.json
 ```
 
+## Remote Notifications (Messangi)
+
+The widget can send alerts to **SMS**, **email**, and **WhatsApp** via
+[Messangi](https://docs.messangi.com) when a configured usage threshold
+is crossed. The provider is pluggable in code but the v1 implementation
+targets the Messangi Communications Platform.
+
+### Channels
+
+- **SMS** — sent to the configured phone number from the configured
+  shortcode.
+- **Email** — sent to the configured address from the configured sender.
+- **WhatsApp** — sent as a **session message** to the configured number.
+  WhatsApp requires the user to opt in (see below) because the
+  destination must have messaged the configured sender within the last
+  24 h to keep the conversation window open. The widget will retry every
+  23 h with a short keep-alive to keep the window alive.
+
+### Threshold rules
+
+- Configured per `provider × window` (provider = `claude_code`, `codex`,
+  `antigravity`, `opencode`; window = `session` for 5 h, `weekly` for
+  7 d / 30 d).
+- An alert is sent when usage **rises past** the threshold and is
+  suppressed while usage stays above it. When usage **drops below** the
+  threshold, the suppression clears so the next rising edge fires
+  again.
+- The widget rate-limits outgoing alerts to one every
+  `minAlertIntervalSecs` seconds (default 60) to avoid bursts.
+
+### Configuration
+
+The widget reads `%APPDATA%\claude-code-usage-monitor\notifier.json`.
+The file is created with sensible defaults the first time you open
+**Notifications → Open config file** from the context menu.
+
+```json
+{
+  "messangiApiKey": "eyJhbGciOi...",
+  "messangiBaseUrl": "https://elastic.messangi.me",
+  "sms": {
+    "enabled": true,
+    "to": "+15551234567",
+    "shortcode": "CLAUDEMON"
+  },
+  "email": {
+    "enabled": true,
+    "from": "alerts@yourdomain.com",
+    "to": "you@yourdomain.com"
+  },
+  "whatsapp": {
+    "enabled": true,
+    "from": "15551234567",
+    "to": "+15551234567"
+  },
+  "thresholds": {
+    "claude_code": { "session": [80, 95], "weekly": [50, 100] },
+    "codex":       { "session": [90],      "weekly": [100] },
+    "antigravity": { "session": [80],      "weekly": [100] },
+    "opencode":    { "session": [80],      "weekly": [100] }
+  },
+  "keepAliveHours": 23,
+  "minAlertIntervalSecs": 60
+}
+```
+
+The `messangiApiKey` is your **JWT** (Preferences → API in the Messangi
+admin UI). `keepAliveHours` controls how often the widget sends a
+keep-alive to your WhatsApp number to hold the 24 h session open.
+
+### Context menu
+
+Right-click the widget → **Settings → Notifications**:
+
+- ☑ **SMS** / **Email** / **WhatsApp** — toggle each channel on or off
+  independently. The toggle is persisted in the same config file.
+- **Opt in to WhatsApp** — appears when WhatsApp is toggled on. Mark the
+  widget as opted in after sending your first message to the configured
+  sender from your phone. Without this, WhatsApp alerts are skipped
+  (the destination has not opened a session window yet).
+- **Test notification** — sends a hard-coded test message through every
+  active channel.
+- **Open config file** — opens `notifier.json` in the default `.json`
+  editor so you can edit thresholds, recipients, etc.
+- **Reload config** — picks up the latest JSON contents without
+  restarting the widget.
+
+### WhatsApp keep-alive
+
+WhatsApp closes a conversation window 24 h after the user's last
+message. The widget sends a short keep-alive via session message
+every `keepAliveHours` (default 23) so the window stays open. To make
+the widget start sending, opt in once via the menu and then send any
+message from your phone to the configured sender. Once you respond to
+the keep-alive, the 24 h window resets.
+
+If a session message fails because the 24 h window expired
+(`detail: "Re-engagement message. ..."` in the Messangi response), the
+widget clears the opt-in automatically and shows a balloon tip. Re-run
+the opt-in from the menu after sending another first message from your
+phone.
+
 ## Account Support
 
 This app works with the same account types that Claude Code itself supports.

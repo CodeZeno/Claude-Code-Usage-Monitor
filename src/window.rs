@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use std::os::windows::process::CommandExt;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -23,6 +24,7 @@ use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
 };
+use crate::notifier;
 use crate::poller;
 use crate::theme;
 use crate::tray_icon;
@@ -78,6 +80,8 @@ struct AppState {
     show_opencode: bool,
 
     data: Option<AppUsageData>,
+
+    notifier: notifier::Notifier,
 
     poll_interval_ms: u32,
     retry_count: u32,
@@ -137,6 +141,13 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_NOTIFIER_TOGGLE_SMS: u16 = 70;
+const IDM_NOTIFIER_TOGGLE_EMAIL: u16 = 71;
+const IDM_NOTIFIER_TOGGLE_WHATSAPP: u16 = 72;
+const IDM_NOTIFIER_TEST: u16 = 73;
+const IDM_NOTIFIER_OPEN_CONFIG: u16 = 74;
+const IDM_NOTIFIER_RELOAD_CONFIG: u16 = 75;
+const IDM_NOTIFIER_OPTIN_WHATSAPP: u16 = 76;
 const IDM_MODEL_OPENCODE: u16 = 63;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
@@ -1401,6 +1412,7 @@ pub fn run() {
                 show_antigravity: settings.show_antigravity,
                 show_opencode: settings.show_opencode,
                 data: None,
+                notifier: notifier::Notifier::load(),
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
                 force_notify_auth_error: false,
@@ -1933,6 +1945,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                 }
 
                 s.data = Some(data);
+                if let Some(data_ref) = s.data.as_ref() {
+                    s.notifier.check_and_notify(data_ref);
+                }
                 s.last_poll_ok = true;
                 refresh_usage_texts(s);
 
@@ -2223,6 +2238,21 @@ fn tray_reposition_is_suppressed() -> bool {
         }
         None => false,
     }
+}
+
+fn show_balloon(hwnd: HWND, title: &str, body: &str) {
+    tray_icon::notify_balloon(hwnd, tray_icon::TrayIconKind::Claude, title, body);
+}
+
+fn default_notifier_json() -> String {
+    serde_json::to_string_pretty(&notifier::NotifierFile {
+        config: notifier::NotifierConfig::default(),
+        state: notifier::NotifierState::default(),
+        notify_sms: Some(false),
+        notify_email: Some(false),
+        notify_whatsapp: Some(false),
+    })
+    .unwrap_or_else(|_| "{}".to_string())
 }
 
 fn position_at_taskbar() {
@@ -2863,6 +2893,194 @@ unsafe extern "system" fn wnd_proc(
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
+                IDM_NOTIFIER_TOGGLE_SMS => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current = s.notifier.is_channel_active(notifier::Channel::Sms);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::Sms, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier SMS toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TOGGLE_EMAIL => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current = s.notifier.is_channel_active(notifier::Channel::Email);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::Email, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier email toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TOGGLE_WHATSAPP => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current =
+                                s.notifier.is_channel_active(notifier::Channel::WhatsApp);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::WhatsApp, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier WhatsApp toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TEST => {
+                    let report = {
+                        let mut state = lock_state();
+                        state
+                            .as_mut()
+                            .map(|s| s.notifier.send_test())
+                    };
+                    match report {
+                        Some(Ok(report)) => {
+                            let mut parts = Vec::new();
+                            if let Some(r) = report.sms {
+                                parts.push(format!(
+                                    "SMS: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            if let Some(r) = report.email {
+                                parts.push(format!(
+                                    "Email: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            if let Some(r) = report.whatsapp {
+                                parts.push(format!(
+                                    "WhatsApp: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            let summary = if parts.is_empty() {
+                                "No active channels. Enable SMS/Email/WhatsApp in this menu first.".to_string()
+                            } else {
+                                parts.join(" | ")
+                            };
+                            show_balloon(hwnd, "Notifier test", &summary);
+                            diagnose::log(format!("notifier test: {summary}"));
+                        }
+                        Some(Err(error)) => {
+                            show_balloon(hwnd, "Notifier test failed", &error.to_string());
+                            diagnose::log(format!("notifier test failed: {error}"));
+                        }
+                        None => {}
+                    }
+                }
+                IDM_NOTIFIER_OPEN_CONFIG => {
+                    let path = dirs::config_dir()
+                        .unwrap_or_else(|| {
+                            std::env::var_os("APPDATA")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| PathBuf::from("."))
+                        })
+                        .join("claude-code-usage-monitor")
+                        .join("notifier.json");
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&path, default_notifier_json());
+                    let _ = std::process::Command::new("cmd")
+                        .arg("/c")
+                        .arg("start")
+                        .arg("")
+                        .arg(&path)
+                        .creation_flags(0x08000000)
+                        .spawn();
+                    diagnose::log(format!(
+                        "opened notifier config at {}",
+                        path.display()
+                    ));
+                }
+                IDM_NOTIFIER_RELOAD_CONFIG => {
+                    let (had_key, sms_active, email_active, whatsapp_active) = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.notifier.reload();
+                            (
+                                s.notifier.has_api_key(),
+                                s.notifier.is_channel_active(notifier::Channel::Sms),
+                                s.notifier.is_channel_active(notifier::Channel::Email),
+                                s.notifier.is_channel_active(notifier::Channel::WhatsApp),
+                            )
+                        } else {
+                            (false, false, false, false)
+                        }
+                    };
+                    let summary = format!(
+                        "api_key={} sms={} email={} whatsapp={}",
+                        if had_key { "yes" } else { "no" },
+                        sms_active,
+                        email_active,
+                        whatsapp_active
+                    );
+                    show_balloon(hwnd, "Notifier config reloaded", &summary);
+                    diagnose::log(format!("notifier reload: {summary}"));
+                }
+                IDM_NOTIFIER_OPTIN_WHATSAPP => {
+                    let (api_key, configured) = {
+                        let state = lock_state();
+                        if let Some(s) = state.as_ref() {
+                            (
+                                s.notifier.has_api_key(),
+                                s.notifier.is_configured_for(notifier::Channel::WhatsApp),
+                            )
+                        } else {
+                            (false, false)
+                        }
+                    };
+                    if !api_key {
+                        show_balloon(
+                            hwnd,
+                            "WhatsApp opt-in",
+                            "Set messangiApiKey in notifier.json first.",
+                        );
+                    } else if !configured {
+                        show_balloon(
+                            hwnd,
+                            "WhatsApp opt-in",
+                            "Set whatsapp.from and whatsapp.to in notifier.json first.",
+                        );
+                    } else {
+                        let (msg, opted) = {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.notifier.mark_whatsapp_opted_in();
+                                (
+                                    "WhatsApp opted in. Send a first message from your phone to the configured sender, then keep an eye on the log to confirm delivery.".to_string(),
+                                    true,
+                                )
+                            } else {
+                                (String::new(), false)
+                            }
+                        };
+                        if opted {
+                            show_balloon(hwnd, "WhatsApp opted in", &msg);
+                            diagnose::log("notifier: WhatsApp opt-in marked");
+                        }
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -3116,6 +3334,109 @@ fn show_context_menu(hwnd: HWND) {
             language_menu.0 as usize,
             PCWSTR::from_raw(language_label.as_ptr()),
         );
+
+        let notifier_menu = CreatePopupMenu().unwrap();
+
+        let (sms_active, email_active, whatsapp_active, whatsapp_opted_in, has_api_key) = {
+            let state = lock_state();
+            match state.as_ref() {
+                Some(s) => (
+                    s.notifier.is_channel_active(notifier::Channel::Sms),
+                    s.notifier.is_channel_active(notifier::Channel::Email),
+                    s.notifier.is_channel_active(notifier::Channel::WhatsApp),
+                    s.notifier.is_whatsapp_opted_in(),
+                    s.notifier.has_api_key(),
+                ),
+                None => (false, false, false, false, false),
+            }
+        };
+
+        let sms_label = native_interop::wide_str(strings.notifier_sms);
+        let sms_flags = if sms_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            sms_flags,
+            IDM_NOTIFIER_TOGGLE_SMS as usize,
+            PCWSTR::from_raw(sms_label.as_ptr()),
+        );
+
+        let email_label = native_interop::wide_str(strings.notifier_email);
+        let email_flags = if email_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            email_flags,
+            IDM_NOTIFIER_TOGGLE_EMAIL as usize,
+            PCWSTR::from_raw(email_label.as_ptr()),
+        );
+
+        let whatsapp_label = native_interop::wide_str(strings.notifier_whatsapp);
+        let whatsapp_flags = if whatsapp_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            whatsapp_flags,
+            IDM_NOTIFIER_TOGGLE_WHATSAPP as usize,
+            PCWSTR::from_raw(whatsapp_label.as_ptr()),
+        );
+
+        if whatsapp_active {
+            let optin_label = native_interop::wide_str(strings.notifier_whatsapp_optin);
+            let _ = AppendMenuW(
+                notifier_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_NOTIFIER_OPTIN_WHATSAPP as usize,
+                PCWSTR::from_raw(optin_label.as_ptr()),
+            );
+            if whatsapp_opted_in {
+                let check_label = native_interop::wide_str(strings.notifier_whatsapp_opted_in);
+                let _ = AppendMenuW(
+                    notifier_menu,
+                    MF_GRAYED,
+                    0,
+                    PCWSTR::from_raw(check_label.as_ptr()),
+                );
+            }
+        }
+
+        let _ = AppendMenuW(notifier_menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+        let test_label = native_interop::wide_str(strings.notifier_test);
+        let test_flags = if has_api_key {
+            MENU_ITEM_FLAGS(0)
+        } else {
+            MF_GRAYED
+        };
+        let _ = AppendMenuW(
+            notifier_menu,
+            test_flags,
+            IDM_NOTIFIER_TEST as usize,
+            PCWSTR::from_raw(test_label.as_ptr()),
+        );
+
+        let open_cfg_label = native_interop::wide_str(strings.notifier_open_config);
+        let _ = AppendMenuW(
+            notifier_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_NOTIFIER_OPEN_CONFIG as usize,
+            PCWSTR::from_raw(open_cfg_label.as_ptr()),
+        );
+
+        let reload_label = native_interop::wide_str(strings.notifier_reload);
+        let _ = AppendMenuW(
+            notifier_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_NOTIFIER_RELOAD_CONFIG as usize,
+            PCWSTR::from_raw(reload_label.as_ptr()),
+        );
+
+        let notifier_label = native_interop::wide_str(strings.notifier_menu);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            notifier_menu.0 as usize,
+            PCWSTR::from_raw(notifier_label.as_ptr()),
+        );
+
+        let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 

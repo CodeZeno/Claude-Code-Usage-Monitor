@@ -185,6 +185,15 @@ pub struct Strings {
     pub codex_window_title: &'static str,
     pub antigravity_window_title: &'static str,
     pub opencode_window_title: &'static str,
+    pub notifier_menu: &'static str,
+    pub notifier_sms: &'static str,
+    pub notifier_email: &'static str,
+    pub notifier_whatsapp: &'static str,
+    pub notifier_whatsapp_optin: &'static str,
+    pub notifier_whatsapp_opted_in: &'static str,
+    pub notifier_test: &'static str,
+    pub notifier_open_config: &'static str,
+    pub notifier_reload: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {
