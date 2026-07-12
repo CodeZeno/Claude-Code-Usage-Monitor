@@ -473,11 +473,11 @@ fn sync_tray_icons(hwnd: HWND) {
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
-    let new_visible = {
+    let (new_visible, embedded) = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
             s.widget_visible = !s.widget_visible;
-            s.widget_visible
+            (s.widget_visible, s.embedded)
         } else {
             return;
         }
@@ -486,7 +486,9 @@ fn toggle_widget_visibility(hwnd: HWND) {
     unsafe {
         if new_visible {
             position_at_taskbar();
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            if !embedded {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
             render_layered();
         } else {
             let _ = ShowWindow(hwnd, SW_HIDE);
@@ -529,15 +531,23 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     } else {
         diagnose::log("TrayNotifyWnd not found");
     }
+    if let Some(rect) = native_interop::get_task_switcher_rect(taskbar.hwnd) {
+        diagnose::log(format!(
+            "task switcher rect=({}, {}, {}, {})",
+            rect.left, rect.top, rect.right, rect.bottom
+        ));
+    } else {
+        diagnose::log("task switcher window not found");
+    }
 
     let hook = tray_notify.and_then(|tray_hwnd| {
         let thread_id = native_interop::get_window_thread_id(tray_hwnd);
-        native_interop::set_tray_event_hook(thread_id, on_tray_location_changed)
+        native_interop::set_taskbar_event_hook(thread_id, on_taskbar_layout_changed)
     });
     if hook.is_some() {
-        diagnose::log("tray event hook installed");
+        diagnose::log("taskbar layout event hook installed");
     } else {
-        diagnose::log("tray event hook could not be installed");
+        diagnose::log("taskbar layout event hook could not be installed");
     }
 
     let mut state = lock_state();
@@ -573,9 +583,40 @@ fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
     tray_left
 }
 
+fn max_safe_tray_offset(
+    taskbar_left: i32,
+    tray_left: i32,
+    task_switcher_right: Option<i32>,
+    widget_width: i32,
+) -> Option<i32> {
+    let occupied_right = task_switcher_right
+        .unwrap_or(taskbar_left)
+        .clamp(taskbar_left, tray_left);
+    let available_width = tray_left - occupied_right;
+    (available_width >= widget_width).then_some(available_width - widget_width)
+}
+
+fn max_offset_for_taskbar(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    tray_left: i32,
+    widget_width: i32,
+) -> Option<i32> {
+    let task_switcher_right =
+        native_interop::get_task_switcher_rect(taskbar_hwnd).map(|rect| rect.right);
+    max_safe_tray_offset(
+        taskbar_rect.left,
+        tray_left,
+        task_switcher_right,
+        widget_width,
+    )
+}
+
 fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
     let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
+    let max_offset =
+        max_offset_for_taskbar(taskbar_hwnd, taskbar_rect, tray_left, total_widget_width())
+            .unwrap_or(0);
     offset.clamp(0, max_offset)
 }
 
@@ -1352,12 +1393,12 @@ pub fn run() {
         // Register system tray icon(s)
         sync_tray_icons(hwnd);
 
-        // Position and show (only if widget_visible preference is true)
+        // Position and show when the user wants the widget and the taskbar has room.
         position_at_taskbar();
-        if settings.widget_visible {
+        if !embedded && settings.widget_visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-        diagnose::log("window shown");
+        diagnose::log("window initialized");
 
         // Initial render via UpdateLayeredWindow (for embedded) or InvalidateRect (fallback)
         render_layered();
@@ -2064,7 +2105,7 @@ fn position_at_taskbar() {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
-    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+    let (hwnd, embedded, tray_offset, taskbar_hwnd, widget_visible) = {
         let state = lock_state();
         let s = match state.as_ref() {
             Some(s) => s,
@@ -2084,7 +2125,13 @@ fn position_at_taskbar() {
             }
         };
 
-        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
+        (
+            s.hwnd.to_hwnd(),
+            s.embedded,
+            s.tray_offset,
+            taskbar_hwnd,
+            s.widget_visible,
+        )
     };
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
@@ -2107,7 +2154,17 @@ fn position_at_taskbar() {
     }
 
     let widget_width = total_widget_width();
-    let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
+    let Some(max_offset) =
+        max_offset_for_taskbar(taskbar_hwnd, taskbar_rect, tray_left, widget_width)
+    else {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        diagnose::log(format!(
+            "taskbar has no free region for widget width={widget_width}; hiding widget"
+        ));
+        return;
+    };
     let tray_offset = tray_offset.clamp(0, max_offset);
     let offset_changed = {
         let mut state = lock_state();
@@ -2144,6 +2201,12 @@ fn position_at_taskbar() {
             "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
         ));
     }
+
+    if widget_visible {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
 }
 
 fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
@@ -2151,8 +2214,8 @@ fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> 
     (anchor_bottom - widget_height).max(anchor_top)
 }
 
-/// WinEvent callback for tray icon location changes
-unsafe extern "system" fn on_tray_location_changed(
+/// WinEvent callback for tray and task-switcher layout changes
+unsafe extern "system" fn on_taskbar_layout_changed(
     _hook: HWINEVENTHOOK,
     _event: u32,
     hwnd: HWND,
@@ -2171,8 +2234,9 @@ unsafe extern "system" fn on_tray_location_changed(
             .map(|h| h == hwnd)
             .unwrap_or(false)
     };
+    let is_taskbar_layout = is_tray || native_interop::is_task_switcher_window(hwnd);
 
-    if is_tray {
+    if is_taskbar_layout {
         if tray_reposition_is_suppressed() {
             return;
         }
@@ -2401,7 +2465,13 @@ unsafe extern "system" fn wnd_proc(
                                 }
                             }
                             let widget_width = total_widget_width_for_state(s);
-                            let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
+                            let max_offset = max_offset_for_taskbar(
+                                taskbar_hwnd,
+                                taskbar_rect,
+                                tray_left,
+                                widget_width,
+                            )
+                            .unwrap_or(0);
                             if new_offset > max_offset {
                                 new_offset = max_offset;
                             }
@@ -3288,5 +3358,31 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
         let _ = FillRgn(hdc, rgn, brush);
         let _ = DeleteObject(rgn);
         let _ = DeleteObject(brush);
+    }
+}
+
+#[cfg(test)]
+mod taskbar_placement_tests {
+    use super::max_safe_tray_offset;
+
+    #[test]
+    fn leaves_task_switcher_space_untouched() {
+        assert_eq!(max_safe_tray_offset(0, 1800, Some(900), 300), Some(600));
+    }
+
+    #[test]
+    fn uses_whole_pre_tray_area_when_task_switcher_is_unknown() {
+        assert_eq!(max_safe_tray_offset(100, 1800, None, 300), Some(1400));
+    }
+
+    #[test]
+    fn reports_no_space_when_widget_does_not_fit_after_task_switcher() {
+        assert_eq!(max_safe_tray_offset(0, 1800, Some(1600), 300), None);
+    }
+
+    #[test]
+    fn clamps_out_of_range_task_switcher_bounds() {
+        assert_eq!(max_safe_tray_offset(100, 1800, Some(50), 300), Some(1400));
+        assert_eq!(max_safe_tray_offset(100, 1800, Some(1900), 300), None);
     }
 }

@@ -77,6 +77,65 @@ pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
     }
 }
 
+/// Find a descendant window by class name.
+pub fn find_descendant_window(parent: HWND, class_name: &str) -> Option<HWND> {
+    struct SearchContext {
+        class_name: Vec<u16>,
+        result: Option<HWND>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let context = &mut *(lparam.0 as *mut SearchContext);
+        let mut candidate = [0u16; 64];
+        let len = unsafe { GetClassNameW(hwnd, &mut candidate) };
+        if len > 0 && candidate[..len as usize] == context.class_name {
+            context.result = Some(hwnd);
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+
+    let mut context = SearchContext {
+        class_name: class_name.encode_utf16().collect(),
+        result: None,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            parent,
+            Some(enum_proc),
+            LPARAM(&mut context as *mut _ as isize),
+        );
+    }
+    context.result
+}
+
+/// Get the task-switcher bounds used by Windows for pinned and running apps.
+pub fn get_task_switcher_rect(taskbar_hwnd: HWND) -> Option<RECT> {
+    // MSTaskListWClass is the narrowest match on classic taskbars. Windows 11
+    // may expose only its parent or the ReBar container, so keep both as
+    // fallbacks. Their bounds still track the space occupied by task buttons.
+    ["MSTaskListWClass", "MSTaskSwWClass", "ReBarWindow32"]
+        .into_iter()
+        .find_map(|class_name| {
+            find_descendant_window(taskbar_hwnd, class_name)
+                .and_then(get_window_rect_safe)
+                .filter(|rect| rect.right > rect.left)
+        })
+}
+
+pub fn is_task_switcher_window(hwnd: HWND) -> bool {
+    let mut class_name = [0u16; 64];
+    let len = unsafe { GetClassNameW(hwnd, &mut class_name) };
+    if len == 0 {
+        return false;
+    }
+
+    matches!(
+        String::from_utf16_lossy(&class_name[..len as usize]).as_str(),
+        "MSTaskListWClass" | "MSTaskSwWClass" | "ReBarWindow32"
+    )
+}
+
 /// Get taskbar position via SHAppBarMessage
 pub fn get_taskbar_rect(taskbar_hwnd: HWND) -> Option<RECT> {
     unsafe {
@@ -141,8 +200,8 @@ pub fn move_window(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-/// Set up a WinEvent hook for tray location changes
-pub fn set_tray_event_hook(
+/// Set up a WinEvent hook for taskbar layout changes
+pub fn set_taskbar_event_hook(
     thread_id: u32,
     callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
 ) -> Option<HWINEVENTHOOK> {
