@@ -208,7 +208,19 @@ impl Color {
         Self { r, g, b }
     }
 
+    pub fn to_hex(self) -> String {
+        format!("#{:02X}{:02X}{:02X}", self.r, self.g, self.b)
+    }
+
     pub fn to_colorref(self) -> u32 {
         colorref(self.r, self.g, self.b)
+    }
+
+    pub fn from_colorref(cr: u32) -> Self {
+        Self {
+            r: (cr & 0xFF) as u8,
+            g: ((cr >> 8) & 0xFF) as u8,
+            b: ((cr >> 16) & 0xFF) as u8,
+        }
     }
 }

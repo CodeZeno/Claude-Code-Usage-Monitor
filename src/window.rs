@@ -11,6 +11,9 @@ use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
+use windows::Win32::UI::Controls::Dialogs::{
+    ChooseColorW, CC_ENABLEHOOK, CC_FULLOPEN, CC_RGBINIT, CHOOSECOLORW,
+};
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Shell::ExtractIconExW;
@@ -70,6 +73,9 @@ struct AppState {
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    icon_color_claude: Option<tray_icon::IconColorOverride>,
+    icon_color_codex: Option<tray_icon::IconColorOverride>,
+    icon_color_antigravity: Option<tray_icon::IconColorOverride>,
 
     data: Option<AppUsageData>,
 
@@ -131,6 +137,10 @@ const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_ICON_COLOR_CLAUDE: u16 = 80;
+const IDM_ICON_COLOR_CODEX: u16 = 81;
+const IDM_ICON_COLOR_ANTIGRAVITY: u16 = 82;
+const IDM_ICON_COLOR_RESET: u16 = 83;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -316,6 +326,35 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_color_claude: Option<IconColorSetting>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_color_codex: Option<IconColorSetting>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon_color_antigravity: Option<IconColorSetting>,
+}
+
+/// Hex-encoded background/text color pair, as persisted in settings.json.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct IconColorSetting {
+    background: String,
+    text: String,
+}
+
+impl IconColorSetting {
+    fn from_override(over: tray_icon::IconColorOverride) -> Self {
+        Self {
+            background: over.background.to_hex(),
+            text: over.text.to_hex(),
+        }
+    }
+
+    fn to_override(&self) -> tray_icon::IconColorOverride {
+        tray_icon::IconColorOverride {
+            background: Color::from_hex(&self.background),
+            text: Color::from_hex(&self.text),
+        }
+    }
 }
 
 impl Default for SettingsFile {
@@ -330,6 +369,9 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            icon_color_claude: None,
+            icon_color_codex: None,
+            icon_color_antigravity: None,
         }
     }
 }
@@ -391,6 +433,11 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            icon_color_claude: s.icon_color_claude.map(IconColorSetting::from_override),
+            icon_color_codex: s.icon_color_codex.map(IconColorSetting::from_override),
+            icon_color_antigravity: s
+                .icon_color_antigravity
+                .map(IconColorSetting::from_override),
         });
     }
 }
@@ -410,6 +457,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         s.session_text,
                         s.weekly_text
                     ),
+                    custom_color: s.icon_color_claude,
                 });
             }
             if s.show_codex {
@@ -422,6 +470,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         s.codex_session_text,
                         s.codex_weekly_text
                     ),
+                    custom_color: s.icon_color_codex,
                 });
             }
             if s.show_antigravity {
@@ -434,6 +483,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         s.antigravity_session_text,
                         s.antigravity_weekly_text
                     ),
+                    custom_color: s.icon_color_antigravity,
                 });
             }
             icons
@@ -445,6 +495,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Claude,
                     percent: None,
                     tooltip: s.language.strings().window_title.to_string(),
+                    custom_color: s.icon_color_claude,
                 });
             }
             if s.show_codex {
@@ -452,6 +503,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Codex,
                     percent: None,
                     tooltip: s.language.strings().codex_window_title.to_string(),
+                    custom_color: s.icon_color_codex,
                 });
             }
             if s.show_antigravity {
@@ -459,6 +511,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
+                    custom_color: s.icon_color_antigravity,
                 });
             }
             icons
@@ -470,6 +523,114 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
 fn sync_tray_icons(hwnd: HWND) {
     let icons = tray_icon_data_from_state();
     tray_icon::sync(hwnd, &icons);
+}
+
+/// Custom-color swatches remembered across ChooseColorW invocations (Win32 requires
+/// a caller-owned 16-entry buffer even when custom swatches aren't otherwise used).
+static ICON_COLOR_CUSTOM_COLORS: Mutex<[u32; 16]> = Mutex::new([0x00FF_FFFF; 16]);
+
+/// Title for the next ChooseColorW dialog, staged here because `choose_color`
+/// is fully modal on the UI thread (no re-entrancy) and reading it in the hook
+/// this way avoids trusting the WM_INITDIALOG lParam's exact pointee type.
+static PENDING_DIALOG_TITLE: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+/// WM_INITDIALOG hook for ChooseColorW: relabels the dialog's title bar so the
+/// user can tell the background-color prompt apart from the text-color prompt.
+unsafe extern "system" fn color_dialog_hook(
+    hdlg: HWND,
+    msg: u32,
+    _wparam: WPARAM,
+    _lparam: LPARAM,
+) -> usize {
+    if msg == WM_INITDIALOG {
+        let title = PENDING_DIALOG_TITLE.lock().unwrap_or_else(|e| e.into_inner());
+        if !title.is_empty() {
+            unsafe {
+                let _ = SetWindowTextW(hdlg, PCWSTR::from_raw(title.as_ptr()));
+            }
+        }
+    }
+    0
+}
+
+/// Show the native Windows color picker, seeded with `initial` and titled with
+/// `title` (so the user can tell which color they're editing). Returns `None`
+/// if the user cancels.
+fn choose_color(hwnd: HWND, initial: Color, title: &str) -> Option<Color> {
+    let mut custom_colors = ICON_COLOR_CUSTOM_COLORS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    {
+        let mut pending = PENDING_DIALOG_TITLE.lock().unwrap_or_else(|e| e.into_inner());
+        *pending = native_interop::wide_str(title);
+    }
+    unsafe {
+        let mut cc: CHOOSECOLORW = std::mem::zeroed();
+        cc.lStructSize = std::mem::size_of::<CHOOSECOLORW>() as u32;
+        cc.hwndOwner = hwnd;
+        cc.rgbResult = COLORREF(initial.to_colorref());
+        cc.lpCustColors = custom_colors.as_mut_ptr() as *mut COLORREF;
+        cc.Flags = CC_RGBINIT | CC_FULLOPEN | CC_ENABLEHOOK;
+        cc.lpfnHook = Some(color_dialog_hook);
+        if ChooseColorW(&mut cc).as_bool() {
+            Some(Color::from_colorref(cc.rgbResult.0))
+        } else {
+            None
+        }
+    }
+}
+
+/// Prompt the user for a background color and then a text color for one tray icon
+/// kind, applying both together only if neither dialog is cancelled.
+fn prompt_icon_color(hwnd: HWND, kind: tray_icon::TrayIconKind) {
+    let (current, strings, model_name) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => {
+                let over = match kind {
+                    tray_icon::TrayIconKind::Claude => s.icon_color_claude,
+                    tray_icon::TrayIconKind::Codex => s.icon_color_codex,
+                    tray_icon::TrayIconKind::Antigravity => s.icon_color_antigravity,
+                };
+                let strings = s.language.strings();
+                let model_name = match kind {
+                    tray_icon::TrayIconKind::Claude => strings.claude_code_model,
+                    tray_icon::TrayIconKind::Codex => strings.codex_model,
+                    tray_icon::TrayIconKind::Antigravity => strings.antigravity_model,
+                };
+                (over, strings, model_name)
+            }
+            None => (None, LanguageId::English.strings(), ""),
+        }
+    };
+    let (initial_bg, initial_text) = match current {
+        Some(over) => (over.background, over.text),
+        None => (Color::from_hex("#D97757"), Color::from_hex("#FFFFFF")),
+    };
+
+    let bg_title = format!("{} \u{2014} {}", model_name, strings.background_color);
+    let text_title = format!("{} \u{2014} {}", model_name, strings.text_color);
+
+    let Some(background) = choose_color(hwnd, initial_bg, &bg_title) else {
+        return;
+    };
+    let Some(text) = choose_color(hwnd, initial_text, &text_title) else {
+        return;
+    };
+
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            let over = tray_icon::IconColorOverride { background, text };
+            match kind {
+                tray_icon::TrayIconKind::Claude => s.icon_color_claude = Some(over),
+                tray_icon::TrayIconKind::Codex => s.icon_color_codex = Some(over),
+                tray_icon::TrayIconKind::Antigravity => s.icon_color_antigravity = Some(over),
+            }
+        }
+    }
+    save_state_settings();
+    sync_tray_icons(hwnd);
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
@@ -1310,6 +1471,18 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                icon_color_claude: settings
+                    .icon_color_claude
+                    .as_ref()
+                    .map(IconColorSetting::to_override),
+                icon_color_codex: settings
+                    .icon_color_codex
+                    .as_ref()
+                    .map(IconColorSetting::to_override),
+                icon_color_antigravity: settings
+                    .icon_color_antigravity
+                    .as_ref()
+                    .map(IconColorSetting::to_override),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -2633,6 +2806,27 @@ unsafe extern "system" fn wnd_proc(
                         do_poll(sh);
                     });
                 }
+                IDM_ICON_COLOR_CLAUDE => {
+                    prompt_icon_color(hwnd, tray_icon::TrayIconKind::Claude);
+                }
+                IDM_ICON_COLOR_CODEX => {
+                    prompt_icon_color(hwnd, tray_icon::TrayIconKind::Codex);
+                }
+                IDM_ICON_COLOR_ANTIGRAVITY => {
+                    prompt_icon_color(hwnd, tray_icon::TrayIconKind::Antigravity);
+                }
+                IDM_ICON_COLOR_RESET => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.icon_color_claude = None;
+                            s.icon_color_codex = None;
+                            s.icon_color_antigravity = None;
+                        }
+                    }
+                    save_state_settings();
+                    sync_tray_icons(hwnd);
+                }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
                 | IDM_LANG_DUTCH
@@ -2833,6 +3027,55 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             models_menu.0 as usize,
             PCWSTR::from_raw(models_label.as_ptr()),
+        );
+
+        // Icon Colors submenu
+        let icon_colors_menu = CreatePopupMenu().unwrap();
+
+        if show_claude_code {
+            let label = native_interop::wide_str(strings.claude_code_color);
+            let _ = AppendMenuW(
+                icon_colors_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_ICON_COLOR_CLAUDE as usize,
+                PCWSTR::from_raw(label.as_ptr()),
+            );
+        }
+        if show_codex {
+            let label = native_interop::wide_str(strings.codex_color);
+            let _ = AppendMenuW(
+                icon_colors_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_ICON_COLOR_CODEX as usize,
+                PCWSTR::from_raw(label.as_ptr()),
+            );
+        }
+        if show_antigravity {
+            let label = native_interop::wide_str(strings.antigravity_color);
+            let _ = AppendMenuW(
+                icon_colors_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_ICON_COLOR_ANTIGRAVITY as usize,
+                PCWSTR::from_raw(label.as_ptr()),
+            );
+        }
+
+        let _ = AppendMenuW(icon_colors_menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+        let reset_colors_label = native_interop::wide_str(strings.reset_icon_colors);
+        let _ = AppendMenuW(
+            icon_colors_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_ICON_COLOR_RESET as usize,
+            PCWSTR::from_raw(reset_colors_label.as_ptr()),
+        );
+
+        let icon_colors_label = native_interop::wide_str(strings.icon_colors);
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            icon_colors_menu.0 as usize,
+            PCWSTR::from_raw(icon_colors_label.as_ptr()),
         );
 
         // Settings submenu
