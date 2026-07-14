@@ -251,40 +251,70 @@ fn format_usd(amount: f64) -> String {
     }
 }
 
+fn spend_close(a: f64, b: f64) -> bool {
+    (a - b).abs() < 0.01
+}
+
+/// Week/day pace uses cumulative billing spend minus anchors at period start.
+/// If both anchors are pinned to the current total, week/day incorrectly read $0.
+fn repair_stuck_anchors(anchors: &mut SpendAnchorsDisk, spend_used: f64) {
+    if spend_used <= 0.0 {
+        return;
+    }
+    // Both period baselines pinned to the live total => zero delta for week and day.
+    // Legitimate day rollover only pins day_spend_start, so leave that case alone.
+    if spend_close(anchors.week_spend_start, spend_used)
+        && spend_close(anchors.day_spend_start, spend_used)
+    {
+        anchors.week_spend_start = 0.0;
+        anchors.day_spend_start = 0.0;
+    }
+}
+
 fn update_anchors(spend_used: f64) -> SpendAnchorsDisk {
     let secs = now_secs();
     let day_key = local_day_key(secs);
     let week_key = local_week_key(secs);
     let mut anchors = load_anchors();
 
+    repair_stuck_anchors(&mut anchors, spend_used);
+
+    // Billing cycle reset: spend dropped — re-anchor from zero, not from the new total.
     if spend_used + 0.01 < anchors.last_spend {
         anchors = SpendAnchorsDisk {
             day_key: day_key.clone(),
-            day_spend_start: spend_used,
+            day_spend_start: 0.0,
             week_key: week_key.clone(),
-            week_spend_start: spend_used,
+            week_spend_start: 0.0,
             last_spend: spend_used,
         };
         save_anchors(&anchors);
         return anchors;
     }
 
-    if anchors.day_key != day_key {
+    if anchors.day_key.is_empty() {
+        anchors.day_key = day_key.clone();
+        anchors.day_spend_start = 0.0;
+    } else if anchors.day_key != day_key {
         anchors.day_key = day_key;
         anchors.day_spend_start = anchors.last_spend;
     }
-    if anchors.week_key != week_key {
+
+    if anchors.week_key.is_empty() {
+        anchors.week_key = week_key.clone();
+        anchors.week_spend_start = 0.0;
+    } else if anchors.week_key != week_key {
         anchors.week_key = week_key;
         anchors.week_spend_start = anchors.last_spend;
     }
+
     anchors.last_spend = spend_used;
     save_anchors(&anchors);
     anchors
 }
 
 pub fn compute_spend_pace(account: &AccountUsage) -> Option<SpendPaceView> {
-    // Credits are consumed first; dollar spend only applies after credits are exhausted.
-    if account.spend_limit <= 0.0 || account.credit_pct < 100.0 {
+    if account.spend_limit <= 0.0 {
         return None;
     }
 
@@ -347,7 +377,49 @@ mod tests {
 
     #[test]
     fn format_pace_fraction_rounds_dollars() {
-        assert_eq!(format_pace_fraction(57.2, 400.0), "$57/400");
-        assert_eq!(format_pace_fraction(13.4, 13.3), "$13/13");
+        assert_eq!(format_pace_fraction(57.2, 400.0), "$57/$400");
+        assert_eq!(format_pace_fraction(13.4, 13.3), "$13/$13");
+    }
+
+    #[test]
+    fn repair_stuck_anchors_unpins_week_and_day() {
+        let mut anchors = SpendAnchorsDisk {
+            day_key: "2026-07-01".to_string(),
+            day_spend_start: 27.41,
+            week_key: "2026-06-30".to_string(),
+            week_spend_start: 27.41,
+            last_spend: 27.41,
+        };
+        repair_stuck_anchors(&mut anchors, 27.41);
+        assert_eq!(anchors.week_spend_start, 0.0);
+        assert_eq!(anchors.day_spend_start, 0.0);
+    }
+
+    #[test]
+    fn repair_stuck_anchors_leaves_day_rollover_alone() {
+        let mut anchors = SpendAnchorsDisk {
+            day_key: "2026-07-01".to_string(),
+            day_spend_start: 27.41,
+            week_key: "2026-06-30".to_string(),
+            week_spend_start: 0.0,
+            last_spend: 27.41,
+        };
+        repair_stuck_anchors(&mut anchors, 27.41);
+        assert_eq!(anchors.week_spend_start, 0.0);
+        assert_eq!(anchors.day_spend_start, 27.41);
+    }
+
+    #[test]
+    fn repair_stuck_anchors_without_last_spend_match() {
+        let mut anchors = SpendAnchorsDisk {
+            day_key: "2026-07-01".to_string(),
+            day_spend_start: 27.41,
+            week_key: "2026-06-30".to_string(),
+            week_spend_start: 27.41,
+            last_spend: 26.0,
+        };
+        repair_stuck_anchors(&mut anchors, 27.41);
+        assert_eq!(anchors.week_spend_start, 0.0);
+        assert_eq!(anchors.day_spend_start, 0.0);
     }
 }

@@ -346,7 +346,20 @@ fn poll_claude_code() -> Result<(UsageData, Option<AccountUsage>), PollError> {
 
     let creds = refresh_or_fallback(creds)?;
 
-    fetch_usage_with_fallback(&creds.access_token)
+    match fetch_usage_with_fallback(&creds.access_token) {
+        Ok(result) => Ok(result),
+        Err(PollError::AuthRequired) => {
+            diagnose::log("Claude usage auth error; attempting CLI token refresh and retry");
+            cli_refresh_token(&creds.source);
+            if let Some(refreshed) = read_credentials_from_source(&creds.source) {
+                if let Ok(result) = fetch_usage_with_fallback(&refreshed.access_token) {
+                    return Ok(result);
+                }
+            }
+            Err(PollError::AuthRequired)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn poll_codex() -> Result<UsageData, PollError> {
@@ -1781,6 +1794,7 @@ mod tests {
             session: UsageSection {
                 percentage,
                 resets_at: None,
+                has_bucket: true,
             },
             weekly: UsageSection::default(),
         }
@@ -1808,7 +1822,7 @@ mod tests {
             true,
             true,
             false,
-            || Ok(usage_with_session_percent(64.0)),
+            || Ok((usage_with_session_percent(64.0), None)),
             || Err(PollError::RequestFailed),
             || unreachable!("antigravity is disabled"),
         )

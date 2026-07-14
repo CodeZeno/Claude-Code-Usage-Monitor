@@ -117,6 +117,7 @@ enum UpdateStatus {
 }
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
+const AUTH_RETRY_BASE_MS: u32 = 120_000; // 2 minutes — keep retrying auth recovery in background
 
 const POLL_1_MIN: u32 = 60_000;
 const POLL_5_MIN: u32 = 300_000;
@@ -374,7 +375,7 @@ fn settings_path() -> PathBuf {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SettingsFile {
-    #[serde(default)]
+    #[serde(default = "default_tray_offset")]
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
@@ -394,12 +395,26 @@ struct SettingsFile {
     show_antigravity: bool,
 }
 
+fn default_tray_offset() -> i32 {
+    TRAY_OFFSET_LEFTMOST
+}
+
 fn resolve_tray_offset(stored: i32, max_offset: i32) -> i32 {
     if stored < 0 {
         max_offset
     } else {
         stored.clamp(0, max_offset)
     }
+}
+
+fn resolved_tray_offset_for_taskbar(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    stored: i32,
+) -> i32 {
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
+    resolve_tray_offset(stored, max_offset)
 }
 
 impl Default for SettingsFile {
@@ -764,6 +779,41 @@ fn schedule_auto_update_check(hwnd: HWND) {
     }
 }
 
+fn waiting_usage_text() -> String {
+    "...".to_string()
+}
+
+/// When a poll fails, keep the last successful values on screen when we have them.
+/// Only show a waiting indicator when there is no cached data yet.
+fn apply_poll_failure_display(state: &mut AppState) {
+    if state.data.is_some() {
+        return;
+    }
+
+    let waiting = waiting_usage_text();
+    if state.show_claude_code {
+        state.session_text = waiting.clone();
+        state.weekly_text = waiting.clone();
+        state.day_text = waiting.clone();
+        state.credit_text = waiting.clone();
+    }
+    if state.show_codex {
+        state.codex_session_text = waiting.clone();
+        state.codex_weekly_text = waiting.clone();
+    }
+    if state.show_antigravity {
+        state.antigravity_session_text = waiting.clone();
+        state.antigravity_weekly_text = waiting.clone();
+    }
+}
+
+fn auth_retry_delay_ms(retry_count: u32, poll_interval_ms: u32) -> u32 {
+    let backoff = AUTH_RETRY_BASE_MS.saturating_mul(
+        1u32.checked_shl(retry_count.saturating_sub(1)).unwrap_or(1),
+    );
+    backoff.min(poll_interval_ms)
+}
+
 fn refresh_usage_texts(state: &mut AppState) {
     if !state.last_poll_ok {
         return;
@@ -820,7 +870,7 @@ fn refresh_usage_texts(state: &mut AppState) {
                 state.day_pace_level = slots.day_level;
 
                 if let Some(account) = data.account.as_ref() {
-                    state.show_credit_row = account.credit_pct < 100.0;
+                    state.show_credit_row = false; // credit shown in tooltip; row omitted to stay within taskbar
                     state.credit_percent = account.credit_pct;
                     state.credit_text =
                         poller::format_credit_text(account.credit_pct, account.credit_expiry);
@@ -848,16 +898,21 @@ fn refresh_usage_texts(state: &mut AppState) {
             }
         }
     } else if state.show_claude_code {
-        state.session_text = "!".to_string();
-        state.weekly_text = "!".to_string();
+        // Provider enabled but this poll returned no Claude data — keep prior text if any.
+        if state.session_text.is_empty() || state.session_text == "!" {
+            state.session_text = waiting_usage_text();
+            state.weekly_text = waiting_usage_text();
+        }
     }
 
     if let Some(codex) = data.codex.as_ref() {
         state.codex_session_text = poller::format_line(&codex.session, strings);
         state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
     } else if state.show_codex {
-        state.codex_session_text = "!".to_string();
-        state.codex_weekly_text = "!".to_string();
+        if state.codex_session_text.is_empty() || state.codex_session_text == "!" {
+            state.codex_session_text = waiting_usage_text();
+            state.codex_weekly_text = waiting_usage_text();
+        }
     }
 
     if let Some(antigravity) = data.antigravity.as_ref() {
@@ -869,8 +924,10 @@ fn refresh_usage_texts(state: &mut AppState) {
                 poller::format_line(&antigravity.weekly, strings)
             };
     } else if state.show_antigravity {
-        state.antigravity_session_text = "!".to_string();
-        state.antigravity_weekly_text = "!".to_string();
+        if state.antigravity_session_text.is_empty() || state.antigravity_session_text == "!" {
+            state.antigravity_session_text = waiting_usage_text();
+            state.antigravity_weekly_text = waiting_usage_text();
+        }
     }
 }
 
@@ -2235,45 +2292,35 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 should_notify = true;
                             }
                             s.force_notify_auth_error = false;
+                            // Still watch credential files for fast recovery after re-login,
+                            // but also keep TIMER_POLL actively retrying so a silent token
+                            // refresh (or transient 401) self-heals without waiting for a
+                            // file change — otherwise the widget sticks on "!" until restart.
                             s.auth_error_paused_polling = true;
                             s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
-                            s.session_text = "!".to_string();
-                            s.weekly_text = "!".to_string();
-                            if !s.account_pace_mode {
-                                s.session_label =
-                                    s.language.strings().session_window.to_string();
-                                s.weekly_label =
-                                    s.language.strings().weekly_window.to_string();
-                            }
-                            s.day_text = "!".to_string();
-                            s.credit_text = "!".to_string();
-                            s.codex_session_text = "!".to_string();
-                            s.codex_weekly_text = "!".to_string();
-                            s.antigravity_session_text = "!".to_string();
-                            s.antigravity_weekly_text = "!".to_string();
+                            apply_poll_failure_display(s);
                             s.retry_count = s.retry_count.saturating_add(1);
+                            let retry_ms =
+                                auth_retry_delay_ms(s.retry_count, s.poll_interval_ms);
+                            diagnose::log(format!(
+                                "auth poll failed; keeping last data and retrying in {retry_ms}ms"
+                            ));
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
                                 let _ = KillTimer(hwnd, TIMER_RESET_POLL);
                                 let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
-                                SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
+                                SetTimer(hwnd, TIMER_POLL, retry_ms, None);
                             }
                         }
                         _ => {
-                            // Transient network / credential-missing errors: exponential backoff.
+                            // Transient network errors: exponential backoff.
+                            // Keep last good values on screen when available.
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
                             s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                             s.auth_watch_snapshot.clear();
-                            s.session_text = "...".to_string();
-                            s.weekly_text = "...".to_string();
-                            s.day_text = "...".to_string();
-                            s.credit_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
-                            s.antigravity_session_text = "...".to_string();
-                            s.antigravity_weekly_text = "...".to_string();
+                            apply_poll_failure_display(s);
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -2548,7 +2595,13 @@ fn start_drag_reposition(hwnd: HWND, pt: POINT, client_x: i32) {
             s.dragging = true;
             s.drag_start_mouse_x = pt.x;
             s.drag_start_client_x = client_x;
-            s.drag_start_offset = s.tray_offset;
+            s.drag_start_offset = s
+                .taskbar_hwnd
+                .and_then(|taskbar_hwnd| {
+                    native_interop::get_taskbar_rect(taskbar_hwnd)
+                        .map(|rect| resolved_tray_offset_for_taskbar(taskbar_hwnd, rect, s.tray_offset))
+                })
+                .unwrap_or(0);
             s.embedded
         } else {
             return;
@@ -2579,22 +2632,14 @@ fn finalize_drag_reposition(hwnd: HWND, pt: POINT) {
         }
     };
     if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
-        let embedded = lock_state()
-            .as_ref()
-            .map(|s| s.embedded)
-            .unwrap_or(false);
         if let Some((target_index, target_taskbar)) = taskbar_at_point(pt) {
             if target_index != current_taskbar_index {
-                let new_offset = if embedded {
-                    0
-                } else {
-                    offset_for_drop_point(
-                        target_taskbar.hwnd,
-                        target_taskbar.rect,
-                        pt,
-                        drag_start_client_x,
-                    )
-                };
+                let new_offset = offset_for_drop_point(
+                    target_taskbar.hwnd,
+                    target_taskbar.rect,
+                    pt,
+                    drag_start_client_x,
+                );
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
@@ -2698,14 +2743,12 @@ fn position_at_taskbar() {
     // If the widget is taller than the taskbar, it cannot be fully shown as a child window
     // (child windows are clipped to the parent's client area). Detach to popup mode so all
     // rows remain visible — the popup path already positions correctly above the taskbar.
-    let was_embedded = embedded;
     let embedded = if embedded && widget_height > taskbar_height {
         native_interop::detach_from_taskbar(hwnd);
         {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 s.embedded = false;
-                s.tray_offset = 0; // place adjacent to clock; stale LEFTMOST offset gives x=0
             }
         }
         diagnose::log(format!(
@@ -2715,18 +2758,13 @@ fn position_at_taskbar() {
     } else {
         embedded
     };
-    // When not embedded due to height overflow (pace mode), place the popup adjacent to the
-    // tray clock by using offset=0. The LEFTMOST sentinel (-1) resolves to max_offset which
-    // clamps popup x to the left edge of the screen, not where the widget should appear.
-    let tray_offset = if !embedded && widget_height > taskbar_height {
-        0
-    } else if embedded && stored_tray_offset < 0 {
-        // LEFTMOST sentinel in embedded mode: reset to adjacent-to-clock so widget doesn't park at x=0
-        { let mut state = lock_state(); if let Some(s) = state.as_mut() { s.tray_offset = 0; } }
-        0
-    } else {
-        tray_offset
-    };
+    if embedded && stored_tray_offset < 0 {
+        // Persist the resolved max_offset so drags start from the correct position.
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.tray_offset = tray_offset;
+        }
+    }
 
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
@@ -2856,19 +2894,24 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let auth_watch = {
-                        let state = lock_state();
-                        state.as_ref().map(|s| {
-                            (
-                                s.auth_error_paused_polling,
-                                s.auth_watch_mode,
-                                s.auth_watch_snapshot.clone(),
-                            )
-                        })
-                    };
-                    match auth_watch {
-                        Some((true, watch_mode, previous_snapshot)) => {
-                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                    // Always poll on the timer — including during auth-error recovery.
+                    // Credential-file watches still update the snapshot when it changes so
+                    // a re-login is detected immediately on the next tick, but we no longer
+                    // skip the poll when the snapshot is unchanged (that left "!" stuck).
+                    {
+                        let auth_watch = {
+                            let state = lock_state();
+                            state.as_ref().map(|s| {
+                                (
+                                    s.auth_error_paused_polling,
+                                    s.auth_watch_mode,
+                                    s.auth_watch_snapshot.clone(),
+                                )
+                            })
+                        };
+                        if let Some((true, watch_mode, previous_snapshot)) = auth_watch {
+                            let current_snapshot =
+                                poller::credential_watch_snapshot(watch_mode);
                             if current_snapshot != previous_snapshot {
                                 let mut state = lock_state();
                                 if let Some(s) = state.as_mut() {
@@ -2878,21 +2921,13 @@ unsafe extern "system" fn wnd_proc(
                                         s.auth_watch_snapshot = current_snapshot;
                                     }
                                 }
-                                drop(state);
-                                let sh = SendHwnd::from_hwnd(hwnd);
-                                std::thread::spawn(move || {
-                                    do_poll(sh);
-                                });
                             }
                         }
-                        Some((false, _, _)) => {
-                            let sh = SendHwnd::from_hwnd(hwnd);
-                            std::thread::spawn(move || {
-                                do_poll(sh);
-                            });
-                        }
-                        None => {}
                     }
+                    let sh = SendHwnd::from_hwnd(hwnd);
+                    std::thread::spawn(move || {
+                        do_poll(sh);
+                    });
                 }
                 TIMER_COUNTDOWN => {
                     update_display();
@@ -2962,12 +2997,12 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_SETCURSOR => {
-            let (is_dragging, embedded) = {
+            let is_dragging = {
                 let state = lock_state();
                 state
                     .as_ref()
-                    .map(|s| (s.dragging, s.embedded))
-                    .unwrap_or((false, false))
+                    .map(|s| s.dragging)
+                    .unwrap_or(false)
             };
             if is_dragging || cursor_is_on_drag_handle(hwnd) {
                 let cursor = LoadCursorW(HINSTANCE::default(), IDC_SIZEWE).unwrap_or_default();
