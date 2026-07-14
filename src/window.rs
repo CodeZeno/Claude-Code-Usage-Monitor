@@ -1679,6 +1679,7 @@ fn render_layered() {
             show_antigravity,
             &codex_accent,
             &antigravity_accent,
+            widget_visible,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -3177,6 +3178,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_claude_code,
         show_codex,
         show_antigravity,
+        widget_visible,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3198,6 +3200,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.widget_visible,
             ),
             None => return,
         }
@@ -3263,6 +3266,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_antigravity,
             &codex_accent,
             &antigravity_accent,
+            widget_visible,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
