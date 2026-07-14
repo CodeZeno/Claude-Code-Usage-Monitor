@@ -1051,22 +1051,33 @@ fn set_startup_enabled(enable: bool) {
     }
 }
 
-// Dimensions matching the C# version
+// Compact, taskbar-friendly layout. The bar width still scales down when
+// multiple providers are visible, but the meter itself is rendered as one
+// continuous pill rather than a row of blocks.
 const SEGMENT_W: i32 = 10;
-const SEGMENT_H: i32 = 13;
+const SEGMENT_H: i32 = 9;
 const SEGMENT_GAP: i32 = 1;
 const SEGMENT_COUNT: i32 = 10;
-const CORNER_RADIUS: i32 = 2;
+const CORNER_RADIUS: i32 = 5;
+const ROW_GAP: i32 = 7;
 
 const LEFT_DIVIDER_W: i32 = 3;
-const DIVIDER_RIGHT_MARGIN: i32 = 10;
-const LABEL_WIDTH: i32 = 18;
-const LABEL_RIGHT_MARGIN: i32 = 10;
-const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 62;
+const DIVIDER_RIGHT_MARGIN: i32 = 12;
+const LABEL_WIDTH: i32 = 20;
+const LABEL_RIGHT_MARGIN: i32 = 8;
+const BAR_RIGHT_MARGIN: i32 = 8;
+const TEXT_WIDTH: i32 = 64;
+const TEXT_HEIGHT: i32 = 15;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
+
+fn usage_row_positions(height: i32) -> (i32, i32) {
+    let rows_height = sc(SEGMENT_H) * 2 + sc(ROW_GAP);
+    let row1_y = (height - rows_height) / 2;
+    let row2_y = row1_y + sc(SEGMENT_H) + sc(ROW_GAP);
+    (row1_y, row2_y)
+}
 
 fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
     let divider_h = sc(25);
@@ -1104,8 +1115,7 @@ fn cursor_is_on_reset_time_toggle(hwnd: HWND) -> bool {
 fn is_reset_time_toggle_point(state: &AppState, client_x: i32, client_y: i32) -> bool {
     let height = sc(WIDGET_HEIGHT);
     let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-    let row2_y = height - sc(5) - sc(SEGMENT_H);
-    let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+    let (row1_y, row2_y) = usage_row_positions(height);
     let active_models = active_model_count(
         state.show_claude_code,
         state.show_codex,
@@ -1125,7 +1135,8 @@ fn reset_text_hit_row(
     client_x: i32,
     client_y: i32,
 ) -> bool {
-    if client_y < y || client_y >= y + sc(SEGMENT_H) {
+    let text_top = y + (sc(SEGMENT_H) - sc(TEXT_HEIGHT)) / 2;
+    if client_y < text_top || client_y >= text_top + sc(TEXT_HEIGHT) {
         return false;
     }
 
@@ -1202,7 +1213,7 @@ fn total_widget_width() -> i32 {
 }
 
 fn claude_accent_color() -> Color {
-    Color::from_hex("#D97757")
+    Color::from_hex("#E18463")
 }
 
 fn codex_accent_color(is_dark: bool) -> Color {
@@ -1219,7 +1230,7 @@ fn antigravity_accent_color() -> Color {
 
 fn claude_usage_text_color(is_dark: bool) -> Color {
     if is_dark {
-        Color::from_hex("#F09A7A")
+        Color::from_hex("#F0A184")
     } else {
         Color::from_hex("#A94F32")
     }
@@ -1557,14 +1568,14 @@ fn render_layered() {
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
     let track = if is_dark {
-        Color::from_hex("#444444")
+        Color::from_hex("#343434")
     } else {
-        Color::from_hex("#AAAAAA")
+        Color::from_hex("#D4D4D4")
     };
     let text_color = if is_dark {
-        Color::from_hex("#888888")
+        Color::from_hex("#A6A6A6")
     } else {
-        Color::from_hex("#404040")
+        Color::from_hex("#505050")
     };
     let bg_color = if is_dark {
         Color::from_hex("#1C1C1C")
@@ -1721,46 +1732,26 @@ fn paint_content(
         FillRect(hdc, &client_rect, bg_brush);
         let _ = DeleteObject(bg_brush);
 
-        // Left divider
-        let divider_h = sc(25);
+        // Subtle pill handle: visible enough to discover dragging without
+        // competing with the usage information.
+        let divider_h = sc(26);
         let divider_top = (height - divider_h) / 2;
         let divider_bottom = divider_top + divider_h;
-
-        let (div_left, div_right) = if is_dark {
-            ((80, 80, 80), (40, 40, 40))
+        let divider_color = if is_dark {
+            Color::from_hex("#5B5B5B")
         } else {
-            ((160, 160, 160), (230, 230, 230))
+            Color::from_hex("#A6A6A6")
         };
-
-        let left_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_left.0, div_left.1, div_left.2,
-        )));
-        let left_rect = RECT {
+        let divider_rect = RECT {
             left: 0,
             top: divider_top,
             right: sc(2),
             bottom: divider_bottom,
         };
-        FillRect(hdc, &left_rect, left_brush);
-        let _ = DeleteObject(left_brush);
-
-        let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_right.0,
-            div_right.1,
-            div_right.2,
-        )));
-        let right_rect = RECT {
-            left: sc(2),
-            top: divider_top,
-            right: sc(3),
-            bottom: divider_bottom,
-        };
-        FillRect(hdc, &right_rect, right_brush);
-        let _ = DeleteObject(right_brush);
+        draw_rounded_rect(hdc, &divider_rect, &divider_color, sc(1));
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row2_y = height - sc(5) - sc(SEGMENT_H);
-        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+        let (row1_y, row2_y) = usage_row_positions(height);
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -3122,14 +3113,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
     let track = if is_dark {
-        Color::from_hex("#444444")
+        Color::from_hex("#343434")
     } else {
-        Color::from_hex("#AAAAAA")
+        Color::from_hex("#D4D4D4")
     };
     let text_color = if is_dark {
-        Color::from_hex("#888888")
+        Color::from_hex("#A6A6A6")
     } else {
-        Color::from_hex("#404040")
+        Color::from_hex("#505050")
     };
     let bg_color = if is_dark {
         Color::from_hex("#1C1C1C")
@@ -3210,33 +3201,22 @@ fn draw_row(
     track: &Color,
 ) {
     let seg_h = sc(SEGMENT_H);
+    let text_h = sc(TEXT_HEIGHT);
+    let text_top = y + (seg_h - text_h) / 2;
     let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
     let segment_count = row_bar_segment_count(active_models);
-    let use_model_text_colors = active_models > 1;
-    let claude_value_color = if use_model_text_colors {
-        claude_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let codex_value_color = if use_model_text_colors {
-        codex_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
-    let antigravity_value_color = if use_model_text_colors {
-        antigravity_usage_text_color(is_dark)
-    } else {
-        *text_color
-    };
+    let claude_value_color = claude_usage_text_color(is_dark);
+    let codex_value_color = codex_usage_text_color(is_dark);
+    let antigravity_value_color = antigravity_usage_text_color(is_dark);
 
     unsafe {
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
         let mut label_wide: Vec<u16> = label.encode_utf16().collect();
         let mut label_rect = RECT {
             left: x,
-            top: y,
+            top: text_top,
             right: x + sc(LABEL_WIDTH),
-            bottom: y + seg_h,
+            bottom: text_top + text_h,
         };
         let _ = DrawTextW(
             hdc,
@@ -3311,63 +3291,41 @@ fn draw_usage_bar(
     let seg_h = sc(SEGMENT_H);
     let seg_gap = sc(SEGMENT_GAP);
     let corner_r = sc(CORNER_RADIUS);
+    let bar_width = segment_count * (seg_w + seg_gap) - seg_gap;
 
     unsafe {
         let percent_clamped = percent.clamp(0.0, 100.0);
-        let segment_percent = 100.0 / segment_count as f64;
+        let track_rect = RECT {
+            left: bar_x,
+            top: y,
+            right: bar_x + bar_width,
+            bottom: y + seg_h,
+        };
+        draw_rounded_rect(hdc, &track_rect, track, corner_r);
 
-        for i in 0..segment_count {
-            let seg_x = bar_x + i * (seg_w + seg_gap);
-            let seg_start = (i as f64) * segment_percent;
-            let seg_end = seg_start + segment_percent;
-
-            let seg_rect = RECT {
-                left: seg_x,
+        let fill_width =
+            ((bar_width as f64 * percent_clamped / 100.0).round() as i32).clamp(0, bar_width);
+        if fill_width > 0 {
+            let fill_rect = RECT {
+                left: bar_x,
                 top: y,
-                right: seg_x + seg_w,
+                right: bar_x + fill_width,
                 bottom: y + seg_h,
             };
-
-            if percent_clamped >= seg_end {
-                draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
-            } else if percent_clamped <= seg_start {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-            } else {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-                let fraction = (percent_clamped - seg_start) / segment_percent;
-                let fill_width = (seg_w as f64 * fraction) as i32;
-                if fill_width > 0 {
-                    let fill_rect = RECT {
-                        left: seg_x,
-                        top: y,
-                        right: seg_x + fill_width,
-                        bottom: y + seg_h,
-                    };
-                    let rgn = CreateRoundRectRgn(
-                        seg_rect.left,
-                        seg_rect.top,
-                        seg_rect.right + 1,
-                        seg_rect.bottom + 1,
-                        corner_r * 2,
-                        corner_r * 2,
-                    );
-                    let _ = SelectClipRgn(hdc, rgn);
-                    let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                    FillRect(hdc, &fill_rect, brush);
-                    let _ = DeleteObject(brush);
-                    let _ = SelectClipRgn(hdc, HRGN::default());
-                    let _ = DeleteObject(rgn);
-                }
-            }
+            // Keep very small values circular and larger values fully pill-shaped.
+            let fill_radius = corner_r.min(fill_width / 2).max(1);
+            draw_rounded_rect(hdc, &fill_rect, accent, fill_radius);
         }
 
-        let text_x = bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
+        let text_x = bar_x + bar_width + sc(BAR_RIGHT_MARGIN);
+        let text_h = sc(TEXT_HEIGHT);
+        let text_top = y + (seg_h - text_h) / 2;
         let mut text_wide: Vec<u16> = text.encode_utf16().collect();
         let mut text_rect = RECT {
             left: text_x,
-            top: y,
+            top: text_top,
             right: text_x + sc(TEXT_WIDTH),
-            bottom: y + seg_h,
+            bottom: text_top + text_h,
         };
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
         let _ = DrawTextW(
