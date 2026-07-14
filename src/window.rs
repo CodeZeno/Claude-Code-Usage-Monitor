@@ -1852,6 +1852,16 @@ fn paint_content(
             track,
         );
 
+        let mut hide_rect = hide_button_rect(width, height);
+        let mut hide_glyph: Vec<u16> = "\u{2715}".encode_utf16().collect();
+        let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+        let _ = DrawTextW(
+            hdc,
+            &mut hide_glyph,
+            &mut hide_rect,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+        );
+
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
     }
