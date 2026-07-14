@@ -1557,6 +1557,7 @@ fn render_layered() {
         show_claude_code,
         show_codex,
         show_antigravity,
+        widget_visible,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1580,6 +1581,7 @@ fn render_layered() {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.widget_visible,
             ),
             None => return,
         }
@@ -1753,6 +1755,7 @@ fn paint_content(
     show_antigravity: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    visible: bool,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1765,6 +1768,36 @@ fn paint_content(
         let bg_brush = CreateSolidBrush(COLORREF(bg.to_colorref()));
         FillRect(hdc, &client_rect, bg_brush);
         let _ = DeleteObject(bg_brush);
+
+        if !visible {
+            // Collapsed: the whole widget IS the show button.
+            let font_name = native_interop::wide_str("Segoe UI");
+            let font = CreateFontW(
+                sc(-12),
+                0,
+                0,
+                0,
+                FW_MEDIUM.0 as i32,
+                0,
+                0,
+                0,
+                DEFAULT_CHARSET.0 as u32,
+                OUT_TT_PRECIS.0 as u32,
+                CLIP_DEFAULT_PRECIS.0 as u32,
+                CLEARTYPE_QUALITY.0 as u32,
+                (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+                PCWSTR::from_raw(font_name.as_ptr()),
+            );
+            let old_font = SelectObject(hdc, font);
+            let _ = SetBkMode(hdc, TRANSPARENT);
+            let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
+            let mut glyph: Vec<u16> = "\u{00BB}".encode_utf16().collect();
+            let mut r = client_rect;
+            let _ = DrawTextW(hdc, &mut glyph, &mut r, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(hdc, old_font);
+            let _ = DeleteObject(font);
+            return;
+        }
 
         // Subtle pill handle: visible enough to discover dragging without
         // competing with the usage information.
