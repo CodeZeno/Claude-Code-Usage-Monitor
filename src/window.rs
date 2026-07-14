@@ -1091,7 +1091,11 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
         if GetCursorPos(&mut pt).is_err() || !ScreenToClient(hwnd, &mut pt).as_bool() {
             return false;
         }
-        is_drag_handle_point(pt.x, pt.y)
+        let widget_visible = {
+            let state = lock_state();
+            state.as_ref().map(|s| s.widget_visible).unwrap_or(true)
+        };
+        widget_visible && is_drag_handle_point(pt.x, pt.y)
     }
 }
 
