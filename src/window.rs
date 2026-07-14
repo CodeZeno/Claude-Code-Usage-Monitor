@@ -1071,6 +1071,8 @@ const TEXT_HEIGHT: i32 = 15;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
+const HIDE_BTN_W: i32 = 16;
+const HIDE_BTN_MARGIN: i32 = 8;
 
 fn usage_row_positions(height: i32) -> (i32, i32) {
     let rows_height = sc(SEGMENT_H) * 2 + sc(ROW_GAP);
@@ -1157,6 +1159,36 @@ fn reset_text_hit_row(
     false
 }
 
+fn hide_button_rect(width: i32, height: i32) -> RECT {
+    let btn_w = sc(HIDE_BTN_W);
+    let right = width - sc(RIGHT_MARGIN);
+    let left = right - btn_w;
+    let top = (height - btn_w) / 2;
+    RECT {
+        left,
+        top,
+        right,
+        bottom: top + btn_w,
+    }
+}
+
+fn is_hide_button_point(width: i32, height: i32, client_x: i32, client_y: i32) -> bool {
+    let r = hide_button_rect(width, height);
+    client_x >= r.left && client_x < r.right && client_y >= r.top && client_y < r.bottom
+}
+
+fn cursor_is_on_hide_button(hwnd: HWND) -> bool {
+    unsafe {
+        let mut pt = POINT::default();
+        if GetCursorPos(&mut pt).is_err() || !ScreenToClient(hwnd, &mut pt).as_bool() {
+            return false;
+        }
+        let mut rect = RECT::default();
+        let _ = GetClientRect(hwnd, &mut rect);
+        is_hide_button_point(rect.right, rect.bottom, pt.x, pt.y)
+    }
+}
+
 fn reset_text_hit_model(bar_x: i32, segment_count: i32, client_x: i32) -> bool {
     let text_x = bar_x
         + segment_count * (sc(SEGMENT_W) + sc(SEGMENT_GAP))
@@ -1190,6 +1222,8 @@ fn total_widget_width_for(active_models: i32) -> i32 {
         + sc(LABEL_RIGHT_MARGIN)
         + model_width * active_models
         + sc(MODEL_RIGHT_MARGIN) * (active_models - 1)
+        + sc(HIDE_BTN_MARGIN)
+        + sc(HIDE_BTN_W)
         + sc(RIGHT_MARGIN)
 }
 
@@ -2411,6 +2445,11 @@ unsafe extern "system" fn wnd_proc(
                 SetCursor(cursor);
                 return LRESULT(1);
             }
+            if cursor_is_on_hide_button(hwnd) {
+                let cursor = LoadCursorW(HINSTANCE::default(), IDC_HAND).unwrap_or_default();
+                SetCursor(cursor);
+                return LRESULT(1);
+            }
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_LBUTTONDOWN => {
@@ -2531,6 +2570,18 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONUP => {
             let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
             let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let is_dragging = {
+                let state = lock_state();
+                state.as_ref().map(|s| s.dragging).unwrap_or(false)
+            };
+            if !is_dragging {
+                let mut rect = RECT::default();
+                let _ = GetClientRect(hwnd, &mut rect);
+                if is_hide_button_point(rect.right, rect.bottom, client_x, client_y) {
+                    toggle_widget_visibility(hwnd);
+                    return LRESULT(0);
+                }
+            }
             let toggled_reset_time = {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
