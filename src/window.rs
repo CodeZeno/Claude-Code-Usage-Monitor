@@ -478,24 +478,19 @@ fn sync_tray_icons(hwnd: HWND) {
 }
 
 fn toggle_widget_visibility(hwnd: HWND) {
-    let new_visible = {
+    {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
             s.widget_visible = !s.widget_visible;
-            s.widget_visible
         } else {
             return;
         }
-    };
+    }
     save_state_settings();
     unsafe {
-        if new_visible {
-            position_at_taskbar();
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-            render_layered();
-        } else {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        }
+        position_at_taskbar();
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        render_layered();
     }
 }
 
@@ -1227,7 +1222,15 @@ fn total_widget_width_for(active_models: i32) -> i32 {
         + sc(RIGHT_MARGIN)
 }
 
+/// Collapsed width: just enough for the show-button glyph, tappable from the taskbar.
+fn collapsed_widget_width() -> i32 {
+    sc(HIDE_BTN_MARGIN) + sc(HIDE_BTN_W) + sc(RIGHT_MARGIN)
+}
+
 fn total_widget_width_for_state(state: &AppState) -> i32 {
+    if !state.widget_visible {
+        return collapsed_widget_width();
+    }
     total_widget_width_for(active_model_count(
         state.show_claude_code,
         state.show_codex,
@@ -1236,6 +1239,13 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
 }
 
 fn total_widget_width() -> i32 {
+    let widget_visible = {
+        let state = lock_state();
+        state.as_ref().map(|s| s.widget_visible).unwrap_or(true)
+    };
+    if !widget_visible {
+        return collapsed_widget_width();
+    }
     let active_models = {
         let state = lock_state();
         state
@@ -1474,11 +1484,9 @@ pub fn run() {
         // Register system tray icon(s)
         sync_tray_icons(hwnd);
 
-        // Position and show (only if widget_visible preference is true)
+        // Always show; collapses to a small show-button when widget_visible is false.
         position_at_taskbar();
-        if settings.widget_visible {
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-        }
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         diagnose::log("window shown");
 
         // Initial render via UpdateLayeredWindow (for embedded) or InvalidateRect (fallback)
@@ -2499,7 +2507,11 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
             let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-            if !is_drag_handle_point(client_x, client_y) {
+            let widget_visible = {
+                let state = lock_state();
+                state.as_ref().map(|s| s.widget_visible).unwrap_or(true)
+            };
+            if !widget_visible || !is_drag_handle_point(client_x, client_y) {
                 return LRESULT(0);
             }
 
