@@ -10,6 +10,9 @@ pub struct UsageSection {
 pub struct UsageData {
     pub session: UsageSection,
     pub weekly: UsageSection,
+    /// Weekly, model-scoped usage for Fable (Claude Code only). Present only
+    /// when the usage endpoint reports a Fable-scoped weekly limit.
+    pub fable: Option<UsageSection>,
 }
 
 #[derive(Clone, Debug, Default)]
