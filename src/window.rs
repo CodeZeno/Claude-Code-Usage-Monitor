@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use std::os::windows::process::CommandExt;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
@@ -23,6 +24,7 @@ use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
 };
+use crate::notifier;
 use crate::poller;
 use crate::theme;
 use crate::tray_icon;
@@ -67,11 +69,19 @@ struct AppState {
     antigravity_session_text: String,
     antigravity_weekly_percent: f64,
     antigravity_weekly_text: String,
+    opencode_session_percent: f64,
+    opencode_session_text: String,
+    opencode_weekly_percent: f64,
+    opencode_weekly_text: String,
+    opencode_weekly_label: &'static str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
 
     data: Option<AppUsageData>,
+
+    notifier: notifier::Notifier,
 
     poll_interval_ms: u32,
     retry_count: u32,
@@ -132,6 +142,14 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_NOTIFIER_TOGGLE_SMS: u16 = 70;
+const IDM_NOTIFIER_TOGGLE_EMAIL: u16 = 71;
+const IDM_NOTIFIER_TOGGLE_WHATSAPP: u16 = 72;
+const IDM_NOTIFIER_TEST: u16 = 73;
+const IDM_NOTIFIER_OPEN_CONFIG: u16 = 74;
+const IDM_NOTIFIER_RELOAD_CONFIG: u16 = 75;
+const IDM_NOTIFIER_OPTIN_WHATSAPP: u16 = 76;
+const IDM_MODEL_OPENCODE: u16 = 63;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -317,6 +335,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default = "default_show_opencode")]
+    show_opencode: bool,
 }
 
 impl Default for SettingsFile {
@@ -331,6 +351,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            show_opencode: false,
         }
     }
 }
@@ -355,13 +376,21 @@ fn default_show_antigravity() -> bool {
     false
 }
 
+fn default_show_opencode() -> bool {
+    false
+}
+
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
     let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
-    if !settings.show_claude_code && !settings.show_codex && !settings.show_antigravity {
+    if !settings.show_claude_code
+        && !settings.show_codex
+        && !settings.show_antigravity
+        && !settings.show_opencode
+    {
         settings.show_claude_code = true;
     }
     settings
@@ -392,6 +421,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            show_opencode: s.show_opencode,
         });
     }
 }
@@ -437,6 +467,18 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     ),
                 });
             }
+            if s.show_opencode {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Opencode,
+                    percent: Some(s.opencode_session_percent),
+                    tooltip: format!(
+                        "{} 5h: {} | 7d: {}",
+                        s.language.strings().opencode_model,
+                        s.opencode_session_text,
+                        s.opencode_weekly_text
+                    ),
+                });
+            }
             icons
         }
         Some(s) => {
@@ -460,6 +502,13 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
+                });
+            }
+            if s.show_opencode {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Opencode,
+                    percent: None,
+                    tooltip: s.language.strings().opencode_window_title.to_string(),
                 });
             }
             icons
@@ -672,6 +721,22 @@ fn refresh_usage_texts(state: &mut AppState) {
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
         state.antigravity_weekly_text = "!".to_string();
+    }
+
+    if let Some(opencode) = data.opencode.as_ref() {
+        state.opencode_session_text = poller::format_line(&opencode.session, strings);
+        let label = opencode.weekly_label.unwrap_or(strings.weekly_window);
+        state.opencode_weekly_label = label;
+        let inner = poller::format_line(&opencode.weekly, strings);
+        state.opencode_weekly_text = if label == strings.weekly_window {
+            inner
+        } else {
+            format!("{label} {inner}")
+        };
+    } else if state.show_opencode {
+        state.opencode_session_text = "!".to_string();
+        state.opencode_weekly_text = "!".to_string();
+        state.opencode_weekly_label = strings.weekly_window;
     }
 }
 
@@ -1080,8 +1145,17 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> i32 {
-    (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
+fn active_model_count(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_opencode: bool,
+) -> i32 {
+    (show_claude_code as i32
+        + show_codex as i32
+        + show_antigravity as i32
+        + show_opencode as i32)
+        .max(1)
 }
 
 fn row_bar_segment_count(active_models: i32) -> i32 {
@@ -1112,6 +1186,7 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
         state.show_claude_code,
         state.show_codex,
         state.show_antigravity,
+        state.show_opencode,
     ))
 }
 
@@ -1120,7 +1195,14 @@ fn total_widget_width() -> i32 {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_claude_code, s.show_codex, s.show_antigravity))
+            .map(|s| {
+                active_model_count(
+                    s.show_claude_code,
+                    s.show_codex,
+                    s.show_antigravity,
+                    s.show_opencode,
+                )
+            })
             .unwrap_or(1)
     };
     total_widget_width_for(active_models)
@@ -1163,6 +1245,18 @@ fn antigravity_usage_text_color(is_dark: bool) -> Color {
         Color::from_hex("#8AB4F8")
     } else {
         Color::from_hex("#1967D2")
+    }
+}
+
+fn opencode_accent_color() -> Color {
+    Color::from_hex("#2EBD85")
+}
+
+fn opencode_usage_text_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#5DD6A1")
+    } else {
+        Color::from_hex("#1F8A5C")
     }
 }
 
@@ -1245,6 +1339,7 @@ pub fn run() {
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
+            settings.show_opencode,
         );
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -1308,10 +1403,17 @@ pub fn run() {
                 antigravity_session_text: "--".to_string(),
                 antigravity_weekly_percent: 0.0,
                 antigravity_weekly_text: "--".to_string(),
+                opencode_session_percent: 0.0,
+                opencode_session_text: "--".to_string(),
+                opencode_weekly_percent: 0.0,
+                opencode_weekly_text: "--".to_string(),
+                opencode_weekly_label: language.strings().weekly_window,
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                show_opencode: settings.show_opencode,
                 data: None,
+                notifier: notifier::Notifier::load(),
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
                 force_notify_auth_error: false,
@@ -1433,9 +1535,14 @@ fn render_layered() {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        opencode_session_pct,
+        opencode_session_text,
+        opencode_weekly_pct,
+        opencode_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_opencode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1456,9 +1563,14 @@ fn render_layered() {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.opencode_session_percent,
+                s.opencode_session_text.clone(),
+                s.opencode_weekly_percent,
+                s.opencode_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_opencode,
             ),
             None => return,
         }
@@ -1480,6 +1592,7 @@ fn render_layered() {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let opencode_accent = opencode_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1551,11 +1664,17 @@ fn render_layered() {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            opencode_session_pct,
+            &opencode_session_text,
+            opencode_weekly_pct,
+            &opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             &codex_accent,
             &antigravity_accent,
+            &opencode_accent,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1627,11 +1746,17 @@ fn paint_content(
     antigravity_session_text: &str,
     antigravity_weekly_pct: f64,
     antigravity_weekly_text: &str,
+    opencode_session_pct: f64,
+    opencode_session_text: &str,
+    opencode_weekly_pct: f64,
+    opencode_weekly_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    opencode_accent: &Color,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1721,12 +1846,16 @@ fn paint_content(
             codex_session_text,
             antigravity_session_pct,
             antigravity_session_text,
+            opencode_session_pct,
+            opencode_session_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             accent,
             codex_accent,
             antigravity_accent,
+            opencode_accent,
             track,
         );
         draw_row(
@@ -1742,12 +1871,16 @@ fn paint_content(
             codex_weekly_text,
             antigravity_weekly_pct,
             antigravity_weekly_text,
+            opencode_weekly_pct,
+            opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             accent,
             codex_accent,
             antigravity_accent,
+            opencode_accent,
             track,
         );
 
@@ -1758,15 +1891,22 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_claude_code, show_codex, show_antigravity) = {
+    let (show_claude_code, show_codex, show_antigravity, show_opencode) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| (s.show_claude_code, s.show_codex, s.show_antigravity))
-            .unwrap_or((true, false, false))
+            .map(|s| {
+                (
+                    s.show_claude_code,
+                    s.show_codex,
+                    s.show_antigravity,
+                    s.show_opencode,
+                )
+            })
+            .unwrap_or((true, false, false, false))
     };
 
-    match poller::poll(show_claude_code, show_codex, show_antigravity) {
+    match poller::poll(show_claude_code, show_codex, show_antigravity, show_opencode) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
@@ -1791,6 +1931,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                     s.antigravity_session_percent = 0.0;
                     s.antigravity_weekly_percent = 0.0;
                 }
+                if let Some(opencode) = data.opencode.as_ref() {
+                    s.opencode_session_percent = opencode.session.percentage;
+                    s.opencode_weekly_percent = opencode.weekly.percentage;
+                } else if s.show_opencode {
+                    s.opencode_session_percent = 0.0;
+                    s.opencode_weekly_percent = 0.0;
+                }
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
                     unsafe {
@@ -1799,6 +1946,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                 }
 
                 s.data = Some(data);
+                if let Some(data_ref) = s.data.as_ref() {
+                    s.notifier.check_and_notify(data_ref);
+                }
                 s.last_poll_ok = true;
                 refresh_usage_texts(s);
 
@@ -1822,6 +1972,17 @@ fn do_poll(send_hwnd: SendHwnd) {
         }
         Err(e) => {
             let auth_watch = match e {
+                poller::PollError::AuthRequired | poller::PollError::TokenExpired
+                    if show_opencode
+                        && !show_claude_code
+                        && !show_codex
+                        && !show_antigravity =>
+                {
+                    Some((
+                        poller::CredentialWatchMode::Opencode,
+                        poller::credential_watch_snapshot(poller::CredentialWatchMode::Opencode),
+                    ))
+                }
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired
                     if show_antigravity && !show_claude_code && !show_codex =>
                 {
@@ -1862,6 +2023,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "!".to_string();
                             s.antigravity_session_text = "!".to_string();
                             s.antigravity_weekly_text = "!".to_string();
+                            s.opencode_session_text = "!".to_string();
+                            s.opencode_weekly_text = "!".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1882,6 +2046,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -1915,12 +2082,19 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 s.language.strings().codex_token_expired_title,
                                 s.language.strings().codex_token_expired_body,
                             )
-                        } else {
+                        } else if s.show_antigravity {
                             (
                                 s.language.strings(),
                                 tray_icon::TrayIconKind::Antigravity,
                                 s.language.strings().antigravity_token_expired_title,
                                 s.language.strings().antigravity_token_expired_body,
+                            )
+                        } else {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Opencode,
+                                s.language.strings().opencode_token_expired_title,
+                                s.language.strings().opencode_token_expired_body,
                             )
                         }
                     })
@@ -1982,6 +2156,12 @@ fn schedule_countdown_timer() {
             .as_ref()
             .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
         data.antigravity
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
+        data.opencode
+            .as_ref()
+            .and_then(|usage| poller::time_until_display_change(usage.session.resets_at)),
+        data.opencode
             .as_ref()
             .and_then(|usage| poller::time_until_display_change(usage.weekly.resets_at)),
     ];
@@ -2059,6 +2239,24 @@ fn tray_reposition_is_suppressed() -> bool {
         }
         None => false,
     }
+}
+
+fn show_balloon(hwnd: HWND, title: &str, body: &str) {
+    tray_icon::notify_balloon(hwnd, tray_icon::TrayIconKind::Claude, title, body);
+}
+
+fn default_notifier_json() -> String {
+    serde_json::to_string_pretty(&notifier::NotifierFile {
+        config: notifier::NotifierConfig {
+            keep_alive: Some("23:00".to_string()),
+            ..Default::default()
+        },
+        state: notifier::NotifierState::default(),
+        notify_sms: Some(false),
+        notify_email: Some(false),
+        notify_whatsapp: Some(false),
+    })
+    .unwrap_or_else(|_| "{}".to_string())
 }
 
 fn position_at_taskbar() {
@@ -2513,6 +2711,11 @@ unsafe extern "system" fn wnd_proc(
                             s.weekly_text = "...".to_string();
                             s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
+                            s.antigravity_session_text = "...".to_string();
+                            s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                             s.force_notify_auth_error = true;
                         }
                     }
@@ -2595,24 +2798,44 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY => {
+                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY
+                | IDM_MODEL_OPENCODE => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             match id {
                                 IDM_MODEL_CLAUDE_CODE => {
-                                    if s.show_codex || s.show_antigravity || !s.show_claude_code {
+                                    if s.show_codex || s.show_antigravity || s.show_opencode
+                                        || !s.show_claude_code
+                                    {
                                         s.show_claude_code = !s.show_claude_code;
                                     }
                                 }
                                 IDM_MODEL_CODEX => {
-                                    if s.show_claude_code || s.show_antigravity || !s.show_codex {
+                                    if s.show_claude_code
+                                        || s.show_antigravity
+                                        || s.show_opencode
+                                        || !s.show_codex
+                                    {
                                         s.show_codex = !s.show_codex;
                                     }
                                 }
                                 IDM_MODEL_ANTIGRAVITY => {
-                                    if s.show_claude_code || s.show_codex || !s.show_antigravity {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_opencode
+                                        || !s.show_antigravity
+                                    {
                                         s.show_antigravity = !s.show_antigravity;
+                                    }
+                                }
+                                IDM_MODEL_OPENCODE => {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_antigravity
+                                        || !s.show_opencode
+                                    {
+                                        s.show_opencode = !s.show_opencode;
                                     }
                                 }
                                 _ => {}
@@ -2623,6 +2846,9 @@ unsafe extern "system" fn wnd_proc(
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.opencode_session_text = "...".to_string();
+                            s.opencode_weekly_text = "...".to_string();
+                            s.opencode_weekly_label = s.language.strings().weekly_window;
                         }
                     }
                     save_state_settings();
@@ -2673,6 +2899,194 @@ unsafe extern "system" fn wnd_proc(
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
+                IDM_NOTIFIER_TOGGLE_SMS => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current = s.notifier.is_channel_active(notifier::Channel::Sms);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::Sms, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier SMS toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TOGGLE_EMAIL => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current = s.notifier.is_channel_active(notifier::Channel::Email);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::Email, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier email toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TOGGLE_WHATSAPP => {
+                    let new_state = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let current =
+                                s.notifier.is_channel_active(notifier::Channel::WhatsApp);
+                            s.notifier
+                                .set_channel_active(notifier::Channel::WhatsApp, !current);
+                            !current
+                        } else {
+                            false
+                        }
+                    };
+                    diagnose::log(format!("notifier WhatsApp toggled -> {new_state}"));
+                }
+                IDM_NOTIFIER_TEST => {
+                    let report = {
+                        let mut state = lock_state();
+                        state
+                            .as_mut()
+                            .map(|s| s.notifier.send_test())
+                    };
+                    match report {
+                        Some(Ok(report)) => {
+                            let mut parts = Vec::new();
+                            if let Some(r) = report.sms {
+                                parts.push(format!(
+                                    "SMS: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            if let Some(r) = report.email {
+                                parts.push(format!(
+                                    "Email: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            if let Some(r) = report.whatsapp {
+                                parts.push(format!(
+                                    "WhatsApp: {}",
+                                    match r {
+                                        Ok(_) => "ok".to_string(),
+                                        Err(e) => format!("error: {e}"),
+                                    }
+                                ));
+                            }
+                            let summary = if parts.is_empty() {
+                                "No active channels. Enable SMS/Email/WhatsApp in this menu first.".to_string()
+                            } else {
+                                parts.join(" | ")
+                            };
+                            show_balloon(hwnd, "Notifier test", &summary);
+                            diagnose::log(format!("notifier test: {summary}"));
+                        }
+                        Some(Err(error)) => {
+                            show_balloon(hwnd, "Notifier test failed", &error.to_string());
+                            diagnose::log(format!("notifier test failed: {error}"));
+                        }
+                        None => {}
+                    }
+                }
+                IDM_NOTIFIER_OPEN_CONFIG => {
+                    let path = dirs::config_dir()
+                        .unwrap_or_else(|| {
+                            std::env::var_os("APPDATA")
+                                .map(PathBuf::from)
+                                .unwrap_or_else(|| PathBuf::from("."))
+                        })
+                        .join("claude-code-usage-monitor")
+                        .join("notifier.json");
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = std::fs::write(&path, default_notifier_json());
+                    let _ = std::process::Command::new("cmd")
+                        .arg("/c")
+                        .arg("start")
+                        .arg("")
+                        .arg(&path)
+                        .creation_flags(0x08000000)
+                        .spawn();
+                    diagnose::log(format!(
+                        "opened notifier config at {}",
+                        path.display()
+                    ));
+                }
+                IDM_NOTIFIER_RELOAD_CONFIG => {
+                    let (had_key, sms_active, email_active, whatsapp_active) = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.notifier.reload();
+                            (
+                                s.notifier.has_api_key(),
+                                s.notifier.is_channel_active(notifier::Channel::Sms),
+                                s.notifier.is_channel_active(notifier::Channel::Email),
+                                s.notifier.is_channel_active(notifier::Channel::WhatsApp),
+                            )
+                        } else {
+                            (false, false, false, false)
+                        }
+                    };
+                    let summary = format!(
+                        "api_key={} sms={} email={} whatsapp={}",
+                        if had_key { "yes" } else { "no" },
+                        sms_active,
+                        email_active,
+                        whatsapp_active
+                    );
+                    show_balloon(hwnd, "Notifier config reloaded", &summary);
+                    diagnose::log(format!("notifier reload: {summary}"));
+                }
+                IDM_NOTIFIER_OPTIN_WHATSAPP => {
+                    let (api_key, configured) = {
+                        let state = lock_state();
+                        if let Some(s) = state.as_ref() {
+                            (
+                                s.notifier.has_api_key(),
+                                s.notifier.is_configured_for(notifier::Channel::WhatsApp),
+                            )
+                        } else {
+                            (false, false)
+                        }
+                    };
+                    if !api_key {
+                        show_balloon(
+                            hwnd,
+                            "WhatsApp opt-in",
+                            "Set messangiApiKey in notifier.json first.",
+                        );
+                    } else if !configured {
+                        show_balloon(
+                            hwnd,
+                            "WhatsApp opt-in",
+                            "Set whatsapp.from and whatsapp.to in notifier.json first.",
+                        );
+                    } else {
+                        let (msg, opted) = {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.notifier.mark_whatsapp_opted_in();
+                                (
+                                    "WhatsApp opted in. Send a first message from your phone to the configured sender, then keep an eye on the log to confirm delivery.".to_string(),
+                                    true,
+                                )
+                            } else {
+                                (String::new(), false)
+                            }
+                        };
+                        if opted {
+                            show_balloon(hwnd, "WhatsApp opted in", &msg);
+                            diagnose::log("notifier: WhatsApp opt-in marked");
+                        }
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -2718,6 +3132,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2732,6 +3147,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.show_opencode,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2742,6 +3158,7 @@ fn show_context_menu(hwnd: HWND) {
                     UpdateStatus::Idle,
                     true,
                     true,
+                    false,
                     false,
                     false,
                 ),
@@ -2830,6 +3247,19 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(antigravity_model.as_ptr()),
         );
 
+        let opencode_model = native_interop::wide_str(strings.opencode_model);
+        let opencode_flags = if show_opencode {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            models_menu,
+            opencode_flags,
+            IDM_MODEL_OPENCODE as usize,
+            PCWSTR::from_raw(opencode_model.as_ptr()),
+        );
+
         let models_label = native_interop::wide_str(strings.models);
         let _ = AppendMenuW(
             menu,
@@ -2912,6 +3342,109 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(language_label.as_ptr()),
         );
 
+        let notifier_menu = CreatePopupMenu().unwrap();
+
+        let (sms_active, email_active, whatsapp_active, whatsapp_opted_in, has_api_key) = {
+            let state = lock_state();
+            match state.as_ref() {
+                Some(s) => (
+                    s.notifier.is_channel_active(notifier::Channel::Sms),
+                    s.notifier.is_channel_active(notifier::Channel::Email),
+                    s.notifier.is_channel_active(notifier::Channel::WhatsApp),
+                    s.notifier.is_whatsapp_opted_in(),
+                    s.notifier.has_api_key(),
+                ),
+                None => (false, false, false, false, false),
+            }
+        };
+
+        let sms_label = native_interop::wide_str(strings.notifier_sms);
+        let sms_flags = if sms_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            sms_flags,
+            IDM_NOTIFIER_TOGGLE_SMS as usize,
+            PCWSTR::from_raw(sms_label.as_ptr()),
+        );
+
+        let email_label = native_interop::wide_str(strings.notifier_email);
+        let email_flags = if email_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            email_flags,
+            IDM_NOTIFIER_TOGGLE_EMAIL as usize,
+            PCWSTR::from_raw(email_label.as_ptr()),
+        );
+
+        let whatsapp_label = native_interop::wide_str(strings.notifier_whatsapp);
+        let whatsapp_flags = if whatsapp_active { MF_CHECKED } else { MENU_ITEM_FLAGS(0) };
+        let _ = AppendMenuW(
+            notifier_menu,
+            whatsapp_flags,
+            IDM_NOTIFIER_TOGGLE_WHATSAPP as usize,
+            PCWSTR::from_raw(whatsapp_label.as_ptr()),
+        );
+
+        if whatsapp_active {
+            let optin_label = native_interop::wide_str(strings.notifier_whatsapp_optin);
+            let _ = AppendMenuW(
+                notifier_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_NOTIFIER_OPTIN_WHATSAPP as usize,
+                PCWSTR::from_raw(optin_label.as_ptr()),
+            );
+            if whatsapp_opted_in {
+                let check_label = native_interop::wide_str(strings.notifier_whatsapp_opted_in);
+                let _ = AppendMenuW(
+                    notifier_menu,
+                    MF_GRAYED,
+                    0,
+                    PCWSTR::from_raw(check_label.as_ptr()),
+                );
+            }
+        }
+
+        let _ = AppendMenuW(notifier_menu, MF_SEPARATOR, 0, PCWSTR::null());
+
+        let test_label = native_interop::wide_str(strings.notifier_test);
+        let test_flags = if has_api_key {
+            MENU_ITEM_FLAGS(0)
+        } else {
+            MF_GRAYED
+        };
+        let _ = AppendMenuW(
+            notifier_menu,
+            test_flags,
+            IDM_NOTIFIER_TEST as usize,
+            PCWSTR::from_raw(test_label.as_ptr()),
+        );
+
+        let open_cfg_label = native_interop::wide_str(strings.notifier_open_config);
+        let _ = AppendMenuW(
+            notifier_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_NOTIFIER_OPEN_CONFIG as usize,
+            PCWSTR::from_raw(open_cfg_label.as_ptr()),
+        );
+
+        let reload_label = native_interop::wide_str(strings.notifier_reload);
+        let _ = AppendMenuW(
+            notifier_menu,
+            MENU_ITEM_FLAGS(0),
+            IDM_NOTIFIER_RELOAD_CONFIG as usize,
+            PCWSTR::from_raw(reload_label.as_ptr()),
+        );
+
+        let notifier_label = native_interop::wide_str(strings.notifier_menu);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            notifier_menu.0 as usize,
+            PCWSTR::from_raw(notifier_label.as_ptr()),
+        );
+
+        let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
+
         let _ = AppendMenuW(settings_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
         let version_label =
@@ -2988,9 +3521,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        opencode_session_pct,
+        opencode_session_text,
+        opencode_weekly_pct,
+        opencode_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_opencode,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3009,9 +3547,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.opencode_session_percent,
+                s.opencode_session_text.clone(),
+                s.opencode_weekly_percent,
+                s.opencode_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_opencode,
             ),
             None => return,
         }
@@ -3020,6 +3563,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let opencode_accent = opencode_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -3072,11 +3616,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            opencode_session_pct,
+            &opencode_session_text,
+            opencode_weekly_pct,
+            &opencode_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_opencode,
             &codex_accent,
             &antigravity_accent,
+            &opencode_accent,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3100,16 +3650,25 @@ fn draw_row(
     codex_text: &str,
     antigravity_percent: f64,
     antigravity_text: &str,
+    opencode_percent: f64,
+    opencode_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_opencode: bool,
     claude_accent: &Color,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    opencode_accent: &Color,
     track: &Color,
 ) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
+    let active_models = active_model_count(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_opencode,
+    );
     let segment_count = row_bar_segment_count(active_models);
     let use_model_text_colors = active_models > 1;
     let claude_value_color = if use_model_text_colors {
@@ -3124,6 +3683,11 @@ fn draw_row(
     };
     let antigravity_value_color = if use_model_text_colors {
         antigravity_usage_text_color(is_dark)
+    } else {
+        *text_color
+    };
+    let opencode_value_color = if use_model_text_colors {
+        opencode_usage_text_color(is_dark)
     } else {
         *text_color
     };
@@ -3184,6 +3748,20 @@ fn draw_row(
                 antigravity_accent,
                 track,
                 &antigravity_value_color,
+            );
+            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_opencode {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                opencode_percent,
+                opencode_text,
+                opencode_accent,
+                track,
+                &opencode_value_color,
             );
         }
     }
