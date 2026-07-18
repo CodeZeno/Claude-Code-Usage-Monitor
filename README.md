@@ -19,8 +19,9 @@ It sits in your taskbar and shows how much of your Claude Code, Codex, and/or An
 - A small native widget that lives directly in the Windows taskbar
 - System tray icon badges showing your enabled model usage percentage
 - Left-click the tray icon to toggle the taskbar widget on or off
-- Right-click options for refresh, displayed models, update frequency, language, startup, widget visibility, and updates
+- Right-click options for refresh, displayed models, update frequency, language, orientation, startup, widget visibility, and updates
 - Multi-monitor taskbar placement, so the widget can live on the taskbar for the screen you prefer
+- Automatic support for vertical taskbars (for example, when using StartAllBack), with a **Settings → Orientation** override for horizontal, vertical, or automatic, and a **Settings → Bar Length** option to size or hide the bars in the vertical layout
 
 ## Who This Is For
 

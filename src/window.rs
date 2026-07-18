@@ -43,6 +43,60 @@ impl SendHwnd {
     }
 }
 
+/// Effective layout direction of the widget, derived from the taskbar it is
+/// docked to (or forced by the user's preference).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Orientation {
+    Horizontal,
+    Vertical,
+}
+
+impl Orientation {
+    /// A taskbar taller than it is wide is docked to a screen edge vertically.
+    fn from_taskbar_rect(rect: RECT) -> Self {
+        if (rect.bottom - rect.top) > (rect.right - rect.left) {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        }
+    }
+}
+
+/// User preference for widget orientation, chosen from the Settings menu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrientationPref {
+    Auto,
+    Horizontal,
+    Vertical,
+}
+
+impl OrientationPref {
+    fn code(self) -> &'static str {
+        match self {
+            OrientationPref::Auto => "auto",
+            OrientationPref::Horizontal => "horizontal",
+            OrientationPref::Vertical => "vertical",
+        }
+    }
+
+    fn from_code(code: &str) -> Self {
+        match code {
+            "horizontal" => OrientationPref::Horizontal,
+            "vertical" => OrientationPref::Vertical,
+            _ => OrientationPref::Auto,
+        }
+    }
+
+    /// Resolve the preference against the taskbar we are docked to.
+    fn resolve(self, taskbar_rect: RECT) -> Orientation {
+        match self {
+            OrientationPref::Horizontal => Orientation::Horizontal,
+            OrientationPref::Vertical => Orientation::Vertical,
+            OrientationPref::Auto => Orientation::from_taskbar_rect(taskbar_rect),
+        }
+    }
+}
+
 /// Shared application state
 struct AppState {
     hwnd: SendHwnd,
@@ -85,9 +139,13 @@ struct AppState {
 
     taskbar_index: usize,
     tray_offset: i32,
+    orientation_pref: OrientationPref,
+    orientation: Orientation,
+    vertical_width: i32,
+    vertical_bar_segments: i32,
     dragging: bool,
-    drag_start_mouse_x: i32,
-    drag_start_client_x: i32,
+    drag_start_mouse_main: i32,
+    drag_start_client_main: i32,
     drag_start_offset: i32,
 
     widget_visible: bool,
@@ -132,6 +190,21 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_ORIENT_AUTO: u16 = 70;
+const IDM_ORIENT_HORIZONTAL: u16 = 71;
+const IDM_ORIENT_VERTICAL: u16 = 72;
+// Bar-length choices for the vertical layout; the value is the segment count
+// (0 hides the bar and shows only the percentage).
+const BAR_LENGTH_CHOICES: [(u16, i32); 4] = [
+    (IDM_BAR_OFF, 0),
+    (IDM_BAR_SHORT, 3),
+    (IDM_BAR_MEDIUM, 5),
+    (IDM_BAR_LONG, 10),
+];
+const IDM_BAR_OFF: u16 = 73;
+const IDM_BAR_SHORT: u16 = 74;
+const IDM_BAR_MEDIUM: u16 = 75;
+const IDM_BAR_LONG: u16 = 76;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -303,6 +376,10 @@ struct SettingsFile {
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
+    #[serde(default = "default_orientation")]
+    orientation: String,
+    #[serde(default = "default_vertical_bar_segments")]
+    vertical_bar_segments: i32,
     #[serde(default = "default_poll_interval")]
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -324,6 +401,8 @@ impl Default for SettingsFile {
         Self {
             tray_offset: 0,
             taskbar_index: 0,
+            orientation: default_orientation(),
+            vertical_bar_segments: default_vertical_bar_segments(),
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
@@ -337,6 +416,14 @@ impl Default for SettingsFile {
 
 fn default_poll_interval() -> u32 {
     POLL_15_MIN
+}
+
+fn default_orientation() -> String {
+    OrientationPref::Auto.code().to_string()
+}
+
+fn default_vertical_bar_segments() -> i32 {
+    V_DEFAULT_BAR_SEGMENTS
 }
 
 fn default_widget_visible() -> bool {
@@ -383,6 +470,8 @@ fn save_state_settings() {
         save_settings(&SettingsFile {
             tray_offset: s.tray_offset,
             taskbar_index: s.taskbar_index,
+            orientation: s.orientation_pref.code().to_string(),
+            vertical_bar_segments: s.vertical_bar_segments,
             poll_interval_ms: s.poll_interval_ms,
             language: s
                 .language_override
@@ -564,32 +653,68 @@ fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)>
         })
 }
 
-fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
+/// Start of the taskbar along its main axis (left edge for horizontal, top edge
+/// for vertical) in screen coordinates.
+fn taskbar_main_start(taskbar_rect: RECT, orientation: Orientation) -> i32 {
+    match orientation {
+        Orientation::Horizontal => taskbar_rect.left,
+        Orientation::Vertical => taskbar_rect.top,
     }
-    tray_left
 }
 
-fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
-    offset.clamp(0, max_offset)
+/// Main-axis coordinate of a screen point.
+fn point_main(pt: POINT, orientation: Orientation) -> i32 {
+    match orientation {
+        Orientation::Horizontal => pt.x,
+        Orientation::Vertical => pt.y,
+    }
+}
+
+/// Screen coordinate of the tray edge facing the widget, along the main axis.
+/// The widget is anchored just before this edge. Horizontal taskbars grow the
+/// tray inward from the right; vertical ones from the bottom.
+fn tray_main_edge(taskbar_hwnd: HWND, taskbar_rect: RECT, orientation: Orientation) -> i32 {
+    let fallback = match orientation {
+        Orientation::Horizontal => taskbar_rect.right,
+        Orientation::Vertical => taskbar_rect.bottom,
+    };
+    native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
+        .and_then(native_interop::get_window_rect_safe)
+        .map(|tray_rect| match orientation {
+            Orientation::Horizontal => tray_rect.left,
+            Orientation::Vertical => tray_rect.top,
+        })
+        .unwrap_or(fallback)
+}
+
+/// The widget's extent along the taskbar's main axis (its width when
+/// horizontal, its height when vertical).
+fn widget_main_extent(orientation: Orientation) -> i32 {
+    let (w, h) = widget_dimensions(orientation);
+    match orientation {
+        Orientation::Horizontal => w,
+        Orientation::Vertical => h,
+    }
+}
+
+/// Largest offset that keeps the widget between the taskbar start and the tray.
+fn max_offset_for(taskbar_rect: RECT, tray_edge: i32, orientation: Orientation) -> i32 {
+    (tray_edge - taskbar_main_start(taskbar_rect, orientation) - widget_main_extent(orientation))
+        .max(0)
 }
 
 fn offset_for_drop_point(
     taskbar_hwnd: HWND,
     taskbar_rect: RECT,
     pt: POINT,
-    drag_start_client_x: i32,
+    drag_start_client_main: i32,
+    orientation: Orientation,
 ) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let desired_left = pt.x - taskbar_rect.left - drag_start_client_x;
-    let offset = tray_left - taskbar_rect.left - total_widget_width() - desired_left;
-    clamp_offset_for_taskbar(taskbar_hwnd, taskbar_rect, offset)
+    let tray_edge = tray_main_edge(taskbar_hwnd, taskbar_rect, orientation);
+    let main_start = taskbar_main_start(taskbar_rect, orientation);
+    let desired = point_main(pt, orientation) - main_start - drag_start_client_main;
+    let offset = tray_edge - main_start - widget_main_extent(orientation) - desired;
+    offset.clamp(0, max_offset_for(taskbar_rect, tray_edge, orientation))
 }
 
 fn now_unix_secs() -> u64 {
@@ -1061,13 +1186,74 @@ const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
 
-fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
-    let divider_h = sc(25);
-    let divider_top = (sc(WIDGET_HEIGHT) - divider_h) / 2;
-    client_x >= 0
-        && client_x < sc(LEFT_DIVIDER_W)
-        && client_y >= divider_top
-        && client_y < divider_top + divider_h
+// Vertical (upright) layout, used on vertical taskbars. Text stays horizontal;
+// each usage window is a stacked block of "label + %" over "bar + countdown".
+const V_WIDTH: i32 = 52; // fallback width; the taskbar width is used when known
+const V_PAD: i32 = 5; // left/right/bottom padding
+const V_HANDLE_H: i32 = 6; // top drag handle band
+const V_LINE_H: i32 = 15; // height of one text line
+const V_SEG_W: i32 = 5; // mini-bar segment width
+const V_SEG_H: i32 = 9; // mini-bar segment height
+const V_SEG_GAP: i32 = 1;
+const V_COUNTDOWN_W: i32 = 16; // reserved width for the countdown on the bar line
+const V_BLOCK_GAP: i32 = 8; // gap between stacked blocks
+const V_DEFAULT_BAR_SEGMENTS: i32 = 5; // 0 hides the bar (percentage only)
+
+/// The effective orientation last resolved by the positioning code.
+fn current_orientation() -> Orientation {
+    lock_state()
+        .as_ref()
+        .map(|s| s.orientation)
+        .unwrap_or(Orientation::Horizontal)
+}
+
+/// Widget window size (width, height) for the given orientation. Horizontal
+/// keeps the classic strip; vertical is a narrow upright column.
+fn widget_dimensions(orientation: Orientation) -> (i32, i32) {
+    match orientation {
+        Orientation::Horizontal => (total_widget_width(), sc(WIDGET_HEIGHT)),
+        Orientation::Vertical => (vertical_widget_width(), vertical_widget_height()),
+    }
+}
+
+/// Width of the vertical widget: the docked taskbar's width when known,
+/// otherwise a sensible fallback.
+fn vertical_widget_width() -> i32 {
+    let stored = lock_state().as_ref().map(|s| s.vertical_width).unwrap_or(0);
+    if stored > 0 {
+        stored
+    } else {
+        sc(V_WIDTH)
+    }
+}
+
+/// Height of the vertical widget: one stacked block per (window, model), each
+/// two text lines tall, plus the top drag handle.
+fn vertical_widget_height() -> i32 {
+    let active_models = {
+        let state = lock_state();
+        state
+            .as_ref()
+            .map(|s| active_model_count(s.show_claude_code, s.show_codex, s.show_antigravity))
+            .unwrap_or(1)
+    };
+    let blocks = active_models * 2;
+    sc(V_HANDLE_H) + blocks * (2 * sc(V_LINE_H)) + (blocks - 1).max(0) * sc(V_BLOCK_GAP) + sc(V_PAD)
+}
+
+fn is_drag_handle_point(orientation: Orientation, client_x: i32, client_y: i32) -> bool {
+    match orientation {
+        Orientation::Horizontal => {
+            let divider_h = sc(25);
+            let divider_top = (sc(WIDGET_HEIGHT) - divider_h) / 2;
+            client_x >= 0
+                && client_x < sc(LEFT_DIVIDER_W)
+                && client_y >= divider_top
+                && client_y < divider_top + divider_h
+        }
+        // The whole top band moves a vertical widget along the taskbar.
+        Orientation::Vertical => client_y >= 0 && client_y < sc(V_HANDLE_H),
+    }
 }
 
 fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
@@ -1076,7 +1262,7 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
         if GetCursorPos(&mut pt).is_err() || !ScreenToClient(hwnd, &mut pt).as_bool() {
             return false;
         }
-        is_drag_handle_point(pt.x, pt.y)
+        is_drag_handle_point(current_orientation(), pt.x, pt.y)
     }
 }
 
@@ -1105,14 +1291,6 @@ fn total_widget_width_for(active_models: i32) -> i32 {
         + model_width * active_models
         + sc(MODEL_RIGHT_MARGIN) * (active_models - 1)
         + sc(RIGHT_MARGIN)
-}
-
-fn total_widget_width_for_state(state: &AppState) -> i32 {
-    total_widget_width_for(active_model_count(
-        state.show_claude_code,
-        state.show_codex,
-        state.show_antigravity,
-    ))
 }
 
 fn total_widget_width() -> i32 {
@@ -1323,9 +1501,13 @@ pub fn run() {
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
                 tray_offset: settings.tray_offset,
+                orientation_pref: OrientationPref::from_code(&settings.orientation),
+                orientation: Orientation::Horizontal,
+                vertical_width: 0,
+                vertical_bar_segments: settings.vertical_bar_segments.max(0),
                 dragging: false,
-                drag_start_mouse_x: 0,
-                drag_start_client_x: 0,
+                drag_start_mouse_main: 0,
+                drag_start_client_main: 0,
                 drag_start_offset: 0,
                 widget_visible: settings.widget_visible,
             });
@@ -1411,6 +1593,61 @@ pub fn run() {
     }
 }
 
+/// A top-down 32-bit DIB section paired with its memory DC, used as an
+/// off-screen render target.
+struct Dib {
+    dc: HDC,
+    bitmap: HBITMAP,
+    old: HGDIOBJ,
+    bits: *mut u32,
+    len: usize,
+}
+
+impl Dib {
+    unsafe fn new(reference_dc: HDC, width: i32, height: i32) -> Option<Dib> {
+        let bmi = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: width,
+                biHeight: -height, // top-down
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: 0, // BI_RGB
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let dc = CreateCompatibleDC(reference_dc);
+        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+        let bitmap = match CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0) {
+            Ok(bitmap) if !bitmap.is_invalid() && !bits.is_null() => bitmap,
+            _ => {
+                let _ = DeleteDC(dc);
+                return None;
+            }
+        };
+        let old = SelectObject(dc, bitmap);
+        Some(Dib {
+            dc,
+            bitmap,
+            old,
+            bits: bits as *mut u32,
+            len: (width * height) as usize,
+        })
+    }
+
+    unsafe fn pixels(&self) -> &mut [u32] {
+        std::slice::from_raw_parts_mut(self.bits, self.len)
+    }
+
+    unsafe fn destroy(self) {
+        SelectObject(self.dc, self.old);
+        let _ = DeleteObject(self.bitmap);
+        let _ = DeleteDC(self.dc);
+    }
+}
+
 /// Render widget content and push to the layered window via UpdateLayeredWindow.
 /// Renders fully opaque with the actual taskbar background colour so that
 /// ClearType sub-pixel font rendering can be used for crisp, OS-native text.
@@ -1474,8 +1711,8 @@ fn render_layered() {
         return;
     }
 
-    let width = total_widget_width();
-    let height = sc(WIDGET_HEIGHT);
+    let orientation = current_orientation();
+    let (width, height) = widget_dimensions(orientation);
 
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
@@ -1499,40 +1736,22 @@ fn render_layered() {
     unsafe {
         let screen_dc = GetDC(hwnd);
 
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: width,
-                biHeight: -height, // top-down
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: 0, // BI_RGB
-                ..Default::default()
-            },
-            ..Default::default()
+        let dib = match Dib::new(screen_dc, width, height) {
+            Some(dib) => dib,
+            None => {
+                ReleaseDC(hwnd, screen_dc);
+                return;
+            }
         };
 
-        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let mem_dc = CreateCompatibleDC(screen_dc);
-        let dib =
-            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
-
-        if dib.is_invalid() || bits.is_null() {
-            let _ = DeleteDC(mem_dc);
-            ReleaseDC(hwnd, screen_dc);
-            return;
-        }
-
-        let old_bmp = SelectObject(mem_dc, dib);
-        let pixel_count = (width * height) as usize;
-
-        // Render once with the actual taskbar background colour.
-        // Using an opaque background lets us use CLEARTYPE_QUALITY for
-        // sub-pixel font rendering that matches the rest of the OS.
+        // Render with the actual taskbar background colour. Using an opaque
+        // background lets us use CLEARTYPE_QUALITY for sub-pixel font rendering
+        // that matches the rest of the OS.
         paint_content(
-            mem_dc,
+            dib.dc,
             width,
             height,
+            orientation,
             is_dark,
             &bg_color,
             &text_color,
@@ -1561,8 +1780,7 @@ fn render_layered() {
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
         // Content pixels → fully opaque (preserves ClearType sub-pixel rendering).
         let bg_bgr = bg_color.to_colorref();
-        let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, pixel_count);
-        for px in pixel_data.iter_mut() {
+        for px in dib.pixels().iter_mut() {
             let rgb = *px & 0x00FFFFFF;
             if rgb == bg_bgr {
                 *px = 0x01000000;
@@ -1589,17 +1807,14 @@ fn render_layered() {
             screen_dc,
             None,
             Some(&sz),
-            mem_dc,
+            dib.dc,
             Some(&pt_src),
             COLORREF(0),
             Some(&blend),
             ULW_ALPHA,
         );
 
-        // Cleanup
-        SelectObject(mem_dc, old_bmp);
-        let _ = DeleteObject(dib);
-        let _ = DeleteDC(mem_dc);
+        dib.destroy();
         ReleaseDC(hwnd, screen_dc);
     }
 }
@@ -1609,6 +1824,7 @@ fn paint_content(
     hdc: HDC,
     width: i32,
     height: i32,
+    orientation: Orientation,
     is_dark: bool,
     bg: &Color,
     text_color: &Color,
@@ -1645,47 +1861,6 @@ fn paint_content(
         FillRect(hdc, &client_rect, bg_brush);
         let _ = DeleteObject(bg_brush);
 
-        // Left divider
-        let divider_h = sc(25);
-        let divider_top = (height - divider_h) / 2;
-        let divider_bottom = divider_top + divider_h;
-
-        let (div_left, div_right) = if is_dark {
-            ((80, 80, 80), (40, 40, 40))
-        } else {
-            ((160, 160, 160), (230, 230, 230))
-        };
-
-        let left_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_left.0, div_left.1, div_left.2,
-        )));
-        let left_rect = RECT {
-            left: 0,
-            top: divider_top,
-            right: sc(2),
-            bottom: divider_bottom,
-        };
-        FillRect(hdc, &left_rect, left_brush);
-        let _ = DeleteObject(left_brush);
-
-        let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
-            div_right.0,
-            div_right.1,
-            div_right.2,
-        )));
-        let right_rect = RECT {
-            left: sc(2),
-            top: divider_top,
-            right: sc(3),
-            bottom: divider_bottom,
-        };
-        FillRect(hdc, &right_rect, right_brush);
-        let _ = DeleteObject(right_brush);
-
-        let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row2_y = height - sc(5) - sc(SEGMENT_H);
-        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
-
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
 
@@ -1708,38 +1883,18 @@ fn paint_content(
         );
         let old_font = SelectObject(hdc, font);
 
-        draw_row(
-            hdc,
-            content_x,
-            row1_y,
-            is_dark,
-            text_color,
-            strings.session_window,
+        let usage = UsageSnapshot {
+            strings,
             session_pct,
             session_text,
-            codex_session_pct,
-            codex_session_text,
-            antigravity_session_pct,
-            antigravity_session_text,
-            show_claude_code,
-            show_codex,
-            show_antigravity,
-            accent,
-            codex_accent,
-            antigravity_accent,
-            track,
-        );
-        draw_row(
-            hdc,
-            content_x,
-            row2_y,
-            is_dark,
-            text_color,
-            strings.weekly_window,
             weekly_pct,
             weekly_text,
+            codex_session_pct,
+            codex_session_text,
             codex_weekly_pct,
             codex_weekly_text,
+            antigravity_session_pct,
+            antigravity_session_text,
             antigravity_weekly_pct,
             antigravity_weekly_text,
             show_claude_code,
@@ -1748,12 +1903,344 @@ fn paint_content(
             accent,
             codex_accent,
             antigravity_accent,
-            track,
-        );
+        };
+
+        match orientation {
+            Orientation::Horizontal => {
+                paint_horizontal(hdc, width, height, is_dark, text_color, track, &usage)
+            }
+            Orientation::Vertical => {
+                paint_vertical(hdc, width, height, is_dark, text_color, track, &usage)
+            }
+        }
 
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
     }
+}
+
+/// The usage figures and colours needed to paint the widget, grouped so the
+/// orientation-specific painters share one signature.
+struct UsageSnapshot<'a> {
+    strings: Strings,
+    session_pct: f64,
+    session_text: &'a str,
+    weekly_pct: f64,
+    weekly_text: &'a str,
+    codex_session_pct: f64,
+    codex_session_text: &'a str,
+    codex_weekly_pct: f64,
+    codex_weekly_text: &'a str,
+    antigravity_session_pct: f64,
+    antigravity_session_text: &'a str,
+    antigravity_weekly_pct: f64,
+    antigravity_weekly_text: &'a str,
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    accent: &'a Color,
+    codex_accent: &'a Color,
+    antigravity_accent: &'a Color,
+}
+
+/// Classic horizontal strip: a drag divider on the left, then a 5h row above a
+/// 7d row, each holding one bar per enabled model.
+unsafe fn paint_horizontal(
+    hdc: HDC,
+    _width: i32,
+    height: i32,
+    is_dark: bool,
+    text_color: &Color,
+    track: &Color,
+    usage: &UsageSnapshot,
+) {
+    let divider_h = sc(25);
+    let divider_top = (height - divider_h) / 2;
+    let divider_bottom = divider_top + divider_h;
+
+    let (div_left, div_right) = if is_dark {
+        ((80, 80, 80), (40, 40, 40))
+    } else {
+        ((160, 160, 160), (230, 230, 230))
+    };
+
+    let left_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
+        div_left.0, div_left.1, div_left.2,
+    )));
+    let left_rect = RECT {
+        left: 0,
+        top: divider_top,
+        right: sc(2),
+        bottom: divider_bottom,
+    };
+    FillRect(hdc, &left_rect, left_brush);
+    let _ = DeleteObject(left_brush);
+
+    let right_brush = CreateSolidBrush(COLORREF(native_interop::colorref(
+        div_right.0,
+        div_right.1,
+        div_right.2,
+    )));
+    let right_rect = RECT {
+        left: sc(2),
+        top: divider_top,
+        right: sc(3),
+        bottom: divider_bottom,
+    };
+    FillRect(hdc, &right_rect, right_brush);
+    let _ = DeleteObject(right_brush);
+
+    let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
+    let row2_y = height - sc(5) - sc(SEGMENT_H);
+    let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+
+    draw_row(
+        hdc,
+        content_x,
+        row1_y,
+        is_dark,
+        text_color,
+        usage.strings.session_window,
+        usage.session_pct,
+        usage.session_text,
+        usage.codex_session_pct,
+        usage.codex_session_text,
+        usage.antigravity_session_pct,
+        usage.antigravity_session_text,
+        usage.show_claude_code,
+        usage.show_codex,
+        usage.show_antigravity,
+        usage.accent,
+        usage.codex_accent,
+        usage.antigravity_accent,
+        track,
+    );
+    draw_row(
+        hdc,
+        content_x,
+        row2_y,
+        is_dark,
+        text_color,
+        usage.strings.weekly_window,
+        usage.weekly_pct,
+        usage.weekly_text,
+        usage.codex_weekly_pct,
+        usage.codex_weekly_text,
+        usage.antigravity_weekly_pct,
+        usage.antigravity_weekly_text,
+        usage.show_claude_code,
+        usage.show_codex,
+        usage.show_antigravity,
+        usage.accent,
+        usage.codex_accent,
+        usage.antigravity_accent,
+        track,
+    );
+}
+
+fn current_vertical_bar_segments() -> i32 {
+    lock_state()
+        .as_ref()
+        .map(|s| s.vertical_bar_segments)
+        .unwrap_or(V_DEFAULT_BAR_SEGMENTS)
+}
+
+/// Split a "14% · 3h" usage line into its percentage and countdown parts.
+/// Lines without a countdown (e.g. "14%", "...", "!") yield an empty countdown.
+fn split_usage_text(text: &str) -> (&str, &str) {
+    match text.split_once(" \u{00b7} ") {
+        Some((pct, countdown)) => (pct, countdown),
+        None => (text, ""),
+    }
+}
+
+/// Narrow upright column for vertical taskbars: a drag handle on top, then one
+/// stacked block per (window, model) showing "label + %" over "bar + countdown".
+unsafe fn paint_vertical(
+    hdc: HDC,
+    width: i32,
+    _height: i32,
+    is_dark: bool,
+    text_color: &Color,
+    track: &Color,
+    usage: &UsageSnapshot,
+) {
+    // Top drag handle: a subtle centred pill.
+    let handle_w = sc(18);
+    let handle_rect = RECT {
+        left: (width - handle_w) / 2,
+        top: sc(2),
+        right: (width + handle_w) / 2,
+        bottom: sc(2) + sc(3),
+    };
+    let handle_color = if is_dark {
+        Color::new(90, 90, 90)
+    } else {
+        Color::new(150, 150, 150)
+    };
+    draw_rounded_rect(hdc, &handle_rect, &handle_color, sc(1));
+
+    let bar_segments = current_vertical_bar_segments();
+    let multi =
+        active_model_count(usage.show_claude_code, usage.show_codex, usage.show_antigravity) > 1;
+    let value_color = |per_model: Color| if multi { per_model } else { *text_color };
+
+    // (show, accent, value colour, session %, session text, weekly %, weekly text)
+    let models: [(bool, &Color, Color, f64, &str, f64, &str); 3] = [
+        (
+            usage.show_claude_code,
+            usage.accent,
+            value_color(claude_usage_text_color(is_dark)),
+            usage.session_pct,
+            usage.session_text,
+            usage.weekly_pct,
+            usage.weekly_text,
+        ),
+        (
+            usage.show_codex,
+            usage.codex_accent,
+            value_color(codex_usage_text_color(is_dark)),
+            usage.codex_session_pct,
+            usage.codex_session_text,
+            usage.codex_weekly_pct,
+            usage.codex_weekly_text,
+        ),
+        (
+            usage.show_antigravity,
+            usage.antigravity_accent,
+            value_color(antigravity_usage_text_color(is_dark)),
+            usage.antigravity_session_pct,
+            usage.antigravity_session_text,
+            usage.antigravity_weekly_pct,
+            usage.antigravity_weekly_text,
+        ),
+    ];
+
+    let x = sc(V_PAD);
+    let block_width = width - 2 * sc(V_PAD);
+    let block_height = 2 * sc(V_LINE_H);
+    let mut y = sc(V_HANDLE_H);
+    let mut first = true;
+
+    // Session (5h) blocks first, then weekly (7d); the bar colour tells the
+    // models apart when more than one is enabled.
+    for is_session in [true, false] {
+        let label = if is_session {
+            usage.strings.session_window
+        } else {
+            usage.strings.weekly_window
+        };
+        for (show, accent, value_col, s_pct, s_text, w_pct, w_text) in models {
+            if !show {
+                continue;
+            }
+            if !first {
+                y += sc(V_BLOCK_GAP);
+            }
+            first = false;
+            let (percent, text) = if is_session {
+                (s_pct, s_text)
+            } else {
+                (w_pct, w_text)
+            };
+            draw_vertical_block(
+                hdc,
+                x,
+                y,
+                block_width,
+                block_height,
+                label,
+                percent,
+                text,
+                text_color,
+                &value_col,
+                accent,
+                track,
+                bar_segments,
+            );
+            y += block_height;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_vertical_block(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    block_width: i32,
+    block_height: i32,
+    label: &str,
+    percent: f64,
+    text: &str,
+    label_color: &Color,
+    value_color: &Color,
+    accent: &Color,
+    track: &Color,
+    bar_segments: i32,
+) {
+    let line_h = block_height / 2;
+    let (pct_str, cd_str) = split_usage_text(text);
+
+    // Header line: window label on the left, percentage on the right.
+    draw_text_aligned(hdc, x, y, block_width, line_h, label, label_color, DT_LEFT);
+    draw_text_aligned(hdc, x, y, block_width, line_h, pct_str, value_color, DT_RIGHT);
+
+    // Bar line: mini bar on the left, countdown reserved on the right. The
+    // segment width shrinks to fit the space left of the countdown so the bar
+    // never collides with it, whatever the segment count.
+    let bar_y = y + line_h;
+    let countdown_w = sc(V_COUNTDOWN_W);
+    if bar_segments > 0 {
+        let seg_gap = sc(V_SEG_GAP);
+        let bar_area = block_width - countdown_w - sc(2);
+        if bar_area > 0 {
+            let seg_w = ((bar_area - (bar_segments - 1) * seg_gap) / bar_segments)
+                .clamp(1, sc(V_SEG_W));
+            let seg_h = sc(V_SEG_H);
+            let bar_top = bar_y + (line_h - seg_h) / 2;
+            draw_bar_segments(
+                hdc,
+                x,
+                bar_top,
+                seg_w,
+                seg_h,
+                seg_gap,
+                sc(CORNER_RADIUS),
+                bar_segments,
+                percent,
+                accent,
+                track,
+            );
+        }
+    }
+    draw_text_aligned(hdc, x, bar_y, block_width, line_h, cd_str, label_color, DT_RIGHT);
+}
+
+/// Draw single-line text within a rectangle, vertically centred and aligned
+/// left or right. No-op for empty text.
+unsafe fn draw_text_aligned(
+    hdc: HDC,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    text: &str,
+    color: &Color,
+    align: DRAW_TEXT_FORMAT,
+) {
+    if text.is_empty() {
+        return;
+    }
+    let _ = SetTextColor(hdc, COLORREF(color.to_colorref()));
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut rect = RECT {
+        left: x,
+        top: y,
+        right: x + w,
+        bottom: y + h,
+    };
+    let _ = DrawTextW(hdc, &mut wide, &mut rect, align | DT_VCENTER | DT_SINGLELINE);
 }
 
 fn do_poll(send_hwnd: SendHwnd) {
@@ -2061,95 +2548,94 @@ fn tray_reposition_is_suppressed() -> bool {
     }
 }
 
-fn position_at_taskbar() {
+/// Position and size the widget for a desired offset, resolving orientation
+/// from the taskbar it is docked to. Returns the clamped offset actually used,
+/// or `None` if there is no taskbar to dock to. Does not persist settings.
+fn place_widget(desired_offset: i32) -> Option<i32> {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
-    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+    let (hwnd, embedded, taskbar_hwnd, pref) = {
         let state = lock_state();
-        let s = match state.as_ref() {
-            Some(s) => s,
-            None => return,
-        };
-
-        // Don't fight the user's drag
-        if s.dragging {
-            return;
-        }
-
-        let taskbar_hwnd = match s.taskbar_hwnd {
-            Some(h) => h,
-            None => {
-                diagnose::log("position_at_taskbar skipped: no taskbar handle");
-                return;
-            }
-        };
-
-        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
+        let s = state.as_ref()?;
+        (
+            s.hwnd.to_hwnd(),
+            s.embedded,
+            s.taskbar_hwnd?,
+            s.orientation_pref,
+        )
     };
 
-    let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
-        Some(r) => r,
-        None => {
-            diagnose::log("position_at_taskbar skipped: unable to query taskbar rect");
-            return;
-        }
-    };
-
-    let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let mut tray_left = taskbar_rect.right;
-    let anchor_top = taskbar_rect.top;
-    let anchor_height = taskbar_height;
-
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
+    let taskbar_rect = native_interop::get_taskbar_rect(taskbar_hwnd)?;
+    let orientation = pref.resolve(taskbar_rect);
+    // A vertical widget fills the taskbar's width; store it before measuring so
+    // `widget_dimensions` picks it up.
+    let vertical_width = (taskbar_rect.right - taskbar_rect.left).clamp(sc(40), sc(120));
+    if let Some(s) = lock_state().as_mut() {
+        s.orientation = orientation;
+        s.vertical_width = vertical_width;
     }
 
-    let widget_width = total_widget_width();
-    let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-    let tray_offset = tray_offset.clamp(0, max_offset);
-    let offset_changed = {
-        let mut state = lock_state();
-        if let Some(s) = state.as_mut() {
-            if s.tray_offset != tray_offset {
-                s.tray_offset = tray_offset;
-                true
-            } else {
-                false
-            }
-        } else {
-            false
+    let (widget_w, widget_h) = widget_dimensions(orientation);
+    let widget_main = widget_main_extent(orientation);
+    let tray_edge = tray_main_edge(taskbar_hwnd, taskbar_rect, orientation);
+    let offset = desired_offset.clamp(0, max_offset_for(taskbar_rect, tray_edge, orientation));
+
+    // Main axis: anchor just before the tray, pushed back by the offset.
+    let main_pos = tray_edge - widget_main - offset;
+    // Cross axis: horizontal bars hug the bottom of the taskbar; a vertical
+    // strip is centred across its width.
+    let cross_pos = match orientation {
+        Orientation::Horizontal => (taskbar_rect.bottom - widget_h).max(taskbar_rect.top),
+        Orientation::Vertical => {
+            let taskbar_width = taskbar_rect.right - taskbar_rect.left;
+            taskbar_rect.left + (taskbar_width - widget_w).max(0) / 2
         }
     };
-    if offset_changed {
-        save_state_settings();
-    }
 
-    let widget_height = sc(WIDGET_HEIGHT);
-    let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+    let (mut x, mut y) = match orientation {
+        Orientation::Horizontal => (main_pos, cross_pos),
+        Orientation::Vertical => (cross_pos, main_pos),
+    };
     if embedded {
-        // Child window: coordinates relative to parent (taskbar)
-        let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
-        diagnose::log(format!(
-            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
-            y - taskbar_rect.top
-        ));
-    } else {
-        // Topmost popup: screen coordinates
-        let x = tray_left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
-        diagnose::log(format!(
-            "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
-        ));
+        // Child window: coordinates are relative to the taskbar.
+        x -= taskbar_rect.left;
+        y -= taskbar_rect.top;
     }
+    native_interop::move_window(hwnd, x, y, widget_w, widget_h);
+    diagnose::log(format!(
+        "positioned {orientation:?} widget embedded={embedded} x={x} y={y} w={widget_w} h={widget_h} offset={offset}"
+    ));
+    Some(offset)
 }
 
-fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
-    let anchor_bottom = anchor_top + anchor_height;
-    (anchor_bottom - widget_height).max(anchor_top)
+fn position_at_taskbar() {
+    let (dragging, tray_offset) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.dragging, s.tray_offset),
+            None => return,
+        }
+    };
+    // Don't fight the user's drag.
+    if dragging {
+        return;
+    }
+    if let Some(offset) = place_widget(tray_offset) {
+        let changed = {
+            let mut state = lock_state();
+            match state.as_mut() {
+                Some(s) if s.tray_offset != offset => {
+                    s.tray_offset = offset;
+                    true
+                }
+                _ => false,
+            }
+        };
+        if changed {
+            save_state_settings();
+        }
+    }
 }
 
 /// WinEvent callback for tray icon location changes
@@ -2325,17 +2811,18 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_SETCURSOR => {
-            let is_dragging = {
+            let orientation = current_orientation();
+            let show_drag_cursor = {
                 let state = lock_state();
                 state.as_ref().map(|s| s.dragging).unwrap_or(false)
-            };
-            if is_dragging {
-                let cursor = LoadCursorW(HINSTANCE::default(), IDC_SIZEWE).unwrap_or_default();
-                SetCursor(cursor);
-                return LRESULT(1);
-            }
-            if cursor_is_on_drag_handle(hwnd) {
-                let cursor = LoadCursorW(HINSTANCE::default(), IDC_SIZEWE).unwrap_or_default();
+            } || cursor_is_on_drag_handle(hwnd);
+            if show_drag_cursor {
+                // The drag handle moves the widget along the taskbar's main axis.
+                let cursor_id = match orientation {
+                    Orientation::Horizontal => IDC_SIZEWE,
+                    Orientation::Vertical => IDC_SIZENS,
+                };
+                let cursor = LoadCursorW(HINSTANCE::default(), cursor_id).unwrap_or_default();
                 SetCursor(cursor);
                 return LRESULT(1);
             }
@@ -2344,113 +2831,50 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
             let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-            if !is_drag_handle_point(client_x, client_y) {
+            let orientation = current_orientation();
+            if !is_drag_handle_point(orientation, client_x, client_y) {
                 return LRESULT(0);
             }
 
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
+            // The widget moves along the taskbar's main axis, so track that axis.
+            let (mouse_main, client_main) = match orientation {
+                Orientation::Horizontal => (pt.x, client_x),
+                Orientation::Vertical => (pt.y, client_y),
+            };
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 s.dragging = true;
-                s.drag_start_mouse_x = pt.x;
-                s.drag_start_client_x = client_x;
+                s.drag_start_mouse_main = mouse_main;
+                s.drag_start_client_main = client_main;
                 s.drag_start_offset = s.tray_offset;
             }
             SetCapture(hwnd);
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
-            let is_dragging = {
+            let (is_dragging, orientation, start_mouse_main, start_offset) = {
                 let state = lock_state();
-                state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                match state.as_ref() {
+                    Some(s) => (
+                        s.dragging,
+                        s.orientation,
+                        s.drag_start_mouse_main,
+                        s.drag_start_offset,
+                    ),
+                    None => return LRESULT(0),
+                }
             };
             if is_dragging {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
-                let move_target = {
-                    let mut state = lock_state();
-                    let s = match state.as_mut() {
-                        Some(s) => s,
-                        None => return LRESULT(0),
-                    };
-
-                    // Moving mouse left = positive delta = larger offset (further left)
-                    let delta = s.drag_start_mouse_x - pt.x;
-                    let mut new_offset = s.drag_start_offset + delta;
-
-                    // Clamp: offset >= 0 (can't go right of default)
-                    if new_offset < 0 {
-                        new_offset = 0;
-                    }
-
-                    let taskbar_hwnd = s.taskbar_hwnd;
-                    let embedded = s.embedded;
-                    let hwnd_val = s.hwnd.to_hwnd();
-
-                    // Clamp: don't go past left edge of taskbar
-                    if let Some(taskbar_hwnd) = taskbar_hwnd {
-                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                            let mut tray_left = taskbar_rect.right;
-                            if let Some(tray_hwnd) =
-                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                            {
-                                if let Some(tray_rect) =
-                                    native_interop::get_window_rect_safe(tray_hwnd)
-                                {
-                                    tray_left = tray_rect.left;
-                                }
-                            }
-                            let widget_width = total_widget_width_for_state(s);
-                            let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-                            if new_offset > max_offset {
-                                new_offset = max_offset;
-                            }
-
-                            s.tray_offset = new_offset;
-
-                            let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-                            let anchor_top = taskbar_rect.top;
-                            let anchor_height = taskbar_height;
-                            let widget_height = sc(WIDGET_HEIGHT);
-                            let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
-                            let x = if embedded {
-                                tray_left - taskbar_rect.left - widget_width - new_offset
-                            } else {
-                                tray_left - widget_width - new_offset
-                            };
-                            Some((
-                                hwnd_val,
-                                embedded,
-                                x,
-                                y,
-                                taskbar_rect.top,
-                                widget_width,
-                                widget_height,
-                            ))
-                        } else {
-                            s.tray_offset = new_offset;
-                            None
-                        }
-                    } else {
-                        s.tray_offset = new_offset;
-                        None
-                    }
-                };
-
-                if let Some((hwnd_val, embedded, x, y, taskbar_top, widget_width, widget_height)) =
-                    move_target
-                {
-                    if embedded {
-                        native_interop::move_window(
-                            hwnd_val,
-                            x,
-                            y - taskbar_top,
-                            widget_width,
-                            widget_height,
-                        );
-                    } else {
-                        native_interop::move_window(hwnd_val, x, y, widget_width, widget_height);
+                // Dragging toward the taskbar start increases the offset.
+                let delta = start_mouse_main - point_main(pt, orientation);
+                let desired_offset = (start_offset + delta).max(0);
+                if let Some(offset) = place_widget(desired_offset) {
+                    if let Some(s) = lock_state().as_mut() {
+                        s.tray_offset = offset;
                     }
                 }
             }
@@ -2464,7 +2888,7 @@ unsafe extern "system" fn wnd_proc(
                 if let Some(s) = state.as_mut() {
                     if s.dragging {
                         s.dragging = false;
-                        Some((s.taskbar_index, s.drag_start_client_x))
+                        Some((s.taskbar_index, s.drag_start_client_main, s.orientation_pref))
                     } else {
                         None
                     }
@@ -2472,7 +2896,9 @@ unsafe extern "system" fn wnd_proc(
                     None
                 }
             };
-            if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
+            if let Some((current_taskbar_index, drag_start_client_main, orientation_pref)) =
+                drag_result
+            {
                 let _ = ReleaseCapture();
                 if let Some((target_index, target_taskbar)) = taskbar_at_point(pt) {
                     if target_index != current_taskbar_index {
@@ -2480,7 +2906,8 @@ unsafe extern "system" fn wnd_proc(
                             target_taskbar.hwnd,
                             target_taskbar.rect,
                             pt,
-                            drag_start_client_x,
+                            drag_start_client_main,
+                            orientation_pref.resolve(target_taskbar.rect),
                         );
                         {
                             let mut state = lock_state();
@@ -2576,6 +3003,37 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
+                }
+                IDM_ORIENT_AUTO | IDM_ORIENT_HORIZONTAL | IDM_ORIENT_VERTICAL => {
+                    let pref = match id {
+                        IDM_ORIENT_HORIZONTAL => OrientationPref::Horizontal,
+                        IDM_ORIENT_VERTICAL => OrientationPref::Vertical,
+                        _ => OrientationPref::Auto,
+                    };
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.orientation_pref = pref;
+                        }
+                    }
+                    save_state_settings();
+                    position_at_taskbar();
+                    render_layered();
+                }
+                IDM_BAR_OFF | IDM_BAR_SHORT | IDM_BAR_MEDIUM | IDM_BAR_LONG => {
+                    if let Some(&(_, segments)) =
+                        BAR_LENGTH_CHOICES.iter().find(|&&(item_id, _)| item_id == id)
+                    {
+                        {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.vertical_bar_segments = segments;
+                            }
+                        }
+                        save_state_settings();
+                        position_at_taskbar();
+                        render_layered();
+                    }
                 }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
@@ -2718,6 +3176,8 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            orientation_pref,
+            vertical_bar_segments,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2732,6 +3192,8 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.orientation_pref,
+                    s.vertical_bar_segments,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2744,6 +3206,8 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     false,
+                    OrientationPref::Auto,
+                    V_DEFAULT_BAR_SEGMENTS,
                 ),
             }
         };
@@ -2860,6 +3324,73 @@ fn show_context_menu(hwnd: HWND) {
             MENU_ITEM_FLAGS(0),
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
+        );
+
+        // Orientation submenu
+        let orientation_menu = CreatePopupMenu().unwrap();
+        let orientation_items: [(u16, OrientationPref, &str); 3] = [
+            (IDM_ORIENT_AUTO, OrientationPref::Auto, strings.orientation_automatic),
+            (
+                IDM_ORIENT_HORIZONTAL,
+                OrientationPref::Horizontal,
+                strings.orientation_horizontal,
+            ),
+            (
+                IDM_ORIENT_VERTICAL,
+                OrientationPref::Vertical,
+                strings.orientation_vertical,
+            ),
+        ];
+        for (id, pref, label) in orientation_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if pref == orientation_pref {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                orientation_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+        let orientation_label = native_interop::wide_str(strings.orientation);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            orientation_menu.0 as usize,
+            PCWSTR::from_raw(orientation_label.as_ptr()),
+        );
+
+        // Bar Length submenu (affects the vertical layout). "Off" shows just the
+        // percentage; the others pick a segment count.
+        let bar_menu = CreatePopupMenu().unwrap();
+        for (id, segments) in BAR_LENGTH_CHOICES {
+            let label = if segments == 0 {
+                strings.bar_length_off.to_string()
+            } else {
+                segments.to_string()
+            };
+            let label_str = native_interop::wide_str(&label);
+            let flags = if segments == vertical_bar_segments {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                bar_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+        let bar_label = native_interop::wide_str(strings.bar_length);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            bar_menu.0 as usize,
+            PCWSTR::from_raw(bar_label.as_ptr()),
         );
 
         let language_menu = CreatePopupMenu().unwrap();
@@ -3050,10 +3581,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
         let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
         let old_bmp = SelectObject(mem_dc, mem_bmp);
 
+        // The non-embedded fallback is only used when no taskbar is found, so
+        // it always renders the horizontal layout.
         paint_content(
             mem_dc,
             width,
             height,
+            Orientation::Horizontal,
             is_dark,
             &bg_color,
             &text_color,
@@ -3209,56 +3743,21 @@ fn draw_usage_bar(
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
     let seg_gap = sc(SEGMENT_GAP);
-    let corner_r = sc(CORNER_RADIUS);
 
     unsafe {
-        let percent_clamped = percent.clamp(0.0, 100.0);
-        let segment_percent = 100.0 / segment_count as f64;
-
-        for i in 0..segment_count {
-            let seg_x = bar_x + i * (seg_w + seg_gap);
-            let seg_start = (i as f64) * segment_percent;
-            let seg_end = seg_start + segment_percent;
-
-            let seg_rect = RECT {
-                left: seg_x,
-                top: y,
-                right: seg_x + seg_w,
-                bottom: y + seg_h,
-            };
-
-            if percent_clamped >= seg_end {
-                draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
-            } else if percent_clamped <= seg_start {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-            } else {
-                draw_rounded_rect(hdc, &seg_rect, track, corner_r);
-                let fraction = (percent_clamped - seg_start) / segment_percent;
-                let fill_width = (seg_w as f64 * fraction) as i32;
-                if fill_width > 0 {
-                    let fill_rect = RECT {
-                        left: seg_x,
-                        top: y,
-                        right: seg_x + fill_width,
-                        bottom: y + seg_h,
-                    };
-                    let rgn = CreateRoundRectRgn(
-                        seg_rect.left,
-                        seg_rect.top,
-                        seg_rect.right + 1,
-                        seg_rect.bottom + 1,
-                        corner_r * 2,
-                        corner_r * 2,
-                    );
-                    let _ = SelectClipRgn(hdc, rgn);
-                    let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
-                    FillRect(hdc, &fill_rect, brush);
-                    let _ = DeleteObject(brush);
-                    let _ = SelectClipRgn(hdc, HRGN::default());
-                    let _ = DeleteObject(rgn);
-                }
-            }
-        }
+        draw_bar_segments(
+            hdc,
+            bar_x,
+            y,
+            seg_w,
+            seg_h,
+            seg_gap,
+            sc(CORNER_RADIUS),
+            segment_count,
+            percent,
+            accent,
+            track,
+        );
 
         let text_x = bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
         let mut text_wide: Vec<u16> = text.encode_utf16().collect();
@@ -3275,6 +3774,71 @@ fn draw_usage_bar(
             &mut text_rect,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE,
         );
+    }
+}
+
+/// Draw a segmented usage bar (rounded segments filled to `percent`). Shared by
+/// the horizontal and vertical layouts, which pass different segment sizes.
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_bar_segments(
+    hdc: HDC,
+    bar_x: i32,
+    y: i32,
+    seg_w: i32,
+    seg_h: i32,
+    seg_gap: i32,
+    corner_r: i32,
+    segment_count: i32,
+    percent: f64,
+    accent: &Color,
+    track: &Color,
+) {
+    let percent_clamped = percent.clamp(0.0, 100.0);
+    let segment_percent = 100.0 / segment_count as f64;
+
+    for i in 0..segment_count {
+        let seg_x = bar_x + i * (seg_w + seg_gap);
+        let seg_start = (i as f64) * segment_percent;
+        let seg_end = seg_start + segment_percent;
+
+        let seg_rect = RECT {
+            left: seg_x,
+            top: y,
+            right: seg_x + seg_w,
+            bottom: y + seg_h,
+        };
+
+        if percent_clamped >= seg_end {
+            draw_rounded_rect(hdc, &seg_rect, accent, corner_r);
+        } else if percent_clamped <= seg_start {
+            draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+        } else {
+            draw_rounded_rect(hdc, &seg_rect, track, corner_r);
+            let fraction = (percent_clamped - seg_start) / segment_percent;
+            let fill_width = (seg_w as f64 * fraction) as i32;
+            if fill_width > 0 {
+                let fill_rect = RECT {
+                    left: seg_x,
+                    top: y,
+                    right: seg_x + fill_width,
+                    bottom: y + seg_h,
+                };
+                let rgn = CreateRoundRectRgn(
+                    seg_rect.left,
+                    seg_rect.top,
+                    seg_rect.right + 1,
+                    seg_rect.bottom + 1,
+                    corner_r * 2,
+                    corner_r * 2,
+                );
+                let _ = SelectClipRgn(hdc, rgn);
+                let brush = CreateSolidBrush(COLORREF(accent.to_colorref()));
+                FillRect(hdc, &fill_rect, brush);
+                let _ = DeleteObject(brush);
+                let _ = SelectClipRgn(hdc, HRGN::default());
+                let _ = DeleteObject(rgn);
+            }
+        }
     }
 }
 
