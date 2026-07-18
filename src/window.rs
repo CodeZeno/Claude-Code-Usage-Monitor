@@ -1195,7 +1195,6 @@ const V_LINE_H: i32 = 15; // height of one text line
 const V_SEG_W: i32 = 5; // mini-bar segment width
 const V_SEG_H: i32 = 9; // mini-bar segment height
 const V_SEG_GAP: i32 = 1;
-const V_COUNTDOWN_W: i32 = 16; // reserved width for the countdown on the bar line
 const V_BLOCK_GAP: i32 = 8; // gap between stacked blocks
 const V_DEFAULT_BAR_SEGMENTS: i32 = 5; // 0 hides the bar (percentage only)
 
@@ -2186,14 +2185,14 @@ unsafe fn draw_vertical_block(
     draw_text_aligned(hdc, x, y, block_width, line_h, label, label_color, DT_LEFT);
     draw_text_aligned(hdc, x, y, block_width, line_h, pct_str, value_color, DT_RIGHT);
 
-    // Bar line: mini bar on the left, countdown reserved on the right. The
-    // segment width shrinks to fit the space left of the countdown so the bar
-    // never collides with it, whatever the segment count.
+    // Bar line: mini bar on the left, countdown on the right. Measure the
+    // countdown so the bar always stops short of it, whatever its length
+    // ("3h", "53m", "now", ...) and segment count.
     let bar_y = y + line_h;
-    let countdown_w = sc(V_COUNTDOWN_W);
     if bar_segments > 0 {
         let seg_gap = sc(V_SEG_GAP);
-        let bar_area = block_width - countdown_w - sc(2);
+        let countdown_w = text_width(hdc, cd_str);
+        let bar_area = block_width - countdown_w - sc(4);
         if bar_area > 0 {
             let seg_w = ((bar_area - (bar_segments - 1) * seg_gap) / bar_segments)
                 .clamp(1, sc(V_SEG_W));
@@ -2215,6 +2214,17 @@ unsafe fn draw_vertical_block(
         }
     }
     draw_text_aligned(hdc, x, bar_y, block_width, line_h, cd_str, label_color, DT_RIGHT);
+}
+
+/// Width in pixels of `text` in the font currently selected into `hdc`.
+unsafe fn text_width(hdc: HDC, text: &str) -> i32 {
+    if text.is_empty() {
+        return 0;
+    }
+    let wide: Vec<u16> = text.encode_utf16().collect();
+    let mut size = SIZE::default();
+    let _ = GetTextExtentPoint32W(hdc, &wide, &mut size);
+    size.cx
 }
 
 /// Draw single-line text within a rectangle, vertically centred and aligned
