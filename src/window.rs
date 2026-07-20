@@ -396,6 +396,51 @@ fn save_state_settings() {
     }
 }
 
+fn build_provider_tooltip(
+    name: &str,
+    strings: Strings,
+    provider: crate::pace::Provider,
+    usage: Option<&crate::models::UsageData>,
+) -> String {
+    use crate::pace::{elapsed_fraction, eta_to_empty_secs, window_length, Section};
+    let now = std::time::SystemTime::now();
+    let mut out = String::from(name);
+
+    for (section, label, sec) in [
+        (Section::Session, strings.session_window, usage.map(|u| &u.session)),
+        (Section::Weekly, strings.weekly_window, usage.map(|u| &u.weekly)),
+    ] {
+        let Some(sec) = sec else { continue };
+        let mut line = format!("\n{}: {:.0}%", label, sec.percentage);
+        if let Some(rt) = sec.resets_at {
+            if let Some((h, m, _dow)) = crate::native_interop::system_time_to_local_hms(rt) {
+                line.push_str(&format!(
+                    " · {} {}",
+                    strings.resets_at_label,
+                    crate::poller::format_hh_mm_ampm(h, m)
+                ));
+            }
+        }
+        let wl = window_length(provider, section);
+        if let (Some(wl), Some(rt)) = (wl, sec.resets_at) {
+            if let Some(f) = elapsed_fraction(Some(rt), Some(wl), now) {
+                if let Some(eta) = eta_to_empty_secs(sec.percentage, f, wl) {
+                    line.push_str(&format!(
+                        " · ~{} {}",
+                        crate::poller::format_countdown_two_units(eta, strings),
+                        strings.left_at_rate_label
+                    ));
+                }
+            }
+        }
+        out.push_str(&line);
+    }
+    if out.chars().count() > 120 {
+        out = out.chars().take(120).collect();
+    }
+    out
+}
+
 fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
     let state = lock_state();
     match state.as_ref() {
@@ -405,11 +450,11 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Claude,
                     percent: Some(s.session_percent),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
+                    tooltip: build_provider_tooltip(
                         s.language.strings().claude_code_model,
-                        s.session_text,
-                        s.weekly_text
+                        s.language.strings(),
+                        crate::pace::Provider::ClaudeCode,
+                        s.data.as_ref().and_then(|d| d.claude_code.as_ref()),
                     ),
                 });
             }
@@ -417,11 +462,11 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Codex,
                     percent: Some(s.codex_session_percent),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
+                    tooltip: build_provider_tooltip(
                         s.language.strings().codex_model,
-                        s.codex_session_text,
-                        s.codex_weekly_text
+                        s.language.strings(),
+                        crate::pace::Provider::Codex,
+                        s.data.as_ref().and_then(|d| d.codex.as_ref()),
                     ),
                 });
             }
@@ -429,11 +474,11 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: Some(s.antigravity_session_percent),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
+                    tooltip: build_provider_tooltip(
                         s.language.strings().antigravity_model,
-                        s.antigravity_session_text,
-                        s.antigravity_weekly_text
+                        s.language.strings(),
+                        crate::pace::Provider::Antigravity,
+                        s.data.as_ref().and_then(|d| d.antigravity.as_ref()),
                     ),
                 });
             }
@@ -1166,6 +1211,18 @@ fn antigravity_usage_text_color(is_dark: bool) -> Color {
     }
 }
 
+fn pace_color(status: crate::pace::PaceStatus, is_dark: bool) -> Color {
+    use crate::pace::PaceStatus::*;
+    match (status, is_dark) {
+        (Ahead, true) => Color::from_hex("#4CC38A"),
+        (Ahead, false) => Color::from_hex("#217A4A"),
+        (OnPace, true) => Color::from_hex("#E0A030"),
+        (OnPace, false) => Color::from_hex("#9A6B00"),
+        (Behind, true) => Color::from_hex("#F0736A"),
+        (Behind, false) => Color::from_hex("#B82020"),
+    }
+}
+
 pub fn run() {
     // Enable Per-Monitor DPI Awareness V2 for crisp rendering at any scale factor
     unsafe {
@@ -1436,6 +1493,8 @@ fn render_layered() {
         show_claude_code,
         show_codex,
         show_antigravity,
+        claude_session_resets,
+        claude_weekly_resets,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1459,6 +1518,14 @@ fn render_layered() {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.data
+                    .as_ref()
+                    .and_then(|d| d.claude_code.as_ref())
+                    .and_then(|u| u.session.resets_at),
+                s.data
+                    .as_ref()
+                    .and_then(|d| d.claude_code.as_ref())
+                    .and_then(|u| u.weekly.resets_at),
             ),
             None => return,
         }
@@ -1556,6 +1623,8 @@ fn render_layered() {
             show_antigravity,
             &codex_accent,
             &antigravity_accent,
+            claude_session_resets,
+            claude_weekly_resets,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1632,6 +1701,8 @@ fn paint_content(
     show_antigravity: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    claude_session_resets: Option<SystemTime>,
+    claude_weekly_resets: Option<SystemTime>,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1708,6 +1779,24 @@ fn paint_content(
         );
         let old_font = SelectObject(hdc, font);
 
+        let now = std::time::SystemTime::now();
+        let claude_session_pace = claude_session_resets.and_then(|rt| {
+            let wl = crate::pace::window_length(
+                crate::pace::Provider::ClaudeCode,
+                crate::pace::Section::Session,
+            );
+            let f = crate::pace::elapsed_fraction(Some(rt), wl, now)?;
+            Some((f, crate::pace::pace_status(session_pct, f, 5.0)))
+        });
+        let claude_weekly_pace = claude_weekly_resets.and_then(|rt| {
+            let wl = crate::pace::window_length(
+                crate::pace::Provider::ClaudeCode,
+                crate::pace::Section::Weekly,
+            );
+            let f = crate::pace::elapsed_fraction(Some(rt), wl, now)?;
+            Some((f, crate::pace::pace_status(weekly_pct, f, 5.0)))
+        });
+
         draw_row(
             hdc,
             content_x,
@@ -1728,6 +1817,9 @@ fn paint_content(
             codex_accent,
             antigravity_accent,
             track,
+            claude_session_pace,
+            None,
+            None,
         );
         draw_row(
             hdc,
@@ -1749,6 +1841,9 @@ fn paint_content(
             codex_accent,
             antigravity_accent,
             track,
+            claude_weekly_pace,
+            None,
+            None,
         );
 
         SelectObject(hdc, old_font);
@@ -2991,6 +3086,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_claude_code,
         show_codex,
         show_antigravity,
+        claude_session_resets,
+        claude_weekly_resets,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3012,6 +3109,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.data
+                    .as_ref()
+                    .and_then(|d| d.claude_code.as_ref())
+                    .and_then(|u| u.session.resets_at),
+                s.data
+                    .as_ref()
+                    .and_then(|d| d.claude_code.as_ref())
+                    .and_then(|u| u.weekly.resets_at),
             ),
             None => return,
         }
@@ -3077,6 +3182,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_antigravity,
             &codex_accent,
             &antigravity_accent,
+            claude_session_resets,
+            claude_weekly_resets,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3107,6 +3214,9 @@ fn draw_row(
     codex_accent: &Color,
     antigravity_accent: &Color,
     track: &Color,
+    claude_pace: Option<(f64, crate::pace::PaceStatus)>,
+    codex_pace: Option<(f64, crate::pace::PaceStatus)>,
+    antigravity_pace: Option<(f64, crate::pace::PaceStatus)>,
 ) {
     let seg_h = sc(SEGMENT_H);
     let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
@@ -3114,19 +3224,38 @@ fn draw_row(
     let use_model_text_colors = active_models > 1;
     let claude_value_color = if use_model_text_colors {
         claude_usage_text_color(is_dark)
+    } else if let Some((_, st)) = claude_pace {
+        pace_color(st, is_dark)
     } else {
         *text_color
     };
     let codex_value_color = if use_model_text_colors {
         codex_usage_text_color(is_dark)
+    } else if let Some((_, st)) = codex_pace {
+        pace_color(st, is_dark)
     } else {
         *text_color
     };
     let antigravity_value_color = if use_model_text_colors {
         antigravity_usage_text_color(is_dark)
+    } else if let Some((_, st)) = antigravity_pace {
+        pace_color(st, is_dark)
     } else {
         *text_color
     };
+
+    let claude_pace_fraction = claude_pace.map(|(f, _)| f);
+    let claude_tick_color = claude_pace
+        .map(|(_, st)| pace_color(st, is_dark))
+        .unwrap_or(claude_value_color);
+    let codex_pace_fraction = codex_pace.map(|(f, _)| f);
+    let codex_tick_color = codex_pace
+        .map(|(_, st)| pace_color(st, is_dark))
+        .unwrap_or(codex_value_color);
+    let antigravity_pace_fraction = antigravity_pace.map(|(f, _)| f);
+    let antigravity_tick_color = antigravity_pace
+        .map(|(_, st)| pace_color(st, is_dark))
+        .unwrap_or(antigravity_value_color);
 
     unsafe {
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -3156,6 +3285,8 @@ fn draw_row(
                 claude_accent,
                 track,
                 &claude_value_color,
+                claude_pace_fraction,
+                &claude_tick_color,
             );
             model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
         }
@@ -3170,6 +3301,8 @@ fn draw_row(
                 codex_accent,
                 track,
                 &codex_value_color,
+                codex_pace_fraction,
+                &codex_tick_color,
             );
             model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
         }
@@ -3184,6 +3317,8 @@ fn draw_row(
                 antigravity_accent,
                 track,
                 &antigravity_value_color,
+                antigravity_pace_fraction,
+                &antigravity_tick_color,
             );
         }
     }
@@ -3205,6 +3340,8 @@ fn draw_usage_bar(
     accent: &Color,
     track: &Color,
     text_color: &Color,
+    pace_fraction: Option<f64>,
+    pace_tick_color: &Color,
 ) {
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -3258,6 +3395,22 @@ fn draw_usage_bar(
                     let _ = DeleteObject(rgn);
                 }
             }
+        }
+
+        if let Some(p) = pace_fraction {
+            let p = p.clamp(0.0, 1.0);
+            let bar_span = segment_count * (seg_w + seg_gap) - seg_gap;
+            let tick_x = bar_x + (p * bar_span as f64) as i32;
+            let tick_w = sc(2).max(1);
+            let tick_rect = RECT {
+                left: tick_x,
+                top: y - sc(1),
+                right: tick_x + tick_w,
+                bottom: y + seg_h + sc(1),
+            };
+            let brush = CreateSolidBrush(COLORREF(pace_tick_color.to_colorref()));
+            FillRect(hdc, &tick_rect, brush);
+            let _ = DeleteObject(brush);
         }
 
         let text_x = bar_x + segment_count * (seg_w + seg_gap) - seg_gap + sc(BAR_RIGHT_MARGIN);
