@@ -2,6 +2,9 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window style constants
@@ -28,6 +31,26 @@ pub const WM_APP_TRAY: u32 = WM_APP + 3;
 pub struct TaskbarWindow {
     pub hwnd: HWND,
     pub rect: RECT,
+    pub is_primary: bool,
+}
+
+/// Return true when the monitor containing `rect` is the primary display.
+fn rect_on_primary_monitor(rect: &RECT) -> bool {
+    unsafe {
+        let hmon = MonitorFromRect(rect as *const RECT, MONITOR_DEFAULTTONEAREST);
+        if hmon.is_invalid() {
+            return false;
+        }
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(hmon, &mut info).as_bool() {
+            (info.dwFlags & MONITORINFOF_PRIMARY) != 0
+        } else {
+            false
+        }
+    }
 }
 
 pub fn find_taskbars() -> Vec<TaskbarWindow> {
@@ -39,7 +62,11 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
                 if let Some(rect) = get_taskbar_rect(hwnd).or_else(|| get_window_rect_safe(hwnd)) {
-                    taskbars.push(TaskbarWindow { hwnd, rect });
+                    taskbars.push(TaskbarWindow {
+                        hwnd,
+                        rect,
+                        is_primary: rect_on_primary_monitor(&rect),
+                    });
                 }
             }
         }

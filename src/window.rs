@@ -132,6 +132,9 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+// Note: 70 is taken by tray_icon::IDM_TOGGLE_WIDGET; use 90..=105 to avoid collision.
+const IDM_MONITOR_BASE: u16 = 90;
+const IDM_MONITOR_MAX: u16 = 105; // supports up to 16 monitors (90..=105)
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -2673,6 +2676,32 @@ unsafe extern "system" fn wnd_proc(
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
+                id if (IDM_MONITOR_BASE..=IDM_MONITOR_MAX).contains(&id) => {
+                    let target = (id - IDM_MONITOR_BASE) as usize;
+                    // Only mutate/persist visibility once we know the re-attach
+                    // succeeded, so a failed attach can't leave the saved state
+                    // marked visible while the window stays hidden.
+                    if attach_to_taskbar(hwnd, target) {
+                        let was_hidden = {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.tray_offset = 0;
+                                let was_hidden = !s.widget_visible;
+                                s.widget_visible = true;
+                                was_hidden
+                            } else {
+                                false
+                            }
+                        };
+                        position_at_taskbar();
+                        if was_hidden {
+                            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+                        }
+                        render_layered();
+                        sync_tray_icons(hwnd);
+                        save_state_settings();
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -2702,6 +2731,16 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// Build the menu label for a monitor entry, e.g. "Monitor 1" or "Monitor 1 (Primary)".
+fn monitor_menu_label(index: usize, is_primary: bool, strings: &Strings) -> String {
+    let base = format!("{} {}", strings.monitor, index + 1);
+    if is_primary {
+        format!("{} ({})", base, strings.primary)
+    } else {
+        base
     }
 }
 
@@ -2837,6 +2876,41 @@ fn show_context_menu(hwnd: HWND) {
             models_menu.0 as usize,
             PCWSTR::from_raw(models_label.as_ptr()),
         );
+
+        // "Display on" (monitor) submenu — only when more than one taskbar exists
+        let current_taskbar_index = {
+            let state = lock_state();
+            state.as_ref().map(|s| s.taskbar_index).unwrap_or(0)
+        };
+        let taskbars = native_interop::find_taskbars();
+        if taskbars.len() > 1 {
+            let monitor_menu = CreatePopupMenu().unwrap();
+            for (i, taskbar) in taskbars.iter().enumerate() {
+                if i > (IDM_MONITOR_MAX - IDM_MONITOR_BASE) as usize {
+                    break;
+                }
+                let label = monitor_menu_label(i, taskbar.is_primary, &strings);
+                let label_str = native_interop::wide_str(&label);
+                let flags = if i == current_taskbar_index {
+                    MF_CHECKED
+                } else {
+                    MENU_ITEM_FLAGS(0)
+                };
+                let _ = AppendMenuW(
+                    monitor_menu,
+                    flags,
+                    IDM_MONITOR_BASE as usize + i,
+                    PCWSTR::from_raw(label_str.as_ptr()),
+                );
+            }
+            let display_on_label = native_interop::wide_str(strings.display_on);
+            let _ = AppendMenuW(
+                menu,
+                MF_POPUP,
+                monitor_menu.0 as usize,
+                PCWSTR::from_raw(display_on_label.as_ptr()),
+            );
+        }
 
         // Settings submenu
         let settings_menu = CreatePopupMenu().unwrap();
@@ -3292,5 +3366,27 @@ fn draw_rounded_rect(hdc: HDC, rect: &RECT, color: &Color, radius: i32) {
         let _ = FillRgn(hdc, rgn, brush);
         let _ = DeleteObject(rgn);
         let _ = DeleteObject(brush);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_strings() -> Strings {
+        localization::LanguageId::English.strings()
+    }
+
+    #[test]
+    fn monitor_label_numbers_from_one() {
+        let s = test_strings();
+        assert_eq!(monitor_menu_label(0, false, &s), "Monitor 1");
+        assert_eq!(monitor_menu_label(2, false, &s), "Monitor 3");
+    }
+
+    #[test]
+    fn monitor_label_tags_primary() {
+        let s = test_strings();
+        assert_eq!(monitor_menu_label(0, true, &s), "Monitor 1 (Primary)");
     }
 }
