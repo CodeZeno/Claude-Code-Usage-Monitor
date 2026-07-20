@@ -48,5 +48,12 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_window_title: "Antigravity 使用量监控",
     resets_at_label: "resets",
     left_at_rate_label: "left at this rate",
+    alerts_menu: "Usage alerts",
+    alert_off: "Off",
+    alert_at_90: "At 90%",
+    alert_at_80_90: "At 80% & 90%",
+    alert_pace: "Pacing to run out",
+    alert_balloon_title: "Usage running low",
+    alert_balloon_body: "You're pacing to run out before your quota resets.",
     second_suffix: "秒",
 };

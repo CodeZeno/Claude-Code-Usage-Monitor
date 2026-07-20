@@ -191,6 +191,13 @@ pub struct Strings {
     pub antigravity_window_title: &'static str,
     pub resets_at_label: &'static str,
     pub left_at_rate_label: &'static str,
+    pub alerts_menu: &'static str,
+    pub alert_off: &'static str,
+    pub alert_at_90: &'static str,
+    pub alert_at_80_90: &'static str,
+    pub alert_pace: &'static str,
+    pub alert_balloon_title: &'static str,
+    pub alert_balloon_body: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

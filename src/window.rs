@@ -71,6 +71,12 @@ struct AppState {
     show_codex: bool,
     show_antigravity: bool,
 
+    alert_preset: crate::pace::AlertPreset,
+    alert_active_session: bool,
+    alert_active_weekly: bool,
+    flash_on: bool,
+    flash_ticks: u8,
+
     data: Option<AppUsageData>,
 
     poll_interval_ms: u32,
@@ -132,6 +138,10 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_ALERT_OFF: u16 = 80;
+const IDM_ALERT_90: u16 = 81;
+const IDM_ALERT_80_90: u16 = 82;
+const IDM_ALERT_PACE: u16 = 83;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -317,6 +327,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default = "default_alert_preset")]
+    pub alert_preset: String,
 }
 
 impl Default for SettingsFile {
@@ -331,6 +343,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            alert_preset: default_alert_preset(),
         }
     }
 }
@@ -353,6 +366,10 @@ fn default_show_codex() -> bool {
 
 fn default_show_antigravity() -> bool {
     false
+}
+
+fn default_alert_preset() -> String {
+    "off".to_string()
 }
 
 fn load_settings() -> SettingsFile {
@@ -392,6 +409,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            alert_preset: s.alert_preset.as_str().to_string(),
         });
     }
 }
@@ -456,6 +474,14 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         crate::pace::Provider::ClaudeCode,
                         s.data.as_ref().and_then(|d| d.claude_code.as_ref()),
                     ),
+                    danger: {
+                        let steady = s.alert_active_session || s.alert_active_weekly;
+                        if s.flash_ticks > 0 {
+                            s.flash_on
+                        } else {
+                            steady
+                        }
+                    },
                 });
             }
             if s.show_codex {
@@ -468,6 +494,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         crate::pace::Provider::Codex,
                         s.data.as_ref().and_then(|d| d.codex.as_ref()),
                     ),
+                    danger: false,
                 });
             }
             if s.show_antigravity {
@@ -480,6 +507,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                         crate::pace::Provider::Antigravity,
                         s.data.as_ref().and_then(|d| d.antigravity.as_ref()),
                     ),
+                    danger: false,
                 });
             }
             icons
@@ -491,6 +519,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Claude,
                     percent: None,
                     tooltip: s.language.strings().window_title.to_string(),
+                    danger: false,
                 });
             }
             if s.show_codex {
@@ -498,6 +527,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Codex,
                     percent: None,
                     tooltip: s.language.strings().codex_window_title.to_string(),
+                    danger: false,
                 });
             }
             if s.show_antigravity {
@@ -505,6 +535,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
+                    danger: false,
                 });
             }
             icons
@@ -1368,6 +1399,11 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                alert_preset: crate::pace::AlertPreset::from_str(&settings.alert_preset),
+                alert_active_session: false,
+                alert_active_weekly: false,
+                flash_on: false,
+                flash_ticks: 0,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1863,6 +1899,9 @@ fn do_poll(send_hwnd: SendHwnd) {
 
     match poller::poll(show_claude_code, show_codex, show_antigravity) {
         Ok(data) => {
+            // Balloon to raise (title, body) once the guard is released, if a
+            // burn-rate alert fired this poll.
+            let mut alert_fire: Option<(&'static str, &'static str)> = None;
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 if let Some(claude_code) = data.claude_code.as_ref() {
@@ -1897,6 +1936,61 @@ fn do_poll(send_hwnd: SendHwnd) {
                 s.last_poll_ok = true;
                 refresh_usage_texts(s);
 
+                // Evaluate burn-rate alerts for Claude session + weekly cells.
+                let now = std::time::SystemTime::now();
+                let claude = s
+                    .data
+                    .as_ref()
+                    .and_then(|d| d.claude_code.as_ref())
+                    .map(|u| {
+                        (
+                            u.session.percentage,
+                            u.session.resets_at,
+                            u.weekly.percentage,
+                            u.weekly.resets_at,
+                        )
+                    });
+                if let Some((sp, sr, wp, wr)) = claude {
+                    let preset = s.alert_preset;
+                    let mut any_fire = false;
+                    for (is_session, pct, rt, section) in [
+                        (true, sp, sr, crate::pace::Section::Session),
+                        (false, wp, wr, crate::pace::Section::Weekly),
+                    ] {
+                        let over_pace = crate::pace::window_length(
+                            crate::pace::Provider::ClaudeCode,
+                            section,
+                        )
+                        .and_then(|wl| {
+                            crate::pace::elapsed_fraction(rt, Some(wl), now)
+                                .and_then(|f| crate::pace::eta_to_empty_secs(pct, f, wl))
+                        })
+                        .is_some();
+                        let was = if is_session {
+                            s.alert_active_session
+                        } else {
+                            s.alert_active_weekly
+                        };
+                        let decision =
+                            crate::pace::evaluate_alert(preset, pct, over_pace, was);
+                        if is_session {
+                            s.alert_active_session = decision.active;
+                        } else {
+                            s.alert_active_weekly = decision.active;
+                        }
+                        if decision.fire {
+                            any_fire = true;
+                        }
+                    }
+                    if any_fire {
+                        let strings = s.language.strings();
+                        s.flash_on = true;
+                        s.flash_ticks = 0;
+                        alert_fire =
+                            Some((strings.alert_balloon_title, strings.alert_balloon_body));
+                    }
+                }
+
                 // Recovered from errors — restore normal poll interval
                 if s.retry_count > 0 {
                     s.retry_count = 0;
@@ -1909,6 +2003,16 @@ fn do_poll(send_hwnd: SendHwnd) {
                 s.auth_error_paused_polling = false;
                 s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                 s.auth_watch_snapshot.clear();
+            }
+
+            // Release the state guard before notify_balloon / SetTimer so the
+            // subsequent tray sync (which re-locks state) cannot deadlock.
+            drop(state);
+            if let Some((title, body)) = alert_fire {
+                tray_icon::notify_balloon(hwnd, tray_icon::TrayIconKind::Claude, title, body);
+                unsafe {
+                    SetTimer(hwnd, native_interop::TIMER_ALERT_FLASH, 400, None);
+                }
             }
 
             unsafe {
@@ -2400,6 +2504,32 @@ unsafe extern "system" fn wnd_proc(
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
                 }
+                native_interop::TIMER_ALERT_FLASH => {
+                    // Toggle the danger badge for a few cycles, then settle.
+                    let done = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.flash_ticks = s.flash_ticks.saturating_add(1);
+                            s.flash_on = !s.flash_on;
+                            s.flash_ticks >= 6
+                        } else {
+                            true
+                        }
+                    };
+                    sync_tray_icons(hwnd);
+                    if done {
+                        let _ = KillTimer(hwnd, native_interop::TIMER_ALERT_FLASH);
+                        {
+                            let mut state = lock_state();
+                            if let Some(s) = state.as_mut() {
+                                s.flash_ticks = 0;
+                                s.flash_on = false;
+                            }
+                        }
+                        // Settle to the steady danger/normal state.
+                        sync_tray_icons(hwnd);
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -2690,6 +2820,23 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
+                IDM_ALERT_OFF | IDM_ALERT_90 | IDM_ALERT_80_90 | IDM_ALERT_PACE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.alert_preset = match id {
+                                IDM_ALERT_90 => crate::pace::AlertPreset::At90,
+                                IDM_ALERT_80_90 => crate::pace::AlertPreset::At80And90,
+                                IDM_ALERT_PACE => crate::pace::AlertPreset::Pace,
+                                _ => crate::pace::AlertPreset::Off,
+                            };
+                            // Re-arm edges on preset change.
+                            s.alert_active_session = false;
+                            s.alert_active_weekly = false;
+                        }
+                    }
+                    save_state_settings();
+                }
                 IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY => {
                     {
                         let mut state = lock_state();
@@ -2813,6 +2960,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            alert_preset,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2827,6 +2975,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.alert_preset,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2839,6 +2988,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     false,
+                    crate::pace::AlertPreset::Off,
                 ),
             }
         };
@@ -2882,6 +3032,41 @@ fn show_context_menu(hwnd: HWND) {
             MF_POPUP,
             freq_menu.0 as usize,
             PCWSTR::from_raw(freq_label.as_ptr()),
+        );
+
+        // Usage alerts submenu
+        let alerts_menu = CreatePopupMenu().unwrap();
+        let alert_items: [(u16, crate::pace::AlertPreset, &str); 4] = [
+            (IDM_ALERT_OFF, crate::pace::AlertPreset::Off, strings.alert_off),
+            (IDM_ALERT_90, crate::pace::AlertPreset::At90, strings.alert_at_90),
+            (
+                IDM_ALERT_80_90,
+                crate::pace::AlertPreset::At80And90,
+                strings.alert_at_80_90,
+            ),
+            (IDM_ALERT_PACE, crate::pace::AlertPreset::Pace, strings.alert_pace),
+        ];
+        for (id, preset, label) in alert_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if preset == alert_preset {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                alerts_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+
+        let alerts_label = native_interop::wide_str(strings.alerts_menu);
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            alerts_menu.0 as usize,
+            PCWSTR::from_raw(alerts_label.as_ptr()),
         );
 
         // Models submenu
