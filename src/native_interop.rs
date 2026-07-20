@@ -1,7 +1,7 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
+use windows::Win32::UI::Shell::{ShellExecuteW, SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window style constants
@@ -173,6 +173,22 @@ pub fn get_window_thread_id(hwnd: HWND) -> u32 {
 pub fn unhook_win_event(hook: HWINEVENTHOOK) {
     unsafe {
         let _ = UnhookWinEvent(hook);
+    }
+}
+
+/// Open a URL in the user's default browser. Best-effort; ignores failure.
+pub fn open_url(url: &str) {
+    let verb = wide_str("open");
+    let target = wide_str(url);
+    unsafe {
+        let _ = ShellExecuteW(
+            None,
+            PCWSTR(verb.as_ptr()),
+            PCWSTR(target.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
     }
 }
 

@@ -132,6 +132,14 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_OPEN_DASHBOARD_CLAUDE: u16 = 90;
+const IDM_OPEN_DASHBOARD_CODEX: u16 = 91;
+const IDM_OPEN_DASHBOARD_ANTIGRAVITY: u16 = 92;
+
+// TODO: verify current usage-page URL before merge
+const URL_CLAUDE_USAGE: &str = "https://claude.ai/settings/usage";
+const URL_CODEX_USAGE: &str = "https://platform.openai.com/usage";
+const URL_ANTIGRAVITY_USAGE: &str = "https://aistudio.google.com/usage";
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -1056,7 +1064,7 @@ const DIVIDER_RIGHT_MARGIN: i32 = 10;
 const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 62;
+const TEXT_WIDTH: i32 = 84;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
@@ -2345,6 +2353,11 @@ unsafe extern "system" fn wnd_proc(
             let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
             let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             if !is_drag_handle_point(client_x, client_y) {
+                // Body click (outside the drag handle): open the usage page of
+                // the provider column under the cursor.
+                if let Some(url) = provider_url_at_x(client_x) {
+                    native_interop::open_url(url);
+                }
                 return LRESULT(0);
             }
 
@@ -2670,6 +2683,9 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
+                IDM_OPEN_DASHBOARD_CLAUDE => native_interop::open_url(URL_CLAUDE_USAGE),
+                IDM_OPEN_DASHBOARD_CODEX => native_interop::open_url(URL_CODEX_USAGE),
+                IDM_OPEN_DASHBOARD_ANTIGRAVITY => native_interop::open_url(URL_ANTIGRAVITY_USAGE),
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
@@ -2757,6 +2773,29 @@ fn show_context_menu(hwnd: HWND) {
             1,
             PCWSTR::from_raw(refresh_str.as_ptr()),
         );
+
+        // Open usage-page items for each enabled provider
+        let open_items: [(bool, u16, &str); 3] = [
+            (show_claude_code, IDM_OPEN_DASHBOARD_CLAUDE, strings.claude_code_model),
+            (show_codex, IDM_OPEN_DASHBOARD_CODEX, strings.codex_model),
+            (
+                show_antigravity,
+                IDM_OPEN_DASHBOARD_ANTIGRAVITY,
+                strings.antigravity_model,
+            ),
+        ];
+        for (enabled, id, name) in open_items {
+            if enabled {
+                let label = format!("{} {}", strings.open_prefix, name);
+                let label_str = native_interop::wide_str(&label);
+                let _ = AppendMenuW(
+                    menu,
+                    MENU_ITEM_FLAGS(0),
+                    id as usize,
+                    PCWSTR::from_raw(label_str.as_ptr()),
+                );
+            }
+        }
 
         // Update Frequency submenu
         let freq_menu = CreatePopupMenu().unwrap();
@@ -3193,6 +3232,40 @@ fn model_usage_width(segment_count: i32) -> i32 {
     (sc(SEGMENT_W) + sc(SEGMENT_GAP)) * segment_count - sc(SEGMENT_GAP)
         + sc(BAR_RIGHT_MARGIN)
         + sc(TEXT_WIDTH)
+}
+
+/// Map a client-area X coordinate (in the widget body, not the drag handle) to
+/// the usage-page URL of the provider column under it. This replicates the
+/// exact left→right column advance used by `draw_row`: content origin, skip the
+/// label, then each enabled provider occupies
+/// `model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN)`.
+fn provider_url_at_x(client_x: i32) -> Option<&'static str> {
+    let (show_claude_code, show_codex, show_antigravity) = {
+        let state = lock_state();
+        let s = state.as_ref()?;
+        (s.show_claude_code, s.show_codex, s.show_antigravity)
+    };
+
+    let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
+    let segment_count = row_bar_segment_count(active_models);
+    let column_width = model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+
+    let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
+    let mut model_x = content_x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
+
+    for (enabled, url) in [
+        (show_claude_code, URL_CLAUDE_USAGE),
+        (show_codex, URL_CODEX_USAGE),
+        (show_antigravity, URL_ANTIGRAVITY_USAGE),
+    ] {
+        if enabled {
+            if client_x >= model_x && client_x < model_x + column_width {
+                return Some(url);
+            }
+            model_x += column_width;
+        }
+    }
+    None
 }
 
 fn draw_usage_bar(

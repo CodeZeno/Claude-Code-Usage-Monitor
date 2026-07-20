@@ -156,6 +156,7 @@ pub struct Strings {
     pub claude_code_model: &'static str,
     pub codex_model: &'static str,
     pub antigravity_model: &'static str,
+    pub open_prefix: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,

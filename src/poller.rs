@@ -1524,7 +1524,7 @@ fn is_leap(y: u64) -> bool {
 /// Format a usage section as "X% · Yh" style text
 pub fn format_line(section: &UsageSection, strings: Strings) -> String {
     let pct = format!("{:.0}%", section.percentage);
-    let cd = format_countdown(section.resets_at, strings);
+    let cd = format_countdown_two(section.resets_at, strings);
     if cd.is_empty() {
         pct
     } else {
@@ -1532,6 +1532,7 @@ pub fn format_line(section: &UsageSection, strings: Strings) -> String {
     }
 }
 
+#[allow(dead_code)]
 fn format_countdown(resets_at: Option<SystemTime>, strings: Strings) -> String {
     let reset = match resets_at {
         Some(t) => t,
@@ -1546,6 +1547,43 @@ fn format_countdown(resets_at: Option<SystemTime>, strings: Strings) -> String {
     format_countdown_from_secs(remaining.as_secs(), strings)
 }
 
+/// Same reset handling as `format_countdown` but renders up to two components.
+fn format_countdown_two(resets_at: Option<SystemTime>, strings: Strings) -> String {
+    let reset = match resets_at {
+        Some(t) => t,
+        None => return String::new(),
+    };
+
+    let remaining = match reset.duration_since(SystemTime::now()) {
+        Ok(d) => d,
+        Err(_) => return strings.now.to_string(),
+    };
+
+    format_countdown_two_units(remaining.as_secs(), strings)
+}
+
+/// Countdown with up to TWO components, e.g. "2h 15m", "3d 4h", "45m 10s".
+pub fn format_countdown_two_units(total_secs: u64, strings: Strings) -> String {
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+    let (a_val, a_suf, b_val, b_suf) = if days > 0 {
+        (days, strings.day_suffix, hours, strings.hour_suffix)
+    } else if hours > 0 {
+        (hours, strings.hour_suffix, minutes, strings.minute_suffix)
+    } else if minutes > 0 {
+        (minutes, strings.minute_suffix, seconds, strings.second_suffix)
+    } else {
+        (seconds, strings.second_suffix, 0, strings.second_suffix)
+    };
+    if b_val > 0 {
+        format!("{}{} {}{}", a_val, a_suf, b_val, b_suf)
+    } else {
+        format!("{}{}", a_val, a_suf)
+    }
+}
+
 /// Calculate how long until the display text would change
 pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Duration> {
     let reset = resets_at?;
@@ -1553,6 +1591,7 @@ pub fn time_until_display_change(resets_at: Option<SystemTime>) -> Option<Durati
     Some(time_until_display_change_from_secs(remaining.as_secs()))
 }
 
+#[allow(dead_code)]
 fn format_countdown_from_secs(total_secs: u64, strings: Strings) -> String {
     let total_mins = total_secs / 60;
     let total_hours = total_secs / 3600;
@@ -1569,22 +1608,19 @@ fn format_countdown_from_secs(total_secs: u64, strings: Strings) -> String {
     }
 }
 
+/// How long until the two-unit countdown text next changes.
+///
+/// When at least an hour remains the smallest displayed unit is minutes
+/// (e.g. "2h 15m"), so the display changes on the next whole-minute boundary.
+/// Below an hour seconds are shown (e.g. "45m 10s" / "30s"), so it changes
+/// every second.
 fn time_until_display_change_from_secs(total_secs: u64) -> Duration {
-    let total_mins = total_secs / 60;
-    let total_hours = total_secs / 3600;
-    let total_days = total_secs / 86400;
-
-    let current_bucket_start = if total_days >= 1 {
-        total_days * 86400
-    } else if total_hours >= 1 {
-        total_hours * 3600
-    } else if total_mins >= 1 {
-        total_mins * 60
+    if total_secs >= 3600 {
+        let rem = total_secs % 60;
+        Duration::from_secs(if rem == 0 { 60 } else { 60 - rem })
     } else {
-        total_secs
-    };
-
-    Duration::from_secs(total_secs.saturating_sub(current_bucket_start) + 1)
+        Duration::from_secs(1)
+    }
 }
 
 /// Returns true if either section has reached "now" (reset time has passed).
@@ -1612,6 +1648,14 @@ mod tests {
             },
             weekly: UsageSection::default(),
         }
+    }
+
+    #[test]
+    fn two_unit_countdown_formats() {
+        let s = crate::localization::LanguageId::English.strings();
+        assert_eq!(format_countdown_two_units(2 * 3600 + 15 * 60, s), "2h 15m");
+        assert_eq!(format_countdown_two_units(30, s), "30s");
+        assert_eq!(format_countdown_two_units(2 * 3600, s), "2h");
     }
 
     #[test]

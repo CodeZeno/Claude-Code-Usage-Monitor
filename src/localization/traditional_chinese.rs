@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    open_prefix: "Open usage page:",
     settings: "設定",
     start_with_windows: "開機時啟動",
     reset_position: "重置位置",
