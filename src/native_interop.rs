@@ -1,5 +1,7 @@
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{BOOL, FILETIME, HWND, LPARAM, RECT, SYSTEMTIME};
+use windows::Win32::Storage::FileSystem::FileTimeToLocalFileTime;
+use windows::Win32::System::Time::FileTimeToSystemTime;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -179,6 +181,29 @@ pub fn unhook_win_event(hook: HWINEVENTHOOK) {
 /// Convert a Rust string to a null-terminated wide string
 pub fn wide_str(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+/// Returns local (hour_24, minute, day_of_week) for a UTC SystemTime.
+/// day_of_week: 0 = Sunday .. 6 = Saturday. None on conversion failure.
+pub fn system_time_to_local_hms(t: std::time::SystemTime) -> Option<(u32, u32, u16)> {
+    let secs = t.duration_since(std::time::UNIX_EPOCH).ok()?.as_secs();
+    // Win32 FILETIME is 100ns ticks since 1601-01-01; offset to unix epoch = 11644473600 s.
+    let ticks: u64 = (secs + 11_644_473_600) * 10_000_000;
+    let ft = FILETIME {
+        dwLowDateTime: (ticks & 0xFFFF_FFFF) as u32,
+        dwHighDateTime: (ticks >> 32) as u32,
+    };
+    unsafe {
+        let mut local_ft = FILETIME::default();
+        if FileTimeToLocalFileTime(&ft, &mut local_ft).is_err() {
+            return None;
+        }
+        let mut st = SYSTEMTIME::default();
+        if FileTimeToSystemTime(&local_ft, &mut st).is_err() {
+            return None;
+        }
+        Some((st.wHour as u32, st.wMinute as u32, st.wDayOfWeek))
+    }
 }
 
 /// COLORREF wrapper (RGB packed into u32)

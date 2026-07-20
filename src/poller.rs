@@ -1569,6 +1569,42 @@ fn format_countdown_from_secs(total_secs: u64, strings: Strings) -> String {
     }
 }
 
+/// Countdown with up to TWO components, e.g. "2h 15m", "3d 4h", "45m 10s".
+/// Falls back to a single component when the smaller one is zero.
+pub fn format_countdown_two_units(total_secs: u64, strings: Strings) -> String {
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+
+    let (a_val, a_suf, b_val, b_suf) = if days > 0 {
+        (days, strings.day_suffix, hours, strings.hour_suffix)
+    } else if hours > 0 {
+        (hours, strings.hour_suffix, minutes, strings.minute_suffix)
+    } else if minutes > 0 {
+        (minutes, strings.minute_suffix, seconds, strings.second_suffix)
+    } else {
+        (seconds, strings.second_suffix, 0, strings.second_suffix)
+    };
+
+    if b_val > 0 {
+        format!("{}{} {}{}", a_val, a_suf, b_val, b_suf)
+    } else {
+        format!("{}{}", a_val, a_suf)
+    }
+}
+
+/// Format a broken-down local time as "h:mm AM/PM" (12-hour, no leading zero on hour).
+pub fn format_hh_mm_ampm(hour_24: u32, minute: u32) -> String {
+    let (h12, suffix) = match hour_24 {
+        0 => (12, "AM"),
+        1..=11 => (hour_24, "AM"),
+        12 => (12, "PM"),
+        _ => (hour_24 - 12, "PM"),
+    };
+    format!("{}:{:02} {}", h12, minute, suffix)
+}
+
 fn time_until_display_change_from_secs(total_secs: u64) -> Duration {
     let total_mins = total_secs / 60;
     let total_hours = total_secs / 3600;
@@ -1731,5 +1767,24 @@ mod tests {
         assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
         assert!(usage.weekly.resets_at.is_some());
         assert!(usage.session.resets_at.is_some());
+    }
+
+    #[test]
+    fn two_unit_countdown_formats() {
+        let s = crate::localization::LanguageId::English.strings();
+        assert_eq!(format_countdown_two_units(2 * 3600 + 15 * 60, s), "2h 15m");
+        assert_eq!(format_countdown_two_units(3 * 86_400 + 4 * 3600, s), "3d 4h");
+        assert_eq!(format_countdown_two_units(45 * 60 + 10, s), "45m 10s");
+        assert_eq!(format_countdown_two_units(30, s), "30s");
+        assert_eq!(format_countdown_two_units(2 * 3600, s), "2h");
+    }
+
+    #[test]
+    fn hh_mm_ampm_formats() {
+        assert_eq!(format_hh_mm_ampm(0, 5), "12:05 AM");
+        assert_eq!(format_hh_mm_ampm(9, 0), "9:00 AM");
+        assert_eq!(format_hh_mm_ampm(12, 45), "12:45 PM");
+        assert_eq!(format_hh_mm_ampm(16, 45), "4:45 PM");
+        assert_eq!(format_hh_mm_ampm(23, 59), "11:59 PM");
     }
 }
