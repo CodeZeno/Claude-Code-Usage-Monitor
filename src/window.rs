@@ -134,12 +134,11 @@ const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
 const IDM_OPEN_DASHBOARD_CLAUDE: u16 = 90;
 const IDM_OPEN_DASHBOARD_CODEX: u16 = 91;
-const IDM_OPEN_DASHBOARD_ANTIGRAVITY: u16 = 92;
+// No Antigravity dashboard URL: its quota is only viewable inside the Antigravity
+// IDE (Settings > Advanced > Models), so it gets no click-through.
 
-// TODO: verify current usage-page URL before merge
 const URL_CLAUDE_USAGE: &str = "https://claude.ai/settings/usage";
-const URL_CODEX_USAGE: &str = "https://platform.openai.com/usage";
-const URL_ANTIGRAVITY_USAGE: &str = "https://aistudio.google.com/usage";
+const URL_CODEX_USAGE: &str = "https://chatgpt.com/codex/settings/usage";
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -2685,7 +2684,6 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_OPEN_DASHBOARD_CLAUDE => native_interop::open_url(URL_CLAUDE_USAGE),
                 IDM_OPEN_DASHBOARD_CODEX => native_interop::open_url(URL_CODEX_USAGE),
-                IDM_OPEN_DASHBOARD_ANTIGRAVITY => native_interop::open_url(URL_ANTIGRAVITY_USAGE),
                 id if id == tray_icon::IDM_TOGGLE_WIDGET => {
                     toggle_widget_visibility(hwnd);
                 }
@@ -2774,15 +2772,11 @@ fn show_context_menu(hwnd: HWND) {
             PCWSTR::from_raw(refresh_str.as_ptr()),
         );
 
-        // Open usage-page items for each enabled provider
-        let open_items: [(bool, u16, &str); 3] = [
+        // Open usage-page items for each enabled provider that has a web usage
+        // page (Antigravity has none — its quota is only in-IDE).
+        let open_items: [(bool, u16, &str); 2] = [
             (show_claude_code, IDM_OPEN_DASHBOARD_CLAUDE, strings.claude_code_model),
             (show_codex, IDM_OPEN_DASHBOARD_CODEX, strings.codex_model),
-            (
-                show_antigravity,
-                IDM_OPEN_DASHBOARD_ANTIGRAVITY,
-                strings.antigravity_model,
-            ),
         ];
         for (enabled, id, name) in open_items {
             if enabled {
@@ -3253,14 +3247,15 @@ fn provider_url_at_x(client_x: i32) -> Option<&'static str> {
     let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
     let mut model_x = content_x + sc(LABEL_WIDTH) + sc(LABEL_RIGHT_MARGIN);
 
+    // Antigravity has no web usage page, so its column maps to None (no open).
     for (enabled, url) in [
-        (show_claude_code, URL_CLAUDE_USAGE),
-        (show_codex, URL_CODEX_USAGE),
-        (show_antigravity, URL_ANTIGRAVITY_USAGE),
+        (show_claude_code, Some(URL_CLAUDE_USAGE)),
+        (show_codex, Some(URL_CODEX_USAGE)),
+        (show_antigravity, None),
     ] {
         if enabled {
             if client_x >= model_x && client_x < model_x + column_width {
-                return Some(url);
+                return url;
             }
             model_x += column_width;
         }
