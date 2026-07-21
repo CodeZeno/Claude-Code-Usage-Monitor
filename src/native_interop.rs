@@ -1,10 +1,10 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
-use windows::Win32::Graphics::Gdi::{
-    GetMonitorInfoW, MonitorFromRect, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window style constants
@@ -27,28 +27,45 @@ pub const WM_APP: u32 = 0x8000;
 pub const WM_APP_USAGE_UPDATED: u32 = WM_APP + 1;
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct TaskbarWindow {
     pub hwnd: HWND,
     pub rect: RECT,
     pub is_primary: bool,
+    /// Stable identity of the monitor this taskbar sits on (e.g. "\\.\DISPLAY2").
+    /// Unlike the taskbar's position in `find_taskbars()`, this does not change
+    /// when another monitor's taskbar is hidden/recreated (e.g. by fullscreen
+    /// video), so it is what we persist and re-attach against.
+    pub monitor_device: String,
 }
 
-/// Return true when the monitor containing `rect` is the primary display.
-fn rect_on_primary_monitor(rect: &RECT) -> bool {
+/// Query the monitor containing `rect`: whether it is the primary display and
+/// its stable device name (`szDevice`, e.g. "\\.\DISPLAY1"). The device name is
+/// empty only if the monitor cannot be resolved.
+fn monitor_info_for_rect(rect: &RECT) -> (bool, String) {
     unsafe {
         let hmon = MonitorFromRect(rect as *const RECT, MONITOR_DEFAULTTONEAREST);
         if hmon.is_invalid() {
-            return false;
+            return (false, String::new());
         }
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        let mut info = MONITORINFOEXW {
+            monitorInfo: MONITORINFO {
+                cbSize: std::mem::size_of::<MONITORINFOEXW>() as u32,
+                ..Default::default()
+            },
             ..Default::default()
         };
-        if GetMonitorInfoW(hmon, &mut info).as_bool() {
-            (info.dwFlags & MONITORINFOF_PRIMARY) != 0
+        if GetMonitorInfoW(hmon, &mut info.monitorInfo as *mut MONITORINFO).as_bool() {
+            let is_primary = (info.monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+            let len = info
+                .szDevice
+                .iter()
+                .position(|&c| c == 0)
+                .unwrap_or(info.szDevice.len());
+            let device = String::from_utf16_lossy(&info.szDevice[..len]);
+            (is_primary, device)
         } else {
-            false
+            (false, String::new())
         }
     }
 }
@@ -62,10 +79,12 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
                 if let Some(rect) = get_taskbar_rect(hwnd).or_else(|| get_window_rect_safe(hwnd)) {
+                    let (is_primary, monitor_device) = monitor_info_for_rect(&rect);
                     taskbars.push(TaskbarWindow {
                         hwnd,
                         rect,
-                        is_primary: rect_on_primary_monitor(&rect),
+                        is_primary,
+                        monitor_device,
                     });
                 }
             }

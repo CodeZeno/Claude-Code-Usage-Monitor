@@ -84,6 +84,15 @@ struct AppState {
     last_update_check_unix: Option<u64>,
 
     taskbar_index: usize,
+    /// Stable device name of the monitor the widget is attached to (e.g.
+    /// "\\.\DISPLAY2"). Preferred over `taskbar_index` when re-attaching, so a
+    /// changing taskbar set (fullscreen hides/recreates a taskbar) cannot move
+    /// the widget onto a different physical monitor.
+    taskbar_monitor: Option<String>,
+    /// Device names captured when the "Display on" submenu was last built, in
+    /// the same order as its entries. Lets the click handler resolve a menu
+    /// index to a stable monitor even if the taskbar set changed since.
+    menu_taskbar_monitors: Vec<String>,
     tray_offset: i32,
     dragging: bool,
     drag_start_mouse_x: i32,
@@ -306,6 +315,8 @@ struct SettingsFile {
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    taskbar_monitor: Option<String>,
     #[serde(default = "default_poll_interval")]
     poll_interval_ms: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -327,6 +338,7 @@ impl Default for SettingsFile {
         Self {
             tray_offset: 0,
             taskbar_index: 0,
+            taskbar_monitor: None,
             poll_interval_ms: default_poll_interval(),
             language: None,
             last_update_check_unix: None,
@@ -386,6 +398,7 @@ fn save_state_settings() {
         save_settings(&SettingsFile {
             tray_offset: s.tray_offset,
             taskbar_index: s.taskbar_index,
+            taskbar_monitor: s.taskbar_monitor.clone(),
             poll_interval_ms: s.poll_interval_ms,
             language: s
                 .language_override
@@ -498,18 +511,41 @@ fn toggle_widget_visibility(hwnd: HWND) {
     }
 }
 
-fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
+/// Choose which taskbar in `taskbars` to attach to.
+///
+/// Prefer the taskbar on the saved monitor (`preferred_device`); the positional
+/// `fallback_index` is only used when that monitor's taskbar is not currently
+/// present (e.g. it is temporarily gone because a fullscreen app hid it). This
+/// keeps the widget on the user's chosen physical monitor even as the number
+/// and ordering of taskbars changes underneath us.
+fn resolve_taskbar_index(
+    taskbars: &[native_interop::TaskbarWindow],
+    preferred_device: Option<&str>,
+    fallback_index: usize,
+) -> usize {
+    if let Some(device) = preferred_device {
+        if !device.is_empty() {
+            if let Some(pos) = taskbars.iter().position(|t| t.monitor_device == device) {
+                return pos;
+            }
+        }
+    }
+    fallback_index.min(taskbars.len().saturating_sub(1))
+}
+
+fn attach_to_taskbar(hwnd: HWND, preferred_device: Option<&str>, fallback_index: usize) -> bool {
     let taskbars = native_interop::find_taskbars();
     if taskbars.is_empty() {
         diagnose::log("taskbar not found; using fallback popup window");
         return false;
     }
 
-    let index = requested_index.min(taskbars.len().saturating_sub(1));
-    let taskbar = taskbars[index];
+    let index = resolve_taskbar_index(&taskbars, preferred_device, fallback_index);
+    let taskbar = taskbars[index].clone();
     diagnose::log(format!(
-        "taskbar selected index={index} count={} hwnd={:?} rect=({}, {}, {}, {})",
+        "taskbar selected index={index} count={} device={} hwnd={:?} rect=({}, {}, {}, {})",
         taskbars.len(),
+        taskbar.monitor_device,
         taskbar.hwnd,
         taskbar.rect.left,
         taskbar.rect.top,
@@ -550,9 +586,51 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         s.tray_notify_hwnd = tray_notify;
         s.win_event_hook = hook;
         s.taskbar_index = index;
+        // Persist the monitor identity so later re-attaches target the same
+        // physical display rather than whatever now happens to sit at `index`.
+        // Only overwrite the saved preference when we actually resolved a
+        // monitor, so a transient empty device name can't wipe it.
+        if !taskbar.monitor_device.is_empty() {
+            s.taskbar_monitor = Some(taskbar.monitor_device.clone());
+        }
         s.embedded = true;
     }
     true
+}
+
+/// Move the widget back onto its saved monitor if that monitor's taskbar is
+/// present but the widget is currently attached elsewhere. Does nothing when no
+/// monitor is saved, when the saved monitor's taskbar is absent, or when the
+/// widget is already there — so it only ever pulls the widget toward the user's
+/// choice, never away from it.
+fn reattach_to_saved_monitor_if_needed(hwnd: HWND) {
+    let (saved_device, current_hwnd, fallback_index) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.taskbar_monitor.clone(), s.taskbar_hwnd, s.taskbar_index),
+            None => return,
+        }
+    };
+    let Some(device) = saved_device else {
+        return;
+    };
+    if device.is_empty() {
+        return;
+    }
+    let taskbars = native_interop::find_taskbars();
+    let Some(target) = taskbars.iter().find(|t| t.monitor_device == device) else {
+        return; // saved monitor's taskbar not present right now; leave as-is
+    };
+    if current_hwnd == Some(target.hwnd) {
+        return; // already on the saved monitor
+    }
+    diagnose::log(format!(
+        "display change: re-homing widget to saved monitor {device}"
+    ));
+    if attach_to_taskbar(hwnd, Some(device.as_str()), fallback_index) {
+        position_at_taskbar();
+        render_layered();
+    }
 }
 
 fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)> {
@@ -1325,6 +1403,8 @@ pub fn run() {
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
+                taskbar_monitor: settings.taskbar_monitor.clone(),
+                menu_taskbar_monitors: Vec::new(),
                 tray_offset: settings.tray_offset,
                 dragging: false,
                 drag_start_mouse_x: 0,
@@ -1335,7 +1415,11 @@ pub fn run() {
         }
 
         // Try to embed in taskbar
-        if attach_to_taskbar(hwnd, settings.taskbar_index) {
+        if attach_to_taskbar(
+            hwnd,
+            settings.taskbar_monitor.as_deref(),
+            settings.taskbar_index,
+        ) {
             embedded = true;
         }
 
@@ -2238,6 +2322,13 @@ unsafe extern "system" fn wnd_proc(
                 check_theme_change();
                 check_language_change();
             }
+            // A monitor topology change (e.g. a fullscreen app exiting and its
+            // taskbar coming back) can make the saved monitor's taskbar
+            // available again. Re-home to it so the widget returns to the
+            // display the user chose instead of staying on a fallback.
+            if msg == WM_DISPLAYCHANGE {
+                reattach_to_saved_monitor_if_needed(hwnd);
+            }
             refresh_dpi();
             position_at_taskbar();
             render_layered();
@@ -2491,7 +2582,13 @@ unsafe extern "system" fn wnd_proc(
                                 s.tray_offset = new_offset;
                             }
                         }
-                        if attach_to_taskbar(hwnd, target_index) {
+                        // Anchor to the dropped monitor by its stable device
+                        // name so the choice survives later taskbar churn.
+                        if attach_to_taskbar(
+                            hwnd,
+                            Some(target_taskbar.monitor_device.as_str()),
+                            target_index,
+                        ) {
                             position_at_taskbar();
                             render_layered();
                         }
@@ -2678,10 +2775,20 @@ unsafe extern "system" fn wnd_proc(
                 }
                 id if (IDM_MONITOR_BASE..=IDM_MONITOR_MAX).contains(&id) => {
                     let target = (id - IDM_MONITOR_BASE) as usize;
+                    // Resolve the clicked entry to the monitor device captured
+                    // when the menu was built, so the attach lands on the
+                    // display the user actually clicked even if the taskbar set
+                    // changed between opening the menu and choosing an entry.
+                    let target_device = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .and_then(|s| s.menu_taskbar_monitors.get(target).cloned())
+                    };
                     // Only mutate/persist visibility once we know the re-attach
                     // succeeded, so a failed attach can't leave the saved state
                     // marked visible while the window stays hidden.
-                    if attach_to_taskbar(hwnd, target) {
+                    if attach_to_taskbar(hwnd, target_device.as_deref(), target) {
                         let was_hidden = {
                             let mut state = lock_state();
                             if let Some(s) = state.as_mut() {
@@ -2878,11 +2985,12 @@ fn show_context_menu(hwnd: HWND) {
         );
 
         // "Display on" (monitor) submenu — only when more than one taskbar exists
-        let current_taskbar_index = {
+        let current_device = {
             let state = lock_state();
-            state.as_ref().map(|s| s.taskbar_index).unwrap_or(0)
+            state.as_ref().and_then(|s| s.taskbar_monitor.clone())
         };
         let taskbars = native_interop::find_taskbars();
+        let mut menu_devices: Vec<String> = Vec::new();
         if taskbars.len() > 1 {
             let monitor_menu = CreatePopupMenu().unwrap();
             for (i, taskbar) in taskbars.iter().enumerate() {
@@ -2891,7 +2999,12 @@ fn show_context_menu(hwnd: HWND) {
                 }
                 let label = monitor_menu_label(i, taskbar.is_primary, &strings);
                 let label_str = native_interop::wide_str(&label);
-                let flags = if i == current_taskbar_index {
+                // Check the entry for the monitor the widget is on, matched by
+                // stable device name rather than list position.
+                let flags = if current_device
+                    .as_deref()
+                    .is_some_and(|d| !d.is_empty() && d == taskbar.monitor_device)
+                {
                     MF_CHECKED
                 } else {
                     MENU_ITEM_FLAGS(0)
@@ -2902,6 +3015,7 @@ fn show_context_menu(hwnd: HWND) {
                     IDM_MONITOR_BASE as usize + i,
                     PCWSTR::from_raw(label_str.as_ptr()),
                 );
+                menu_devices.push(taskbar.monitor_device.clone());
             }
             let display_on_label = native_interop::wide_str(strings.display_on);
             let _ = AppendMenuW(
@@ -2910,6 +3024,14 @@ fn show_context_menu(hwnd: HWND) {
                 monitor_menu.0 as usize,
                 PCWSTR::from_raw(display_on_label.as_ptr()),
             );
+        }
+        // Remember the enumeration order so the click handler can map a chosen
+        // entry back to its monitor even if the taskbar set changes meanwhile.
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.menu_taskbar_monitors = menu_devices;
+            }
         }
 
         // Settings submenu
@@ -3388,5 +3510,57 @@ mod tests {
     fn monitor_label_tags_primary() {
         let s = test_strings();
         assert_eq!(monitor_menu_label(0, true, &s), "Monitor 1 (Primary)");
+    }
+
+    fn taskbar(device: &str) -> native_interop::TaskbarWindow {
+        native_interop::TaskbarWindow {
+            hwnd: HWND::default(),
+            rect: RECT::default(),
+            is_primary: false,
+            monitor_device: device.to_string(),
+        }
+    }
+
+    #[test]
+    fn resolve_prefers_saved_monitor_over_index() {
+        let taskbars = [taskbar(r"\\.\DISPLAY1"), taskbar(r"\\.\DISPLAY2")];
+        // Saved monitor is at position 1; the stale fallback index points at 0.
+        assert_eq!(
+            resolve_taskbar_index(&taskbars, Some(r"\\.\DISPLAY2"), 0),
+            1
+        );
+    }
+
+    #[test]
+    fn resolve_survives_a_changed_taskbar_set() {
+        // Reproduces the reported bug: the widget was on DISPLAY3, then a
+        // hidden taskbar reappeared and shifted every list position. Matching by
+        // device name keeps it on DISPLAY3 instead of following the old index.
+        let before = [taskbar(r"\\.\DISPLAY1"), taskbar(r"\\.\DISPLAY3")];
+        let chosen = resolve_taskbar_index(&before, Some(r"\\.\DISPLAY3"), 1);
+        let saved = before[chosen].monitor_device.clone();
+
+        let after = [
+            taskbar(r"\\.\DISPLAY1"),
+            taskbar(r"\\.\DISPLAY2"),
+            taskbar(r"\\.\DISPLAY3"),
+        ];
+        // Same stale index (1) would now be DISPLAY2; the device match must win.
+        let resolved = resolve_taskbar_index(&after, Some(&saved), 1);
+        assert_eq!(after[resolved].monitor_device, r"\\.\DISPLAY3");
+    }
+
+    #[test]
+    fn resolve_falls_back_to_clamped_index_when_monitor_absent() {
+        let taskbars = [taskbar(r"\\.\DISPLAY1"), taskbar(r"\\.\DISPLAY2")];
+        // Saved monitor is gone (fullscreen) -> clamp the index into range.
+        assert_eq!(
+            resolve_taskbar_index(&taskbars, Some(r"\\.\DISPLAY9"), 5),
+            1
+        );
+        // No saved monitor at all -> plain clamped index.
+        assert_eq!(resolve_taskbar_index(&taskbars, None, 0), 0);
+        // Empty device string is ignored like "no preference".
+        assert_eq!(resolve_taskbar_index(&taskbars, Some(""), 1), 1);
     }
 }
