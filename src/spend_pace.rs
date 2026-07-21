@@ -261,6 +261,9 @@ fn repair_stuck_anchors(anchors: &mut SpendAnchorsDisk, spend_used: f64) {
     if spend_used <= 0.0 {
         return;
     }
+    if anchors.day_spend_start <= 0.01 && anchors.week_spend_start <= 0.01 {
+        return;
+    }
     // Both period baselines pinned to the live total => zero delta for week and day.
     // Legitimate day rollover only pins day_spend_start, so leave that case alone.
     if spend_close(anchors.week_spend_start, spend_used)
@@ -271,13 +274,29 @@ fn repair_stuck_anchors(anchors: &mut SpendAnchorsDisk, spend_used: f64) {
     }
 }
 
+/// Fresh install or anchor reset with zero baselines must not attribute existing
+/// billing-cycle spend to today/week.
+fn repair_inflated_period_anchors(anchors: &mut SpendAnchorsDisk, spend_used: f64) {
+    if spend_used <= 0.01 {
+        return;
+    }
+    if anchors.day_spend_start > 0.01 || anchors.week_spend_start > 0.01 {
+        return;
+    }
+    anchors.day_spend_start = spend_used;
+    anchors.week_spend_start = spend_used;
+}
+
 fn update_anchors(spend_used: f64) -> SpendAnchorsDisk {
     let secs = now_secs();
     let day_key = local_day_key(secs);
     let week_key = local_week_key(secs);
     let mut anchors = load_anchors();
 
-    repair_stuck_anchors(&mut anchors, spend_used);
+    repair_inflated_period_anchors(&mut anchors, spend_used);
+    if !spend_close(anchors.day_spend_start, spend_used) {
+        repair_stuck_anchors(&mut anchors, spend_used);
+    }
 
     // Billing cycle reset: spend dropped — re-anchor from zero, not from the new total.
     if spend_used + 0.01 < anchors.last_spend {
@@ -294,7 +313,7 @@ fn update_anchors(spend_used: f64) -> SpendAnchorsDisk {
 
     if anchors.day_key.is_empty() {
         anchors.day_key = day_key.clone();
-        anchors.day_spend_start = 0.0;
+        anchors.day_spend_start = spend_used;
     } else if anchors.day_key != day_key {
         anchors.day_key = day_key;
         anchors.day_spend_start = anchors.last_spend;
@@ -302,7 +321,7 @@ fn update_anchors(spend_used: f64) -> SpendAnchorsDisk {
 
     if anchors.week_key.is_empty() {
         anchors.week_key = week_key.clone();
-        anchors.week_spend_start = 0.0;
+        anchors.week_spend_start = spend_used;
     } else if anchors.week_key != week_key {
         anchors.week_key = week_key;
         anchors.week_spend_start = anchors.last_spend;
@@ -407,6 +426,34 @@ mod tests {
         repair_stuck_anchors(&mut anchors, 27.41);
         assert_eq!(anchors.week_spend_start, 0.0);
         assert_eq!(anchors.day_spend_start, 27.41);
+    }
+
+    #[test]
+    fn repair_inflated_anchors_pins_unknown_history() {
+        let mut anchors = SpendAnchorsDisk {
+            day_key: "2026-07-20".to_string(),
+            day_spend_start: 0.0,
+            week_key: "2026-07-20".to_string(),
+            week_spend_start: 0.0,
+            last_spend: 317.0,
+        };
+        repair_inflated_period_anchors(&mut anchors, 317.42);
+        assert_eq!(anchors.day_spend_start, 317.42);
+        assert_eq!(anchors.week_spend_start, 317.42);
+    }
+
+    #[test]
+    fn repair_inflated_anchors_skips_when_baseline_exists() {
+        let mut anchors = SpendAnchorsDisk {
+            day_key: "2026-07-20".to_string(),
+            day_spend_start: 12.0,
+            week_key: "2026-07-14".to_string(),
+            week_spend_start: 5.0,
+            last_spend: 20.0,
+        };
+        repair_inflated_period_anchors(&mut anchors, 20.0);
+        assert_eq!(anchors.day_spend_start, 12.0);
+        assert_eq!(anchors.week_spend_start, 5.0);
     }
 
     #[test]

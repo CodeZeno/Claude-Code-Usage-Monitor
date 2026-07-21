@@ -24,6 +24,7 @@ pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
 pub const TIMER_DRAG: usize = 5;
+pub const TIMER_WIDGET_KEEPALIVE: usize = 6;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -67,13 +68,149 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
     taskbars
 }
 
-/// Find a child window by class name
+/// Find a child window by class name (direct children only).
 pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
+    find_next_child_window(parent, HWND::default(), class_name)
+}
+
+/// Find a descendant window by class name anywhere under `parent`.
+pub fn find_descendant_window(parent: HWND, class_name: &str) -> Option<HWND> {
+    struct Search {
+        target: String,
+        found: Option<HWND>,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam.0 as *mut Search);
+        let mut class_buf = [0u16; 64];
+        let len = GetClassNameW(hwnd, &mut class_buf);
+        if len > 0 {
+            let class = String::from_utf16_lossy(&class_buf[..len as usize]);
+            if class == search.target {
+                search.found = Some(hwnd);
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+
+    let mut search = Search {
+        target: class_name.to_string(),
+        found: None,
+    };
+    unsafe {
+        let _ = EnumChildWindows(parent, Some(enum_proc), LPARAM(&mut search as *mut _ as isize));
+    }
+    search.found
+}
+
+struct TaskbarBandScan {
+    taskbar_rect: RECT,
+    content_left: i32,
+    pin_right: i32,
+}
+
+unsafe extern "system" fn scan_taskbar_band_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let scan = &mut *(lparam.0 as *mut TaskbarBandScan);
+    let mut class_buf = [0u16; 64];
+    let len = GetClassNameW(hwnd, &mut class_buf);
+    if len <= 0 {
+        return BOOL(1);
+    }
+    let class = String::from_utf16_lossy(&class_buf[..len as usize]);
+    if class != "MSTaskListWClass" && class != "MSTaskSwWClass" {
+        return BOOL(1);
+    }
+    if let Some(rect) = get_window_rect_safe(hwnd) {
+        scan.pin_right = scan.pin_right.max(rect.right);
+        let relative_right = rect.right.saturating_sub(scan.taskbar_rect.left);
+        let relative_left = rect.left.saturating_sub(scan.taskbar_rect.left);
+        let taskbar_width = scan.taskbar_rect.right - scan.taskbar_rect.left;
+        if relative_right > relative_left && relative_right < taskbar_width {
+            scan.content_left = scan.content_left.max(relative_right);
+        }
+    }
+    BOOL(1)
+}
+
+
+struct VisibleLeftScan {
+    visible_left: i32,
+    found: bool,
+}
+
+unsafe extern "system" fn scan_visible_left_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    let scan = &mut *(lparam.0 as *mut VisibleLeftScan);
+    let mut class_buf = [0u16; 64];
+    let len = GetClassNameW(hwnd, &mut class_buf);
+    if len > 0 {
+        let class = String::from_utf16_lossy(&class_buf[..len as usize]);
+        let is_chrome = class.contains("Start")
+            || class == "MSTaskListWClass"
+            || class == "MSTaskSwWClass"
+            || class == "ReBarWindow32"
+            || class == "ToolbarWindow32";
+        if is_chrome {
+            if let Some(rect) = get_window_rect_safe(hwnd) {
+                if rect.right > rect.left {
+                    scan.visible_left = if scan.found {
+                        scan.visible_left.min(rect.left)
+                    } else {
+                        rect.left
+                    };
+                    scan.found = true;
+                }
+            }
+        }
+    }
+    unsafe {
+        let _ = EnumChildWindows(hwnd, Some(scan_visible_left_proc), lparam);
+    }
+    BOOL(1)
+}
+
+fn taskbar_visible_left(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
+    let mut scan = VisibleLeftScan {
+        visible_left: taskbar_rect.left,
+        found: false,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            taskbar_hwnd,
+            Some(scan_visible_left_proc),
+            LPARAM(&mut scan as *mut _ as isize),
+        );
+    }
+    if scan.found {
+        scan.visible_left
+    } else {
+        taskbar_rect.left
+    }
+}
+
+fn scan_taskbar_band(taskbar_hwnd: HWND, taskbar_rect: RECT) -> (i32, i32) {
+    let mut scan = TaskbarBandScan {
+        taskbar_rect,
+        content_left: 0,
+        pin_right: 0,
+    };
+    unsafe {
+        let _ = EnumChildWindows(
+            taskbar_hwnd,
+            Some(scan_taskbar_band_proc),
+            LPARAM(&mut scan as *mut _ as isize),
+        );
+    }
+    (scan.content_left, scan.pin_right)
+}
+
+/// Find the next sibling child window matching `class_name`.
+pub fn find_next_child_window(parent: HWND, after: HWND, class_name: &str) -> Option<HWND> {
     unsafe {
         let class = wide_str(class_name);
         match FindWindowExW(
             parent,
-            HWND::default(),
+            after,
             PCWSTR::from_raw(class.as_ptr()),
             PCWSTR::null(),
         ) {
@@ -120,17 +257,51 @@ pub fn get_window_rect_safe(hwnd: HWND) -> Option<RECT> {
     }
 }
 
-/// Embed our window as a child of the taskbar
-pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
+/// Left edge of visible taskbar chrome (relative to taskbar rect).
+pub fn taskbar_content_left(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
+    taskbar_visible_left_screen(taskbar_hwnd, taskbar_rect).saturating_sub(taskbar_rect.left)
+}
+
+/// Left edge of visible taskbar chrome in screen coordinates.
+pub fn taskbar_visible_left_screen(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
+    taskbar_visible_left(taskbar_hwnd, taskbar_rect)
+}
+
+/// Right edge of the pinned-app band in screen coordinates.
+pub fn pin_band_right(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
+    scan_taskbar_band(taskbar_hwnd, taskbar_rect).1
+}
+
+/// Ensure WS_EX_LAYERED is set so UpdateLayeredWindow can push pixels.
+pub fn ensure_layered_style(hwnd: HWND) {
     unsafe {
-        // Preserve existing extended style, add tool window + no activate
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if ex_style & (WS_EX_LAYERED.0 as i32) == 0 {
+            let _ = SetWindowLongW(
+                hwnd,
+                GWL_EXSTYLE,
+                ex_style | WS_EX_LAYERED.0 as i32 | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
+            );
+        }
+    }
+}
+
+/// Remove WS_EX_LAYERED so the child paints via normal WM_PAINT inside Shell_TrayWnd.
+pub fn strip_layered_style(hwnd: HWND) {
+    unsafe {
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        let cleared = ex_style & !(WS_EX_LAYERED.0 as i32);
         let _ = SetWindowLongW(
             hwnd,
             GWL_EXSTYLE,
-            ex_style | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
+            cleared | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
         );
+    }
+}
 
+/// Embed our window as a child of the taskbar
+pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
+    unsafe {
         // Change from popup to child
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let new_style = (style & !WS_POPUP_STYLE) | WS_CHILD_STYLE | WS_CLIPSIBLINGS_STYLE;
@@ -159,10 +330,18 @@ pub fn detach_from_taskbar(hwnd: HWND) {
     }
 }
 
-/// Re-assert HWND_TOPMOST so the window sits above Shell_TrayWnd (which is also topmost).
-/// MoveWindow preserves z-order but doesn't lift us to the front of the topmost band.
-pub fn raise_above_taskbar(hwnd: HWND) {
+/// Place the popup widget above Shell_TrayWnd in the topmost z-order band.
+pub fn raise_above_taskbar(hwnd: HWND, _taskbar_hwnd: Option<HWND>) {
     unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
         let _ = SetWindowPos(
             hwnd,
             HWND_TOPMOST,
@@ -171,6 +350,67 @@ pub fn raise_above_taskbar(hwnd: HWND) {
             0,
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Place the layered popup immediately above the taskbar in Z-order.
+pub fn position_above_taskbar(hwnd: HWND, _taskbar_hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_NOTOPMOST,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Fallback when no taskbar handle is available yet.
+pub fn position_topmost_popup(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE,
+        );
+    }
+}
+
+/// Place a popup layered widget in the taskbar band (screen coords), just above the taskbar z-order.
+pub fn position_on_taskbar_band(
+    hwnd: HWND,
+    taskbar_hwnd: HWND,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+) {
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            taskbar_hwnd,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE,
         );
     }
 }

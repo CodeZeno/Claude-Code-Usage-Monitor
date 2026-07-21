@@ -89,6 +89,12 @@ fn ensure_disk_cache_loaded() {
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_TOKEN_URL_LEGACY: &str = "https://console.anthropic.com/v1/oauth/token";
+/// Client ID used by Claude Code OAuth (not the dynamic-metadata URL).
+const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const CLAUDE_OAUTH_USER_AGENT: &str = "claude-cli/2.1.0 (external; claude-code)";
+const DEFAULT_ACCESS_TOKEN_TTL_SECS: i64 = 28_800;
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const ANTIGRAVITY_CREDENTIAL_TARGET: &str = "gemini:antigravity";
 const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
@@ -349,8 +355,8 @@ fn poll_claude_code() -> Result<(UsageData, Option<AccountUsage>), PollError> {
     match fetch_usage_with_fallback(&creds.access_token) {
         Ok(result) => Ok(result),
         Err(PollError::AuthRequired) => {
-            diagnose::log("Claude usage auth error; attempting CLI token refresh and retry");
-            cli_refresh_token(&creds.source);
+            diagnose::log("Claude usage auth error; attempting OAuth token refresh and retry");
+            refresh_claude_token(&creds.source);
             if let Some(refreshed) = read_credentials_from_source(&creds.source) {
                 if let Ok(result) = fetch_usage_with_fallback(&refreshed.access_token) {
                     return Ok(result);
@@ -401,7 +407,7 @@ fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError>
         }
 
         let source = creds.source.clone();
-        cli_refresh_token(&source);
+        refresh_claude_token(&source);
 
         match read_credentials_from_source(&source) {
             Some(refreshed) if !is_token_expired(refreshed.expires_at) => return Ok(refreshed),
@@ -420,63 +426,378 @@ fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError>
     }
 }
 
-/// Invoke the Claude CLI with a minimal prompt to force its internal
-/// OAuth token refresh.
-fn cli_refresh_token(source: &CredentialSource) {
+/// Refresh Claude OAuth credentials without invoking the Claude CLI (no model spend).
+fn refresh_claude_token(source: &CredentialSource) {
+    diagnose::log(format!("attempting Claude OAuth refresh via HTTP for {source:?}"));
+    if http_refresh_claude_token(source) {
+        diagnose::log("Claude OAuth refresh via HTTP succeeded");
+        return;
+    }
     match source {
-        CredentialSource::Windows(_) => cli_refresh_windows_token(),
-        CredentialSource::Wsl { distro } => cli_refresh_wsl_token(distro),
+        CredentialSource::Wsl { distro } => {
+            diagnose::log(
+                "Claude OAuth HTTP refresh failed for WSL; falling back to Claude CLI (may incur usage charges)",
+            );
+            cli_refresh_wsl_token(distro);
+        }
+        CredentialSource::Windows(_) => diagnose::log(
+            "Claude OAuth HTTP refresh failed; run 'claude auth login' if usage polling stays unauthorized",
+        ),
     }
 }
 
-fn cli_refresh_windows_token() {
-    let claude_path = resolve_windows_claude_path();
-    let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
-    diagnose::log(format!(
-        "attempting Windows Claude token refresh via {claude_path}"
-    ));
+#[derive(Deserialize)]
+struct OauthRefreshResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    refresh_token_expires_in: Option<i64>,
+    scope: Option<String>,
+}
 
-    let args: &[&str] = &["-p", "."];
-
-    let mut cmd = if is_cmd {
-        let mut c = Command::new("cmd.exe");
-        c.arg("/c").arg(&claude_path).args(args);
-        c
-    } else {
-        let mut c = Command::new(&claude_path);
-        c.args(args);
-        c
+fn http_refresh_claude_token(source: &CredentialSource) -> bool {
+    let (content, expected_mtime) = match read_credentials_file_raw(source) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: unable to read credentials file");
+            return false;
+        }
     };
-    cmd.env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+
+    let (refresh_token, scopes) = match parse_oauth_refresh_fields(&content) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: credentials missing refresh token");
+            return false;
+        }
+    };
+
+    let response = match request_oauth_refresh(&refresh_token, &scopes) {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let updated = match merge_oauth_refresh_into_credentials(&content, &response) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: unable to merge refreshed token into credentials");
+            return false;
+        }
+    };
+
+    if !credentials_json_is_safe_to_persist(&updated) {
+        diagnose::log(
+            "OAuth HTTP refresh refused persist: merged credentials missing access or refresh token",
+        );
+        return false;
+    }
+
+    write_credentials_file_raw(source, &updated, expected_mtime)
+}
+
+fn read_credentials_file_raw(source: &CredentialSource) -> Option<(String, Option<SystemTime>)> {
+    match source {
+        CredentialSource::Windows(path) => {
+            let metadata = std::fs::metadata(path).ok()?;
+            let modified = metadata.modified().ok();
+            let content = std::fs::read_to_string(path).ok()?;
+            Some((content, modified))
+        }
+        CredentialSource::Wsl { distro } => {
+            let output = run_with_timeout(
+                Command::new("wsl.exe")
+                    .arg("-d")
+                    .arg(distro)
+                    .arg("--")
+                    .arg("cat")
+                    .arg("~/.claude/.credentials.json")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null()),
+                Duration::from_secs(5),
+            )?;
+            if !output.status.success() {
+                return None;
+            }
+            Some((decode_wsl_text(&output.stdout), None))
+        }
+    }
+}
+
+fn write_credentials_file_raw(
+    source: &CredentialSource,
+    content: &str,
+    expected_mtime: Option<SystemTime>,
+) -> bool {
+    match source {
+        CredentialSource::Windows(path) => write_windows_credentials_file(path, content, expected_mtime),
+        CredentialSource::Wsl { distro } => write_wsl_credentials_file(distro, content),
+    }
+}
+
+fn write_windows_credentials_file(
+    path: &PathBuf,
+    content: &str,
+    expected_mtime: Option<SystemTime>,
+) -> bool {
+    if !credentials_json_is_safe_to_persist(content) {
+        diagnose::log(
+            "OAuth HTTP refresh refused persist: credentials payload missing access or refresh token",
+        );
+        return false;
+    }
+
+    if let Some(expected) = expected_mtime {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Ok(actual) = metadata.modified() {
+                if actual != expected {
+                    diagnose::log(
+                        "OAuth HTTP refresh skipped persist: credentials file changed during refresh",
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+
+    backup_credentials_file(path);
+
+    let tmp_path = path.with_extension("json.tmp");
+    if let Err(error) = std::fs::write(&tmp_path, content) {
+        diagnose::log_error("OAuth HTTP refresh failed to write temp credentials file", error);
+        return false;
+    }
+    if let Err(error) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        diagnose::log_error("OAuth HTTP refresh failed to replace credentials file", error);
+        return false;
+    }
+    true
+}
+
+fn write_wsl_credentials_file(distro: &str, content: &str) -> bool {
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d")
+        .arg(distro)
+        .arg("--")
+        .arg("bash")
+        .arg("-lc")
+        .arg("cat > ~/.claude/.credentials.json")
         .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
     let mut child = match cmd.spawn() {
-        Ok(c) => c,
+        Ok(child) => child,
         Err(error) => {
-            diagnose::log_error("unable to spawn Windows Claude token refresh", error);
-            return;
+            diagnose::log_error("OAuth HTTP refresh failed to spawn WSL credentials writer", error);
+            return false;
         }
     };
 
-    // Wait up to 30 seconds — don't block the poll thread forever
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if start.elapsed() > Duration::from_secs(30) {
-                    let _ = child.kill();
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Err(_) => break,
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        if stdin.write_all(content.as_bytes()).is_err() {
+            let _ = child.kill();
+            diagnose::log("OAuth HTTP refresh failed while writing credentials to WSL stdin");
+            return false;
         }
     }
+
+    match child.wait() {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            diagnose::log(format!(
+                "OAuth HTTP refresh WSL credentials writer exited with status {status}"
+            ));
+            false
+        }
+        Err(error) => {
+            diagnose::log_error("OAuth HTTP refresh failed waiting for WSL credentials writer", error);
+            false
+        }
+    }
+}
+
+fn parse_oauth_refresh_fields(content: &str) -> Option<(String, Vec<String>)> {
+    let json: serde_json::Value = serde_json::from_str(content).ok()?;
+    let oauth = json.get("claudeAiOauth")?;
+    let refresh_token = oauth.get("refreshToken")?.as_str()?.trim();
+    if refresh_token.is_empty() {
+        return None;
+    }
+    let scopes = oauth
+        .get("scopes")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some((refresh_token.to_string(), scopes))
+}
+
+fn request_oauth_refresh(refresh_token: &str, scopes: &[String]) -> Option<OauthRefreshResponse> {
+    let mut body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+    });
+    if !scopes.is_empty() {
+        body["scope"] = serde_json::Value::String(scopes.join(" "));
+    }
+
+    for (index, url) in [OAUTH_TOKEN_URL, OAUTH_TOKEN_URL_LEGACY]
+        .into_iter()
+        .enumerate()
+    {
+        let has_fallback = index + 1 < 2;
+        match post_oauth_refresh(url, &body) {
+            Ok(response) => return Some(response),
+            Err(OauthRefreshError::EndpointMoved) if has_fallback => {
+                diagnose::log(format!(
+                    "OAuth token endpoint {url} unavailable; trying legacy endpoint"
+                ));
+                continue;
+            }
+            Err(error) => {
+                diagnose::log(format!("OAuth HTTP refresh failed against {url}: {error}"));
+                return None;
+            }
+        }
+    }
+
+    None
+}
+
+enum OauthRefreshError {
+    EndpointMoved,
+    Failed(String),
+}
+
+impl std::fmt::Display for OauthRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EndpointMoved => write!(f, "token endpoint moved"),
+            Self::Failed(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+fn post_oauth_refresh(url: &str, body: &serde_json::Value) -> Result<OauthRefreshResponse, OauthRefreshError> {
+    let agent = build_agent().map_err(|_| OauthRefreshError::Failed("HTTP client unavailable".into()))?;
+    let response = agent
+        .post(url)
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .set("User-Agent", CLAUDE_OAUTH_USER_AGENT)
+        .send_json(body)
+        .map_err(|error| match error {
+            ureq::Error::Status(code, _) if code == 404 || code == 405 => OauthRefreshError::EndpointMoved,
+            ureq::Error::Status(code, resp) => {
+                let detail = resp.into_string().unwrap_or_default();
+                OauthRefreshError::Failed(format!("status {code}: {detail}"))
+            }
+            ureq::Error::Transport(error) => OauthRefreshError::Failed(error.to_string()),
+        })?;
+
+    response
+        .into_json::<OauthRefreshResponse>()
+        .map_err(|error| OauthRefreshError::Failed(error.to_string()))
+}
+
+fn merge_oauth_refresh_into_credentials(
+    content: &str,
+    response: &OauthRefreshResponse,
+) -> Option<String> {
+    let mut root: serde_json::Value = serde_json::from_str(content).ok()?;
+    let oauth = root.get_mut("claudeAiOauth")?.as_object_mut()?;
+    if response.access_token.is_empty() {
+        return None;
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let expires_in = response.expires_in.unwrap_or(DEFAULT_ACCESS_TOKEN_TTL_SECS);
+    oauth.insert(
+        "accessToken".into(),
+        serde_json::Value::String(response.access_token.clone()),
+    );
+    if let Some(refresh_token) = response.refresh_token.as_ref() {
+        if !refresh_token.is_empty() {
+            oauth.insert(
+                "refreshToken".into(),
+                serde_json::Value::String(refresh_token.clone()),
+            );
+        }
+    }
+    oauth.insert(
+        "expiresAt".into(),
+        serde_json::Value::Number((now_ms + expires_in * 1000).into()),
+    );
+    if let Some(refresh_token_expires_in) = response.refresh_token_expires_in {
+        oauth.insert(
+            "refreshTokenExpiresAt".into(),
+            serde_json::Value::Number((now_ms + refresh_token_expires_in * 1000).into()),
+        );
+    }
+    if let Some(scope) = response.scope.as_ref() {
+        let scopes: Vec<serde_json::Value> = scope
+            .split_whitespace()
+            .map(|item| serde_json::Value::String(item.to_string()))
+            .collect();
+        if !scopes.is_empty() {
+            oauth.insert("scopes".into(), serde_json::Value::Array(scopes));
+        }
+    }
+
+    serde_json::to_string_pretty(&root).ok()
+}
+
+fn credentials_json_is_safe_to_persist(content: &str) -> bool {
+    let json: serde_json::Value = match serde_json::from_str(content) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let oauth = match json.get("claudeAiOauth") {
+        Some(value) => value,
+        None => return false,
+    };
+    let access_token = oauth
+        .get("accessToken")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    let refresh_token = oauth
+        .get("refreshToken")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    access_token.is_some() && refresh_token.is_some()
+}
+
+fn backup_credentials_file(path: &PathBuf) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let backup_dir = parent.join("backups");
+    if std::fs::create_dir_all(&backup_dir).is_err() {
+        return;
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let backup_path = backup_dir.join(format!(".credentials.json.backup.{timestamp}"));
+    let _ = std::fs::write(backup_path, content);
 }
 
 fn cli_refresh_wsl_token(distro: &str) {
@@ -589,42 +910,6 @@ fn wait_for_refresh(child: &mut std::process::Child) {
             Err(_) => break,
         }
     }
-}
-
-/// Resolve the full path to the `claude` CLI executable.
-fn resolve_windows_claude_path() -> String {
-    for name in &["claude.cmd", "claude"] {
-        if Command::new(name)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return name.to_string();
-        }
-    }
-
-    for name in &["claude.cmd", "claude"] {
-        if let Ok(output) = Command::new("where.exe")
-            .arg(name)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = stdout.lines().next() {
-                    let path = first_line.trim().to_string();
-                    if !path.is_empty() {
-                        return path;
-                    }
-                }
-            }
-        }
-    }
-
-    "claude.cmd".to_string()
 }
 
 fn resolve_windows_codex_path() -> String {
@@ -1515,7 +1800,9 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
     let oauth = json.get("claudeAiOauth")?;
     let access_token = oauth
         .get("accessToken")
-        .and_then(|v| v.as_str())?
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?
         .to_string();
     let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64());
 
@@ -1917,6 +2204,72 @@ mod tests {
         assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
         assert!(usage.weekly.resets_at.is_some());
         assert!(usage.session.resets_at.is_some());
+    }
+
+    #[test]
+    fn merge_oauth_refresh_preserves_unrelated_credential_fields() {
+        let original = r#"{
+  "mcpOAuth": {},
+  "claudeAiOauth": {
+    "accessToken": "old-access",
+    "refreshToken": "old-refresh",
+    "expiresAt": 1,
+    "refreshTokenExpiresAt": 2,
+    "scopes": ["user:inference"],
+    "subscriptionType": "enterprise"
+  }
+}"#;
+        let response = OauthRefreshResponse {
+            access_token: "new-access".into(),
+            refresh_token: Some("new-refresh".into()),
+            expires_in: Some(28800),
+            refresh_token_expires_in: Some(2_592_000),
+            scope: Some("user:inference user:profile".into()),
+        };
+
+        let merged = merge_oauth_refresh_into_credentials(original, &response)
+            .expect("refresh merge should succeed");
+        let json: serde_json::Value = serde_json::from_str(&merged).expect("merged json");
+        assert_eq!(json["mcpOAuth"], serde_json::json!({}));
+        assert_eq!(json["claudeAiOauth"]["accessToken"], "new-access");
+        assert_eq!(json["claudeAiOauth"]["refreshToken"], "new-refresh");
+        assert_eq!(
+            json["claudeAiOauth"]["subscriptionType"],
+            serde_json::json!("enterprise")
+        );
+        assert_eq!(
+            json["claudeAiOauth"]["scopes"],
+            serde_json::json!(["user:inference", "user:profile"])
+        );
+    }
+
+    #[test]
+    fn parse_oauth_refresh_fields_reads_refresh_token_and_scopes() {
+        let content = r#"{"claudeAiOauth":{"refreshToken":"rt","scopes":["user:inference"]}}"#;
+        let (refresh_token, scopes) =
+            parse_oauth_refresh_fields(content).expect("refresh fields should parse");
+        assert_eq!(refresh_token, "rt");
+        assert_eq!(scopes, vec!["user:inference".to_string()]);
+    }
+
+    #[test]
+    fn credentials_json_is_safe_to_persist_rejects_empty_tokens() {
+        let empty_access = r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"rt"}}"#;
+        let empty_refresh = r#"{"claudeAiOauth":{"accessToken":"at","refreshToken":""}}"#;
+        let valid = r#"{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}"#;
+        assert!(!credentials_json_is_safe_to_persist(empty_access));
+        assert!(!credentials_json_is_safe_to_persist(empty_refresh));
+        assert!(credentials_json_is_safe_to_persist(valid));
+    }
+
+    #[test]
+    fn parse_credentials_rejects_empty_access_token() {
+        let content = r#"{"claudeAiOauth":{"accessToken":"","expiresAt":123}}"#;
+        assert!(parse_credentials(
+            content,
+            CredentialSource::Windows(PathBuf::from("dummy"))
+        )
+        .is_none());
     }
 }
 

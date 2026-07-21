@@ -157,7 +157,7 @@ What it does **not** do:
 
 Notes:
 
-- If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
+- If your Claude Code token is expired, the app refreshes OAuth directly against `platform.claude.com/v1/oauth/token` and updates `~/.claude/.credentials.json` (no Claude CLI session / no model spend on Windows)
 - If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository
