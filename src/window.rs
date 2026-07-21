@@ -12,7 +12,7 @@ use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, ReleaseCapture, SetCapture, VK_LBUTTON};
 use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -20,10 +20,12 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
+    TIMER_WIDGET_KEEPALIVE,
+    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
+use crate::spend_pace;
 use crate::theme;
 use crate::tray_icon;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
@@ -57,8 +59,21 @@ struct AppState {
 
     session_percent: f64,
     session_text: String,
+    session_label: String,
     weekly_percent: f64,
     weekly_text: String,
+    weekly_label: String,
+    account_pace_mode: bool,
+    show_credit_row: bool,
+    credit_percent: f64,
+    credit_text: String,
+    credit_label: String,
+    session_pace_level: u8,
+    weekly_pace_level: u8,
+    day_percent: f64,
+    day_text: String,
+    day_label: String,
+    day_pace_level: u8,
     codex_session_percent: f64,
     codex_session_text: String,
     codex_weekly_percent: f64,
@@ -90,6 +105,11 @@ struct AppState {
     drag_start_client_x: i32,
     drag_start_offset: i32,
 
+    /// Screen origin for UpdateLayeredWindow when embedded (GetWindowRect lies on WS_CHILD).
+    layered_screen_x: i32,
+    layered_screen_y: i32,
+    layered_position_valid: bool,
+
     widget_visible: bool,
 }
 
@@ -103,6 +123,7 @@ enum UpdateStatus {
 }
 
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
+const AUTH_RETRY_BASE_MS: u32 = 120_000; // 2 minutes — keep retrying auth recovery in background
 
 const POLL_1_MIN: u32 = 60_000;
 const POLL_5_MIN: u32 = 300_000;
@@ -116,6 +137,8 @@ const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_RESET_POSITION: u16 = 30;
+/// Persisted in settings.json; resolved to max_offset at layout time.
+const TRAY_OFFSET_LEFTMOST: i32 = -1;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
@@ -135,13 +158,17 @@ const IDM_MODEL_ANTIGRAVITY: u16 = 62;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
+const WM_APP_RECOVER_TASKBAR: u32 = WM_APP + 4;
+const WM_APP_ENSURE_VISIBLE: u32 = WM_APP + 5;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 
 /// How often the watchdog thread polls for an explorer.exe restart (which
 /// recreates the taskbar and wipes our tray-icon registration).
-const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;
+const TASKBAR_WATCH_INTERVAL_SECS: u64 = 1;
+const TASKBAR_RECOVER_MAX_ATTEMPTS: u32 = 3;
 
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+static TASKBAR_RECOVER_FAILURES: AtomicU32 = AtomicU32::new(0);
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
@@ -226,6 +253,35 @@ fn relaunch_self() {
     }
 }
 
+/// True when our widget HWND is still a live child of the given taskbar.
+/// HWND reuse after an explorer restart can make stale handle comparisons lie;
+/// parentage is the reliable signal.
+fn is_widget_embedded_in_taskbar(widget_hwnd: HWND, taskbar_hwnd: HWND) -> bool {
+    unsafe {
+        IsWindow(widget_hwnd).as_bool()
+            && IsWindow(taskbar_hwnd).as_bool()
+            && GetParent(widget_hwnd).ok() == Some(taskbar_hwnd)
+    }
+}
+
+fn recover_taskbar_embed(hwnd: HWND) {
+    let taskbar_index = {
+        let state = lock_state();
+        state.as_ref().map(|s| s.taskbar_index).unwrap_or(0)
+    };
+    diagnose::log("recover_taskbar_embed: re-attaching to taskbar");
+    if attach_to_taskbar(hwnd, taskbar_index) {
+        position_at_taskbar();
+        sync_tray_icons(hwnd);
+        render_layered();
+        TASKBAR_RECOVER_FAILURES.store(0, Ordering::Relaxed);
+        diagnose::log("recover_taskbar_embed: success");
+    } else {
+        diagnose::log("recover_taskbar_embed: attach failed, relaunching");
+        relaunch_self();
+    }
+}
+
 /// Detect explorer.exe restarts and recover from them.
 ///
 /// Once explorer destroys the taskbar, our embedded child window is destroyed
@@ -235,22 +291,60 @@ fn relaunch_self() {
 fn spawn_taskbar_watchdog() {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
-        let stored = {
+        let (widget_hwnd, old_taskbar, embedded, widget_visible) = {
             let state = lock_state();
-            state.as_ref().and_then(|s| s.taskbar_hwnd)
+            match state.as_ref() {
+                Some(s) => (
+                    s.hwnd.to_hwnd(),
+                    s.taskbar_hwnd,
+                    s.embedded,
+                    s.widget_visible,
+                ),
+                None => continue,
+            }
         };
-        // Only relevant once we have embedded into a taskbar at least once.
-        let Some(old) = stored else {
+        if !widget_visible {
             continue;
-        };
-        let taskbars = native_interop::find_taskbars();
-        if !taskbars.is_empty() && !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
-            let new = taskbars[0].hwnd;
+        }
+        if embedded {
+            let intact = old_taskbar
+                .is_some_and(|taskbar| is_widget_embedded_in_taskbar(widget_hwnd, taskbar));
+            if intact {
+                TASKBAR_RECOVER_FAILURES.store(0, Ordering::Relaxed);
+                continue;
+            }
+        } else {
+            let taskbar_ok = old_taskbar.is_some_and(|taskbar| unsafe { IsWindow(taskbar).as_bool() });
+            if taskbar_ok {
+                unsafe {
+                    let _ = PostMessageW(widget_hwnd, WM_APP_ENSURE_VISIBLE, WPARAM(0), LPARAM(0));
+                }
+                continue;
+            }
+        }
+
+        let widget_alive = unsafe { IsWindow(widget_hwnd).as_bool() };
+        diagnose::log(format!(
+            "watchdog: embed broken widget_alive={widget_alive} taskbar={:?}",
+            old_taskbar.map(|h| h.0)
+        ));
+
+        if !widget_alive {
+            relaunch_self();
+            continue;
+        }
+
+        let failures = TASKBAR_RECOVER_FAILURES.fetch_add(1, Ordering::Relaxed) + 1;
+        if failures >= TASKBAR_RECOVER_MAX_ATTEMPTS {
             diagnose::log(format!(
-                "watchdog: taskbar changed old={:?} new={:?} -> relaunching",
-                old.0, new.0
+                "watchdog: {failures} in-process recoveries failed, relaunching"
             ));
             relaunch_self();
+            continue;
+        }
+
+        unsafe {
+            let _ = PostMessageW(widget_hwnd, WM_APP_RECOVER_TASKBAR, WPARAM(0), LPARAM(0));
         }
     });
 }
@@ -299,7 +393,7 @@ fn settings_path() -> PathBuf {
 
 #[derive(Debug, Serialize, Deserialize)]
 struct SettingsFile {
-    #[serde(default)]
+    #[serde(default = "default_tray_offset")]
     tray_offset: i32,
     #[serde(default)]
     taskbar_index: usize,
@@ -319,10 +413,41 @@ struct SettingsFile {
     show_antigravity: bool,
 }
 
+fn default_tray_offset() -> i32 {
+    TRAY_OFFSET_LEFTMOST
+}
+
+fn resolve_tray_offset(stored: i32, max_offset: i32) -> i32 {
+    if stored < 0 {
+        max_offset
+    } else {
+        stored.clamp(0, max_offset)
+    }
+}
+
+fn max_tray_offset_for_taskbar(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    widget_width: i32,
+) -> i32 {
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+    let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+    (tray_left - taskbar_rect.left - widget_width - content_left).max(0)
+}
+
+fn resolved_tray_offset_for_taskbar(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    stored: i32,
+) -> i32 {
+    let max_offset = max_tray_offset_for_taskbar(taskbar_hwnd, taskbar_rect, total_widget_width());
+    resolve_tray_offset(stored, max_offset)
+}
+
 impl Default for SettingsFile {
     fn default() -> Self {
         Self {
-            tray_offset: 0,
+            tray_offset: TRAY_OFFSET_LEFTMOST,
             taskbar_index: 0,
             poll_interval_ms: default_poll_interval(),
             language: None,
@@ -364,6 +489,11 @@ fn load_settings() -> SettingsFile {
     if !settings.show_claude_code && !settings.show_codex && !settings.show_antigravity {
         settings.show_claude_code = true;
     }
+    // Older builds clobbered leftmost placement by persisting tray_offset=0 on embed.
+    if settings.tray_offset == 0 {
+        settings.tray_offset = TRAY_OFFSET_LEFTMOST;
+        settings.taskbar_index = 0;
+    }
     settings
 }
 
@@ -380,8 +510,14 @@ fn save_settings(settings: &SettingsFile) {
 fn save_state_settings() {
     let state = lock_state();
     if let Some(s) = state.as_ref() {
+        // Persist the user's placement intent (-1 = leftmost), not the resolved pixel offset.
+        let tray_offset = if s.tray_offset < 0 {
+            TRAY_OFFSET_LEFTMOST
+        } else {
+            s.tray_offset
+        };
         save_settings(&SettingsFile {
-            tray_offset: s.tray_offset,
+            tray_offset,
             taskbar_index: s.taskbar_index,
             poll_interval_ms: s.poll_interval_ms,
             language: s
@@ -402,15 +538,35 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
         Some(s) if s.last_poll_ok => {
             let mut icons = Vec::new();
             if s.show_claude_code {
+                let tooltip = if s.account_pace_mode {
+                    let credit_pct = s
+                        .data
+                        .as_ref()
+                        .and_then(|d| d.spend_pace.as_ref())
+                        .map(|p| p.credit_pct)
+                        .unwrap_or(0.0);
+                    format!(
+                        "{} Mo: {} | Wk: {} | Dy: {} | Cr: {:.0}%",
+                        s.language.strings().claude_code_model,
+                        s.session_text,
+                        s.weekly_text,
+                        s.day_text,
+                        credit_pct
+                    )
+                } else {
+                    format!(
+                        "{} {}: {} | {}: {}",
+                        s.language.strings().claude_code_model,
+                        s.session_label,
+                        s.session_text,
+                        s.weekly_label,
+                        s.weekly_text
+                    )
+                };
                 icons.push(tray_icon::TrayIconData {
                     kind: tray_icon::TrayIconKind::Claude,
                     percent: Some(s.session_percent),
-                    tooltip: format!(
-                        "{} 5h: {} | 7d: {}",
-                        s.language.strings().claude_code_model,
-                        s.session_text,
-                        s.weekly_text
-                    ),
+                    tooltip,
                 });
             }
             if s.show_codex {
@@ -495,6 +651,28 @@ fn toggle_widget_visibility(hwnd: HWND) {
     }
 }
 
+/// Pick a taskbar that actually hosts the notification area. On multi-monitor
+/// setups Windows can expose a spanning primary bar (often at a virtual top
+/// edge) that has no TrayNotifyWnd; embedding there hides the widget.
+fn resolve_taskbar_index(requested_index: usize, taskbars: &[native_interop::TaskbarWindow]) -> usize {
+    if taskbars.is_empty() {
+        return 0;
+    }
+    let capped = requested_index.min(taskbars.len() - 1);
+    if native_interop::find_descendant_window(taskbars[capped].hwnd, "TrayNotifyWnd").is_some() {
+        return capped;
+    }
+    for (index, taskbar) in taskbars.iter().enumerate() {
+        if native_interop::find_descendant_window(taskbar.hwnd, "TrayNotifyWnd").is_some() {
+            diagnose::log(format!(
+                "taskbar index {requested_index} has no TrayNotifyWnd; using index {index}"
+            ));
+            return index;
+        }
+    }
+    capped
+}
+
 fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     let taskbars = native_interop::find_taskbars();
     if taskbars.is_empty() {
@@ -502,7 +680,7 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         return false;
     }
 
-    let index = requested_index.min(taskbars.len().saturating_sub(1));
+    let index = resolve_taskbar_index(requested_index, &taskbars);
     let taskbar = taskbars[index];
     diagnose::log(format!(
         "taskbar selected index={index} count={} hwnd={:?} rect=({}, {}, {}, {})",
@@ -522,7 +700,7 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         native_interop::unhook_win_event(hook);
     }
 
-    native_interop::embed_in_taskbar(hwnd, taskbar.hwnd);
+    native_interop::raise_above_taskbar(hwnd, Some(taskbar.hwnd));
 
     let tray_notify = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
     if tray_notify.is_some() {
@@ -541,13 +719,16 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         diagnose::log("tray event hook could not be installed");
     }
 
-    let mut state = lock_state();
-    if let Some(s) = state.as_mut() {
-        s.taskbar_hwnd = Some(taskbar.hwnd);
-        s.tray_notify_hwnd = tray_notify;
-        s.win_event_hook = hook;
-        s.taskbar_index = index;
-        s.embedded = true;
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.taskbar_hwnd = Some(taskbar.hwnd);
+            s.tray_notify_hwnd = tray_notify;
+            s.win_event_hook = hook;
+            s.taskbar_index = index;
+            s.embedded = false;
+            s.dragging = false;
+        }
     }
     true
 }
@@ -574,10 +755,34 @@ fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
     tray_left
 }
 
-fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
+fn clamp_offset_for_taskbar(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    offset: i32,
+    widget_width: i32,
+) -> i32 {
+    let max_offset = max_tray_offset_for_taskbar(taskbar_hwnd, taskbar_rect, widget_width);
     offset.clamp(0, max_offset)
+}
+
+/// Screen X for the layered popup widget.
+fn popup_screen_x(
+    stored_tray_offset: i32,
+    resolved_tray_offset: i32,
+    _taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    content_left: i32,
+    max_offset: i32,
+    max_x: i32,
+) -> i32 {
+    let min_x = taskbar_rect.left;
+    let max_x_screen = taskbar_rect.left + max_x;
+    let x = if stored_tray_offset < 0 {
+        min_x
+    } else {
+        content_left + max_offset - resolved_tray_offset + taskbar_rect.left
+    };
+    x.clamp(min_x, max_x_screen)
 }
 
 fn offset_for_drop_point(
@@ -588,8 +793,9 @@ fn offset_for_drop_point(
 ) -> i32 {
     let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
     let desired_left = pt.x - taskbar_rect.left - drag_start_client_x;
-    let offset = tray_left - taskbar_rect.left - total_widget_width() - desired_left;
-    clamp_offset_for_taskbar(taskbar_hwnd, taskbar_rect, offset)
+    let widget_width = total_widget_width();
+    let offset = tray_left - taskbar_rect.left - widget_width - desired_left;
+    clamp_offset_for_taskbar(taskbar_hwnd, taskbar_rect, offset, widget_width)
 }
 
 fn now_unix_secs() -> u64 {
@@ -635,6 +841,41 @@ fn schedule_auto_update_check(hwnd: HWND) {
     }
 }
 
+fn waiting_usage_text() -> String {
+    "--".to_string()
+}
+
+/// When a poll fails, keep the last successful values on screen when we have them.
+/// Only show a waiting indicator when there is no cached data yet.
+fn apply_poll_failure_display(state: &mut AppState) {
+    if state.data.is_some() {
+        return;
+    }
+
+    let waiting = waiting_usage_text();
+    if state.show_claude_code {
+        state.session_text = waiting.clone();
+        state.weekly_text = waiting.clone();
+        state.day_text = waiting.clone();
+        state.credit_text = waiting.clone();
+    }
+    if state.show_codex {
+        state.codex_session_text = waiting.clone();
+        state.codex_weekly_text = waiting.clone();
+    }
+    if state.show_antigravity {
+        state.antigravity_session_text = waiting.clone();
+        state.antigravity_weekly_text = waiting.clone();
+    }
+}
+
+fn auth_retry_delay_ms(retry_count: u32, poll_interval_ms: u32) -> u32 {
+    let backoff = AUTH_RETRY_BASE_MS.saturating_mul(
+        1u32.checked_shl(retry_count.saturating_sub(1)).unwrap_or(1),
+    );
+    backoff.min(poll_interval_ms)
+}
+
 fn refresh_usage_texts(state: &mut AppState) {
     if !state.last_poll_ok {
         return;
@@ -645,20 +886,95 @@ fn refresh_usage_texts(state: &mut AppState) {
         return;
     };
 
+    // Reset labels to defaults before potentially overriding below
+    state.session_label = strings.session_window.to_string();
+    state.weekly_label = strings.weekly_window.to_string();
+    state.account_pace_mode = false;
+    state.show_credit_row = false;
+    state.credit_text.clear();
+    state.credit_label.clear();
+    state.day_text.clear();
+    state.day_label.clear();
+
     if let Some(claude_code) = data.claude_code.as_ref() {
+        state.session_percent = claude_code.session.percentage;
+        state.weekly_percent = claude_code.weekly.percentage;
         state.session_text = poller::format_line(&claude_code.session, strings);
         state.weekly_text = poller::format_line(&claude_code.weekly, strings);
+
+        // When the usage endpoint returned no rate-limit buckets (enterprise), show account rows
+        let has_rate_limit = claude_code.session.has_bucket || claude_code.weekly.has_bucket;
+
+        diagnose::log(format!("refresh_usage_texts: has_rate_limit={has_rate_limit} account={}", data.account.is_some()));
+        if !has_rate_limit {
+            if let Some(pace) = data.spend_pace.as_ref() {
+                let slots = &pace.slots;
+                state.account_pace_mode = true;
+                state.session_label = "Mo".to_string();
+                state.session_text =
+                    spend_pace::format_pace_fraction(slots.month_actual, slots.month_cap);
+                state.session_percent =
+                    spend_pace::bar_fill_percent(slots.month_actual, slots.month_cap);
+                state.session_pace_level = slots.month_level;
+
+                state.weekly_label = "Wk".to_string();
+                state.weekly_text =
+                    spend_pace::format_pace_fraction(slots.week_actual, slots.week_cap);
+                state.weekly_percent =
+                    spend_pace::bar_fill_percent(slots.week_actual, slots.week_cap);
+                state.weekly_pace_level = slots.week_level;
+
+                state.day_label = "Dy".to_string();
+                state.day_text =
+                    spend_pace::format_pace_fraction(slots.day_actual, slots.day_cap);
+                state.day_percent =
+                    spend_pace::bar_fill_percent(slots.day_actual, slots.day_cap);
+                state.day_pace_level = slots.day_level;
+
+                if let Some(account) = data.account.as_ref() {
+                    state.show_credit_row = false; // credit shown in tooltip; row omitted to stay within taskbar
+                    state.credit_percent = account.credit_pct;
+                    state.credit_text =
+                        poller::format_credit_text(account.credit_pct, account.credit_expiry);
+                    state.credit_label = "Cr".to_string();
+                }
+            } else if let Some(account) = data.account.as_ref() {
+                diagnose::log(format!(
+                    "refresh_usage_texts: setting Cr/Sp rows credit_pct={}",
+                    account.credit_pct
+                ));
+                state.session_percent = account.credit_pct;
+                state.session_text =
+                    poller::format_credit_text(account.credit_pct, account.credit_expiry);
+                state.session_label = "Cr".to_string();
+
+                let spend_pct = if account.spend_limit > 0.0 {
+                    (account.spend_used / account.spend_limit * 100.0).clamp(0.0, 100.0)
+                } else {
+                    0.0
+                };
+                state.weekly_percent = spend_pct;
+                state.weekly_text =
+                    poller::format_spend_text(account.spend_used, account.spend_limit);
+                state.weekly_label = "Sp".to_string();
+            }
+        }
     } else if state.show_claude_code {
-        state.session_text = "!".to_string();
-        state.weekly_text = "!".to_string();
+        // Provider enabled but this poll returned no Claude data — keep prior text if any.
+        if state.session_text.is_empty() || state.session_text == "!" {
+            state.session_text = waiting_usage_text();
+            state.weekly_text = waiting_usage_text();
+        }
     }
 
     if let Some(codex) = data.codex.as_ref() {
         state.codex_session_text = poller::format_line(&codex.session, strings);
         state.codex_weekly_text = poller::format_line(&codex.weekly, strings);
     } else if state.show_codex {
-        state.codex_session_text = "!".to_string();
-        state.codex_weekly_text = "!".to_string();
+        if state.codex_session_text.is_empty() || state.codex_session_text == "!" {
+            state.codex_session_text = waiting_usage_text();
+            state.codex_weekly_text = waiting_usage_text();
+        }
     }
 
     if let Some(antigravity) = data.antigravity.as_ref() {
@@ -670,8 +986,10 @@ fn refresh_usage_texts(state: &mut AppState) {
                 poller::format_line(&antigravity.weekly, strings)
             };
     } else if state.show_antigravity {
-        state.antigravity_session_text = "!".to_string();
-        state.antigravity_weekly_text = "!".to_string();
+        if state.antigravity_session_text.is_empty() || state.antigravity_session_text == "!" {
+            state.antigravity_session_text = waiting_usage_text();
+            state.antigravity_weekly_text = waiting_usage_text();
+        }
     }
 }
 
@@ -1052,6 +1370,8 @@ const SEGMENT_COUNT: i32 = 10;
 const CORNER_RADIUS: i32 = 2;
 
 const LEFT_DIVIDER_W: i32 = 3;
+/// Hit-test width for the drag handle — wider than the visual divider for usability.
+const LEFT_DIVIDER_HIT_W: i32 = 10;
 const DIVIDER_RIGHT_MARGIN: i32 = 10;
 const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
@@ -1060,23 +1380,67 @@ const TEXT_WIDTH: i32 = 62;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
+const WIDGET_HEIGHT_PACE: i32 = 48;
+const WIDGET_HEIGHT_PACE_CREDIT: i32 = 88;
 
-fn is_drag_handle_point(client_x: i32, client_y: i32) -> bool {
+fn widget_height(account_pace_mode: bool, show_credit_row: bool) -> i32 {
+    if account_pace_mode {
+        if show_credit_row {
+            WIDGET_HEIGHT_PACE_CREDIT
+        } else {
+            WIDGET_HEIGHT_PACE
+        }
+    } else {
+        WIDGET_HEIGHT
+    }
+}
+
+fn widget_height_for_state(state: &AppState) -> i32 {
+    widget_height(state.account_pace_mode, state.show_credit_row)
+}
+
+fn is_drag_handle_point(client_x: i32, client_y: i32, state: &AppState) -> bool {
+    is_drag_handle_point_inner(client_x, client_y, state, false)
+}
+
+fn is_drag_handle_point_verbose(client_x: i32, client_y: i32, state: &AppState) -> bool {
+    is_drag_handle_point_inner(client_x, client_y, state, true)
+}
+
+fn is_drag_handle_point_inner(client_x: i32, client_y: i32, state: &AppState, verbose: bool) -> bool {
+    // MoveWindow / SetWindowPos on a taskbar child freezes Explorer; keep embedded
+    // widgets docked beside the tray (use popup fallback for free positioning).
+    if state.embedded {
+        return false;
+    }
     let divider_h = sc(25);
-    let divider_top = (sc(WIDGET_HEIGHT) - divider_h) / 2;
+    let widget_h = sc(widget_height_for_state(state));
+    let divider_top = (widget_h - divider_h) / 2;
+    let hit_w = sc(LEFT_DIVIDER_HIT_W);
+    if verbose {
+        diagnose::log(&format!(
+            "is_drag_handle_point: client=({},{}) widget_h={} divider_top={} divider_h={} hit_w={} dpi={}",
+            client_x, client_y, widget_h, divider_top, divider_h, hit_w,
+            CURRENT_DPI.load(Ordering::Relaxed)
+        ));
+    }
     client_x >= 0
-        && client_x < sc(LEFT_DIVIDER_W)
+        && client_x < hit_w
         && client_y >= divider_top
         && client_y < divider_top + divider_h
 }
 
 fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
+    let state = lock_state();
+    let Some(s) = state.as_ref() else {
+        return false;
+    };
     unsafe {
         let mut pt = POINT::default();
         if GetCursorPos(&mut pt).is_err() || !ScreenToClient(hwnd, &mut pt).as_bool() {
             return false;
         }
-        is_drag_handle_point(pt.x, pt.y)
+        is_drag_handle_point(pt.x, pt.y, s)
     }
 }
 
@@ -1124,6 +1488,14 @@ fn total_widget_width() -> i32 {
             .unwrap_or(1)
     };
     total_widget_width_for(active_models)
+}
+
+/// Width/height used for both MoveWindow and the layered bitmap so they always match.
+fn resolved_widget_size(account_pace_mode: bool, show_credit_row: bool) -> (i32, i32) {
+    refresh_dpi();
+    let width = total_widget_width();
+    let height = sc(widget_height(account_pace_mode, show_credit_row));
+    (width, height)
 }
 
 fn claude_accent_color() -> Color {
@@ -1298,8 +1670,21 @@ pub fn run() {
                 install_channel,
                 session_percent: 0.0,
                 session_text: "--".to_string(),
+                session_label: language.strings().session_window.to_string(),
                 weekly_percent: 0.0,
                 weekly_text: "--".to_string(),
+                weekly_label: language.strings().weekly_window.to_string(),
+                account_pace_mode: false,
+                show_credit_row: false,
+                credit_percent: 0.0,
+                credit_text: String::new(),
+                credit_label: String::new(),
+                session_pace_level: 0,
+                weekly_pace_level: 0,
+                day_percent: 0.0,
+                day_text: String::new(),
+                day_label: String::new(),
+                day_pace_level: 0,
                 codex_session_percent: 0.0,
                 codex_session_text: "--".to_string(),
                 codex_weekly_percent: 0.0,
@@ -1327,17 +1712,18 @@ pub fn run() {
                 drag_start_mouse_x: 0,
                 drag_start_client_x: 0,
                 drag_start_offset: 0,
+                layered_screen_x: 0,
+                layered_screen_y: 0,
+                layered_position_valid: false,
                 widget_visible: settings.widget_visible,
             });
         }
 
         // Try to embed in taskbar
-        if attach_to_taskbar(hwnd, settings.taskbar_index) {
-            embedded = true;
-        }
+        let attached = attach_to_taskbar(hwnd, settings.taskbar_index);
 
-        // If not embedded, fall back to topmost popup with SetLayeredWindowAttributes
-        if !embedded {
+        // Popup layered window (anchored to taskbar when attach succeeds)
+        if !attached {
             let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
             let _ = SetWindowPos(
                 hwnd,
@@ -1351,10 +1737,14 @@ pub fn run() {
         }
 
         // Register system tray icon(s)
+        diagnose::log("before sync_tray_icons");
         sync_tray_icons(hwnd);
+        diagnose::log("after sync_tray_icons");
 
         // Position and show (only if widget_visible preference is true)
+        diagnose::log("before position_at_taskbar");
         position_at_taskbar();
+        diagnose::log("before ShowWindow");
         if settings.widget_visible {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
@@ -1372,6 +1762,7 @@ pub fn run() {
                 .unwrap_or(POLL_15_MIN)
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
+        SetTimer(hwnd, TIMER_WIDGET_KEEPALIVE, 15_000, None);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
         // icon (the shell discards tray registrations when it restarts). This
@@ -1419,12 +1810,14 @@ fn render_layered() {
     let (
         hwnd_val,
         is_dark,
-        embedded,
+        _embedded,
         strings,
         session_pct,
         session_text,
+        session_label,
         weekly_pct,
         weekly_text,
+        weekly_label,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
@@ -1436,6 +1829,17 @@ fn render_layered() {
         show_claude_code,
         show_codex,
         show_antigravity,
+        account_pace_mode,
+        show_credit_row,
+        credit_pct,
+        credit_text,
+        credit_label,
+        day_pct,
+        day_text,
+        day_label,
+        session_pace_level,
+        weekly_pace_level,
+        day_pace_level,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1446,8 +1850,10 @@ fn render_layered() {
                 s.language.strings(),
                 s.session_percent,
                 s.session_text.clone(),
+                s.session_label.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                s.weekly_label.clone(),
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_weekly_percent,
@@ -1459,6 +1865,17 @@ fn render_layered() {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.account_pace_mode,
+                s.show_credit_row,
+                s.credit_percent,
+                s.credit_text.clone(),
+                s.credit_label.clone(),
+                s.day_percent,
+                s.day_text.clone(),
+                s.day_label.clone(),
+                s.session_pace_level,
+                s.weekly_pace_level,
+                s.day_pace_level,
             ),
             None => return,
         }
@@ -1466,16 +1883,11 @@ fn render_layered() {
 
     let hwnd = hwnd_val.to_hwnd();
 
-    // For non-embedded fallback, just invalidate and let WM_PAINT handle it
-    if !embedded {
-        unsafe {
-            let _ = InvalidateRect(hwnd, None, false);
-        }
-        return;
+    unsafe {
+        native_interop::ensure_layered_style(hwnd);
     }
 
-    let width = total_widget_width();
-    let height = sc(WIDGET_HEIGHT);
+    let (width, height) = resolved_widget_size(account_pace_mode, show_credit_row);
 
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
@@ -1497,7 +1909,7 @@ fn render_layered() {
     };
 
     unsafe {
-        let screen_dc = GetDC(hwnd);
+        let screen_dc = GetDC(HWND::default());
 
         let bmi = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -1519,7 +1931,7 @@ fn render_layered() {
 
         if dib.is_invalid() || bits.is_null() {
             let _ = DeleteDC(mem_dc);
-            ReleaseDC(hwnd, screen_dc);
+            ReleaseDC(HWND::default(), screen_dc);
             return;
         }
 
@@ -1541,8 +1953,10 @@ fn render_layered() {
             strings,
             session_pct,
             &session_text,
+            &session_label,
             weekly_pct,
             &weekly_text,
+            &weekly_label,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
@@ -1554,24 +1968,55 @@ fn render_layered() {
             show_claude_code,
             show_codex,
             show_antigravity,
+            account_pace_mode,
+            show_credit_row,
+            credit_pct,
+            &credit_text,
+            &credit_label,
+            day_pct,
+            &day_text,
+            &day_label,
+            session_pace_level,
+            weekly_pace_level,
+            day_pace_level,
             &codex_accent,
             &antigravity_accent,
         );
 
-        // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
-        // Content pixels → fully opaque (preserves ClearType sub-pixel rendering).
-        let bg_bgr = bg_color.to_colorref();
+        // Embedded: paint an opaque taskbar-coloured background so pinned icons never
+        // bleed through if UpdateLayeredWindow and MoveWindow ever disagree by a few px.
         let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, pixel_count);
         for px in pixel_data.iter_mut() {
             let rgb = *px & 0x00FFFFFF;
-            if rgb == bg_bgr {
-                *px = 0x01000000;
-            } else {
-                *px = rgb | 0xFF000000;
-            }
+            *px = rgb | 0xFF000000;
         }
 
-        // Push to window via UpdateLayeredWindow
+        // Push to window via UpdateLayeredWindow — always use explicit screen coords.
+        // GetWindowRect on WS_CHILD layered windows embedded in Shell_TrayWnd returns bogus
+        // screen Y (often thousands of pixels off); use coords stored in position_at_taskbar.
+        let (layered_x, layered_y) = {
+            let state = lock_state();
+            match state.as_ref() {
+                Some(s) if s.layered_position_valid => {
+                    (s.layered_screen_x, s.layered_screen_y)
+                }
+                _ => {
+                    let mut window_rect = RECT::default();
+                    if GetWindowRect(hwnd, &mut window_rect).is_err() {
+                        SelectObject(mem_dc, old_bmp);
+                        let _ = DeleteObject(dib);
+                        let _ = DeleteDC(mem_dc);
+                        ReleaseDC(HWND::default(), screen_dc);
+                        return;
+                    }
+                    (window_rect.left, window_rect.top)
+                }
+            }
+        };
+        let pt_dest = POINT {
+            x: layered_x,
+            y: layered_y,
+        };
         let pt_src = POINT { x: 0, y: 0 };
         let sz = SIZE {
             cx: width,
@@ -1587,7 +2032,7 @@ fn render_layered() {
         let _ = UpdateLayeredWindow(
             hwnd,
             screen_dc,
-            None,
+            Some(&pt_dest),
             Some(&sz),
             mem_dc,
             Some(&pt_src),
@@ -1596,11 +2041,27 @@ fn render_layered() {
             ULW_ALPHA,
         );
 
+        if !_embedded {
+            let taskbar_hwnd = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
+            if let Some(taskbar_hwnd) = taskbar_hwnd {
+                native_interop::position_above_taskbar(
+                    hwnd,
+                    taskbar_hwnd,
+                    layered_x,
+                    layered_y,
+                    width,
+                    height,
+                );
+            } else {
+                native_interop::position_topmost_popup(hwnd, layered_x, layered_y, width, height);
+            }
+        }
+
         // Cleanup
         SelectObject(mem_dc, old_bmp);
         let _ = DeleteObject(dib);
         let _ = DeleteDC(mem_dc);
-        ReleaseDC(hwnd, screen_dc);
+        ReleaseDC(HWND::default(), screen_dc);
     }
 }
 
@@ -1614,11 +2075,13 @@ fn paint_content(
     text_color: &Color,
     accent: &Color,
     track: &Color,
-    strings: Strings,
+    _strings: Strings,
     session_pct: f64,
     session_text: &str,
+    session_label: &str,
     weekly_pct: f64,
     weekly_text: &str,
+    weekly_label: &str,
     codex_session_pct: f64,
     codex_session_text: &str,
     codex_weekly_pct: f64,
@@ -1630,6 +2093,17 @@ fn paint_content(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    account_pace_mode: bool,
+    show_credit_row: bool,
+    credit_pct: f64,
+    credit_text: &str,
+    credit_label: &str,
+    day_pct: f64,
+    day_text: &str,
+    day_label: &str,
+    session_pace_level: u8,
+    weekly_pace_level: u8,
+    day_pace_level: u8,
     codex_accent: &Color,
     antigravity_accent: &Color,
 ) {
@@ -1683,8 +2157,35 @@ fn paint_content(
         let _ = DeleteObject(right_brush);
 
         let content_x = sc(LEFT_DIVIDER_W) + sc(DIVIDER_RIGHT_MARGIN);
-        let row2_y = height - sc(5) - sc(SEGMENT_H);
-        let row1_y = row2_y - sc(10) - sc(SEGMENT_H);
+        let bottom_y = height - sc(5) - sc(SEGMENT_H);
+        let (mo_y, wk_y, dy_y, credit_y) = if account_pace_mode {
+            let row_gap = sc(1);
+            let dy_y = bottom_y;
+            let wk_y = dy_y - row_gap - sc(SEGMENT_H);
+            let mo_y = wk_y - row_gap - sc(SEGMENT_H);
+            let credit_y = if show_credit_row {
+                Some(mo_y - row_gap - sc(SEGMENT_H))
+            } else {
+                None
+            };
+            (mo_y, wk_y, dy_y, credit_y)
+        } else {
+            let wk_y = bottom_y;
+            let mo_y = wk_y - sc(10) - sc(SEGMENT_H);
+            (mo_y, wk_y, bottom_y, None)
+        };
+
+        let claude_session_accent = if account_pace_mode {
+            spend_pace::pace_accent(session_pace_level)
+        } else {
+            *accent
+        };
+        let claude_weekly_accent = if account_pace_mode {
+            spend_pace::pace_accent(weekly_pace_level)
+        } else {
+            *accent
+        };
+        let claude_day_accent = spend_pace::pace_accent(day_pace_level);
 
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
@@ -1708,13 +2209,37 @@ fn paint_content(
         );
         let old_font = SelectObject(hdc, font);
 
+        if let Some(credit_y) = credit_y {
+            draw_row(
+                hdc,
+                content_x,
+                credit_y,
+                is_dark,
+                text_color,
+                credit_label,
+                credit_pct,
+                credit_text,
+                codex_session_pct,
+                codex_session_text,
+                antigravity_session_pct,
+                antigravity_session_text,
+                show_claude_code,
+                show_codex,
+                show_antigravity,
+                accent,
+                codex_accent,
+                antigravity_accent,
+                track,
+            );
+        }
+
         draw_row(
             hdc,
             content_x,
-            row1_y,
+            mo_y,
             is_dark,
             text_color,
-            strings.session_window,
+            session_label,
             session_pct,
             session_text,
             codex_session_pct,
@@ -1724,7 +2249,7 @@ fn paint_content(
             show_claude_code,
             show_codex,
             show_antigravity,
-            accent,
+            &claude_session_accent,
             codex_accent,
             antigravity_accent,
             track,
@@ -1732,10 +2257,10 @@ fn paint_content(
         draw_row(
             hdc,
             content_x,
-            row2_y,
+            wk_y,
             is_dark,
             text_color,
-            strings.weekly_window,
+            weekly_label,
             weekly_pct,
             weekly_text,
             codex_weekly_pct,
@@ -1745,11 +2270,34 @@ fn paint_content(
             show_claude_code,
             show_codex,
             show_antigravity,
-            accent,
+            &claude_weekly_accent,
             codex_accent,
             antigravity_accent,
             track,
         );
+        if account_pace_mode {
+            draw_row(
+                hdc,
+                content_x,
+                dy_y,
+                is_dark,
+                text_color,
+                day_label,
+                day_pct,
+                day_text,
+                codex_weekly_pct,
+                codex_weekly_text,
+                antigravity_weekly_pct,
+                antigravity_weekly_text,
+                show_claude_code,
+                show_codex,
+                show_antigravity,
+                &claude_day_accent,
+                codex_accent,
+                antigravity_accent,
+                track,
+            );
+        }
 
         SelectObject(hdc, old_font);
         let _ = DeleteObject(font);
@@ -1853,35 +2401,35 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 should_notify = true;
                             }
                             s.force_notify_auth_error = false;
+                            // Still watch credential files for fast recovery after re-login,
+                            // but also keep TIMER_POLL actively retrying so a silent token
+                            // refresh (or transient 401) self-heals without waiting for a
+                            // file change — otherwise the widget sticks on "!" until restart.
                             s.auth_error_paused_polling = true;
                             s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
-                            s.session_text = "!".to_string();
-                            s.weekly_text = "!".to_string();
-                            s.codex_session_text = "!".to_string();
-                            s.codex_weekly_text = "!".to_string();
-                            s.antigravity_session_text = "!".to_string();
-                            s.antigravity_weekly_text = "!".to_string();
+                            apply_poll_failure_display(s);
                             s.retry_count = s.retry_count.saturating_add(1);
+                            let retry_ms =
+                                auth_retry_delay_ms(s.retry_count, s.poll_interval_ms);
+                            diagnose::log(format!(
+                                "auth poll failed; keeping last data and retrying in {retry_ms}ms"
+                            ));
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
                                 let _ = KillTimer(hwnd, TIMER_RESET_POLL);
                                 let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
-                                SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
+                                SetTimer(hwnd, TIMER_POLL, retry_ms, None);
                             }
                         }
                         _ => {
-                            // Transient network / credential-missing errors: exponential backoff.
+                            // Transient network errors: exponential backoff.
+                            // Keep last good values on screen when available.
                             s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
                             s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource;
                             s.auth_watch_snapshot.clear();
-                            s.session_text = "...".to_string();
-                            s.weekly_text = "...".to_string();
-                            s.codex_session_text = "...".to_string();
-                            s.codex_weekly_text = "...".to_string();
-                            s.antigravity_session_text = "...".to_string();
-                            s.antigravity_weekly_text = "...".to_string();
+                            apply_poll_failure_display(s);
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -2061,11 +2609,235 @@ fn tray_reposition_is_suppressed() -> bool {
     }
 }
 
+fn drag_button_held() -> bool {
+    unsafe { (GetAsyncKeyState(VK_LBUTTON.0 as i32) as u16 & 0x8000) != 0 }
+}
+
+fn update_drag_reposition_from_cursor() {
+    let mut pt = POINT::default();
+    unsafe {
+        let _ = GetCursorPos(&mut pt);
+    }
+    let move_target = {
+        let mut state = lock_state();
+        let s = match state.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+        if s.embedded {
+            return;
+        }
+
+        let delta = s.drag_start_mouse_x - pt.x;
+        let mut new_offset = s.drag_start_offset + delta;
+        if new_offset < 0 {
+            new_offset = 0;
+        }
+
+        let taskbar_hwnd = s.taskbar_hwnd;
+        let embedded = s.embedded;
+        let hwnd_val = s.hwnd.to_hwnd();
+
+        if let Some(taskbar_hwnd) = taskbar_hwnd {
+            if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+                let widget_width = total_widget_width_for_state(s);
+                let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+                let max_x = (tray_left - taskbar_rect.left - widget_width).max(content_left);
+                let max_offset = (max_x - content_left).max(0);
+                if new_offset > max_offset {
+                    new_offset = max_offset;
+                }
+
+                s.tray_offset = new_offset;
+
+                let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
+                let anchor_top = taskbar_rect.top;
+                let anchor_height = taskbar_height;
+                let widget_height = sc(widget_height(s.account_pace_mode, s.show_credit_row));
+                let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+                let x = if embedded {
+                    (content_left + max_offset - new_offset).clamp(content_left, max_x)
+                } else {
+                    popup_screen_x(
+                        s.tray_offset,
+                        new_offset,
+                        taskbar_hwnd,
+                        taskbar_rect,
+                        content_left,
+                        max_offset,
+                        max_x,
+                    )
+                };
+                diagnose::log(&format!("update_drag: pt.x={} delta={} new_offset={} x={} embedded={}", pt.x, s.drag_start_mouse_x - pt.x, new_offset, x, embedded));
+                Some((
+                    hwnd_val,
+                    embedded,
+                    x,
+                    y,
+                    taskbar_rect.top,
+                    widget_width,
+                    widget_height,
+                ))
+            } else {
+                s.tray_offset = new_offset;
+                None
+            }
+        } else {
+            s.tray_offset = new_offset;
+            None
+        }
+    };
+
+    if let Some((hwnd_val, embedded, x, y, taskbar_top, widget_width, widget_height)) = move_target
+    {
+        if embedded {
+            native_interop::move_window_async(
+                hwnd_val,
+                x,
+                y - taskbar_top,
+                widget_width,
+                widget_height,
+            );
+        } else {
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.layered_screen_x = x;
+                    s.layered_screen_y = y;
+                    s.layered_position_valid = true;
+                }
+            }
+            if let Some(taskbar_hwnd) = lock_state().as_ref().and_then(|s| s.taskbar_hwnd) {
+                native_interop::position_above_taskbar(
+                    hwnd_val,
+                    taskbar_hwnd,
+                    x,
+                    y,
+                    widget_width,
+                    widget_height,
+                );
+            } else {
+                native_interop::position_topmost_popup(hwnd_val, x, y, widget_width, widget_height);
+            }
+        }
+    }
+}
+
+fn start_drag_reposition(hwnd: HWND, pt: POINT, client_x: i32) {
+    let embedded = {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            if s.embedded {
+                return;
+            }
+            s.dragging = true;
+            s.drag_start_mouse_x = pt.x;
+            s.drag_start_client_x = client_x;
+            s.drag_start_offset = s
+                .taskbar_hwnd
+                .and_then(|taskbar_hwnd| {
+                    native_interop::get_taskbar_rect(taskbar_hwnd)
+                        .map(|rect| resolved_tray_offset_for_taskbar(taskbar_hwnd, rect, s.tray_offset))
+                })
+                .unwrap_or(0);
+            s.embedded
+        } else {
+            return;
+        }
+    };
+    diagnose::log(&format!("start_drag_reposition embedded={} pt=({},{}) client_x={}", embedded, pt.x, pt.y, client_x));
+    unsafe {
+        if embedded {
+            // SetCapture on a taskbar child freezes Explorer; poll via timer instead.
+            let _ = SetTimer(hwnd, TIMER_DRAG, 16, None);
+        } else {
+            let _ = SetCapture(hwnd);
+        }
+    }
+}
+
+fn finalize_drag_reposition(hwnd: HWND, pt: POINT) {
+    let drag_result = {
+        let state = lock_state();
+        if let Some(s) = state.as_ref() {
+            if s.dragging {
+                Some((s.taskbar_index, s.drag_start_client_x))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
+    if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
+        if let Some((target_index, target_taskbar)) = taskbar_at_point(pt) {
+            if target_index != current_taskbar_index {
+                let new_offset = offset_for_drop_point(
+                    target_taskbar.hwnd,
+                    target_taskbar.rect,
+                    pt,
+                    drag_start_client_x,
+                );
+                {
+                    let mut state = lock_state();
+                    if let Some(s) = state.as_mut() {
+                        s.tray_offset = new_offset;
+                    }
+                }
+                if attach_to_taskbar(hwnd, target_index) {
+                    position_at_taskbar();
+                    render_layered();
+                }
+            }
+        }
+    }
+    finish_drag_reposition();
+}
+
+fn finish_drag_reposition() -> bool {
+    let (was_dragging, hwnd) = {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            let was = s.dragging;
+            s.dragging = false;
+            (was, s.hwnd.to_hwnd())
+        } else {
+            (false, HWND::default())
+        }
+    };
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_DRAG);
+        let _ = ReleaseCapture();
+    }
+    if was_dragging {
+        save_state_settings();
+        position_at_taskbar();
+        render_layered();
+    }
+    was_dragging
+}
+
+fn ensure_popup_visible() {
+    let (visible, dragging, embedded) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.widget_visible, s.dragging, s.embedded),
+            None => return,
+        }
+    };
+    if !visible || dragging || embedded {
+        return;
+    }
+    position_at_taskbar();
+    render_layered();
+}
+
 fn position_at_taskbar() {
     refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
-    let (hwnd, embedded, tray_offset, taskbar_hwnd) = {
+    let (hwnd, tray_offset, taskbar_index) = {
         let state = lock_state();
         let s = match state.as_ref() {
             Some(s) => s,
@@ -2077,15 +2849,36 @@ fn position_at_taskbar() {
             return;
         }
 
-        let taskbar_hwnd = match s.taskbar_hwnd {
-            Some(h) => h,
-            None => {
-                diagnose::log("position_at_taskbar skipped: no taskbar handle");
+        (s.hwnd.to_hwnd(), s.tray_offset, s.taskbar_index)
+    };
+
+    let taskbar_hwnd = {
+        let current = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
+        let valid = current.is_some_and(|h| unsafe { IsWindow(h).as_bool() });
+        if valid {
+            current.unwrap()
+        } else {
+            let taskbars = native_interop::find_taskbars();
+            if taskbars.is_empty() {
+                diagnose::log("position_at_taskbar skipped: no taskbar found");
                 return;
             }
-        };
-
-        (s.hwnd.to_hwnd(), s.embedded, s.tray_offset, taskbar_hwnd)
+            let index = resolve_taskbar_index(taskbar_index, &taskbars);
+            let selected = taskbars[index].hwnd;
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.taskbar_hwnd = Some(selected);
+                    s.taskbar_index = index;
+                    s.embedded = false;
+                }
+            }
+            diagnose::log(format!(
+                "position_at_taskbar: re-bound taskbar index={index} hwnd={:?}",
+                selected
+            ));
+            selected
+        }
     };
 
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
@@ -2107,43 +2900,104 @@ fn position_at_taskbar() {
         }
     }
 
-    let widget_width = total_widget_width();
-    let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-    let tray_offset = tray_offset.clamp(0, max_offset);
-    let offset_changed = {
-        let mut state = lock_state();
-        if let Some(s) = state.as_mut() {
-            if s.tray_offset != tray_offset {
-                s.tray_offset = tray_offset;
-                true
-            } else {
-                false
+    let account_pace_mode = lock_state()
+        .as_ref()
+        .map(|s| (s.account_pace_mode, s.show_credit_row))
+        .unwrap_or((false, false));
+    let (widget_width, widget_height) =
+        resolved_widget_size(account_pace_mode.0, account_pace_mode.1);
+    let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+    let max_x = (tray_left - taskbar_rect.left - widget_width).max(content_left);
+    let max_offset = (max_x - content_left).max(0);
+    let stored_tray_offset = tray_offset;
+    let tray_offset = resolve_tray_offset(stored_tray_offset, max_offset);
+    let widget_visible = lock_state()
+        .as_ref()
+        .map(|s| s.widget_visible)
+        .unwrap_or(true);
+
+    let embedded = lock_state()
+        .as_ref()
+        .map(|s| s.embedded)
+        .unwrap_or(false);
+
+    if embedded && widget_height > taskbar_height {
+        native_interop::detach_from_taskbar(hwnd);
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.embedded = false;
             }
-        } else {
-            false
         }
-    };
-    if offset_changed {
-        save_state_settings();
+        diagnose::log(format!(
+            "detached from taskbar: widget_height={widget_height} > taskbar_height={taskbar_height}"
+        ));
     }
 
-    let widget_height = sc(WIDGET_HEIGHT);
+    let embedded = lock_state()
+        .as_ref()
+        .map(|s| s.embedded)
+        .unwrap_or(false);
+
     let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+
     if embedded {
-        // Child window: coordinates relative to parent (taskbar)
-        let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
+        let mut x = if stored_tray_offset < 0 {
+            0
+        } else {
+            content_left + max_offset - tray_offset
+        };
+        x = x.clamp(0, max_x);
+        let y_child = compute_anchor_y(anchor_top, anchor_height, widget_height) - anchor_top;
+        let screen_x = taskbar_rect.left + x;
+        let screen_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.layered_screen_x = screen_x;
+                s.layered_screen_y = screen_y;
+            }
+        }
+        native_interop::move_window(hwnd, x, y_child, widget_width, widget_height);
         diagnose::log(format!(
-            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
-            y - taskbar_rect.top
+            "positioned embedded widget at x={x} y={y_child} screen=({screen_x},{screen_y}) w={widget_width} h={widget_height} content_left={content_left}"
         ));
     } else {
-        // Topmost popup: screen coordinates
-        let x = tray_left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
+        let x = popup_screen_x(
+            stored_tray_offset,
+            tray_offset,
+            taskbar_hwnd,
+            taskbar_rect,
+            content_left,
+            max_offset,
+            max_x,
+        );
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.layered_screen_x = x;
+                s.layered_screen_y = y;
+                s.layered_position_valid = true;
+            }
+        }
+        native_interop::position_above_taskbar(
+            hwnd,
+            taskbar_hwnd,
+            x,
+            y,
+            widget_width,
+            widget_height,
+        );
         diagnose::log(format!(
-            "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
+            "positioned popup widget at x={x} y={y} w={widget_width} h={widget_height} pin_right={} content_left={content_left}",
+            native_interop::pin_band_right(taskbar_hwnd, taskbar_rect)
         ));
+    }
+    if widget_visible {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        render_layered();
     }
 }
 
@@ -2207,26 +3061,32 @@ unsafe extern "system" fn wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_PAINT => {
-            // For non-embedded fallback, paint normally
-            let embedded = {
-                let state = lock_state();
-                state.as_ref().map(|s| s.embedded).unwrap_or(false)
-            };
-            if embedded {
-                // Layered windows don't use WM_PAINT; just validate the region
-                let mut ps = PAINTSTRUCT::default();
-                let _ = BeginPaint(hwnd, &mut ps);
-                let _ = EndPaint(hwnd, &ps);
-            } else {
-                let mut ps = PAINTSTRUCT::default();
-                let hdc = BeginPaint(hwnd, &mut ps);
-                paint(hdc, hwnd);
-                let _ = EndPaint(hwnd, &ps);
-            }
+            // Layered windows render via UpdateLayeredWindow; validate the region only.
+            let mut ps = PAINTSTRUCT::default();
+            let _ = BeginPaint(hwnd, &mut ps);
+            let _ = EndPaint(hwnd, &mut ps);
             LRESULT(0)
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_DISPLAYCHANGE | WM_DPICHANGED_MSG | WM_SETTINGCHANGE => {
+            static LAST_DISPLAY_REPOSITION: Mutex<Option<std::time::Instant>> =
+                Mutex::new(None);
+            let should_reposition = {
+                let mut last = LAST_DISPLAY_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
+                let now = std::time::Instant::now();
+                if last
+                    .map(|t| now.duration_since(t).as_millis() > 500)
+                    .unwrap_or(true)
+                {
+                    *last = Some(now);
+                    true
+                } else {
+                    false
+                }
+            };
+            if !should_reposition {
+                return LRESULT(0);
+            }
             if msg == WM_DPICHANGED_MSG {
                 let new_dpi = (wparam.0 & 0xFFFF) as u32;
                 CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
@@ -2244,19 +3104,24 @@ unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let auth_watch = {
-                        let state = lock_state();
-                        state.as_ref().map(|s| {
-                            (
-                                s.auth_error_paused_polling,
-                                s.auth_watch_mode,
-                                s.auth_watch_snapshot.clone(),
-                            )
-                        })
-                    };
-                    match auth_watch {
-                        Some((true, watch_mode, previous_snapshot)) => {
-                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
+                    // Always poll on the timer — including during auth-error recovery.
+                    // Credential-file watches still update the snapshot when it changes so
+                    // a re-login is detected immediately on the next tick, but we no longer
+                    // skip the poll when the snapshot is unchanged (that left "!" stuck).
+                    {
+                        let auth_watch = {
+                            let state = lock_state();
+                            state.as_ref().map(|s| {
+                                (
+                                    s.auth_error_paused_polling,
+                                    s.auth_watch_mode,
+                                    s.auth_watch_snapshot.clone(),
+                                )
+                            })
+                        };
+                        if let Some((true, watch_mode, previous_snapshot)) = auth_watch {
+                            let current_snapshot =
+                                poller::credential_watch_snapshot(watch_mode);
                             if current_snapshot != previous_snapshot {
                                 let mut state = lock_state();
                                 if let Some(s) = state.as_mut() {
@@ -2266,21 +3131,13 @@ unsafe extern "system" fn wnd_proc(
                                         s.auth_watch_snapshot = current_snapshot;
                                     }
                                 }
-                                drop(state);
-                                let sh = SendHwnd::from_hwnd(hwnd);
-                                std::thread::spawn(move || {
-                                    do_poll(sh);
-                                });
                             }
                         }
-                        Some((false, _, _)) => {
-                            let sh = SendHwnd::from_hwnd(hwnd);
-                            std::thread::spawn(move || {
-                                do_poll(sh);
-                            });
-                        }
-                        None => {}
                     }
+                    let sh = SendHwnd::from_hwnd(hwnd);
+                    std::thread::spawn(move || {
+                        do_poll(sh);
+                    });
                 }
                 TIMER_COUNTDOWN => {
                     update_display();
@@ -2305,6 +3162,35 @@ unsafe extern "system" fn wnd_proc(
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
                 }
+                TIMER_WIDGET_KEEPALIVE => {
+                    ensure_popup_visible();
+                }
+                TIMER_DRAG => {
+                    let (dragging, embedded, tray_offset) = {
+                        let state = lock_state();
+                        state
+                            .as_ref()
+                            .map(|s| (s.dragging, s.embedded, s.tray_offset))
+                            .unwrap_or((false, false, 0))
+                    };
+                    if !dragging || embedded {
+                        if dragging && embedded {
+                            finish_drag_reposition();
+                        }
+                        unsafe {
+                            let _ = KillTimer(hwnd, TIMER_DRAG);
+                        }
+                    } else if !drag_button_held() {
+                        let mut pt = POINT::default();
+                        unsafe {
+                            let _ = GetCursorPos(&mut pt);
+                        }
+                        diagnose::log(&format!("TIMER_DRAG: button released, finalizing at offset={}", tray_offset));
+                        finalize_drag_reposition(hwnd, pt);
+                    } else {
+                        update_drag_reposition_from_cursor();
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -2312,6 +3198,7 @@ unsafe extern "system" fn wnd_proc(
         WM_APP_USAGE_UPDATED => {
             check_theme_change();
             check_language_change();
+            position_at_taskbar();
             render_layered();
             schedule_countdown_timer();
             suppress_tray_reposition_for(Duration::from_millis(
@@ -2324,17 +3211,23 @@ unsafe extern "system" fn wnd_proc(
             schedule_auto_update_check(hwnd);
             LRESULT(0)
         }
+        WM_APP_RECOVER_TASKBAR => {
+            recover_taskbar_embed(hwnd);
+            LRESULT(0)
+        }
+        msg if msg == WM_APP_ENSURE_VISIBLE => {
+            ensure_popup_visible();
+            LRESULT(0)
+        }
         WM_SETCURSOR => {
             let is_dragging = {
                 let state = lock_state();
-                state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                state
+                    .as_ref()
+                    .map(|s| s.dragging)
+                    .unwrap_or(false)
             };
-            if is_dragging {
-                let cursor = LoadCursorW(HINSTANCE::default(), IDC_SIZEWE).unwrap_or_default();
-                SetCursor(cursor);
-                return LRESULT(1);
-            }
-            if cursor_is_on_drag_handle(hwnd) {
+            if is_dragging || cursor_is_on_drag_handle(hwnd) {
                 let cursor = LoadCursorW(HINSTANCE::default(), IDC_SIZEWE).unwrap_or_default();
                 SetCursor(cursor);
                 return LRESULT(1);
@@ -2344,159 +3237,54 @@ unsafe extern "system" fn wnd_proc(
         WM_LBUTTONDOWN => {
             let client_x = (lparam.0 & 0xFFFF) as i16 as i32;
             let client_y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
-            if !is_drag_handle_point(client_x, client_y) {
-                return LRESULT(0);
-            }
-
+            diagnose::log(&format!("WM_LBUTTONDOWN client_x={} client_y={}", client_x, client_y));
+            {
+                let state = lock_state();
+                let Some(s) = state.as_ref() else {
+                    return LRESULT(0);
+                };
+                let on_handle = is_drag_handle_point_verbose(client_x, client_y, s);
+                diagnose::log(&format!("WM_LBUTTONDOWN on_drag_handle={} embedded={}", on_handle, s.embedded));
+                if !on_handle {
+                    return LRESULT(0);
+                }
+            } // drop state before start_drag_reposition re-acquires it
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
-            let mut state = lock_state();
-            if let Some(s) = state.as_mut() {
-                s.dragging = true;
-                s.drag_start_mouse_x = pt.x;
-                s.drag_start_client_x = client_x;
-                s.drag_start_offset = s.tray_offset;
-            }
-            SetCapture(hwnd);
+            start_drag_reposition(hwnd, pt, client_x);
             LRESULT(0)
         }
         WM_MOUSEMOVE => {
             let is_dragging = {
                 let state = lock_state();
-                state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                state
+                    .as_ref()
+                    .map(|s| s.dragging && !s.embedded)
+                    .unwrap_or(false)
             };
             if is_dragging {
-                let mut pt = POINT::default();
-                let _ = GetCursorPos(&mut pt);
-                let move_target = {
-                    let mut state = lock_state();
-                    let s = match state.as_mut() {
-                        Some(s) => s,
-                        None => return LRESULT(0),
-                    };
-
-                    // Moving mouse left = positive delta = larger offset (further left)
-                    let delta = s.drag_start_mouse_x - pt.x;
-                    let mut new_offset = s.drag_start_offset + delta;
-
-                    // Clamp: offset >= 0 (can't go right of default)
-                    if new_offset < 0 {
-                        new_offset = 0;
-                    }
-
-                    let taskbar_hwnd = s.taskbar_hwnd;
-                    let embedded = s.embedded;
-                    let hwnd_val = s.hwnd.to_hwnd();
-
-                    // Clamp: don't go past left edge of taskbar
-                    if let Some(taskbar_hwnd) = taskbar_hwnd {
-                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                            let mut tray_left = taskbar_rect.right;
-                            if let Some(tray_hwnd) =
-                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                            {
-                                if let Some(tray_rect) =
-                                    native_interop::get_window_rect_safe(tray_hwnd)
-                                {
-                                    tray_left = tray_rect.left;
-                                }
-                            }
-                            let widget_width = total_widget_width_for_state(s);
-                            let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-                            if new_offset > max_offset {
-                                new_offset = max_offset;
-                            }
-
-                            s.tray_offset = new_offset;
-
-                            let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-                            let anchor_top = taskbar_rect.top;
-                            let anchor_height = taskbar_height;
-                            let widget_height = sc(WIDGET_HEIGHT);
-                            let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
-                            let x = if embedded {
-                                tray_left - taskbar_rect.left - widget_width - new_offset
-                            } else {
-                                tray_left - widget_width - new_offset
-                            };
-                            Some((
-                                hwnd_val,
-                                embedded,
-                                x,
-                                y,
-                                taskbar_rect.top,
-                                widget_width,
-                                widget_height,
-                            ))
-                        } else {
-                            s.tray_offset = new_offset;
-                            None
-                        }
-                    } else {
-                        s.tray_offset = new_offset;
-                        None
-                    }
-                };
-
-                if let Some((hwnd_val, embedded, x, y, taskbar_top, widget_width, widget_height)) =
-                    move_target
-                {
-                    if embedded {
-                        native_interop::move_window(
-                            hwnd_val,
-                            x,
-                            y - taskbar_top,
-                            widget_width,
-                            widget_height,
-                        );
-                    } else {
-                        native_interop::move_window(hwnd_val, x, y, widget_width, widget_height);
-                    }
-                }
+                update_drag_reposition_from_cursor();
             }
             LRESULT(0)
         }
         WM_LBUTTONUP => {
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
-            let drag_result = {
-                let mut state = lock_state();
-                if let Some(s) = state.as_mut() {
-                    if s.dragging {
-                        s.dragging = false;
-                        Some((s.taskbar_index, s.drag_start_client_x))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
+            let dragging = {
+                let state = lock_state();
+                state.as_ref().map(|s| s.dragging).unwrap_or(false)
             };
-            if let Some((current_taskbar_index, drag_start_client_x)) = drag_result {
-                let _ = ReleaseCapture();
-                if let Some((target_index, target_taskbar)) = taskbar_at_point(pt) {
-                    if target_index != current_taskbar_index {
-                        let new_offset = offset_for_drop_point(
-                            target_taskbar.hwnd,
-                            target_taskbar.rect,
-                            pt,
-                            drag_start_client_x,
-                        );
-                        {
-                            let mut state = lock_state();
-                            if let Some(s) = state.as_mut() {
-                                s.tray_offset = new_offset;
-                            }
-                        }
-                        if attach_to_taskbar(hwnd, target_index) {
-                            position_at_taskbar();
-                            render_layered();
-                        }
-                    }
-                }
-                save_state_settings();
+            if dragging {
+                finalize_drag_reposition(hwnd, pt);
             }
             LRESULT(0)
+        }
+        WM_CAPTURECHANGED => {
+            let losing = HWND(lparam.0 as *mut _);
+            if losing == hwnd {
+                finish_drag_reposition();
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_RBUTTONUP => {
             show_context_menu(hwnd);
@@ -2511,6 +3299,14 @@ unsafe extern "system" fn wnd_proc(
                         if let Some(s) = state.as_mut() {
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            if !s.account_pace_mode {
+                                s.session_label =
+                                    s.language.strings().session_window.to_string();
+                                s.weekly_label =
+                                    s.language.strings().weekly_window.to_string();
+                            }
+                            s.day_text = "...".to_string();
+                            s.credit_text = "...".to_string();
                             s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.force_notify_auth_error = true;
@@ -2568,7 +3364,7 @@ unsafe extern "system" fn wnd_proc(
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
-                            s.tray_offset = 0;
+                            s.tray_offset = TRAY_OFFSET_LEFTMOST;
                         }
                     }
                     save_state_settings();
@@ -2619,6 +3415,8 @@ unsafe extern "system" fn wnd_proc(
                             }
                             s.session_text = "...".to_string();
                             s.weekly_text = "...".to_string();
+                            s.day_text = "...".to_string();
+                            s.credit_text = "...".to_string();
                             s.codex_session_text = "...".to_string();
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
@@ -2978,8 +3776,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
         strings,
         session_pct,
         session_text,
+        session_label,
         weekly_pct,
         weekly_text,
+        weekly_label,
         codex_session_pct,
         codex_session_text,
         codex_weekly_pct,
@@ -2991,6 +3791,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_claude_code,
         show_codex,
         show_antigravity,
+        account_pace_mode,
+        show_credit_row,
+        credit_pct,
+        credit_text,
+        credit_label,
+        day_pct,
+        day_text,
+        day_label,
+        session_pace_level,
+        weekly_pace_level,
+        day_pace_level,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -2999,8 +3810,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.language.strings(),
                 s.session_percent,
                 s.session_text.clone(),
+                s.session_label.clone(),
                 s.weekly_percent,
                 s.weekly_text.clone(),
+                s.weekly_label.clone(),
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_weekly_percent,
@@ -3012,10 +3825,28 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.account_pace_mode,
+                s.show_credit_row,
+                s.credit_percent,
+                s.credit_text.clone(),
+                s.credit_label.clone(),
+                s.day_percent,
+                s.day_text.clone(),
+                s.day_label.clone(),
+                s.session_pace_level,
+                s.weekly_pace_level,
+                s.day_pace_level,
             ),
             None => return,
         }
     };
+
+    let mut rect = RECT::default();
+    unsafe {
+        let _ = GetClientRect(hwnd, &mut rect);
+    }
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
 
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
@@ -3062,8 +3893,10 @@ fn paint(hdc: HDC, hwnd: HWND) {
             strings,
             session_pct,
             &session_text,
+            &session_label,
             weekly_pct,
             &weekly_text,
+            &weekly_label,
             codex_session_pct,
             &codex_session_text,
             codex_weekly_pct,
@@ -3075,6 +3908,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            account_pace_mode,
+            show_credit_row,
+            credit_pct,
+            &credit_text,
+            &credit_label,
+            day_pct,
+            &day_text,
+            &day_label,
+            session_pace_level,
+            weekly_pace_level,
+            day_pace_level,
             &codex_accent,
             &antigravity_accent,
         );

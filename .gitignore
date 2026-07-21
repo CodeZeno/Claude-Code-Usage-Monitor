@@ -26,3 +26,6 @@ AGENTS.md
 
 # Local WinGet manifest generation output
 /manifests/
+
+# Cursor IDE agent rules - hard-linked, not repo content
+.cursor/

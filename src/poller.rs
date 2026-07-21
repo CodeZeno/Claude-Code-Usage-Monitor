@@ -6,15 +6,95 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use crate::diagnose;
 use crate::localization::Strings;
-use crate::models::{AppUsageData, UsageData, UsageSection};
+use crate::models::{AccountUsage, AppUsageData, UsageData, UsageSection};
+
+// In-memory cache: survives transient 429s within a single session.
+static LAST_KNOWN_ACCOUNT: Mutex<Option<AccountUsage>> = Mutex::new(None);
+// Ensures disk cache is read at most once per process lifetime.
+static DISK_CACHE_LOADED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Serialize, Deserialize, Default)]
+struct CachedAccountDisk {
+    credit_pct: f64,
+    credit_expiry_unix: Option<u64>,
+    spend_used: f64,
+    spend_limit: f64,
+}
+
+fn account_cache_path() -> PathBuf {
+    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
+    PathBuf::from(appdata)
+        .join("ClaudeCodeUsageMonitor")
+        .join("account_cache.json")
+}
+
+fn save_account_to_disk(account: &AccountUsage) {
+    let path = account_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let credit_expiry_unix = account
+        .credit_expiry
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs());
+    let disk = CachedAccountDisk {
+        credit_pct: account.credit_pct,
+        credit_expiry_unix,
+        spend_used: account.spend_used,
+        spend_limit: account.spend_limit,
+    };
+    if let Ok(json) = serde_json::to_string(&disk) {
+        let _ = std::fs::write(&path, json);
+    }
+}
+
+fn load_account_from_disk() -> Option<AccountUsage> {
+    let content = std::fs::read_to_string(account_cache_path()).ok()?;
+    let disk: CachedAccountDisk = serde_json::from_str(&content).ok()?;
+    let credit_expiry = disk.credit_expiry_unix.filter(|&s| s > 0).map(|secs| {
+        UNIX_EPOCH + Duration::from_secs(secs)
+    });
+    Some(AccountUsage {
+        credit_pct: disk.credit_pct,
+        credit_expiry,
+        spend_used: disk.spend_used,
+        spend_limit: disk.spend_limit,
+    })
+}
+
+/// Pre-populate in-memory cache from disk on first call (no-op afterwards).
+fn ensure_disk_cache_loaded() {
+    if DISK_CACHE_LOADED.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    if let Some(account) = load_account_from_disk() {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            if cached.is_none() {
+                diagnose::log(format!(
+                    "loaded account cache from disk credit_pct={}",
+                    account.credit_pct
+                ));
+                *cached = Some(account);
+            }
+        }
+    }
+}
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+const OAUTH_TOKEN_URL: &str = "https://platform.claude.com/v1/oauth/token";
+const OAUTH_TOKEN_URL_LEGACY: &str = "https://console.anthropic.com/v1/oauth/token";
+/// Client ID used by Claude Code OAuth (not the dynamic-metadata URL).
+const CLAUDE_OAUTH_CLIENT_ID: &str = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const CLAUDE_OAUTH_USER_AGENT: &str = "claude-cli/2.1.0 (external; claude-code)";
+const DEFAULT_ACCESS_TOKEN_TTL_SECS: i64 = 28_800;
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const ANTIGRAVITY_CREDENTIAL_TARGET: &str = "gemini:antigravity";
 const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
@@ -47,6 +127,20 @@ pub type CredentialWatchSnapshot = Vec<String>;
 struct UsageResponse {
     five_hour: Option<UsageBucket>,
     seven_day: Option<UsageBucket>,
+    cinder_cove: Option<UsageBucket>,
+    spend: Option<SpendData>,
+}
+
+#[derive(Deserialize)]
+struct SpendData {
+    used: SpendAmount,
+    limit: SpendAmount,
+}
+
+#[derive(Deserialize)]
+struct SpendAmount {
+    amount_minor: i64,
+    exponent: u32,
 }
 
 #[derive(Deserialize)]
@@ -190,7 +284,7 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
-    mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_claude_code: impl FnMut() -> Result<(UsageData, Option<AccountUsage>), PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
@@ -200,7 +294,13 @@ fn poll_with(
 
     if show_claude_code {
         match poll_claude_code() {
-            Ok(claude_code) => data.claude_code = Some(claude_code),
+            Ok((usage, account)) => {
+                data.claude_code = Some(usage);
+                data.account = account;
+                if let Some(ref account) = data.account {
+                    data.spend_pace = crate::spend_pace::compute_spend_pace(account);
+                }
+            }
             Err(error) => {
                 if active_provider_count > 1 {
                     diagnose::log(format!("Claude Code usage poll failed: {error:?}"));
@@ -241,7 +341,7 @@ fn poll_with(
     }
 }
 
-fn poll_claude_code() -> Result<UsageData, PollError> {
+fn poll_claude_code() -> Result<(UsageData, Option<AccountUsage>), PollError> {
     let creds = match read_first_credentials() {
         Some(c) => c,
         None => {
@@ -252,7 +352,20 @@ fn poll_claude_code() -> Result<UsageData, PollError> {
 
     let creds = refresh_or_fallback(creds)?;
 
-    fetch_usage_with_fallback(&creds.access_token)
+    match fetch_usage_with_fallback(&creds.access_token) {
+        Ok(result) => Ok(result),
+        Err(PollError::AuthRequired) => {
+            diagnose::log("Claude usage auth error; attempting OAuth token refresh and retry");
+            refresh_claude_token(&creds.source);
+            if let Some(refreshed) = read_credentials_from_source(&creds.source) {
+                if let Ok(result) = fetch_usage_with_fallback(&refreshed.access_token) {
+                    return Ok(result);
+                }
+            }
+            Err(PollError::AuthRequired)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn poll_codex() -> Result<UsageData, PollError> {
@@ -294,7 +407,7 @@ fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError>
         }
 
         let source = creds.source.clone();
-        cli_refresh_token(&source);
+        refresh_claude_token(&source);
 
         match read_credentials_from_source(&source) {
             Some(refreshed) if !is_token_expired(refreshed.expires_at) => return Ok(refreshed),
@@ -313,63 +426,378 @@ fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError>
     }
 }
 
-/// Invoke the Claude CLI with a minimal prompt to force its internal
-/// OAuth token refresh.
-fn cli_refresh_token(source: &CredentialSource) {
+/// Refresh Claude OAuth credentials without invoking the Claude CLI (no model spend).
+fn refresh_claude_token(source: &CredentialSource) {
+    diagnose::log(format!("attempting Claude OAuth refresh via HTTP for {source:?}"));
+    if http_refresh_claude_token(source) {
+        diagnose::log("Claude OAuth refresh via HTTP succeeded");
+        return;
+    }
     match source {
-        CredentialSource::Windows(_) => cli_refresh_windows_token(),
-        CredentialSource::Wsl { distro } => cli_refresh_wsl_token(distro),
+        CredentialSource::Wsl { distro } => {
+            diagnose::log(
+                "Claude OAuth HTTP refresh failed for WSL; falling back to Claude CLI (may incur usage charges)",
+            );
+            cli_refresh_wsl_token(distro);
+        }
+        CredentialSource::Windows(_) => diagnose::log(
+            "Claude OAuth HTTP refresh failed; run 'claude auth login' if usage polling stays unauthorized",
+        ),
     }
 }
 
-fn cli_refresh_windows_token() {
-    let claude_path = resolve_windows_claude_path();
-    let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
-    diagnose::log(format!(
-        "attempting Windows Claude token refresh via {claude_path}"
-    ));
+#[derive(Deserialize)]
+struct OauthRefreshResponse {
+    access_token: String,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    refresh_token_expires_in: Option<i64>,
+    scope: Option<String>,
+}
 
-    let args: &[&str] = &["-p", "."];
-
-    let mut cmd = if is_cmd {
-        let mut c = Command::new("cmd.exe");
-        c.arg("/c").arg(&claude_path).args(args);
-        c
-    } else {
-        let mut c = Command::new(&claude_path);
-        c.args(args);
-        c
+fn http_refresh_claude_token(source: &CredentialSource) -> bool {
+    let (content, expected_mtime) = match read_credentials_file_raw(source) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: unable to read credentials file");
+            return false;
+        }
     };
-    cmd.env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+
+    let (refresh_token, scopes) = match parse_oauth_refresh_fields(&content) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: credentials missing refresh token");
+            return false;
+        }
+    };
+
+    let response = match request_oauth_refresh(&refresh_token, &scopes) {
+        Some(value) => value,
+        None => return false,
+    };
+
+    let updated = match merge_oauth_refresh_into_credentials(&content, &response) {
+        Some(value) => value,
+        None => {
+            diagnose::log("OAuth HTTP refresh failed: unable to merge refreshed token into credentials");
+            return false;
+        }
+    };
+
+    if !credentials_json_is_safe_to_persist(&updated) {
+        diagnose::log(
+            "OAuth HTTP refresh refused persist: merged credentials missing access or refresh token",
+        );
+        return false;
+    }
+
+    write_credentials_file_raw(source, &updated, expected_mtime)
+}
+
+fn read_credentials_file_raw(source: &CredentialSource) -> Option<(String, Option<SystemTime>)> {
+    match source {
+        CredentialSource::Windows(path) => {
+            let metadata = std::fs::metadata(path).ok()?;
+            let modified = metadata.modified().ok();
+            let content = std::fs::read_to_string(path).ok()?;
+            Some((content, modified))
+        }
+        CredentialSource::Wsl { distro } => {
+            let output = run_with_timeout(
+                Command::new("wsl.exe")
+                    .arg("-d")
+                    .arg(distro)
+                    .arg("--")
+                    .arg("cat")
+                    .arg("~/.claude/.credentials.json")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::null()),
+                Duration::from_secs(5),
+            )?;
+            if !output.status.success() {
+                return None;
+            }
+            Some((decode_wsl_text(&output.stdout), None))
+        }
+    }
+}
+
+fn write_credentials_file_raw(
+    source: &CredentialSource,
+    content: &str,
+    expected_mtime: Option<SystemTime>,
+) -> bool {
+    match source {
+        CredentialSource::Windows(path) => write_windows_credentials_file(path, content, expected_mtime),
+        CredentialSource::Wsl { distro } => write_wsl_credentials_file(distro, content),
+    }
+}
+
+fn write_windows_credentials_file(
+    path: &PathBuf,
+    content: &str,
+    expected_mtime: Option<SystemTime>,
+) -> bool {
+    if !credentials_json_is_safe_to_persist(content) {
+        diagnose::log(
+            "OAuth HTTP refresh refused persist: credentials payload missing access or refresh token",
+        );
+        return false;
+    }
+
+    if let Some(expected) = expected_mtime {
+        if let Ok(metadata) = std::fs::metadata(path) {
+            if let Ok(actual) = metadata.modified() {
+                if actual != expected {
+                    diagnose::log(
+                        "OAuth HTTP refresh skipped persist: credentials file changed during refresh",
+                    );
+                    return false;
+                }
+            }
+        }
+    }
+
+    backup_credentials_file(path);
+
+    let tmp_path = path.with_extension("json.tmp");
+    if let Err(error) = std::fs::write(&tmp_path, content) {
+        diagnose::log_error("OAuth HTTP refresh failed to write temp credentials file", error);
+        return false;
+    }
+    if let Err(error) = std::fs::rename(&tmp_path, path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        diagnose::log_error("OAuth HTTP refresh failed to replace credentials file", error);
+        return false;
+    }
+    true
+}
+
+fn write_wsl_credentials_file(distro: &str, content: &str) -> bool {
+    let mut cmd = Command::new("wsl.exe");
+    cmd.arg("-d")
+        .arg(distro)
+        .arg("--")
+        .arg("bash")
+        .arg("-lc")
+        .arg("cat > ~/.claude/.credentials.json")
         .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
     let mut child = match cmd.spawn() {
-        Ok(c) => c,
+        Ok(child) => child,
         Err(error) => {
-            diagnose::log_error("unable to spawn Windows Claude token refresh", error);
-            return;
+            diagnose::log_error("OAuth HTTP refresh failed to spawn WSL credentials writer", error);
+            return false;
         }
     };
 
-    // Wait up to 30 seconds — don't block the poll thread forever
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) => {
-                if start.elapsed() > Duration::from_secs(30) {
-                    let _ = child.kill();
-                    break;
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            Err(_) => break,
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        if stdin.write_all(content.as_bytes()).is_err() {
+            let _ = child.kill();
+            diagnose::log("OAuth HTTP refresh failed while writing credentials to WSL stdin");
+            return false;
         }
     }
+
+    match child.wait() {
+        Ok(status) if status.success() => true,
+        Ok(status) => {
+            diagnose::log(format!(
+                "OAuth HTTP refresh WSL credentials writer exited with status {status}"
+            ));
+            false
+        }
+        Err(error) => {
+            diagnose::log_error("OAuth HTTP refresh failed waiting for WSL credentials writer", error);
+            false
+        }
+    }
+}
+
+fn parse_oauth_refresh_fields(content: &str) -> Option<(String, Vec<String>)> {
+    let json: serde_json::Value = serde_json::from_str(content).ok()?;
+    let oauth = json.get("claudeAiOauth")?;
+    let refresh_token = oauth.get("refreshToken")?.as_str()?.trim();
+    if refresh_token.is_empty() {
+        return None;
+    }
+    let scopes = oauth
+        .get("scopes")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some((refresh_token.to_string(), scopes))
+}
+
+fn request_oauth_refresh(refresh_token: &str, scopes: &[String]) -> Option<OauthRefreshResponse> {
+    let mut body = serde_json::json!({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+    });
+    if !scopes.is_empty() {
+        body["scope"] = serde_json::Value::String(scopes.join(" "));
+    }
+
+    for (index, url) in [OAUTH_TOKEN_URL, OAUTH_TOKEN_URL_LEGACY]
+        .into_iter()
+        .enumerate()
+    {
+        let has_fallback = index + 1 < 2;
+        match post_oauth_refresh(url, &body) {
+            Ok(response) => return Some(response),
+            Err(OauthRefreshError::EndpointMoved) if has_fallback => {
+                diagnose::log(format!(
+                    "OAuth token endpoint {url} unavailable; trying legacy endpoint"
+                ));
+                continue;
+            }
+            Err(error) => {
+                diagnose::log(format!("OAuth HTTP refresh failed against {url}: {error}"));
+                return None;
+            }
+        }
+    }
+
+    None
+}
+
+enum OauthRefreshError {
+    EndpointMoved,
+    Failed(String),
+}
+
+impl std::fmt::Display for OauthRefreshError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EndpointMoved => write!(f, "token endpoint moved"),
+            Self::Failed(message) => write!(f, "{message}"),
+        }
+    }
+}
+
+fn post_oauth_refresh(url: &str, body: &serde_json::Value) -> Result<OauthRefreshResponse, OauthRefreshError> {
+    let agent = build_agent().map_err(|_| OauthRefreshError::Failed("HTTP client unavailable".into()))?;
+    let response = agent
+        .post(url)
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .set("User-Agent", CLAUDE_OAUTH_USER_AGENT)
+        .send_json(body)
+        .map_err(|error| match error {
+            ureq::Error::Status(code, _) if code == 404 || code == 405 => OauthRefreshError::EndpointMoved,
+            ureq::Error::Status(code, resp) => {
+                let detail = resp.into_string().unwrap_or_default();
+                OauthRefreshError::Failed(format!("status {code}: {detail}"))
+            }
+            ureq::Error::Transport(error) => OauthRefreshError::Failed(error.to_string()),
+        })?;
+
+    response
+        .into_json::<OauthRefreshResponse>()
+        .map_err(|error| OauthRefreshError::Failed(error.to_string()))
+}
+
+fn merge_oauth_refresh_into_credentials(
+    content: &str,
+    response: &OauthRefreshResponse,
+) -> Option<String> {
+    let mut root: serde_json::Value = serde_json::from_str(content).ok()?;
+    let oauth = root.get_mut("claudeAiOauth")?.as_object_mut()?;
+    if response.access_token.is_empty() {
+        return None;
+    }
+
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()?
+        .as_millis() as i64;
+    let expires_in = response.expires_in.unwrap_or(DEFAULT_ACCESS_TOKEN_TTL_SECS);
+    oauth.insert(
+        "accessToken".into(),
+        serde_json::Value::String(response.access_token.clone()),
+    );
+    if let Some(refresh_token) = response.refresh_token.as_ref() {
+        if !refresh_token.is_empty() {
+            oauth.insert(
+                "refreshToken".into(),
+                serde_json::Value::String(refresh_token.clone()),
+            );
+        }
+    }
+    oauth.insert(
+        "expiresAt".into(),
+        serde_json::Value::Number((now_ms + expires_in * 1000).into()),
+    );
+    if let Some(refresh_token_expires_in) = response.refresh_token_expires_in {
+        oauth.insert(
+            "refreshTokenExpiresAt".into(),
+            serde_json::Value::Number((now_ms + refresh_token_expires_in * 1000).into()),
+        );
+    }
+    if let Some(scope) = response.scope.as_ref() {
+        let scopes: Vec<serde_json::Value> = scope
+            .split_whitespace()
+            .map(|item| serde_json::Value::String(item.to_string()))
+            .collect();
+        if !scopes.is_empty() {
+            oauth.insert("scopes".into(), serde_json::Value::Array(scopes));
+        }
+    }
+
+    serde_json::to_string_pretty(&root).ok()
+}
+
+fn credentials_json_is_safe_to_persist(content: &str) -> bool {
+    let json: serde_json::Value = match serde_json::from_str(content) {
+        Ok(value) => value,
+        Err(_) => return false,
+    };
+    let oauth = match json.get("claudeAiOauth") {
+        Some(value) => value,
+        None => return false,
+    };
+    let access_token = oauth
+        .get("accessToken")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    let refresh_token = oauth
+        .get("refreshToken")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty());
+    access_token.is_some() && refresh_token.is_some()
+}
+
+fn backup_credentials_file(path: &PathBuf) {
+    let Ok(content) = std::fs::read_to_string(path) else {
+        return;
+    };
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    let backup_dir = parent.join("backups");
+    if std::fs::create_dir_all(&backup_dir).is_err() {
+        return;
+    }
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let backup_path = backup_dir.join(format!(".credentials.json.backup.{timestamp}"));
+    let _ = std::fs::write(backup_path, content);
 }
 
 fn cli_refresh_wsl_token(distro: &str) {
@@ -482,42 +910,6 @@ fn wait_for_refresh(child: &mut std::process::Child) {
             Err(_) => break,
         }
     }
-}
-
-/// Resolve the full path to the `claude` CLI executable.
-fn resolve_windows_claude_path() -> String {
-    for name in &["claude.cmd", "claude"] {
-        if Command::new(name)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return name.to_string();
-        }
-    }
-
-    for name in &["claude.cmd", "claude"] {
-        if let Ok(output) = Command::new("where.exe")
-            .arg(name)
-            .creation_flags(CREATE_NO_WINDOW)
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                if let Some(first_line) = stdout.lines().next() {
-                    let path = first_line.trim().to_string();
-                    if !path.is_empty() {
-                        return path;
-                    }
-                }
-            }
-        }
-    }
-
-    "claude.cmd".to_string()
 }
 
 fn resolve_windows_codex_path() -> String {
@@ -654,10 +1046,10 @@ fn wsl_credential_watch_signature(distro: &str) -> Option<String> {
     Some(format!("wsl:{distro}|{state}"))
 }
 
-fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
+fn fetch_usage_with_fallback(token: &str) -> Result<(UsageData, Option<AccountUsage>), PollError> {
     // Try the dedicated usage endpoint first
     match try_usage_endpoint(token)? {
-        Some(data) => {
+        Some((data, account)) => {
             // If reset timers are missing, fill them in from the Messages API
             if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
                 if let Ok(fallback) = fetch_usage_via_messages(token) {
@@ -668,10 +1060,10 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
                     if merged.weekly.resets_at.is_none() {
                         merged.weekly.resets_at = fallback.weekly.resets_at;
                     }
-                    return Ok(merged);
+                    return Ok((merged, account));
                 }
             }
-            return Ok(data);
+            return Ok((data, account));
         }
         None => {}
     }
@@ -679,12 +1071,26 @@ fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
     // Fall back to Messages API with rate limit headers
     let result = fetch_usage_via_messages(token);
     if result.is_err() {
-        diagnose::log("usage endpoint and Messages API fallback both failed");
+        diagnose::log("usage endpoint and messages API both unavailable");
     }
-    result
+    // Load disk cache once per process, then use in-memory cache
+    ensure_disk_cache_loaded();
+    let cached_account = LAST_KNOWN_ACCOUNT.lock().ok().and_then(|g| g.clone());
+    match result {
+        Ok(d) => Ok((d, cached_account)),
+        // Both endpoints down but we have cached enterprise data: return it with empty
+        // UsageData so refresh_usage_texts can still render the Cr/Sp rows.  This keeps
+        // poll() returning Ok and prevents the transient-error handler from wiping
+        // session_text / weekly_text with "...".
+        Err(_) if cached_account.is_some() => {
+            diagnose::log("using cached account data (usage endpoint unavailable)");
+            Ok((UsageData::default(), cached_account))
+        }
+        Err(e) => Err(e),
+    }
 }
 
-fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
+fn try_usage_endpoint(token: &str) -> Result<Option<(UsageData, Option<AccountUsage>)>, PollError> {
     let agent = build_agent()?;
 
     let resp = match agent
@@ -700,26 +1106,79 @@ fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
             ));
             return Err(PollError::AuthRequired);
         }
-        Err(_) => return Ok(None),
+        Err(ureq::Error::Status(code, _)) => {
+            diagnose::log(format!("usage endpoint returned non-auth error status {code}"));
+            return Ok(None);
+        }
+        Err(e) => {
+            diagnose::log(format!("usage endpoint request failed: {e}"));
+            return Ok(None);
+        }
     };
 
     let response: UsageResponse = match resp.into_json() {
         Ok(response) => response,
-        Err(_) => return Ok(None),
+        Err(e) => {
+            diagnose::log(format!("usage endpoint json parse failed: {e}"));
+            return Ok(None);
+        }
     };
+    diagnose::log("usage endpoint json parsed ok");
     let mut data = UsageData::default();
 
     if let Some(bucket) = &response.five_hour {
         data.session.percentage = bucket.utilization;
         data.session.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+        data.session.has_bucket = true;
     }
 
     if let Some(bucket) = &response.seven_day {
         data.weekly.percentage = bucket.utilization;
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+        data.weekly.has_bucket = true;
     }
 
-    Ok(Some(data))
+    let account = extract_account_usage(&response);
+    // Update both in-memory cache and disk to reflect the current plan.
+    // When account is None (non-enterprise plan), clear the disk cache too so
+    // stale enterprise rows don't reappear after a 429 later in the session.
+    if let Some(ref a) = account {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            *cached = Some(a.clone());
+        }
+        save_account_to_disk(a);
+    } else {
+        if let Ok(mut cached) = LAST_KNOWN_ACCOUNT.lock() {
+            *cached = None;
+        }
+        let _ = std::fs::remove_file(account_cache_path());
+    }
+    Ok(Some((data, account)))
+}
+
+fn extract_account_usage(response: &UsageResponse) -> Option<AccountUsage> {
+    diagnose::log(format!(
+        "extract_account_usage: cinder_cove={} spend={}",
+        response.cinder_cove.is_some(),
+        response.spend.is_some()
+    ));
+    let credit_bucket = response.cinder_cove.as_ref()?;
+    let spend = response.spend.as_ref()?;
+
+    let used_divisor = 10f64.powi(spend.used.exponent as i32);
+    let limit_divisor = 10f64.powi(spend.limit.exponent as i32);
+
+    let result = Some(AccountUsage {
+        credit_pct: credit_bucket.utilization,
+        credit_expiry: parse_iso8601(credit_bucket.resets_at.as_deref()),
+        spend_used: spend.used.amount_minor as f64 / used_divisor,
+        spend_limit: spend.limit.amount_minor as f64 / limit_divisor,
+    });
+    diagnose::log(format!(
+        "extract_account_usage: returning Some with credit_pct={}",
+        credit_bucket.utilization
+    ));
+    result
 }
 
 fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
@@ -855,6 +1314,7 @@ fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
     UsageSection {
         percentage: window.used_percent,
         resets_at: unix_to_system_time(Some(window.reset_at)),
+        has_bucket: true,
     }
 }
 
@@ -1047,6 +1507,7 @@ fn antigravity_section_from_quota(quota: AntigravityQuotaInfo) -> Option<UsageSe
     Some(UsageSection {
         percentage: (1.0 - remaining) * 100.0,
         resets_at: parse_iso8601(quota.reset_time.as_deref()),
+        has_bucket: true,
     })
 }
 
@@ -1057,6 +1518,7 @@ fn antigravity_section_from_summary_bucket(
     Some(UsageSection {
         percentage: (1.0 - remaining) * 100.0,
         resets_at: parse_iso8601(bucket.reset_time.as_deref()),
+        has_bucket: true,
     })
 }
 
@@ -1338,7 +1800,9 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
     let oauth = json.get("claudeAiOauth")?;
     let access_token = oauth
         .get("accessToken")
-        .and_then(|v| v.as_str())?
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|token| !token.is_empty())?
         .to_string();
     let expires_at = oauth.get("expiresAt").and_then(|v| v.as_i64());
 
@@ -1460,10 +1924,18 @@ fn is_token_expired(expires_at: Option<i64>) -> bool {
 /// Parse an ISO 8601 timestamp string into a SystemTime.
 fn parse_iso8601(s: Option<&str>) -> Option<SystemTime> {
     let s = s?;
-    // Strip timezone offset to get "YYYY-MM-DDTHH:MM:SS" or with fractional seconds
-    // The API returns formats like "2026-03-05T08:00:00.321598+00:00"
-    let datetime_part = s.split('+').next().unwrap_or(s);
-    let datetime_part = datetime_part.split('Z').next().unwrap_or(datetime_part);
+    // Strip timezone: "2026-03-05T08:00:00.321598+00:00" or "-05:00"
+    // First strip trailing 'Z', then find +/- timezone offset after the 'T' separator.
+    let datetime_part = s.split('Z').next().unwrap_or(s);
+    let datetime_part = if let Some(t_pos) = datetime_part.find('T') {
+        let after_t = &datetime_part[t_pos + 1..];
+        match after_t.find(|c: char| c == '+' || c == '-') {
+            Some(tz) => &datetime_part[..t_pos + 1 + tz],
+            None => datetime_part,
+        }
+    } else {
+        datetime_part
+    };
 
     // Try parsing with and without fractional seconds
     let formats = ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"];
@@ -1609,6 +2081,7 @@ mod tests {
             session: UsageSection {
                 percentage,
                 resets_at: None,
+                has_bucket: true,
             },
             weekly: UsageSection::default(),
         }
@@ -1636,7 +2109,7 @@ mod tests {
             true,
             true,
             false,
-            || Ok(usage_with_session_percent(64.0)),
+            || Ok((usage_with_session_percent(64.0), None)),
             || Err(PollError::RequestFailed),
             || unreachable!("antigravity is disabled"),
         )
@@ -1731,5 +2204,160 @@ mod tests {
         assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
         assert!(usage.weekly.resets_at.is_some());
         assert!(usage.session.resets_at.is_some());
+    }
+
+    #[test]
+    fn merge_oauth_refresh_preserves_unrelated_credential_fields() {
+        let original = r#"{
+  "mcpOAuth": {},
+  "claudeAiOauth": {
+    "accessToken": "old-access",
+    "refreshToken": "old-refresh",
+    "expiresAt": 1,
+    "refreshTokenExpiresAt": 2,
+    "scopes": ["user:inference"],
+    "subscriptionType": "enterprise"
+  }
+}"#;
+        let response = OauthRefreshResponse {
+            access_token: "new-access".into(),
+            refresh_token: Some("new-refresh".into()),
+            expires_in: Some(28800),
+            refresh_token_expires_in: Some(2_592_000),
+            scope: Some("user:inference user:profile".into()),
+        };
+
+        let merged = merge_oauth_refresh_into_credentials(original, &response)
+            .expect("refresh merge should succeed");
+        let json: serde_json::Value = serde_json::from_str(&merged).expect("merged json");
+        assert_eq!(json["mcpOAuth"], serde_json::json!({}));
+        assert_eq!(json["claudeAiOauth"]["accessToken"], "new-access");
+        assert_eq!(json["claudeAiOauth"]["refreshToken"], "new-refresh");
+        assert_eq!(
+            json["claudeAiOauth"]["subscriptionType"],
+            serde_json::json!("enterprise")
+        );
+        assert_eq!(
+            json["claudeAiOauth"]["scopes"],
+            serde_json::json!(["user:inference", "user:profile"])
+        );
+    }
+
+    #[test]
+    fn parse_oauth_refresh_fields_reads_refresh_token_and_scopes() {
+        let content = r#"{"claudeAiOauth":{"refreshToken":"rt","scopes":["user:inference"]}}"#;
+        let (refresh_token, scopes) =
+            parse_oauth_refresh_fields(content).expect("refresh fields should parse");
+        assert_eq!(refresh_token, "rt");
+        assert_eq!(scopes, vec!["user:inference".to_string()]);
+    }
+
+    #[test]
+    fn credentials_json_is_safe_to_persist_rejects_empty_tokens() {
+        let empty_access = r#"{"claudeAiOauth":{"accessToken":"","refreshToken":"rt"}}"#;
+        let empty_refresh = r#"{"claudeAiOauth":{"accessToken":"at","refreshToken":""}}"#;
+        let valid = r#"{"claudeAiOauth":{"accessToken":"at","refreshToken":"rt"}}"#;
+        assert!(!credentials_json_is_safe_to_persist(empty_access));
+        assert!(!credentials_json_is_safe_to_persist(empty_refresh));
+        assert!(credentials_json_is_safe_to_persist(valid));
+    }
+
+    #[test]
+    fn parse_credentials_rejects_empty_access_token() {
+        let content = r#"{"claudeAiOauth":{"accessToken":"","expiresAt":123}}"#;
+        assert!(parse_credentials(
+            content,
+            CredentialSource::Windows(PathBuf::from("dummy"))
+        )
+        .is_none());
+    }
+}
+
+pub fn format_credit_text(credit_pct: f64, expiry: Option<std::time::SystemTime>) -> String {
+    match expiry {
+        Some(t) => {
+            let suffix = format_expiry_locale(t);
+            if suffix.is_empty() {
+                // Expiry in the past or invalid — show percentage only
+                format!("{:.0}%", credit_pct)
+            } else {
+                // Drop decimal when expiry suffix present: "NN%·D/M" must fit 62px
+                format!("{:.0}%\u{00b7}{}", credit_pct, suffix)
+            }
+        }
+        // No expiry: keep one decimal for sub-10% precision
+        None => {
+            if credit_pct < 10.0 {
+                format!("{:.1}%", credit_pct)
+            } else {
+                format!("{:.0}%", credit_pct)
+            }
+        }
+    }
+}
+
+pub fn format_spend_text(spend_used: f64, spend_limit: f64) -> String {
+    if spend_limit <= 0.0 {
+        return format_usd(spend_used);
+    }
+    format!("{}/{}", format_usd(spend_used), format_usd(spend_limit))
+}
+
+fn format_expiry_locale(t: std::time::SystemTime) -> String {
+    let secs = match t.duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs(),
+        Err(_) => return String::new(),
+    };
+    let (month, day) = unix_secs_to_month_day(secs);
+    crate::native_interop::format_month_day_locale(month, day)
+}
+
+fn unix_secs_to_month_day(secs: u64) -> (u8, u8) {
+    let days = secs / 86400;
+    let mut remaining = days;
+    let mut year = 1970u32;
+    loop {
+        let year_days = if is_leap_year(year) { 366u64 } else { 365u64 };
+        if remaining < year_days {
+            break;
+        }
+        remaining -= year_days;
+        year += 1;
+    }
+    let month_lengths: [u64; 12] = [
+        31, if is_leap_year(year) { 29 } else { 28 },
+        31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    ];
+    let mut month = 1u8;
+    let mut rem = remaining;
+    for &days_in_month in &month_lengths {
+        if rem < days_in_month {
+            break;
+        }
+        rem -= days_in_month;
+        month += 1;
+    }
+    let month = month.min(12);
+    let day = (rem + 1).min(31) as u8;
+    (month, day)
+}
+
+fn is_leap_year(year: u32) -> bool {
+    year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+}
+
+fn format_usd(amount: f64) -> String {
+    let dollars = amount as u64;
+    if dollars >= 10_000 {
+        format!("${:.0}K", amount / 1000.0)
+    } else if dollars >= 1_000 {
+        let k = amount / 1000.0;
+        if (k - k.floor()).abs() < 0.05 {
+            format!("${:.0}K", k)
+        } else {
+            format!("${:.1}K", k)
+        }
+    } else {
+        format!("${}", dollars)
     }
 }
