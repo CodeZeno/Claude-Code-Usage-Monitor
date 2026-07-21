@@ -518,29 +518,84 @@ fn toggle_widget_visibility(hwnd: HWND) {
 /// present (e.g. it is temporarily gone because a fullscreen app hid it). This
 /// keeps the widget on the user's chosen physical monitor even as the number
 /// and ordering of taskbars changes underneath us.
+///
+/// Returns the chosen index together with whether it was resolved by matching
+/// the preferred monitor's device name (`true`) rather than by falling back to
+/// the positional index (`false`). Callers use that flag to avoid persisting a
+/// temporary fallback over the user's saved choice.
 fn resolve_taskbar_index(
     taskbars: &[native_interop::TaskbarWindow],
     preferred_device: Option<&str>,
     fallback_index: usize,
-) -> usize {
+) -> (usize, bool) {
     if let Some(device) = preferred_device {
         if !device.is_empty() {
             if let Some(pos) = taskbars.iter().position(|t| t.monitor_device == device) {
-                return pos;
+                return (pos, true);
             }
         }
     }
-    fallback_index.min(taskbars.len().saturating_sub(1))
+    (fallback_index.min(taskbars.len().saturating_sub(1)), false)
 }
 
-fn attach_to_taskbar(hwnd: HWND, preferred_device: Option<&str>, fallback_index: usize) -> bool {
+/// Decide what the saved monitor preference (`taskbar_monitor`) should become
+/// after an attach, given how that attach resolved. Returns `Some(device)` to
+/// write, or `None` to leave the existing preference untouched.
+///
+/// The saved preference is the user's *intent*, and it must survive a temporary
+/// fallback: when the chosen monitor's taskbar is briefly gone (e.g. a
+/// fullscreen app hid it) an automatic re-attach lands on a different monitor,
+/// but that must NOT rewrite the intent — otherwise the widget's home is lost
+/// permanently and it can never return. So only adopt the resolved monitor as
+/// the new saved preference when:
+///   - the user explicitly picked it (`persist_choice`), or
+///   - the resolve actually matched the saved preference (`matched_preferred`),
+///     or
+///   - there was no saved preference yet (`!has_saved_pref`) — migration from
+///     the legacy index-only setting.
+fn monitor_pref_after_attach(
+    persist_choice: bool,
+    requested_device: Option<&str>,
+    resolved_device: &str,
+    matched_preferred: bool,
+    has_saved_pref: bool,
+) -> Option<String> {
+    if persist_choice {
+        // Honor the user's explicit intent — the monitor they asked for — even
+        // if we had to fall back to another one at this instant. Its taskbar
+        // will return and reattach_to_saved_monitor_if_needed will home to it.
+        let dev = requested_device
+            .filter(|d| !d.is_empty())
+            .unwrap_or(resolved_device);
+        (!dev.is_empty()).then(|| dev.to_string())
+    } else if !resolved_device.is_empty() && (matched_preferred || !has_saved_pref) {
+        Some(resolved_device.to_string())
+    } else {
+        None
+    }
+}
+
+/// Attach the widget to a taskbar.
+///
+/// `preferred_device` names the monitor to prefer; `fallback_index` is used only
+/// when that monitor's taskbar is absent. `persist_choice` marks this as an
+/// explicit user selection (picker/drag) whose monitor should be saved as the
+/// new intent; automatic attaches (startup, display-change re-home) pass `false`
+/// so a temporary fallback cannot overwrite the user's saved monitor.
+fn attach_to_taskbar(
+    hwnd: HWND,
+    preferred_device: Option<&str>,
+    fallback_index: usize,
+    persist_choice: bool,
+) -> bool {
     let taskbars = native_interop::find_taskbars();
     if taskbars.is_empty() {
         diagnose::log("taskbar not found; using fallback popup window");
         return false;
     }
 
-    let index = resolve_taskbar_index(&taskbars, preferred_device, fallback_index);
+    let (index, matched_preferred) =
+        resolve_taskbar_index(&taskbars, preferred_device, fallback_index);
     let taskbar = taskbars[index].clone();
     diagnose::log(format!(
         "taskbar selected index={index} count={} device={} hwnd={:?} rect=({}, {}, {}, {})",
@@ -588,10 +643,18 @@ fn attach_to_taskbar(hwnd: HWND, preferred_device: Option<&str>, fallback_index:
         s.taskbar_index = index;
         // Persist the monitor identity so later re-attaches target the same
         // physical display rather than whatever now happens to sit at `index`.
-        // Only overwrite the saved preference when we actually resolved a
-        // monitor, so a transient empty device name can't wipe it.
-        if !taskbar.monitor_device.is_empty() {
-            s.taskbar_monitor = Some(taskbar.monitor_device.clone());
+        // Crucially, a temporary fallback (the chosen monitor's taskbar is gone
+        // right now) must NOT overwrite the user's saved choice — see
+        // monitor_pref_after_attach — otherwise the widget's home is lost and it
+        // can never return.
+        if let Some(device) = monitor_pref_after_attach(
+            persist_choice,
+            preferred_device,
+            &taskbar.monitor_device,
+            matched_preferred,
+            s.taskbar_monitor.is_some(),
+        ) {
+            s.taskbar_monitor = Some(device);
         }
         s.embedded = true;
     }
@@ -627,7 +690,7 @@ fn reattach_to_saved_monitor_if_needed(hwnd: HWND) {
     diagnose::log(format!(
         "display change: re-homing widget to saved monitor {device}"
     ));
-    if attach_to_taskbar(hwnd, Some(device.as_str()), fallback_index) {
+    if attach_to_taskbar(hwnd, Some(device.as_str()), fallback_index, false) {
         position_at_taskbar();
         render_layered();
     }
@@ -1419,6 +1482,7 @@ pub fn run() {
             hwnd,
             settings.taskbar_monitor.as_deref(),
             settings.taskbar_index,
+            false,
         ) {
             embedded = true;
         }
@@ -2583,11 +2647,13 @@ unsafe extern "system" fn wnd_proc(
                             }
                         }
                         // Anchor to the dropped monitor by its stable device
-                        // name so the choice survives later taskbar churn.
+                        // name so the choice survives later taskbar churn. This
+                        // is an explicit user choice, so persist it.
                         if attach_to_taskbar(
                             hwnd,
                             Some(target_taskbar.monitor_device.as_str()),
                             target_index,
+                            true,
                         ) {
                             position_at_taskbar();
                             render_layered();
@@ -2788,7 +2854,7 @@ unsafe extern "system" fn wnd_proc(
                     // Only mutate/persist visibility once we know the re-attach
                     // succeeded, so a failed attach can't leave the saved state
                     // marked visible while the window stays hidden.
-                    if attach_to_taskbar(hwnd, target_device.as_deref(), target) {
+                    if attach_to_taskbar(hwnd, target_device.as_deref(), target, true) {
                         let was_hidden = {
                             let mut state = lock_state();
                             if let Some(s) = state.as_mut() {
@@ -3527,7 +3593,7 @@ mod tests {
         // Saved monitor is at position 1; the stale fallback index points at 0.
         assert_eq!(
             resolve_taskbar_index(&taskbars, Some(r"\\.\DISPLAY2"), 0),
-            1
+            (1, true)
         );
     }
 
@@ -3537,7 +3603,7 @@ mod tests {
         // hidden taskbar reappeared and shifted every list position. Matching by
         // device name keeps it on DISPLAY3 instead of following the old index.
         let before = [taskbar(r"\\.\DISPLAY1"), taskbar(r"\\.\DISPLAY3")];
-        let chosen = resolve_taskbar_index(&before, Some(r"\\.\DISPLAY3"), 1);
+        let (chosen, _) = resolve_taskbar_index(&before, Some(r"\\.\DISPLAY3"), 1);
         let saved = before[chosen].monitor_device.clone();
 
         let after = [
@@ -3546,21 +3612,73 @@ mod tests {
             taskbar(r"\\.\DISPLAY3"),
         ];
         // Same stale index (1) would now be DISPLAY2; the device match must win.
-        let resolved = resolve_taskbar_index(&after, Some(&saved), 1);
+        let (resolved, matched) = resolve_taskbar_index(&after, Some(&saved), 1);
+        assert!(matched);
         assert_eq!(after[resolved].monitor_device, r"\\.\DISPLAY3");
     }
 
     #[test]
     fn resolve_falls_back_to_clamped_index_when_monitor_absent() {
         let taskbars = [taskbar(r"\\.\DISPLAY1"), taskbar(r"\\.\DISPLAY2")];
-        // Saved monitor is gone (fullscreen) -> clamp the index into range.
+        // Saved monitor is gone (fullscreen) -> clamp the index into range and
+        // report that we did NOT match the preferred monitor.
         assert_eq!(
             resolve_taskbar_index(&taskbars, Some(r"\\.\DISPLAY9"), 5),
-            1
+            (1, false)
         );
-        // No saved monitor at all -> plain clamped index.
-        assert_eq!(resolve_taskbar_index(&taskbars, None, 0), 0);
+        // No saved monitor at all -> plain clamped index, no match.
+        assert_eq!(resolve_taskbar_index(&taskbars, None, 0), (0, false));
         // Empty device string is ignored like "no preference".
-        assert_eq!(resolve_taskbar_index(&taskbars, Some(""), 1), 1);
+        assert_eq!(resolve_taskbar_index(&taskbars, Some(""), 1), (1, false));
+    }
+
+    #[test]
+    fn auto_attach_fallback_never_overwrites_saved_choice() {
+        // THE reported regression: the user's monitor (DISPLAY3) taskbar is
+        // temporarily gone, so an automatic attach falls back to DISPLAY1. The
+        // saved preference must stay DISPLAY3 so the widget can home back to it.
+        let next = monitor_pref_after_attach(
+            false,                 // automatic re-attach, not a user choice
+            Some(r"\\.\DISPLAY3"), // still asking for the saved monitor
+            r"\\.\DISPLAY1",       // but we fell back to DISPLAY1
+            false,                 // did not match the preferred monitor
+            true,                  // a preference is already saved
+        );
+        assert_eq!(next, None, "a fallback must not rewrite the saved monitor");
+    }
+
+    #[test]
+    fn auto_attach_keeps_preference_when_matched() {
+        let next = monitor_pref_after_attach(
+            false,
+            Some(r"\\.\DISPLAY3"),
+            r"\\.\DISPLAY3",
+            true,
+            true,
+        );
+        assert_eq!(next, Some(r"\\.\DISPLAY3".to_string()));
+    }
+
+    #[test]
+    fn auto_attach_migrates_legacy_index_only_settings() {
+        // Upgrading from the index-only setting (nothing saved yet): adopt
+        // whatever we resolved so the choice becomes sticky going forward.
+        let next = monitor_pref_after_attach(false, None, r"\\.\DISPLAY2", false, false);
+        assert_eq!(next, Some(r"\\.\DISPLAY2".to_string()));
+    }
+
+    #[test]
+    fn user_choice_persists_requested_monitor_even_on_fallback() {
+        // The user explicitly picks DISPLAY3 but its taskbar vanished this
+        // instant; we still save DISPLAY3 as the intent so we home to it when
+        // it returns, rather than saving the fallback we landed on.
+        let next = monitor_pref_after_attach(
+            true,
+            Some(r"\\.\DISPLAY3"),
+            r"\\.\DISPLAY1",
+            false,
+            true,
+        );
+        assert_eq!(next, Some(r"\\.\DISPLAY3".to_string()));
     }
 }
