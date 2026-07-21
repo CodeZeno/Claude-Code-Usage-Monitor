@@ -768,13 +768,13 @@ fn clamp_offset_for_taskbar(
 fn popup_screen_x(
     stored_tray_offset: i32,
     resolved_tray_offset: i32,
-    taskbar_hwnd: HWND,
+    _taskbar_hwnd: HWND,
     taskbar_rect: RECT,
     content_left: i32,
     max_offset: i32,
     max_x: i32,
 ) -> i32 {
-    let min_x = native_interop::taskbar_visible_left_screen(taskbar_hwnd, taskbar_rect);
+    let min_x = taskbar_rect.left;
     let max_x_screen = taskbar_rect.left + max_x;
     let x = if stored_tray_offset < 0 {
         min_x
@@ -2941,8 +2941,12 @@ fn position_at_taskbar() {
     let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
 
     if embedded {
-        let mut x = content_left + max_offset - tray_offset;
-        x = x.clamp(content_left, max_x);
+        let mut x = if stored_tray_offset < 0 {
+            0
+        } else {
+            content_left + max_offset - tray_offset
+        };
+        x = x.clamp(0, max_x);
         let y_child = compute_anchor_y(anchor_top, anchor_height, widget_height) - anchor_top;
         let screen_x = taskbar_rect.left + x;
         let screen_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
