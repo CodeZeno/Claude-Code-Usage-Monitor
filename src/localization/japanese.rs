@@ -46,5 +46,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Antigravity を開いて再度サインインしてください。その後、このアプリを更新するか再起動してください。",
     codex_window_title: "Codex 使用量モニター",
     antigravity_window_title: "Antigravity 使用量モニター",
+    minimax_model: "MiniMax",
+    ollama_model: "Ollama",
+    minimax_window_title: "MiniMax 使用量モニター",
+    ollama_window_title: "Ollama 使用量モニター",
     second_suffix: "秒",
 };

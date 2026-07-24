@@ -4,6 +4,8 @@ mod diagnose;
 mod localization;
 mod models;
 mod native_interop;
+#[cfg(feature = "ollama-login-webview")]
+mod ollama_login;
 mod poller;
 mod theme;
 mod tray_icon;

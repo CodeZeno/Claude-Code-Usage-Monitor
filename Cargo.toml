@@ -16,12 +16,41 @@ InternalName = "ClaudeCodeUsageMonitor"
 Comments = "https://codezeno.com.au"
 LegalCopyright = "Copyright (C) 2026 Code Zeno Pty Ltd"
 
+[[bin]]
+name = "claude-code-usage-monitor"
+path = "src/main.rs"
+
+[[bin]]
+name = "ollama-login-helper"
+path = "src/ollama_login_helper.rs"
+required-features = ["ollama-login-webview"]
+
 [dependencies]
 ureq = { version = "2", default-features = false, features = ["native-tls", "json", "proxy-from-env"] }
 native-tls = "0.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
+
+[features]
+# Pulls in wry + tao for an embedded WebView2 login window. Off by default
+# because the native deps add ~6 MB to the release binary. Enable with:
+#   cargo build --release --features ollama-login-webview
+# Then right-click the tray icon → "Log in to Ollama…" to capture fresh
+# cookies via CoreWebView2.CookieManager.GetCookiesAsync().
+default = []
+ollama-login-webview = ["dep:wry", "dep:tao"]
+
+[dependencies.wry]
+version = "0.55"
+optional = true
+# On Windows: uses WebView2 via Edge automatically (no extra feature needed).
+# On Linux: requires `linux-body` (webkit2gtk v2_40).
+# We only target Windows for the tray, so default features suffice.
+
+[dependencies.tao]
+version = "0.35"
+optional = true
 
 [dependencies.windows]
 version = "0.58"

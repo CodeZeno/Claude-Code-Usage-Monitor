@@ -17,4 +17,6 @@ pub struct AppUsageData {
     pub claude_code: Option<UsageData>,
     pub codex: Option<UsageData>,
     pub antigravity: Option<UsageData>,
+    pub minimax: Option<UsageData>,
+    pub ollama: Option<UsageData>,
 }

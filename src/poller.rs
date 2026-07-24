@@ -175,14 +175,20 @@ pub fn poll(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_minimax: bool,
+    show_ollama: bool,
 ) -> Result<AppUsageData, PollError> {
     poll_with(
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_minimax,
+        show_ollama,
         poll_claude_code,
         poll_codex,
         poll_antigravity,
+        poll_minimax,
+        poll_ollama,
     )
 }
 
@@ -190,13 +196,21 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_minimax: bool,
+    show_ollama: bool,
     mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_minimax: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_ollama: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
     let mut data = AppUsageData::default();
     let mut first_error = None;
-    let active_provider_count = show_claude_code as u8 + show_codex as u8 + show_antigravity as u8;
+    let active_provider_count = show_claude_code as u8
+        + show_codex as u8
+        + show_antigravity as u8
+        + show_minimax as u8
+        + show_ollama as u8;
 
     if show_claude_code {
         match poll_claude_code() {
@@ -234,7 +248,36 @@ fn poll_with(
         }
     }
 
-    if data.claude_code.is_none() && data.codex.is_none() && data.antigravity.is_none() {
+    if show_minimax {
+        match poll_minimax() {
+            Ok(minimax) => data.minimax = Some(minimax),
+            Err(error) => {
+                if active_provider_count > 1 {
+                    diagnose::log(format!("MiniMax usage poll failed: {error:?}"));
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if show_ollama {
+        match poll_ollama() {
+            Ok(ollama) => data.ollama = Some(ollama),
+            Err(error) => {
+                if active_provider_count > 1 {
+                    diagnose::log(format!("Ollama usage poll failed: {error:?}"));
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if data.claude_code.is_none()
+        && data.codex.is_none()
+        && data.antigravity.is_none()
+        && data.minimax.is_none()
+        && data.ollama.is_none()
+    {
         Err(first_error.unwrap_or(PollError::RequestFailed))
     } else {
         Ok(data)
@@ -285,6 +328,362 @@ fn poll_antigravity() -> Result<UsageData, PollError> {
     };
 
     fetch_antigravity_usage(&creds.access_token)
+}
+
+fn poll_minimax() -> Result<UsageData, PollError> {
+    // Try to read MiniMax API token from ~/.minimax/credentials or env
+    let token = read_minimax_token();
+
+    match token {
+        Some(t) if !t.is_empty() => fetch_minimax_usage(&t),
+        _ => {
+            diagnose::log("MiniMax usage poll failed: no MiniMax credentials found");
+            Err(PollError::NoCredentials)
+        }
+    }
+}
+
+fn poll_ollama() -> Result<UsageData, PollError> {
+    // Ollama's real quota values are rendered on the authenticated settings
+    // page. The API key can identify the plan, but cannot return consumption.
+    let cookie = read_ollama_session_cookie();
+
+    match cookie {
+        Some(cookie) if !cookie.is_empty() => fetch_ollama_usage(&cookie),
+        _ => {
+            diagnose::log(
+                "Ollama usage poll failed: no Ollama Cloud session cookie found; refusing to display plan-tier guesses",
+            );
+            Err(PollError::NoCredentials)
+        }
+    }
+}
+
+/// Read the MiniMax credential used by Hermes itself, with compatibility
+/// fallbacks for standalone MiniMax CLI/API-key installs.
+fn read_minimax_token() -> Option<String> {
+    if let Ok(key) = std::env::var("MINIMAX_API_KEY") {
+        if !key.is_empty() {
+            return Some(key);
+        }
+    }
+
+    let home = dirs::home_dir()?;
+
+    // Hermes stores the active OAuth credential here. Prefer this because it
+    // is the same token used by the configured minimax-oauth backend.
+    let auth_path = home.join(".hermes").join("auth.json");
+    if let Ok(content) = std::fs::read_to_string(&auth_path) {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+            let provider_token = json
+                .get("providers")
+                .and_then(|v| v.get("minimax-oauth"))
+                .and_then(|v| v.get("access_token"))
+                .and_then(|v| v.as_str());
+            if let Some(token) = provider_token.filter(|s| !s.is_empty()) {
+                return Some(token.to_string());
+            }
+
+            let pool_token = json
+                .get("credential_pool")
+                .and_then(|v| v.get("minimax-oauth"))
+                .and_then(|v| v.as_array())
+                .and_then(|v| v.iter().find(|entry| entry.get("access_token").is_some()))
+                .and_then(|v| v.get("access_token"))
+                .and_then(|v| v.as_str());
+            if let Some(token) = pool_token.filter(|s| !s.is_empty()) {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    // Compatibility fallback for a standalone MiniMax CLI/API-key install.
+    let cred_path = home.join(".minimax").join("credentials.json");
+    let content = std::fs::read_to_string(&cred_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    json.get("api_key")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+}
+
+/// Read the authenticated Ollama Cloud session cookie.
+///
+/// Priority:
+/// 1. OLLAMA_CLOUD_SESSION environment variable
+/// 2. Local app file (so Explorer/launched-at-login builds can use it)
+/// 3. ~/.claude/settings.json env.OLLAMA_CLOUD_SESSION
+fn read_ollama_session_cookie() -> Option<String> {
+    if let Ok(cookie) = std::env::var("OLLAMA_CLOUD_SESSION") {
+        if cookie.contains("aid=") && cookie.contains("__Secure-session=") {
+            return Some(cookie);
+        }
+    }
+
+    if let Some(local_data) = dirs::data_local_dir() {
+        let cookie_path = local_data
+            .join("ClaudeCodeUsageMonitor")
+            .join("ollama_session_cookie.txt");
+        if let Ok(cookie) = std::fs::read_to_string(cookie_path) {
+            let cookie = cookie.trim().to_string();
+            if cookie.contains("aid=") && cookie.contains("__Secure-session=") {
+                return Some(cookie);
+            }
+        }
+    }
+
+    let settings_path = dirs::home_dir()?.join(".claude").join("settings.json");
+    let content = std::fs::read_to_string(settings_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    let cookie = json
+        .get("env")
+        .and_then(|env| env.get("OLLAMA_CLOUD_SESSION"))
+        .and_then(|value| value.as_str())?;
+    if cookie.contains("aid=") && cookie.contains("__Secure-session=") {
+        Some(cookie.to_string())
+    } else {
+        None
+    }
+}
+
+const MINIMAX_TOKEN_PLAN_URL: &str = "https://www.minimax.io/v1/token_plan/remains";
+
+#[derive(Deserialize)]
+struct MiniMaxTokenPlanResponse {
+    model_remains: Vec<MiniMaxModelRemain>,
+}
+
+#[derive(Deserialize)]
+struct MiniMaxModelRemain {
+    model_name: Option<String>,
+    end_time: Option<u64>,
+    weekly_end_time: Option<u64>,
+    current_interval_remaining_percent: Option<f64>,
+    current_weekly_remaining_percent: Option<f64>,
+}
+
+fn minimax_reset_time(ms: Option<u64>) -> Option<SystemTime> {
+    ms.map(|value| UNIX_EPOCH + Duration::from_millis(value))
+}
+
+fn fetch_minimax_usage(token: &str) -> Result<UsageData, PollError> {
+    let agent = build_agent()?;
+
+    let resp = match agent
+        .get(MINIMAX_TOKEN_PLAN_URL)
+        .set("Authorization", &format!("Bearer {token}"))
+        .call()
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log(format!(
+                "MiniMax token plan endpoint returned auth error status {code}"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(error) => {
+            diagnose::log_error("MiniMax token plan request failed", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let response: MiniMaxTokenPlanResponse = match resp.into_json() {
+        Ok(response) => response,
+        Err(error) => {
+            diagnose::log_error("unable to parse MiniMax token plan response", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    // The API returns one bucket per model. The general bucket is the
+    // subscription-wide coding quota; fall back to the first bucket if the
+    // account does not expose a general bucket.
+    let bucket = response
+        .model_remains
+        .iter()
+        .find(|entry| entry.model_name.as_deref() == Some("general"))
+        .or_else(|| response.model_remains.first())
+        .ok_or_else(|| {
+            diagnose::log("MiniMax token plan response contained no model buckets");
+            PollError::RequestFailed
+        })?;
+
+    let mut data = UsageData::default();
+    data.session.percentage = 100.0
+        - bucket
+            .current_interval_remaining_percent
+            .unwrap_or(0.0)
+            .clamp(0.0, 100.0);
+    data.session.resets_at = minimax_reset_time(bucket.end_time);
+    data.weekly.percentage = 100.0
+        - bucket
+            .current_weekly_remaining_percent
+            .unwrap_or(0.0)
+            .clamp(0.0, 100.0);
+    data.weekly.resets_at = minimax_reset_time(bucket.weekly_end_time);
+
+    Ok(data)
+}
+
+const OLLAMA_SETTINGS_URL: &str = "https://ollama.com/settings";
+
+// Ollama Cloud usage scraper — adapted from bubbabright/usage-daemon (HANDOFF-14
+// from the upstream GNONE-shell + daemon suite). Their parser was the cleanest
+// of the half-dozen reference implementations reviewed; we mirror its regexes
+// because they match the actual aria-labelled structure ollama.com emits:
+//
+//   <span aria-label="Session usage 100% used" ...>
+//   <span aria-label="Weekly usage 26.5% used" ...>
+//
+// followed by two <span data-time="...">Resets in N hours</span> elements for
+// the next 5h / weekly reset timestamps.
+
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+enum OllamaParseError {
+    /// HTML body did not contain the "Cloud usage" header — user is logged out
+    /// or ollama changed the page layout.
+    AuthExpired,
+    /// Could not parse one or both percentages out of an otherwise-valid page.
+    ParseFailed,
+}
+
+fn fetch_ollama_usage(cookie: &str) -> Result<UsageData, PollError> {
+    let agent = build_ollama_agent()?;
+
+    let resp = match agent
+        .get(OLLAMA_SETTINGS_URL)
+        .set("Cookie", cookie)
+        .set(
+            "User-Agent",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+             (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+        )
+        .set("Accept", "text/html,application/xhtml+xml")
+        .call()
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log(format!(
+                "Ollama settings page returned auth error status {code}"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(ureq::Error::Status(code, _)) if (300..400).contains(&code) => {
+            // usage-daemon's ollama.js does `redirect: 'manual'` — a 3xx from
+            // ollama.com/settings is the auth-expired signal, not a real
+            // navigation we should silently follow.
+            diagnose::log(format!(
+                "Ollama settings page redirected with status {code} (likely to /signin)"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(ureq::Error::Status(429, response)) => {
+            let retry_after = response
+                .header("Retry-After")
+                .and_then(|v| v.parse::<u64>().ok());
+            diagnose::log(format!(
+                "Ollama settings page rate-limited (Retry-After={retry_after:?})"
+            ));
+            return Err(PollError::RequestFailed);
+        }
+        Err(error) => {
+            diagnose::log_error("Ollama settings page request failed", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let html: String = match resp.into_string() {
+        Ok(html) => html,
+        Err(error) => {
+            diagnose::log_error("unable to read Ollama settings page", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    parse_ollama_usage(&html).map_err(|err| match err {
+        OllamaParseError::AuthExpired => {
+            diagnose::log("Ollama settings page did not contain Cloud usage header (auth expired)");
+            PollError::AuthRequired
+        }
+        OllamaParseError::ParseFailed => {
+            diagnose::log("Ollama settings page missing Session/Weekly usage percentages");
+            PollError::RequestFailed
+        }
+    })
+}
+
+/// Ollama-specific ureq agent. Distinct from `build_agent` because Ollama needs
+/// `redirects(0)` (so a 303 → /signin surfaces as a Status error we can
+/// recognise, instead of being followed silently), and a browser-flavoured
+/// User-Agent.
+fn build_ollama_agent() -> Result<ureq::Agent, PollError> {
+    let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
+    Ok(ureq::AgentBuilder::new()
+        .timeout(Duration::from_secs(30))
+        .redirects(0)
+        .tls_connector(std::sync::Arc::new(tls))
+        .build())
+}
+
+/// Pure function of the HTML body — used by the tests in
+/// `mod ollama_usage_tests` below to verify the parser against fixtures
+/// without doing real network. Mirrors `parse()` in usage-daemon's
+/// `providers/ollama.js`.
+fn parse_ollama_usage(html: &str) -> Result<UsageData, OllamaParseError> {
+    // Auth gate — the "Cloud usage" heading only appears on a logged-in
+    // settings page. A redirect to /signin omits this entirely.
+    if !html.contains("Cloud usage") {
+        return Err(OllamaParseError::AuthExpired);
+    }
+
+    let session_percentage = parse_ollama_aria_percentage(html, "Session usage")
+        .ok_or(OllamaParseError::ParseFailed)?;
+    let weekly_percentage = parse_ollama_aria_percentage(html, "Weekly usage")
+        .ok_or(OllamaParseError::ParseFailed)?;
+
+    let resets = parse_ollama_reset_times(html);
+    let mut data = UsageData::default();
+    data.session.percentage = session_percentage.clamp(0.0, 100.0);
+    data.weekly.percentage = weekly_percentage.clamp(0.0, 100.0);
+    data.session.resets_at = resets.first().copied().flatten();
+    data.weekly.resets_at = resets.get(1).copied().flatten();
+
+    Ok(data)
+}
+
+/// Match `aria-label="Session usage 26.5% used"` (decimal allowed).
+fn parse_ollama_aria_percentage(html: &str, label: &str) -> Option<f64> {
+    let needle = format!("aria-label=\"{label} ");
+    let start = html.find(&needle)? + needle.len();
+    let after = &html[start..];
+    let end = after.find('%')?;
+    let number = after[..end].trim();
+    number.parse::<f64>().ok()
+}
+
+fn parse_ollama_reset_times(html: &str) -> Vec<Option<SystemTime>> {
+    let mut results = Vec::new();
+    let mut offset = 0;
+
+    while let Some(relative) = html[offset..].find("data-time=\"") {
+        let value_start = offset + relative + "data-time=\"".len();
+        let Some(value_end_relative) = html[value_start..].find('"') else {
+            break;
+        };
+        let value_end = value_start + value_end_relative;
+        let after_end = (value_end + 300).min(html.len());
+        let after = &html[value_end..after_end];
+        if after.contains("Resets in") {
+            results.push(parse_iso8601(Some(&html[value_start..value_end])));
+            if results.len() >= 2 {
+                break;
+            }
+        }
+        offset = value_end + 1;
+    }
+
+    results
 }
 
 fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError> {
@@ -1521,6 +1920,109 @@ fn is_leap(y: u64) -> bool {
     (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
+#[cfg(test)]
+mod ollama_usage_tests {
+    use super::{parse_ollama_aria_percentage, parse_ollama_reset_times, parse_ollama_usage};
+    use crate::models::UsageData;
+
+    /// Minimal-but-faithful settings-page fixture. The "Cloud usage" heading +
+    /// aria-label pattern is what bubbabright/usage-daemon's parser keys on;
+    /// keeping the same markup ensures we're matching the same page.
+    const FIXTURE_LOGGED_IN: &str = r#"
+        <main>
+          <h2>Cloud usage <span class="capitalize">pro</span></h2>
+          <p>Cloud models and capabilities such as web search contribute to session and weekly limits.</p>
+          <section>
+            <span aria-label="Session usage 100% used">100% used</span>
+            <span data-time="2026-07-23T16:00:00Z">Resets in 2 hours</span>
+          </section>
+          <section>
+            <span aria-label="Weekly usage 26.5% used">26.5% used</span>
+            <span data-time="2026-07-26T14:00:00Z">Resets in 3 days</span>
+          </section>
+        </main>
+    "#;
+
+    const FIXTURE_LOGGED_OUT: &str = r#"
+        <html><head><title>Sign in</title></head>
+        <body><h2>Sign in to Ollama</h2></body></html>
+    "#;
+
+    const FIXTURE_GENUINE_ZERO: &str = r#"
+        <main>
+          <h2>Cloud usage <span class="capitalize">free</span></h2>
+          <section>
+            <span aria-label="Session usage 0% used">0% used</span>
+            <span data-time="2026-07-23T20:00:00Z">Resets in 5 hours</span>
+          </section>
+          <section>
+            <span aria-label="Weekly usage 0% used">0% used</span>
+            <span data-time="2026-07-30T00:00:00Z">Resets in 6 days</span>
+          </section>
+        </main>
+    "#;
+
+    #[test]
+    fn parses_actual_ollama_usage_labels() {
+        let data = parse_ollama_usage(FIXTURE_LOGGED_IN).expect("logged-in fixture should parse");
+        assert_eq!(data.session.percentage, 100.0);
+        assert_eq!(data.weekly.percentage, 26.5);
+        assert!(data.session.resets_at.is_some(), "session reset must parse");
+        assert!(data.weekly.resets_at.is_some(), "weekly reset must parse");
+    }
+
+    #[test]
+    fn parses_zero_usage_fixture() {
+        let data = parse_ollama_usage(FIXTURE_GENUINE_ZERO).expect("0% fixture should parse");
+        assert_eq!(data.session.percentage, 0.0);
+        assert_eq!(data.weekly.percentage, 0.0);
+    }
+
+    #[test]
+    fn auth_expired_when_cloud_usage_heading_missing() {
+        let err = parse_ollama_usage(FIXTURE_LOGGED_OUT)
+            .err()
+            .expect("logged-out fixture must fail");
+        assert!(
+            matches!(err, super::OllamaParseError::AuthExpired),
+            "expected AuthExpired, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn parse_failed_when_percent_missing() {
+        // Page has "Cloud usage" but no aria-label percentages — must NOT silently
+        // default to 0; must report ParseFailed so the tray shows `??` rather
+        // than a misleading 0% reading.
+        let html = r#"<main><h2>Cloud usage</h2></main>"#;
+        let err = parse_ollama_usage(html).err().expect("must fail");
+        assert!(matches!(err, super::OllamaParseError::ParseFailed));
+    }
+
+    #[test]
+    fn aria_label_matcher_handles_decimals_and_whitespace() {
+        let html = r#"<span aria-label="Session usage 26.5% used">"#;
+        assert_eq!(parse_ollama_aria_percentage(html, "Session usage"), Some(26.5));
+    }
+
+    #[test]
+    fn reset_times_pair_session_then_weekly() {
+        let times = parse_ollama_reset_times(FIXTURE_LOGGED_IN);
+        assert_eq!(times.len(), 2, "expected session + weekly resets");
+    }
+
+    #[test]
+    fn usage_data_default_helper_does_not_silently_zero() {
+        // Defensive: ensure an empty UsageData really is `??` for the UI, not 0.
+        let d = UsageData::default();
+        assert_eq!(d.session.percentage, 0.0);
+        assert_eq!(d.weekly.percentage, 0.0);
+        assert!(d.session.resets_at.is_none());
+        assert!(d.weekly.resets_at.is_none());
+    }
+}
+
+
 /// Format a usage section as "X% · Yh" style text
 pub fn format_line(section: &UsageSection, strings: Strings) -> String {
     let pct = format!("{:.0}%", section.percentage);
@@ -1598,6 +2100,8 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
     data.claude_code.as_ref().is_some_and(is_past_reset)
         || data.codex.as_ref().is_some_and(is_past_reset)
         || data.antigravity.as_ref().is_some_and(is_past_reset)
+        || data.minimax.as_ref().is_some_and(is_past_reset)
+        || data.ollama.as_ref().is_some_and(is_past_reset)
 }
 
 #[cfg(test)]
@@ -1620,9 +2124,13 @@ mod tests {
             true,
             true,
             false,
+            false,
+            false,
             || Err(PollError::AuthRequired),
             || Ok(usage_with_session_percent(42.0)),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("minimax is disabled"),
+            || unreachable!("ollama is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
@@ -1636,9 +2144,13 @@ mod tests {
             true,
             true,
             false,
+            false,
+            false,
             || Ok(usage_with_session_percent(64.0)),
             || Err(PollError::RequestFailed),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("minimax is disabled"),
+            || unreachable!("ollama is disabled"),
         )
         .expect("claude data should keep the poll successful");
 
@@ -1652,9 +2164,13 @@ mod tests {
             true,
             true,
             true,
+            false,
+            false,
             || Err(PollError::AuthRequired),
             || Err(PollError::RequestFailed),
             || Err(PollError::NoCredentials),
+            || unreachable!("minimax is disabled"),
+            || unreachable!("ollama is disabled"),
         )
         .expect_err("all-provider failure should return an error");
 
@@ -1667,9 +2183,13 @@ mod tests {
             false,
             true,
             true,
+            false,
+            false,
             || unreachable!("claude code is disabled"),
             || Ok(usage_with_session_percent(42.0)),
             || Err(PollError::NoCredentials),
+            || unreachable!("minimax is disabled"),
+            || unreachable!("ollama is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
