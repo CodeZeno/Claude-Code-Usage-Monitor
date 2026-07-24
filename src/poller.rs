@@ -175,19 +175,16 @@ pub fn poll(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
-    show_minimax: bool,
     show_ollama: bool,
 ) -> Result<AppUsageData, PollError> {
     poll_with(
         show_claude_code,
         show_codex,
         show_antigravity,
-        show_minimax,
         show_ollama,
         poll_claude_code,
         poll_codex,
         poll_antigravity,
-        poll_minimax,
         poll_ollama,
     )
 }
@@ -196,12 +193,10 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
-    show_minimax: bool,
     show_ollama: bool,
     mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
-    mut poll_minimax: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_ollama: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
     let mut data = AppUsageData::default();
@@ -209,7 +204,6 @@ fn poll_with(
     let active_provider_count = show_claude_code as u8
         + show_codex as u8
         + show_antigravity as u8
-        + show_minimax as u8
         + show_ollama as u8;
 
     if show_claude_code {
@@ -248,18 +242,6 @@ fn poll_with(
         }
     }
 
-    if show_minimax {
-        match poll_minimax() {
-            Ok(minimax) => data.minimax = Some(minimax),
-            Err(error) => {
-                if active_provider_count > 1 {
-                    diagnose::log(format!("MiniMax usage poll failed: {error:?}"));
-                }
-                first_error.get_or_insert(error);
-            }
-        }
-    }
-
     if show_ollama {
         match poll_ollama() {
             Ok(ollama) => data.ollama = Some(ollama),
@@ -273,16 +255,15 @@ fn poll_with(
     }
 
     if data.claude_code.is_none()
-        && data.codex.is_none()
-        && data.antigravity.is_none()
-        && data.minimax.is_none()
-        && data.ollama.is_none()
-    {
-        Err(first_error.unwrap_or(PollError::RequestFailed))
-    } else {
-        Ok(data)
+            && data.codex.is_none()
+            && data.antigravity.is_none()
+            && data.ollama.is_none()
+        {
+            Err(first_error.unwrap_or(PollError::RequestFailed))
+        } else {
+            Ok(data)
+        }
     }
-}
 
 fn poll_claude_code() -> Result<UsageData, PollError> {
     let creds = match read_first_credentials() {
@@ -330,18 +311,7 @@ fn poll_antigravity() -> Result<UsageData, PollError> {
     fetch_antigravity_usage(&creds.access_token)
 }
 
-fn poll_minimax() -> Result<UsageData, PollError> {
-    // Try to read MiniMax API token from ~/.minimax/credentials or env
-    let token = read_minimax_token();
-
-    match token {
-        Some(t) if !t.is_empty() => fetch_minimax_usage(&t),
-        _ => {
-            diagnose::log("MiniMax usage poll failed: no MiniMax credentials found");
-            Err(PollError::NoCredentials)
-        }
-    }
-}
+const OLLAMA_SETTINGS_URL: &str = "https://ollama.com/settings";
 
 fn poll_ollama() -> Result<UsageData, PollError> {
     // Ollama's real quota values are rendered on the authenticated settings
@@ -357,54 +327,6 @@ fn poll_ollama() -> Result<UsageData, PollError> {
             Err(PollError::NoCredentials)
         }
     }
-}
-
-/// Read the MiniMax credential used by Hermes itself, with compatibility
-/// fallbacks for standalone MiniMax CLI/API-key installs.
-fn read_minimax_token() -> Option<String> {
-    if let Ok(key) = std::env::var("MINIMAX_API_KEY") {
-        if !key.is_empty() {
-            return Some(key);
-        }
-    }
-
-    let home = dirs::home_dir()?;
-
-    // Hermes stores the active OAuth credential here. Prefer this because it
-    // is the same token used by the configured minimax-oauth backend.
-    let auth_path = home.join(".hermes").join("auth.json");
-    if let Ok(content) = std::fs::read_to_string(&auth_path) {
-        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-            let provider_token = json
-                .get("providers")
-                .and_then(|v| v.get("minimax-oauth"))
-                .and_then(|v| v.get("access_token"))
-                .and_then(|v| v.as_str());
-            if let Some(token) = provider_token.filter(|s| !s.is_empty()) {
-                return Some(token.to_string());
-            }
-
-            let pool_token = json
-                .get("credential_pool")
-                .and_then(|v| v.get("minimax-oauth"))
-                .and_then(|v| v.as_array())
-                .and_then(|v| v.iter().find(|entry| entry.get("access_token").is_some()))
-                .and_then(|v| v.get("access_token"))
-                .and_then(|v| v.as_str());
-            if let Some(token) = pool_token.filter(|s| !s.is_empty()) {
-                return Some(token.to_string());
-            }
-        }
-    }
-
-    // Compatibility fallback for a standalone MiniMax CLI/API-key install.
-    let cred_path = home.join(".minimax").join("credentials.json");
-    let content = std::fs::read_to_string(&cred_path).ok()?;
-    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
-    json.get("api_key")
-        .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
 }
 
 /// Read the authenticated Ollama Cloud session cookie.
@@ -445,87 +367,6 @@ fn read_ollama_session_cookie() -> Option<String> {
         None
     }
 }
-
-const MINIMAX_TOKEN_PLAN_URL: &str = "https://www.minimax.io/v1/token_plan/remains";
-
-#[derive(Deserialize)]
-struct MiniMaxTokenPlanResponse {
-    model_remains: Vec<MiniMaxModelRemain>,
-}
-
-#[derive(Deserialize)]
-struct MiniMaxModelRemain {
-    model_name: Option<String>,
-    end_time: Option<u64>,
-    weekly_end_time: Option<u64>,
-    current_interval_remaining_percent: Option<f64>,
-    current_weekly_remaining_percent: Option<f64>,
-}
-
-fn minimax_reset_time(ms: Option<u64>) -> Option<SystemTime> {
-    ms.map(|value| UNIX_EPOCH + Duration::from_millis(value))
-}
-
-fn fetch_minimax_usage(token: &str) -> Result<UsageData, PollError> {
-    let agent = build_agent()?;
-
-    let resp = match agent
-        .get(MINIMAX_TOKEN_PLAN_URL)
-        .set("Authorization", &format!("Bearer {token}"))
-        .call()
-    {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!(
-                "MiniMax token plan endpoint returned auth error status {code}"
-            ));
-            return Err(PollError::AuthRequired);
-        }
-        Err(error) => {
-            diagnose::log_error("MiniMax token plan request failed", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    let response: MiniMaxTokenPlanResponse = match resp.into_json() {
-        Ok(response) => response,
-        Err(error) => {
-            diagnose::log_error("unable to parse MiniMax token plan response", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    // The API returns one bucket per model. The general bucket is the
-    // subscription-wide coding quota; fall back to the first bucket if the
-    // account does not expose a general bucket.
-    let bucket = response
-        .model_remains
-        .iter()
-        .find(|entry| entry.model_name.as_deref() == Some("general"))
-        .or_else(|| response.model_remains.first())
-        .ok_or_else(|| {
-            diagnose::log("MiniMax token plan response contained no model buckets");
-            PollError::RequestFailed
-        })?;
-
-    let mut data = UsageData::default();
-    data.session.percentage = 100.0
-        - bucket
-            .current_interval_remaining_percent
-            .unwrap_or(0.0)
-            .clamp(0.0, 100.0);
-    data.session.resets_at = minimax_reset_time(bucket.end_time);
-    data.weekly.percentage = 100.0
-        - bucket
-            .current_weekly_remaining_percent
-            .unwrap_or(0.0)
-            .clamp(0.0, 100.0);
-    data.weekly.resets_at = minimax_reset_time(bucket.weekly_end_time);
-
-    Ok(data)
-}
-
-const OLLAMA_SETTINGS_URL: &str = "https://ollama.com/settings";
 
 // Ollama Cloud usage scraper — adapted from bubbabright/usage-daemon (HANDOFF-14
 // from the upstream GNONE-shell + daemon suite). Their parser was the cleanest
@@ -2100,7 +1941,6 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
     data.claude_code.as_ref().is_some_and(is_past_reset)
         || data.codex.as_ref().is_some_and(is_past_reset)
         || data.antigravity.as_ref().is_some_and(is_past_reset)
-        || data.minimax.as_ref().is_some_and(is_past_reset)
         || data.ollama.as_ref().is_some_and(is_past_reset)
 }
 
@@ -2119,83 +1959,75 @@ mod tests {
     }
 
     #[test]
-    fn claude_failure_does_not_block_codex_when_both_are_enabled() {
-        let data = poll_with(
-            true,
-            true,
-            false,
-            false,
-            false,
-            || Err(PollError::AuthRequired),
-            || Ok(usage_with_session_percent(42.0)),
-            || unreachable!("antigravity is disabled"),
-            || unreachable!("minimax is disabled"),
-            || unreachable!("ollama is disabled"),
-        )
-        .expect("codex data should keep the poll successful");
+        fn claude_failure_does_not_block_codex_when_both_are_enabled() {
+            let data = poll_with(
+                true,
+                true,
+                false,
+                false,
+                || Err(PollError::AuthRequired),
+                || Ok(usage_with_session_percent(42.0)),
+                || unreachable!("antigravity is disabled"),
+                || unreachable!("ollama is disabled"),
+            )
+            .expect("codex data should keep the poll successful");
 
-        assert!(data.claude_code.is_none());
-        assert_eq!(data.codex.unwrap().session.percentage, 42.0);
-    }
+            assert!(data.claude_code.is_none());
+            assert_eq!(data.codex.unwrap().session.percentage, 42.0);
+        }
 
-    #[test]
-    fn codex_failure_does_not_block_claude_when_both_are_enabled() {
-        let data = poll_with(
-            true,
-            true,
-            false,
-            false,
-            false,
-            || Ok(usage_with_session_percent(64.0)),
-            || Err(PollError::RequestFailed),
-            || unreachable!("antigravity is disabled"),
-            || unreachable!("minimax is disabled"),
-            || unreachable!("ollama is disabled"),
-        )
-        .expect("claude data should keep the poll successful");
+        #[test]
+        fn codex_failure_does_not_block_claude_when_both_are_enabled() {
+            let data = poll_with(
+                true,
+                true,
+                false,
+                false,
+                || Ok(usage_with_session_percent(64.0)),
+                || Err(PollError::RequestFailed),
+                || unreachable!("antigravity is disabled"),
+                || unreachable!("ollama is disabled"),
+            )
+            .expect("claude data should keep the poll successful");
 
-        assert_eq!(data.claude_code.unwrap().session.percentage, 64.0);
-        assert!(data.codex.is_none());
-    }
+            assert_eq!(data.claude_code.unwrap().session.percentage, 64.0);
+            assert!(data.codex.is_none());
+        }
 
-    #[test]
-    fn returns_first_error_when_no_enabled_provider_succeeds() {
-        let error = poll_with(
-            true,
-            true,
-            true,
-            false,
-            false,
-            || Err(PollError::AuthRequired),
-            || Err(PollError::RequestFailed),
-            || Err(PollError::NoCredentials),
-            || unreachable!("minimax is disabled"),
-            || unreachable!("ollama is disabled"),
-        )
-        .expect_err("all-provider failure should return an error");
+        #[test]
+        fn returns_first_error_when_no_enabled_provider_succeeds() {
+            let error = poll_with(
+                true,
+                true,
+                true,
+                false,
+                || Err(PollError::AuthRequired),
+                || Err(PollError::RequestFailed),
+                || Err(PollError::NoCredentials),
+                || unreachable!("ollama is disabled"),
+            )
+            .expect_err("all-provider failure should return an error");
 
-        assert_eq!(error, PollError::AuthRequired);
-    }
+            assert_eq!(error, PollError::AuthRequired);
+        }
 
-    #[test]
-    fn antigravity_failure_does_not_block_codex_when_both_are_enabled() {
-        let data = poll_with(
-            false,
-            true,
-            true,
-            false,
-            false,
-            || unreachable!("claude code is disabled"),
-            || Ok(usage_with_session_percent(42.0)),
-            || Err(PollError::NoCredentials),
-            || unreachable!("minimax is disabled"),
-            || unreachable!("ollama is disabled"),
-        )
-        .expect("codex data should keep the poll successful");
+        #[test]
+        fn antigravity_failure_does_not_block_codex_when_both_are_enabled() {
+            let data = poll_with(
+                false,
+                true,
+                true,
+                false,
+                || unreachable!("claude code is disabled"),
+                || Ok(usage_with_session_percent(42.0)),
+                || Err(PollError::NoCredentials),
+                || unreachable!("ollama is disabled"),
+            )
+            .expect("codex data should keep the poll successful");
 
-        assert!(data.antigravity.is_none());
-        assert_eq!(data.codex.unwrap().session.percentage, 42.0);
-    }
+            assert!(data.antigravity.is_none());
+            assert_eq!(data.codex.unwrap().session.percentage, 42.0);
+        }
 
     #[test]
     fn antigravity_summary_prefers_gemini_group() {
