@@ -51,4 +51,6 @@ pub(super) const STRINGS: Strings = Strings {
     codex_window_title: "Монитор использования Codex",
     antigravity_window_title: "Монитор использования Antigravity",
     cursor_window_title: "Монитор использования Cursor",
+    cursor_token_expired_title: "Cursor Auth Error",
+    cursor_token_expired_body: "Sign in to Cursor (or set CURSOR_SESSION_TOKEN), then refresh or restart this app.",
 };

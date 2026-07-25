@@ -457,12 +457,14 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             }
             if s.show_cursor {
                 icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
+                    kind: tray_icon::TrayIconKind::Cursor,
                     percent: Some(s.cursor_session_percent),
                     tooltip: format!(
-                        "{} Auto: {} | API: {}",
+                        "{} {}: {} | {}: {}",
                         s.language.strings().cursor_model,
+                        s.language.strings().cursor_auto_window,
                         s.cursor_session_text,
+                        s.language.strings().cursor_api_window,
                         s.cursor_weekly_text
                     ),
                 });
@@ -494,7 +496,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             }
             if s.show_cursor {
                 icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Codex,
+                    kind: tray_icon::TrayIconKind::Cursor,
                     percent: None,
                     tooltip: s.language.strings().cursor_window_title.to_string(),
                 });
@@ -2052,6 +2054,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 tray_icon::TrayIconKind::Codex,
                                 s.language.strings().codex_token_expired_title,
                                 s.language.strings().codex_token_expired_body,
+                            )
+                        } else if s.show_cursor {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Cursor,
+                                s.language.strings().cursor_token_expired_title,
+                                s.language.strings().cursor_token_expired_body,
                             )
                         } else {
                             (
