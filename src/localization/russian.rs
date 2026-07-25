@@ -47,4 +47,8 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Откройте Antigravity и войдите снова. После этого обновите или перезапустите приложение.",
     codex_window_title: "Монитор использования Codex",
     antigravity_window_title: "Монитор использования Antigravity",
+    ollama_model: "Ollama",
+    ollama_window_title: "Монитор использования Ollama",
+    ollama_token_expired_title: "Ошибка авторизации Ollama",
+    ollama_token_expired_body: "Используйте Models -> 'Войти в Ollama...' или задайте OLLAMA_CLOUD_SESSION, затем обновите.",
 };

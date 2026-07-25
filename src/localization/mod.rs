@@ -186,10 +186,14 @@ pub struct Strings {
     pub codex_token_expired_title: &'static str,
     pub codex_token_expired_body: &'static str,
     pub antigravity_token_expired_title: &'static str,
-    pub antigravity_token_expired_body: &'static str,
-    pub codex_window_title: &'static str,
-    pub antigravity_window_title: &'static str,
-}
+        pub antigravity_token_expired_body: &'static str,
+        pub codex_window_title: &'static str,
+        pub antigravity_window_title: &'static str,
+        pub ollama_model: &'static str,
+        pub ollama_window_title: &'static str,
+    pub ollama_token_expired_title: &'static str,
+    pub ollama_token_expired_body: &'static str,
+    }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {
     language_override.unwrap_or_else(detect_system_language)

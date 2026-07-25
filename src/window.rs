@@ -67,9 +67,14 @@ struct AppState {
     antigravity_session_text: String,
     antigravity_weekly_percent: f64,
     antigravity_weekly_text: String,
+    ollama_session_percent: f64,
+    ollama_session_text: String,
+    ollama_weekly_percent: f64,
+    ollama_weekly_text: String,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_ollama: bool,
 
     data: Option<AppUsageData>,
 
@@ -132,6 +137,9 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_MODEL_OLLAMA: u16 = 64;
+#[cfg(feature = "ollama-login-webview")]
+const IDM_LOGIN_OLLAMA: u16 = 65;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -317,6 +325,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default = "default_show_ollama")]
+    show_ollama: bool,
 }
 
 impl Default for SettingsFile {
@@ -331,6 +341,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            show_ollama: false,
         }
     }
 }
@@ -355,13 +366,21 @@ fn default_show_antigravity() -> bool {
     false
 }
 
+fn default_show_ollama() -> bool {
+    false
+}
+
 fn load_settings() -> SettingsFile {
     let content = match std::fs::read_to_string(settings_path()) {
         Ok(c) => c,
         Err(_) => return SettingsFile::default(),
     };
     let mut settings: SettingsFile = serde_json::from_str(&content).unwrap_or_default();
-    if !settings.show_claude_code && !settings.show_codex && !settings.show_antigravity {
+    if !settings.show_claude_code
+        && !settings.show_codex
+        && !settings.show_antigravity
+        && !settings.show_ollama
+    {
         settings.show_claude_code = true;
     }
     settings
@@ -392,6 +411,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            show_ollama: s.show_ollama,
         });
     }
 }
@@ -437,6 +457,18 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     ),
                 });
             }
+            if s.show_ollama {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Ollama,
+                    percent: Some(s.ollama_session_percent),
+                    tooltip: format!(
+                        "{} 5h: {} | 7d: {}",
+                        s.language.strings().ollama_model,
+                        s.ollama_session_text,
+                        s.ollama_weekly_text
+                    ),
+                });
+            }
             icons
         }
         Some(s) => {
@@ -460,6 +492,13 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
                     kind: tray_icon::TrayIconKind::Antigravity,
                     percent: None,
                     tooltip: s.language.strings().antigravity_window_title.to_string(),
+                });
+            }
+            if s.show_ollama {
+                icons.push(tray_icon::TrayIconData {
+                    kind: tray_icon::TrayIconKind::Ollama,
+                    percent: None,
+                    tooltip: s.language.strings().ollama_window_title.to_string(),
                 });
             }
             icons
@@ -672,6 +711,19 @@ fn refresh_usage_texts(state: &mut AppState) {
     } else if state.show_antigravity {
         state.antigravity_session_text = "!".to_string();
         state.antigravity_weekly_text = "!".to_string();
+    }
+
+    if let Some(ollama) = data.ollama.as_ref() {
+        state.ollama_session_text = poller::format_line(&ollama.session, strings);
+        state.ollama_weekly_text =
+            if ollama.weekly.resets_at.is_none() && ollama.weekly.percentage == 0.0 {
+                "--".to_string()
+            } else {
+                poller::format_line(&ollama.weekly, strings)
+            };
+    } else if state.show_ollama {
+        state.ollama_session_text = "!".to_string();
+        state.ollama_weekly_text = "!".to_string();
     }
 }
 
@@ -1080,8 +1132,17 @@ fn cursor_is_on_drag_handle(hwnd: HWND) -> bool {
     }
 }
 
-fn active_model_count(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> i32 {
-    (show_claude_code as i32 + show_codex as i32 + show_antigravity as i32).max(1)
+fn active_model_count(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_ollama: bool,
+) -> i32 {
+    (show_claude_code as i32
+        + show_codex as i32
+        + show_antigravity as i32
+        + show_ollama as i32)
+        .max(1)
 }
 
 fn row_bar_segment_count(active_models: i32) -> i32 {
@@ -1112,6 +1173,7 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
         state.show_claude_code,
         state.show_codex,
         state.show_antigravity,
+        state.show_ollama,
     ))
 }
 
@@ -1120,7 +1182,14 @@ fn total_widget_width() -> i32 {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| active_model_count(s.show_claude_code, s.show_codex, s.show_antigravity))
+            .map(|s| {
+                active_model_count(
+                    s.show_claude_code,
+                    s.show_codex,
+                    s.show_antigravity,
+                    s.show_ollama,
+                )
+            })
             .unwrap_or(1)
     };
     total_widget_width_for(active_models)
@@ -1140,6 +1209,10 @@ fn codex_accent_color(is_dark: bool) -> Color {
 
 fn antigravity_accent_color() -> Color {
     Color::from_hex("#4285F4")
+}
+
+fn ollama_accent_color() -> Color {
+    Color::from_hex("#676BEC")
 }
 
 fn claude_usage_text_color(is_dark: bool) -> Color {
@@ -1163,6 +1236,14 @@ fn antigravity_usage_text_color(is_dark: bool) -> Color {
         Color::from_hex("#8AB4F8")
     } else {
         Color::from_hex("#1967D2")
+    }
+}
+
+fn ollama_usage_text_color(is_dark: bool) -> Color {
+    if is_dark {
+        Color::from_hex("#9398F5")
+    } else {
+        Color::from_hex("#4848B8")
     }
 }
 
@@ -1245,6 +1326,7 @@ pub fn run() {
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
+            settings.show_ollama,
         );
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -1308,9 +1390,14 @@ pub fn run() {
                 antigravity_session_text: "--".to_string(),
                 antigravity_weekly_percent: 0.0,
                 antigravity_weekly_text: "--".to_string(),
+                ollama_session_percent: 0.0,
+                ollama_session_text: "--".to_string(),
+                ollama_weekly_percent: 0.0,
+                ollama_weekly_text: "--".to_string(),
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                show_ollama: settings.show_ollama,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -1433,9 +1520,14 @@ fn render_layered() {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        ollama_session_pct,
+        ollama_session_text,
+        ollama_weekly_pct,
+        ollama_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_ollama,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -1456,9 +1548,14 @@ fn render_layered() {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.ollama_session_percent,
+                s.ollama_session_text.clone(),
+                s.ollama_weekly_percent,
+                s.ollama_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_ollama,
             ),
             None => return,
         }
@@ -1480,6 +1577,7 @@ fn render_layered() {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let ollama_accent = ollama_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -1551,11 +1649,17 @@ fn render_layered() {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            ollama_session_pct,
+            &ollama_session_text,
+            ollama_weekly_pct,
+            &ollama_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_ollama,
             &codex_accent,
             &antigravity_accent,
+            &ollama_accent,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -1627,11 +1731,17 @@ fn paint_content(
     antigravity_session_text: &str,
     antigravity_weekly_pct: f64,
     antigravity_weekly_text: &str,
+    ollama_session_pct: f64,
+    ollama_session_text: &str,
+    ollama_weekly_pct: f64,
+    ollama_weekly_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_ollama: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    ollama_accent: &Color,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -1721,12 +1831,16 @@ fn paint_content(
             codex_session_text,
             antigravity_session_pct,
             antigravity_session_text,
+            ollama_session_pct,
+            ollama_session_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_ollama,
             accent,
             codex_accent,
             antigravity_accent,
+            ollama_accent,
             track,
         );
         draw_row(
@@ -1742,12 +1856,16 @@ fn paint_content(
             codex_weekly_text,
             antigravity_weekly_pct,
             antigravity_weekly_text,
+            ollama_weekly_pct,
+            ollama_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_ollama,
             accent,
             codex_accent,
             antigravity_accent,
+            ollama_accent,
             track,
         );
 
@@ -1758,15 +1876,30 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_claude_code, show_codex, show_antigravity) = {
+    let (
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_ollama,
+    ) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|s| (s.show_claude_code, s.show_codex, s.show_antigravity))
-            .unwrap_or((true, false, false))
+            .map(|s| (
+                s.show_claude_code,
+                s.show_codex,
+                s.show_antigravity,
+                s.show_ollama,
+            ))
+            .unwrap_or((true, false, false, false))
     };
 
-    match poller::poll(show_claude_code, show_codex, show_antigravity) {
+        match poller::poll(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_ollama,
+    ) {
         Ok(data) => {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
@@ -1790,6 +1923,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                 } else if s.show_antigravity {
                     s.antigravity_session_percent = 0.0;
                     s.antigravity_weekly_percent = 0.0;
+                }
+                if let Some(ollama) = data.ollama.as_ref() {
+                    s.ollama_session_percent = ollama.session.percentage;
+                    s.ollama_weekly_percent = ollama.weekly.percentage;
+                } else if s.show_ollama {
+                    s.ollama_session_percent = 0.0;
+                    s.ollama_weekly_percent = 0.0;
                 }
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
@@ -1823,7 +1963,10 @@ fn do_poll(send_hwnd: SendHwnd) {
         Err(e) => {
             let auth_watch = match e {
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired
-                    if show_antigravity && !show_claude_code && !show_codex =>
+                    if show_antigravity
+                        && !show_claude_code
+                        && !show_codex
+                        && !show_ollama =>
                 {
                     Some((
                         poller::CredentialWatchMode::Antigravity,
@@ -1862,6 +2005,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "!".to_string();
                             s.antigravity_session_text = "!".to_string();
                             s.antigravity_weekly_text = "!".to_string();
+                            s.ollama_session_text = "!".to_string();
+                            s.ollama_weekly_text = "!".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
                                 let _ = KillTimer(hwnd, TIMER_POLL);
@@ -1882,6 +2027,8 @@ fn do_poll(send_hwnd: SendHwnd) {
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.ollama_session_text = "...".to_string();
+                            s.ollama_weekly_text = "...".to_string();
                             s.retry_count = s.retry_count.saturating_add(1);
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
@@ -1914,6 +2061,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 tray_icon::TrayIconKind::Codex,
                                 s.language.strings().codex_token_expired_title,
                                 s.language.strings().codex_token_expired_body,
+                            )
+                        } else if s.show_ollama {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Ollama,
+                                s.language.strings().ollama_token_expired_title,
+                                s.language.strings().ollama_token_expired_body,
                             )
                         } else {
                             (
@@ -2595,24 +2749,48 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_ANTIGRAVITY => {
+                IDM_MODEL_CLAUDE_CODE
+                | IDM_MODEL_CODEX
+                | IDM_MODEL_ANTIGRAVITY
+                | IDM_MODEL_OLLAMA => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             match id {
                                 IDM_MODEL_CLAUDE_CODE => {
-                                    if s.show_codex || s.show_antigravity || !s.show_claude_code {
+                                    if s.show_codex
+                                        || s.show_antigravity
+                                        || s.show_ollama
+                                        || !s.show_claude_code
+                                    {
                                         s.show_claude_code = !s.show_claude_code;
                                     }
                                 }
                                 IDM_MODEL_CODEX => {
-                                    if s.show_claude_code || s.show_antigravity || !s.show_codex {
+                                    if s.show_claude_code
+                                        || s.show_antigravity
+                                        || s.show_ollama
+                                        || !s.show_codex
+                                    {
                                         s.show_codex = !s.show_codex;
                                     }
                                 }
                                 IDM_MODEL_ANTIGRAVITY => {
-                                    if s.show_claude_code || s.show_codex || !s.show_antigravity {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_ollama
+                                        || !s.show_antigravity
+                                    {
                                         s.show_antigravity = !s.show_antigravity;
+                                    }
+                                }
+                                IDM_MODEL_OLLAMA => {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_antigravity
+                                        || !s.show_ollama
+                                    {
+                                        s.show_ollama = !s.show_ollama;
                                     }
                                 }
                                 _ => {}
@@ -2623,6 +2801,8 @@ unsafe extern "system" fn wnd_proc(
                             s.codex_weekly_text = "...".to_string();
                             s.antigravity_session_text = "...".to_string();
                             s.antigravity_weekly_text = "...".to_string();
+                            s.ollama_session_text = "...".to_string();
+                            s.ollama_weekly_text = "...".to_string();
                         }
                     }
                     save_state_settings();
@@ -2633,6 +2813,19 @@ unsafe extern "system" fn wnd_proc(
                     std::thread::spawn(move || {
                         do_poll(sh);
                     });
+                }
+                #[cfg(feature = "ollama-login-webview")]
+                IDM_LOGIN_OLLAMA => {
+                    tray_icon::notify_balloon(
+                        hwnd,
+                        tray_icon::TrayIconKind::Claude,
+                        "Ollama login",
+                        "A sign-in window will open. Complete WorkOS auth there; the tray picks up the cookie on the next poll.",
+                    );
+                    // Spawn the standalone helper process. It runs its own
+                    // tao event loop with its own Win32 message pump, so the
+                    // tray stays responsive.
+                    crate::ollama_login::run_login_blocking();
                 }
                 IDM_LANG_SYSTEM
                 | IDM_LANG_ENGLISH
@@ -2718,6 +2911,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_ollama,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2732,6 +2926,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.show_ollama,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2742,6 +2937,7 @@ fn show_context_menu(hwnd: HWND) {
                     UpdateStatus::Idle,
                     true,
                     true,
+                    false,
                     false,
                     false,
                 ),
@@ -2829,6 +3025,38 @@ fn show_context_menu(hwnd: HWND) {
             IDM_MODEL_ANTIGRAVITY as usize,
             PCWSTR::from_raw(antigravity_model.as_ptr()),
         );
+
+        let ollama_model = native_interop::wide_str(strings.ollama_model);
+        let ollama_flags = if show_ollama {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            models_menu,
+            ollama_flags,
+            IDM_MODEL_OLLAMA as usize,
+            PCWSTR::from_raw(ollama_model.as_ptr()),
+        );
+
+        // "Log in to Ollama…" menu item — only built when the
+        // `ollama-login-webview` feature is enabled (otherwise no wry/tao).
+        #[cfg(feature = "ollama-login-webview")]
+        {
+            let _ = AppendMenuW(
+                models_menu,
+                MF_SEPARATOR,
+                0,
+                PCWSTR::null(),
+            );
+            let login_str = native_interop::wide_str("Log in to Ollama\u{2026}");
+            let _ = AppendMenuW(
+                models_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_LOGIN_OLLAMA as usize,
+                PCWSTR::from_raw(login_str.as_ptr()),
+            );
+        }
 
         let models_label = native_interop::wide_str(strings.models);
         let _ = AppendMenuW(
@@ -2988,9 +3216,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_session_text,
         antigravity_weekly_pct,
         antigravity_weekly_text,
+        ollama_session_pct,
+        ollama_session_text,
+        ollama_weekly_pct,
+        ollama_weekly_text,
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_ollama,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -3009,9 +3242,14 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_session_text.clone(),
                 s.antigravity_weekly_percent,
                 s.antigravity_weekly_text.clone(),
+                s.ollama_session_percent,
+                s.ollama_session_text.clone(),
+                s.ollama_weekly_percent,
+                s.ollama_weekly_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
+                s.show_ollama,
             ),
             None => return,
         }
@@ -3020,6 +3258,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color(is_dark);
     let antigravity_accent = antigravity_accent_color();
+    let ollama_accent = ollama_accent_color();
     let track = if is_dark {
         Color::from_hex("#444444")
     } else {
@@ -3072,11 +3311,17 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_session_text,
             antigravity_weekly_pct,
             &antigravity_weekly_text,
+            ollama_session_pct,
+            &ollama_session_text,
+            ollama_weekly_pct,
+            &ollama_weekly_text,
             show_claude_code,
             show_codex,
             show_antigravity,
+            show_ollama,
             &codex_accent,
             &antigravity_accent,
+            &ollama_accent,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -3100,16 +3345,21 @@ fn draw_row(
     codex_text: &str,
     antigravity_percent: f64,
     antigravity_text: &str,
+    ollama_percent: f64,
+    ollama_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_ollama: bool,
     claude_accent: &Color,
     codex_accent: &Color,
     antigravity_accent: &Color,
+    ollama_accent: &Color,
     track: &Color,
 ) {
     let seg_h = sc(SEGMENT_H);
-    let active_models = active_model_count(show_claude_code, show_codex, show_antigravity);
+    let active_models =
+        active_model_count(show_claude_code, show_codex, show_antigravity, show_ollama);
     let segment_count = row_bar_segment_count(active_models);
     let use_model_text_colors = active_models > 1;
     let claude_value_color = if use_model_text_colors {
@@ -3124,6 +3374,11 @@ fn draw_row(
     };
     let antigravity_value_color = if use_model_text_colors {
         antigravity_usage_text_color(is_dark)
+    } else {
+        *text_color
+    };
+    let ollama_value_color = if use_model_text_colors {
+        ollama_usage_text_color(is_dark)
     } else {
         *text_color
     };
@@ -3184,6 +3439,20 @@ fn draw_row(
                 antigravity_accent,
                 track,
                 &antigravity_value_color,
+            );
+            model_x += model_usage_width(segment_count) + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_ollama {
+            draw_usage_bar(
+                hdc,
+                model_x,
+                y,
+                segment_count,
+                ollama_percent,
+                ollama_text,
+                ollama_accent,
+                track,
+                &ollama_value_color,
             );
         }
     }
