@@ -8,6 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 use std::os::windows::process::CommandExt;
+use rusqlite::OptionalExtension;
 
 use crate::diagnose;
 use crate::localization::Strings;
@@ -175,14 +176,17 @@ pub fn poll(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_cursor: bool,
 ) -> Result<AppUsageData, PollError> {
     poll_with(
         show_claude_code,
         show_codex,
         show_antigravity,
+        show_cursor,
         poll_claude_code,
         poll_codex,
         poll_antigravity,
+        poll_cursor,
     )
 }
 
@@ -190,13 +194,18 @@ fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    show_cursor: bool,
     mut poll_claude_code: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_codex: impl FnMut() -> Result<UsageData, PollError>,
     mut poll_antigravity: impl FnMut() -> Result<UsageData, PollError>,
+    mut poll_cursor: impl FnMut() -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollError> {
     let mut data = AppUsageData::default();
     let mut first_error = None;
-    let active_provider_count = show_claude_code as u8 + show_codex as u8 + show_antigravity as u8;
+    let active_provider_count = show_claude_code as u8
+        + show_codex as u8
+        + show_antigravity as u8
+        + show_cursor as u8;
 
     if show_claude_code {
         match poll_claude_code() {
@@ -234,7 +243,23 @@ fn poll_with(
         }
     }
 
-    if data.claude_code.is_none() && data.codex.is_none() && data.antigravity.is_none() {
+    if show_cursor {
+        match poll_cursor() {
+            Ok(cursor) => data.cursor = Some(cursor),
+            Err(error) => {
+                if active_provider_count > 1 {
+                    diagnose::log(format!("Cursor usage poll failed: {error:?}"));
+                }
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+
+    if data.claude_code.is_none()
+        && data.codex.is_none()
+        && data.antigravity.is_none()
+        && data.cursor.is_none()
+    {
         Err(first_error.unwrap_or(PollError::RequestFailed))
     } else {
         Ok(data)
@@ -285,6 +310,19 @@ fn poll_antigravity() -> Result<UsageData, PollError> {
     };
 
     fetch_antigravity_usage(&creds.access_token)
+}
+
+fn poll_cursor() -> Result<UsageData, PollError> {
+    let cookie = match read_cursor_session_cookie() {
+        Some(cookie) if !cookie.is_empty() => cookie,
+        _ => {
+            diagnose::log(
+                "Cursor usage poll failed: no Cursor session found (sign in to Cursor or set CURSOR_SESSION_TOKEN)",
+            );
+            return Err(PollError::NoCredentials);
+        }
+    };
+    fetch_cursor_usage(&cookie)
 }
 
 fn refresh_or_fallback(mut creds: Credentials) -> Result<Credentials, PollError> {
@@ -1147,6 +1185,235 @@ fn is_antigravity_display_model(model: &str) -> bool {
         || model.starts_with("imagen")
 }
 
+const CURSOR_USAGE_SUMMARY_URL: &str = "https://cursor.com/api/usage-summary";
+
+#[derive(Deserialize)]
+struct CursorUsageSummaryResponse {
+    #[serde(rename = "billingCycleEnd")]
+    billing_cycle_end: Option<String>,
+    #[serde(rename = "individualUsage")]
+    individual_usage: Option<CursorIndividualUsage>,
+}
+
+#[derive(Deserialize)]
+struct CursorIndividualUsage {
+    plan: Option<CursorPlanUsage>,
+}
+
+#[derive(Deserialize)]
+struct CursorPlanUsage {
+    #[serde(rename = "autoPercentUsed")]
+    auto_percent_used: Option<f64>,
+    #[serde(rename = "apiPercentUsed")]
+    api_percent_used: Option<f64>,
+    #[serde(rename = "totalPercentUsed")]
+    total_percent_used: Option<f64>,
+}
+
+/// Resolve a Cursor session cookie for `cursor.com` dashboard APIs.
+///
+/// Priority:
+/// 1. `CURSOR_SESSION_TOKEN` env (raw cookie value or JWT)
+/// 2. Access token from Cursor IDE `state.vscdb` (`cursorAuth/accessToken`)
+fn read_cursor_session_cookie() -> Option<String> {
+    if let Ok(token) = std::env::var("CURSOR_SESSION_TOKEN") {
+        let token = token.trim();
+        if !token.is_empty() {
+            return Some(normalize_cursor_session_cookie(token));
+        }
+    }
+
+    let access_token = read_cursor_access_token_from_state_db()?;
+    cursor_cookie_from_access_token(&access_token)
+}
+
+fn normalize_cursor_session_cookie(token: &str) -> String {
+    let token = token
+        .trim()
+        .trim_start_matches("WorkosCursorSessionToken=")
+        .trim();
+    if token.contains("%3A%3A") || token.contains("::") {
+        token.replace("::", "%3A%3A")
+    } else if let Some(cookie) = cursor_cookie_from_access_token(token) {
+        cookie
+    } else {
+        token.to_string()
+    }
+}
+
+fn cursor_cookie_from_access_token(access_token: &str) -> Option<String> {
+    let user_id = extract_cursor_user_id(access_token)?;
+    Some(format!("{user_id}%3A%3A{access_token}"))
+}
+
+fn extract_cursor_user_id(jwt: &str) -> Option<String> {
+    let payload = jwt.split('.').nth(1)?;
+    let padded = match payload.len() % 4 {
+        2 => format!("{payload}=="),
+        3 => format!("{payload}="),
+        _ => payload.to_string(),
+    };
+    let decoded = base64_url_decode(&padded)?;
+    let json: serde_json::Value = serde_json::from_slice(&decoded).ok()?;
+    let sub = json.get("sub")?.as_str()?;
+    Some(
+        sub.rsplit_once('|')
+            .map(|(_, id)| id.to_string())
+            .unwrap_or_else(|| sub.to_string()),
+    )
+}
+
+fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
+    let mut standard = input.replace('-', "+").replace('_', "/");
+    while standard.len() % 4 != 0 {
+        standard.push('=');
+    }
+    base64_decode(&standard)
+}
+
+fn base64_decode(input: &str) -> Option<Vec<u8>> {
+    const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = Vec::with_capacity(input.len() * 3 / 4);
+    let mut buf = 0u32;
+    let mut bits = 0u32;
+    for byte in input.bytes() {
+        if byte == b'=' {
+            break;
+        }
+        let value = TABLE.iter().position(|&c| c == byte)? as u32;
+        buf = (buf << 6) | value;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            output.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    Some(output)
+}
+
+fn cursor_state_db_path() -> Option<PathBuf> {
+    // Windows: %APPDATA%\Cursor\User\globalStorage\state.vscdb
+    if let Some(roaming) = dirs::config_dir() {
+        let path = roaming
+            .join("Cursor")
+            .join("User")
+            .join("globalStorage")
+            .join("state.vscdb");
+        if path.exists() {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn read_cursor_access_token_from_state_db() -> Option<String> {
+    let path = cursor_state_db_path()?;
+    match query_cursor_access_token(&path) {
+        Ok(token) => token,
+        Err(error) => {
+            // Cursor may hold a write lock; copy then retry read-only.
+            diagnose::log(format!(
+                "Cursor state DB direct read failed ({error}); retrying via temp copy"
+            ));
+            let temp = std::env::temp_dir().join(format!(
+                "claude-monitor-cursor-state-{}.vscdb",
+                std::process::id()
+            ));
+            std::fs::copy(&path, &temp).ok()?;
+            let result = query_cursor_access_token(&temp);
+            let _ = std::fs::remove_file(&temp);
+            match result {
+                Ok(token) => token,
+                Err(copy_error) => {
+                    diagnose::log(format!(
+                        "Cursor state DB temp-copy read failed: {copy_error}"
+                    ));
+                    None
+                }
+            }
+        }
+    }
+}
+
+fn query_cursor_access_token(path: &std::path::Path) -> Result<Option<String>, String> {
+    let conn = rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT value FROM ItemTable WHERE key = ?1")
+        .map_err(|e| e.to_string())?;
+    let value: Option<String> = stmt
+        .query_row(["cursorAuth/accessToken"], |row| row.get(0))
+        .optional()
+        .map_err(|e| e.to_string())?;
+    Ok(value.filter(|token| !token.is_empty()))
+}
+
+fn fetch_cursor_usage(cookie: &str) -> Result<UsageData, PollError> {
+    let agent = build_agent()?;
+    let cookie_header = if cookie.starts_with("WorkosCursorSessionToken=") {
+        cookie.to_string()
+    } else {
+        format!("WorkosCursorSessionToken={cookie}")
+    };
+
+    let resp = match agent
+        .get(CURSOR_USAGE_SUMMARY_URL)
+        .set("Cookie", &cookie_header)
+        .set("User-Agent", "Mozilla/5.0")
+        .call()
+    {
+        Ok(resp) => resp,
+        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+            diagnose::log(format!(
+                "Cursor usage-summary returned auth error status {code}"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+        Err(error) => {
+            diagnose::log_error("Cursor usage-summary request failed", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    let response: CursorUsageSummaryResponse = match resp.into_json() {
+        Ok(response) => response,
+        Err(error) => {
+            diagnose::log_error("unable to parse Cursor usage-summary response", error);
+            return Err(PollError::RequestFailed);
+        }
+    };
+
+    cursor_usage_from_summary(response).ok_or_else(|| {
+        diagnose::log("Cursor usage-summary response missing plan usage");
+        PollError::RequestFailed
+    })
+}
+
+fn cursor_usage_from_summary(response: CursorUsageSummaryResponse) -> Option<UsageData> {
+    let plan = response.individual_usage?.plan?;
+    let reset = parse_iso8601(response.billing_cycle_end.as_deref());
+    let auto = plan
+        .auto_percent_used
+        .or(plan.total_percent_used)
+        .unwrap_or(0.0)
+        .clamp(0.0, 100.0);
+    let api = plan.api_percent_used.unwrap_or(0.0).clamp(0.0, 100.0);
+
+    Some(UsageData {
+        session: UsageSection {
+            percentage: auto,
+            resets_at: reset,
+        },
+        weekly: UsageSection {
+            percentage: api,
+            resets_at: reset,
+        },
+    })
+}
+
 fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {
     response
         .header(name)
@@ -1598,6 +1865,7 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
     data.claude_code.as_ref().is_some_and(is_past_reset)
         || data.codex.as_ref().is_some_and(is_past_reset)
         || data.antigravity.as_ref().is_some_and(is_past_reset)
+        || data.cursor.as_ref().is_some_and(is_past_reset)
 }
 
 #[cfg(test)]
@@ -1620,9 +1888,11 @@ mod tests {
             true,
             true,
             false,
+            false,
             || Err(PollError::AuthRequired),
             || Ok(usage_with_session_percent(42.0)),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("cursor is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
@@ -1636,9 +1906,11 @@ mod tests {
             true,
             true,
             false,
+            false,
             || Ok(usage_with_session_percent(64.0)),
             || Err(PollError::RequestFailed),
             || unreachable!("antigravity is disabled"),
+            || unreachable!("cursor is disabled"),
         )
         .expect("claude data should keep the poll successful");
 
@@ -1652,9 +1924,11 @@ mod tests {
             true,
             true,
             true,
+            false,
             || Err(PollError::AuthRequired),
             || Err(PollError::RequestFailed),
             || Err(PollError::NoCredentials),
+            || unreachable!("cursor is disabled"),
         )
         .expect_err("all-provider failure should return an error");
 
@@ -1667,14 +1941,39 @@ mod tests {
             false,
             true,
             true,
+            false,
             || unreachable!("claude code is disabled"),
             || Ok(usage_with_session_percent(42.0)),
             || Err(PollError::NoCredentials),
+            || unreachable!("cursor is disabled"),
         )
         .expect("codex data should keep the poll successful");
 
         assert!(data.antigravity.is_none());
         assert_eq!(data.codex.unwrap().session.percentage, 42.0);
+    }
+
+    #[test]
+    fn cursor_usage_maps_auto_and_api_percentages() {
+        let response: CursorUsageSummaryResponse = serde_json::from_str(
+            r#"{
+                "billingCycleEnd": "2026-08-25T19:27:24.000Z",
+                "individualUsage": {
+                    "plan": {
+                        "autoPercentUsed": 12.5,
+                        "apiPercentUsed": 3.0,
+                        "totalPercentUsed": 10.0
+                    }
+                }
+            }"#,
+        )
+        .expect("fixture should parse");
+
+        let data = cursor_usage_from_summary(response).expect("plan usage should map");
+        assert_eq!(data.session.percentage, 12.5);
+        assert_eq!(data.weekly.percentage, 3.0);
+        assert!(data.session.resets_at.is_some());
+        assert_eq!(data.session.resets_at, data.weekly.resets_at);
     }
 
     #[test]

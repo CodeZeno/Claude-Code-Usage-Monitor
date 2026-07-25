@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    cursor_model: "Cursor",
     settings: "設定",
     start_with_windows: "開機時啟動",
     reset_position: "重置位置",
@@ -34,6 +35,8 @@ pub(super) const STRINGS: Strings = Strings {
     show_widget: "顯示小工具",
     session_window: "5h",
     weekly_window: "7d",
+    cursor_auto_window: "Auto",
+    cursor_api_window: "API",
     now: "現在",
     day_suffix: "天",
     hour_suffix: "時",
@@ -46,5 +49,6 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "請開啟 Antigravity 並重新登入。完成後，請重新整理或重新啟動此應用程式。",
     codex_window_title: "Codex 使用量監控",
     antigravity_window_title: "Antigravity 使用量監控",
+    cursor_window_title: "Cursor 使用量監控",
     second_suffix: "秒",
 };

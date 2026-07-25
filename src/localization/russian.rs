@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    cursor_model: "Cursor",
     settings: "Настройки",
     start_with_windows: "Запускать вместе с Windows",
     reset_position: "Сбросить позицию",
@@ -34,6 +35,8 @@ pub(super) const STRINGS: Strings = Strings {
     show_widget: "Показать виджет",
     session_window: "5ч",
     weekly_window: "7д",
+    cursor_auto_window: "Auto",
+    cursor_api_window: "API",
     now: "сейчас",
     day_suffix: "д",
     hour_suffix: "ч",
@@ -47,4 +50,5 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Откройте Antigravity и войдите снова. После этого обновите или перезапустите приложение.",
     codex_window_title: "Монитор использования Codex",
     antigravity_window_title: "Монитор использования Antigravity",
+    cursor_window_title: "Монитор использования Cursor",
 };

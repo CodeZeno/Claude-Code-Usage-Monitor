@@ -156,6 +156,7 @@ pub struct Strings {
     pub claude_code_model: &'static str,
     pub codex_model: &'static str,
     pub antigravity_model: &'static str,
+    pub cursor_model: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub reset_position: &'static str,
@@ -176,6 +177,8 @@ pub struct Strings {
     pub show_widget: &'static str,
     pub session_window: &'static str,
     pub weekly_window: &'static str,
+    pub cursor_auto_window: &'static str,
+    pub cursor_api_window: &'static str,
     pub now: &'static str,
     pub day_suffix: &'static str,
     pub hour_suffix: &'static str,
@@ -189,6 +192,7 @@ pub struct Strings {
     pub antigravity_token_expired_body: &'static str,
     pub codex_window_title: &'static str,
     pub antigravity_window_title: &'static str,
+    pub cursor_window_title: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

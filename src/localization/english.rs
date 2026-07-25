@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    cursor_model: "Cursor",
     settings: "Settings",
     start_with_windows: "Start with Windows",
     reset_position: "Reset Position",
@@ -34,6 +35,8 @@ pub(super) const STRINGS: Strings = Strings {
     show_widget: "Show Widget",
     session_window: "5h",
     weekly_window: "7d",
+    cursor_auto_window: "Auto",
+    cursor_api_window: "API",
     now: "now",
     day_suffix: "d",
     hour_suffix: "h",
@@ -46,5 +49,6 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Open Antigravity and sign in again. After that, refresh or restart this app.",
     codex_window_title: "Codex Usage Monitor",
     antigravity_window_title: "Antigravity Usage Monitor",
+    cursor_window_title: "Cursor Usage Monitor",
     second_suffix: "s",
 };

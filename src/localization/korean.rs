@@ -14,6 +14,7 @@ pub(super) const STRINGS: Strings = Strings {
     claude_code_model: "Claude Code",
     codex_model: "Codex",
     antigravity_model: "Antigravity",
+    cursor_model: "Cursor",
     settings: "설정",
     start_with_windows: "Windows 시작 시 자동 실행",
     reset_position: "위치 초기화",
@@ -34,6 +35,8 @@ pub(super) const STRINGS: Strings = Strings {
     show_widget: "위젯 표시",
     session_window: "5시간",
     weekly_window: "7일",
+    cursor_auto_window: "Auto",
+    cursor_api_window: "API",
     now: "지금",
     day_suffix: "일",
     hour_suffix: "시간",
@@ -46,5 +49,6 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_body: "Antigravity를 열고 다시 로그인하세요. 그런 다음 이 앱을 새로 고치거나 다시 시작하세요.",
     codex_window_title: "Codex 사용량 모니터",
     antigravity_window_title: "Antigravity 사용량 모니터",
+    cursor_window_title: "Cursor 사용량 모니터",
     second_suffix: "초",
 };
