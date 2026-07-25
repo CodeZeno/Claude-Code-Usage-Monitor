@@ -48,5 +48,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_window_title: "Antigravity 사용량 모니터",
     ollama_model: "Ollama",
     ollama_window_title: "Ollama 사용량 모니터",
+    ollama_token_expired_title: "Ollama 인증 오류",
+    ollama_token_expired_body: "Models -> 'Ollama에 로그인...'을 사용하거나 OLLAMA_CLOUD_SESSION을 설정한 뒤 새로 고치세요.",
     second_suffix: "초",
 };

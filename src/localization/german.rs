@@ -48,5 +48,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_window_title: "Antigravity-Nutzungsmonitor",
     ollama_model: "Ollama",
     ollama_window_title: "Ollama-Nutzungsmonitor",
+    ollama_token_expired_title: "Ollama-Authentifizierungsfehler",
+    ollama_token_expired_body: "Nutzen Sie Modelle -> 'Bei Ollama anmelden...' oder setzen Sie OLLAMA_CLOUD_SESSION und aktualisieren Sie.",
     second_suffix: "s",
 };

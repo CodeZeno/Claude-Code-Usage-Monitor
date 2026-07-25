@@ -459,7 +459,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             }
             if s.show_ollama {
                 icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Antigravity,
+                    kind: tray_icon::TrayIconKind::Ollama,
                     percent: Some(s.ollama_session_percent),
                     tooltip: format!(
                         "{} 5h: {} | 7d: {}",
@@ -496,7 +496,7 @@ fn tray_icon_data_from_state() -> Vec<tray_icon::TrayIconData> {
             }
             if s.show_ollama {
                 icons.push(tray_icon::TrayIconData {
-                    kind: tray_icon::TrayIconKind::Antigravity,
+                    kind: tray_icon::TrayIconKind::Ollama,
                     percent: None,
                     tooltip: s.language.strings().ollama_window_title.to_string(),
                 });
@@ -2061,6 +2061,13 @@ fn do_poll(send_hwnd: SendHwnd) {
                                 tray_icon::TrayIconKind::Codex,
                                 s.language.strings().codex_token_expired_title,
                                 s.language.strings().codex_token_expired_body,
+                            )
+                        } else if s.show_ollama {
+                            (
+                                s.language.strings(),
+                                tray_icon::TrayIconKind::Ollama,
+                                s.language.strings().ollama_token_expired_title,
+                                s.language.strings().ollama_token_expired_body,
                             )
                         } else {
                             (

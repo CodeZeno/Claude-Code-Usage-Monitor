@@ -15,6 +15,8 @@
 //!   2 = webview init error
 //!   3 = cookie write error
 
+#![windows_subsystem = "windows"]
+
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
@@ -239,6 +241,9 @@ fn write_cookie_file(cookies: &[Cookie]) -> std::io::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let header = build_cookie_header(cookies);
+    // Intentionally plaintext under the current user's LOCALAPPDATA profile —
+    // same trust boundary as OLLAMA_CLOUD_SESSION / ~/.claude/settings.json.
+    // Encrypting only this file wouldn't cover those override paths.
     std::fs::write(&path, header.as_bytes())?;
     println!(
         "ollama-login-helper: wrote {} bytes to {}",

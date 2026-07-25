@@ -369,7 +369,7 @@ fn read_ollama_session_cookie() -> Option<String> {
 }
 
 // Ollama Cloud usage scraper — adapted from bubbabright/usage-daemon (HANDOFF-14
-// from the upstream GNONE-shell + daemon suite). Their parser was the cleanest
+// from the upstream GNOME-shell + daemon suite). Their parser was the cleanest
 // of the half-dozen reference implementations reviewed; we mirror its regexes
 // because they match the actual aria-labelled structure ollama.com emits:
 //

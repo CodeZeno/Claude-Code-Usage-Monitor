@@ -191,6 +191,8 @@ pub struct Strings {
         pub antigravity_window_title: &'static str,
         pub ollama_model: &'static str,
         pub ollama_window_title: &'static str,
+    pub ollama_token_expired_title: &'static str,
+    pub ollama_token_expired_body: &'static str,
     }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

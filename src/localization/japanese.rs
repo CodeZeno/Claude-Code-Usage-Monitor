@@ -48,5 +48,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_window_title: "Antigravity 使用量モニター",
     ollama_model: "Ollama",
     ollama_window_title: "Ollama 使用量モニター",
+    ollama_token_expired_title: "Ollama 認証エラー",
+    ollama_token_expired_body: "Models -> 'Ollama にログイン...' を使うか OLLAMA_CLOUD_SESSION を設定してから更新してください。",
     second_suffix: "秒",
 };
