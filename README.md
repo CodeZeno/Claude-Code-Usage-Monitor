@@ -28,7 +28,7 @@ This app is for Windows users who already have **Claude Code (CLI or App) instal
 
 Codex support is optional. To show Codex usage, install and sign in to the Codex CLI, then enable Codex from the right-click **Models** menu.
 
-Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable the **Antigravity** model from the right-click **Models** menu.
+Antigravity support is optional too. To show Antigravity usage, install Google Antigravity, run `agy` in a terminal and sign in there, then enable the **Antigravity** model from the right-click **Models** menu.
 
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
@@ -37,7 +37,7 @@ It works best if you want a simple "how close am I to the limit?" display that i
 - Windows 10 or Windows 11
 - Claude Code (CLI or App) installed and authenticated
 - Optional: Codex CLI installed and authenticated, if you want Codex usage
-- Optional: Google Antigravity installed and authenticated, if you want Antigravity usage
+- Optional: Google Antigravity installed with its `agy` CLI authenticated, if you want Antigravity usage
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
@@ -62,8 +62,9 @@ claude-code-usage-monitor
 Once running, it will appear in your taskbar and as one or more tray icons in the notification area.
 
 - Drag the left divider to move the taskbar widget
-- On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen
-- Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, language, updates, and exit
+- On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen, or pick the screen directly via **Settings → Monitor**
+- Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, taskbar side, language, updates, and exit
+- Use **Settings → Taskbar Side** to anchor the widget to the left or right side of the taskbar (right by default); dragging still fine-tunes the position from the chosen side
 - Left-click the tray icon to toggle the taskbar widget on or off
 - Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
 
@@ -139,7 +140,7 @@ What the app sends over the network:
 
 What the app stores locally:
 
-- Widget position
+- Widget position and taskbar side
 - Selected taskbar / screen
 - Widget visibility
 - Polling frequency
@@ -159,7 +160,7 @@ Notes:
 
 - If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
 - If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
-- If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
+- If your Antigravity token is expired, run `agy` in a terminal and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository
 - Proxies should be trusted because proxied usage requests include your OAuth bearer token inside the TLS connection
 

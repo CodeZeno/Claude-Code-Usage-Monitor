@@ -81,6 +81,8 @@ struct CodexRateLimitDetails {
 struct CodexRateLimitWindow {
     used_percent: f64,
     reset_at: i64,
+    limit_window_seconds: Option<i64>,
+    window_minutes: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -841,14 +843,29 @@ fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> 
     let mut data = UsageData::default();
 
     if let Some(window) = details.primary_window.flatten() {
-        data.session = codex_section_from_window(&window);
+        if codex_window_is_weekly(&window).unwrap_or(false) {
+            data.weekly = codex_section_from_window(&window);
+        } else {
+            data.session = codex_section_from_window(&window);
+        }
     }
 
     if let Some(window) = details.secondary_window.flatten() {
-        data.weekly = codex_section_from_window(&window);
+        if codex_window_is_weekly(&window).unwrap_or(true) {
+            data.weekly = codex_section_from_window(&window);
+        } else {
+            data.session = codex_section_from_window(&window);
+        }
     }
 
     Some(data)
+}
+
+fn codex_window_is_weekly(window: &CodexRateLimitWindow) -> Option<bool> {
+    window
+        .limit_window_seconds
+        .map(|seconds| seconds >= 24 * 60 * 60)
+        .or_else(|| window.window_minutes.map(|minutes| minutes >= 24 * 60))
 }
 
 fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
@@ -1612,6 +1629,29 @@ mod tests {
             },
             weekly: UsageSection::default(),
         }
+    }
+
+    #[test]
+    fn codex_weekly_only_window_stays_in_weekly_slot() {
+        let response: CodexUsageResponse = serde_json::from_str(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 32,
+                        "reset_at": 2000000000,
+                        "limit_window_seconds": 604800
+                    },
+                    "secondary_window": null
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let usage = codex_usage_from_response(response).unwrap();
+
+        assert!(usage.session.resets_at.is_none());
+        assert_eq!(usage.weekly.percentage, 32.0);
+        assert!(usage.weekly.resets_at.is_some());
     }
 
     #[test]

@@ -1,5 +1,8 @@
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITORINFOEXW, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -59,6 +62,39 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
         )
     });
     taskbars
+}
+
+/// Windows display device number (the `n` in `\\.\DISPLAYn`, matching the
+/// numbering shown in display settings for typical setups) of the monitor
+/// containing the given rect.
+pub fn monitor_number_for_rect(rect: RECT) -> Option<u32> {
+    unsafe {
+        let center = POINT {
+            x: rect.left + (rect.right - rect.left) / 2,
+            y: rect.top + (rect.bottom - rect.top) / 2,
+        };
+        let monitor = MonitorFromPoint(center, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+        if !GetMonitorInfoW(
+            monitor,
+            &mut info as *mut MONITORINFOEXW as *mut MONITORINFO,
+        )
+        .as_bool()
+        {
+            return None;
+        }
+        let device_len = info
+            .szDevice
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(info.szDevice.len());
+        let device = String::from_utf16_lossy(&info.szDevice[..device_len]);
+        device
+            .rsplit(|c: char| !c.is_ascii_digit())
+            .next()
+            .and_then(|digits| digits.parse::<u32>().ok())
+    }
 }
 
 /// Find a child window by class name
