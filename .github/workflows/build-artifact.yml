@@ -1,0 +1,20 @@
+name: Build Artifact (manual)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-usage-monitor
+          path: target/release/claude-code-usage-monitor.exe
