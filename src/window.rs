@@ -147,6 +147,11 @@ const IDM_MONITOR_MAX: u16 = 105; // supports up to 16 monitors (90..=105)
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
+/// Posted from the watchdog thread to the UI thread to ask it to re-home the
+/// widget onto its saved monitor. The actual re-embed (SetParent, hooks) must
+/// run on the UI thread that owns the window, so the background watchdog only
+/// detects the condition and posts; the UI thread does the work.
+const WM_APP_REHOME: u32 = WM_APP + 4;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 
 /// How often the watchdog thread polls for an explorer.exe restart (which
@@ -247,22 +252,53 @@ fn relaunch_self() {
 fn spawn_taskbar_watchdog() {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
-        let stored = {
+        let (stored, saved_device, main_hwnd) = {
             let state = lock_state();
-            state.as_ref().and_then(|s| s.taskbar_hwnd)
+            match state.as_ref() {
+                Some(s) => (s.taskbar_hwnd, s.taskbar_monitor.clone(), s.hwnd.to_hwnd()),
+                None => continue,
+            }
         };
         // Only relevant once we have embedded into a taskbar at least once.
         let Some(old) = stored else {
             continue;
         };
         let taskbars = native_interop::find_taskbars();
-        if !taskbars.is_empty() && !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
+        if taskbars.is_empty() {
+            continue;
+        }
+        // The taskbar we were embedded in is gone entirely (e.g. explorer
+        // restarted and destroyed our window). Our message loop is dead, so
+        // recover by relaunching a fresh process.
+        if !taskbars.iter().any(|taskbar| taskbar.hwnd == old) {
             let new = taskbars[0].hwnd;
             diagnose::log(format!(
                 "watchdog: taskbar changed old={:?} new={:?} -> relaunching",
                 old.0, new.0
             ));
             relaunch_self();
+            continue;
+        }
+        // Our window is still alive and embedded, but possibly on the WRONG
+        // monitor: a relaunch (above) or a startup while the chosen monitor's
+        // taskbar was hidden can land the widget on a fallback taskbar. As soon
+        // as the saved monitor's taskbar is back and we are not on it, ask the
+        // UI thread to re-home. This is what actually makes the widget return to
+        // the user's monitor — WM_DISPLAYCHANGE alone is unreliable, because a
+        // taskbar merely being hidden/shown (fullscreen apps) does not raise it.
+        if let Some(device) = saved_device.filter(|d| !d.is_empty()) {
+            let saved_present = taskbars.iter().any(|t| t.monitor_device == device);
+            let on_saved = taskbars
+                .iter()
+                .any(|t| t.hwnd == old && t.monitor_device == device);
+            if saved_present && !on_saved {
+                diagnose::log(format!(
+                    "watchdog: widget off saved monitor {device}; requesting re-home"
+                ));
+                unsafe {
+                    let _ = PostMessageW(main_hwnd, WM_APP_REHOME, WPARAM(0), LPARAM(0));
+                }
+            }
         }
     });
 }
@@ -598,9 +634,12 @@ fn attach_to_taskbar(
         resolve_taskbar_index(&taskbars, preferred_device, fallback_index);
     let taskbar = taskbars[index].clone();
     diagnose::log(format!(
-        "taskbar selected index={index} count={} device={} hwnd={:?} rect=({}, {}, {}, {})",
+        "taskbar selected index={index} count={} requested={} resolved={} matched={} persist={} hwnd={:?} rect=({}, {}, {}, {})",
         taskbars.len(),
+        preferred_device.unwrap_or("<none>"),
         taskbar.monitor_device,
+        matched_preferred,
+        persist_choice,
         taskbar.hwnd,
         taskbar.rect.left,
         taskbar.rect.top,
@@ -2480,6 +2519,13 @@ unsafe extern "system" fn wnd_proc(
         }
         WM_APP_UPDATE_CHECK_COMPLETE => {
             schedule_auto_update_check(hwnd);
+            LRESULT(0)
+        }
+        WM_APP_REHOME => {
+            // The watchdog detected the widget is on the wrong monitor while the
+            // saved monitor's taskbar is available. Re-embed onto it here, on the
+            // UI thread that owns the window.
+            reattach_to_saved_monitor_if_needed(hwnd);
             LRESULT(0)
         }
         WM_SETCURSOR => {
