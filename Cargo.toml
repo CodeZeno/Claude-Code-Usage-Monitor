@@ -5,7 +5,7 @@ edition = "2021"
 license = "MIT"
 description = "Claude Code Usage Monitor"
 homepage = "https://codezeno.com.au"
-repository = "https://github.com/CodeZeno/Claude-Code-Usage-Monitor"
+repository = "https://github.com/svenbledt/Claude-Code-Usage-Monitor"
 
 [package.metadata.winres]
 CompanyName = "Code Zeno Pty Ltd"
