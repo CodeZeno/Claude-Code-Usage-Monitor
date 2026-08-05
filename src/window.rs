@@ -18,7 +18,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
-use crate::models::AppUsageData;
+use crate::models::{self, AppUsageData, UsageDisplayMode};
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK, WM_APP_TRAY,
     WM_APP_USAGE_UPDATED,
@@ -70,6 +70,7 @@ struct AppState {
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
+    usage_display: UsageDisplayMode,
 
     data: Option<AppUsageData>,
 
@@ -132,6 +133,8 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_USAGE_DISPLAY_USED: u16 = 70;
+const IDM_USAGE_DISPLAY_REMAINING: u16 = 71;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -317,6 +320,8 @@ struct SettingsFile {
     show_codex: bool,
     #[serde(default = "default_show_antigravity")]
     show_antigravity: bool,
+    #[serde(default)]
+    usage_display: UsageDisplayMode,
 }
 
 impl Default for SettingsFile {
@@ -331,6 +336,7 @@ impl Default for SettingsFile {
             show_claude_code: true,
             show_codex: false,
             show_antigravity: false,
+            usage_display: UsageDisplayMode::default(),
         }
     }
 }
@@ -364,6 +370,7 @@ fn load_settings() -> SettingsFile {
     if !settings.show_claude_code && !settings.show_codex && !settings.show_antigravity {
         settings.show_claude_code = true;
     }
+    models::set_usage_display(settings.usage_display);
     settings
 }
 
@@ -392,6 +399,7 @@ fn save_state_settings() {
             show_claude_code: s.show_claude_code,
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
+            usage_display: s.usage_display,
         });
     }
 }
@@ -1311,6 +1319,7 @@ pub fn run() {
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
+                usage_display: settings.usage_display,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -2577,6 +2586,25 @@ unsafe extern "system" fn wnd_proc(
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
                 }
+                IDM_USAGE_DISPLAY_USED | IDM_USAGE_DISPLAY_REMAINING => {
+                    let mode = if id == IDM_USAGE_DISPLAY_REMAINING {
+                        UsageDisplayMode::Remaining
+                    } else {
+                        UsageDisplayMode::Used
+                    };
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.usage_display = mode;
+                            // Set before reformatting: format_line reads the global.
+                            models::set_usage_display(mode);
+                            refresh_usage_texts(s);
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icons(hwnd);
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
@@ -2718,6 +2746,7 @@ fn show_context_menu(hwnd: HWND) {
             show_claude_code,
             show_codex,
             show_antigravity,
+            usage_display,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -2732,6 +2761,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
+                    s.usage_display,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -2744,6 +2774,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     false,
+                    UsageDisplayMode::default(),
                 ),
             }
         };
@@ -2840,6 +2871,39 @@ fn show_context_menu(hwnd: HWND) {
 
         // Settings submenu
         let settings_menu = CreatePopupMenu().unwrap();
+
+        // Usage display submenu: show quota consumed, or quota left.
+        let usage_display_menu = CreatePopupMenu().unwrap();
+        let usage_display_items: [(u16, &str, UsageDisplayMode); 2] = [
+            (IDM_USAGE_DISPLAY_USED, strings.used_usage, UsageDisplayMode::Used),
+            (
+                IDM_USAGE_DISPLAY_REMAINING,
+                strings.remaining_usage,
+                UsageDisplayMode::Remaining,
+            ),
+        ];
+        for (id, label, mode) in usage_display_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if usage_display == mode {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                usage_display_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+
+        let usage_display_label = native_interop::wide_str(strings.usage_display);
+        let _ = AppendMenuW(
+            settings_menu,
+            MF_POPUP,
+            usage_display_menu.0 as usize,
+            PCWSTR::from_raw(usage_display_label.as_ptr()),
+        );
 
         let startup_str = native_interop::wide_str(strings.start_with_windows);
         let startup_flags = if is_startup_enabled() {
@@ -3212,7 +3276,8 @@ fn draw_usage_bar(
     let corner_r = sc(CORNER_RADIUS);
 
     unsafe {
-        let percent_clamped = percent.clamp(0.0, 100.0);
+        // Keep the bar consistent with the number rendered next to it.
+        let percent_clamped = models::display_percentage(percent);
         let segment_percent = 100.0 / segment_count as f64;
 
         for i in 0..segment_count {

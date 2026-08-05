@@ -1523,7 +1523,10 @@ fn is_leap(y: u64) -> bool {
 
 /// Format a usage section as "X% · Yh" style text
 pub fn format_line(section: &UsageSection, strings: Strings) -> String {
-    let pct = format!("{:.0}%", section.percentage);
+    let pct = format!(
+        "{:.0}%",
+        crate::models::display_percentage(section.percentage)
+    );
     let cd = format_countdown(section.resets_at, strings);
     if cd.is_empty() {
         pct

@@ -141,8 +141,13 @@ pub fn create_icon(kind: TrayIconKind, percent: Option<f64>) -> HICON {
         TrayIconKind::Antigravity => Color::from_hex("#FFFFFF"),
     };
 
+    // `percent` stays the used share above so fills and thresholds keep their
+    // meaning; only the badge number follows the user's display preference.
     let display_text = match percent {
-        Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
+        Some(p) => format!(
+            "{}",
+            crate::models::display_percentage(p).round().clamp(0.0, 999.0) as u32
+        ),
         None => match kind {
             TrayIconKind::Claude => String::new(),
             TrayIconKind::Codex => "C".to_string(),
