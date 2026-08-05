@@ -19,7 +19,7 @@ It sits in your taskbar and shows how much of your Claude Code, Codex, and/or An
 - A small native widget that lives directly in the Windows taskbar
 - System tray icon badges showing your enabled model usage percentage
 - Left-click the tray icon to toggle the taskbar widget on or off
-- Right-click options for refresh, displayed models, update frequency, language, startup, widget visibility, and updates
+- Right-click options for refresh, displayed models, usage display (used or remaining), update frequency, language, startup, widget visibility, and updates
 - Multi-monitor taskbar placement, so the widget can live on the taskbar for the screen you prefer
 
 ## Who This Is For
@@ -76,6 +76,15 @@ Use the right-click **Models** menu to choose what the widget displays:
 - **Antigravity** can be enabled alongside the other providers or shown by itself as its own model column
 
 When multiple models are shown, each model has its own usage bar and matching usage text color. Antigravity prefers Google's Gemini quota summary when available and falls back to model quota data when needed.
+
+### Usage Display
+
+Use the right-click **Settings → Usage Display** menu to choose what the percentages mean:
+
+- **Used** shows how much of the window you have consumed. This is the default.
+- **Remaining** shows how much of the window is left.
+
+The setting applies to the tray badge, the widget bars and labels, and the tooltips. Warning colors always follow used quota, so a low remaining value still shows the warning color.
 
 ### System Tray Icon
 
