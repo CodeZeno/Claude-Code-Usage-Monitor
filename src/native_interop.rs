@@ -77,6 +77,61 @@ pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
     }
 }
 
+/// Find any tray or clock child window in a taskbar (for primary or secondary taskbars)
+pub fn find_taskbar_tray_or_clock_window(taskbar_hwnd: HWND) -> Option<HWND> {
+    const CANDIDATES: &[&str] = &[
+        "TrayNotifyWnd",
+        "Taskbar.SecondaryTrayHostControl",
+        "TrayClockWClass",
+        "ClockButton",
+    ];
+    for &class_name in CANDIDATES {
+        if let Some(h) = find_child_window(taskbar_hwnd, class_name) {
+            return Some(h);
+        }
+    }
+    None
+}
+
+/// Find the leftmost X coordinate of right-side child controls inside a taskbar
+pub fn find_taskbar_right_controls_left(taskbar_hwnd: HWND, taskbar_rect: RECT) -> Option<i32> {
+    if let Some(tray_hwnd) = find_taskbar_tray_or_clock_window(taskbar_hwnd) {
+        if let Some(tray_rect) = get_window_rect_safe(tray_hwnd) {
+            return Some(tray_rect.left);
+        }
+    }
+
+    unsafe extern "system" fn enum_child_proc(child_hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let (taskbar_rect, min_left) = &mut *(lparam.0 as *mut (RECT, Option<i32>));
+        if let Some(rect) = get_window_rect_safe(child_hwnd) {
+            let taskbar_width = taskbar_rect.right - taskbar_rect.left;
+            // Only search in the rightmost 25% of the taskbar to avoid taskbar app buttons
+            let right_zone_x = taskbar_rect.right - (taskbar_width / 4);
+            if rect.left >= right_zone_x && rect.left < taskbar_rect.right && (rect.right - rect.left) > 0 {
+                match min_left {
+                    Some(current) => {
+                        if rect.left < *current {
+                            *min_left = Some(rect.left);
+                        }
+                    }
+                    None => *min_left = Some(rect.left),
+                }
+            }
+        }
+        BOOL(1)
+    }
+
+    let mut data = (taskbar_rect, None);
+    unsafe {
+        let _ = EnumChildWindows(
+            taskbar_hwnd,
+            Some(enum_child_proc),
+            LPARAM(&mut data as *mut _ as isize),
+        );
+    }
+    data.1
+}
+
 /// Get taskbar position via SHAppBarMessage
 pub fn get_taskbar_rect(taskbar_hwnd: HWND) -> Option<RECT> {
     unsafe {

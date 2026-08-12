@@ -132,6 +132,7 @@ const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
 const IDM_MODEL_CLAUDE_CODE: u16 = 60;
 const IDM_MODEL_CODEX: u16 = 61;
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
+const IDM_TASKBAR_BASE: u16 = 70;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -524,11 +525,11 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
 
     native_interop::embed_in_taskbar(hwnd, taskbar.hwnd);
 
-    let tray_notify = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
+    let tray_notify = native_interop::find_taskbar_tray_or_clock_window(taskbar.hwnd);
     if tray_notify.is_some() {
-        diagnose::log("TrayNotifyWnd found");
+        diagnose::log("tray/clock control found");
     } else {
-        diagnose::log("TrayNotifyWnd not found");
+        diagnose::log("tray/clock control not found");
     }
 
     let hook = tray_notify.and_then(|tray_hwnd| {
@@ -565,13 +566,8 @@ fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)>
 }
 
 fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
-    tray_left
+    native_interop::find_taskbar_right_controls_left(taskbar_hwnd, taskbar_rect)
+        .unwrap_or(taskbar_rect.right)
 }
 
 fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
@@ -2097,15 +2093,9 @@ fn position_at_taskbar() {
     };
 
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let mut tray_left = taskbar_rect.right;
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
     let anchor_top = taskbar_rect.top;
     let anchor_height = taskbar_height;
-
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
 
     let widget_width = total_widget_width();
     let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
@@ -2368,6 +2358,38 @@ unsafe extern "system" fn wnd_proc(
             if is_dragging {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
+
+                let target_switch = {
+                    let state = lock_state();
+                    state.as_ref().and_then(|s| {
+                        if let Some((target_index, _)) = taskbar_at_point(pt) {
+                            if target_index != s.taskbar_index {
+                                Some(target_index)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    })
+                };
+
+                if let Some(target_index) = target_switch {
+                    let mut state = lock_state();
+                    if let Some(s) = state.as_mut() {
+                        s.taskbar_index = target_index;
+                        s.drag_start_mouse_x = pt.x;
+                        s.drag_start_offset = 0;
+                        s.tray_offset = 0;
+                    }
+                    drop(state);
+                    if attach_to_taskbar(hwnd, target_index) {
+                        position_at_taskbar();
+                        render_layered();
+                    }
+                    return LRESULT(0);
+                }
+
                 let move_target = {
                     let mut state = lock_state();
                     let s = match state.as_mut() {
@@ -2391,16 +2413,7 @@ unsafe extern "system" fn wnd_proc(
                     // Clamp: don't go past left edge of taskbar
                     if let Some(taskbar_hwnd) = taskbar_hwnd {
                         if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
-                            let mut tray_left = taskbar_rect.right;
-                            if let Some(tray_hwnd) =
-                                native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-                            {
-                                if let Some(tray_rect) =
-                                    native_interop::get_window_rect_safe(tray_hwnd)
-                                {
-                                    tray_left = tray_rect.left;
-                                }
-                            }
+                            let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
                             let widget_width = total_widget_width_for_state(s);
                             let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
                             if new_offset > max_offset {
@@ -2576,6 +2589,21 @@ unsafe extern "system" fn wnd_proc(
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
+                }
+                id if id >= IDM_TASKBAR_BASE && id < IDM_TASKBAR_BASE + 10 => {
+                    let target_index = (id - IDM_TASKBAR_BASE) as usize;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.taskbar_index = target_index;
+                            s.tray_offset = 0;
+                        }
+                    }
+                    if attach_to_taskbar(hwnd, target_index) {
+                        position_at_taskbar();
+                        render_layered();
+                    }
+                    save_state_settings();
                 }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
@@ -2861,6 +2889,41 @@ fn show_context_menu(hwnd: HWND) {
             IDM_RESET_POSITION as usize,
             PCWSTR::from_raw(reset_pos_str.as_ptr()),
         );
+
+        let taskbars = native_interop::find_taskbars();
+        if taskbars.len() > 1 {
+            let screen_menu = CreatePopupMenu().unwrap();
+            let current_index = {
+                let state = lock_state();
+                state.as_ref().map(|s| s.taskbar_index).unwrap_or(0)
+            };
+            for (idx, _) in taskbars.iter().enumerate() {
+                let label = if idx == 0 {
+                    "Screen 1 (Primary)".to_string()
+                } else {
+                    format!("Screen {}", idx + 1)
+                };
+                let label_str = native_interop::wide_str(&label);
+                let flags = if idx == current_index {
+                    MF_CHECKED
+                } else {
+                    MENU_ITEM_FLAGS(0)
+                };
+                let _ = AppendMenuW(
+                    screen_menu,
+                    flags,
+                    (IDM_TASKBAR_BASE + idx as u16) as usize,
+                    PCWSTR::from_raw(label_str.as_ptr()),
+                );
+            }
+            let screen_label = native_interop::wide_str("Screen / Taskbar");
+            let _ = AppendMenuW(
+                settings_menu,
+                MF_POPUP,
+                screen_menu.0 as usize,
+                PCWSTR::from_raw(screen_label.as_ptr()),
+            );
+        }
 
         let language_menu = CreatePopupMenu().unwrap();
         let system_label = native_interop::wide_str(strings.system_default);
