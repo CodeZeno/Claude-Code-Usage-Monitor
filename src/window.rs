@@ -941,7 +941,19 @@ fn begin_winget_update(hwnd: HWND) {
 const STARTUP_REGISTRY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const STARTUP_REGISTRY_KEY: &str = "ClaudeCodeUsageMonitor";
 
-/// Returns true only if the startup registry value points to this executable.
+fn get_fixed_startup_exe_path() -> Option<std::path::PathBuf> {
+    dirs::data_local_dir().map(|mut p| {
+        p.push("ClaudeCodeUsageMonitor");
+        p.push("claude-code-usage-monitor.exe");
+        p
+    })
+}
+
+fn get_current_exe_path() -> Option<std::path::PathBuf> {
+    std::env::current_exe().ok()
+}
+
+/// Returns true only if the startup registry value points to an existing executable matching current or fixed path.
 fn is_startup_enabled() -> bool {
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
@@ -989,29 +1001,36 @@ fn is_startup_enabled() -> bool {
             return false;
         }
 
-        // Convert the registry value (UTF-16) to a string
+        // Convert the registry value (UTF-16) to a string and trim quotes/nulls
         let wide_slice =
             std::slice::from_raw_parts(buf.as_ptr() as *const u16, data_size as usize / 2);
         let reg_value = String::from_utf16_lossy(wide_slice)
             .trim_end_matches('\0')
+            .trim()
+            .trim_matches('"')
             .to_string();
 
-        // Get the current executable path
-        let mut exe_buf = [0u16; 260];
-        let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
-        if len == 0 {
+        if reg_value.is_empty() {
             return false;
         }
-        let current_exe = String::from_utf16_lossy(&exe_buf[..len]);
 
-        // Case-insensitive comparison (Windows paths are case-insensitive)
-        reg_value.eq_ignore_ascii_case(&current_exe)
+        let reg_path = std::path::Path::new(&reg_value);
+
+        let matches_curr = get_current_exe_path()
+            .map(|p| p.to_string_lossy().eq_ignore_ascii_case(&reg_value))
+            .unwrap_or(false);
+        let matches_fixed = get_fixed_startup_exe_path()
+            .map(|p| p.to_string_lossy().eq_ignore_ascii_case(&reg_value))
+            .unwrap_or(false);
+
+        (matches_curr || matches_fixed) && reg_path.exists()
     }
 }
 
 fn set_startup_enabled(enable: bool) {
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
+        let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
 
         let mut hkey = HKEY::default();
         let result = RegOpenKeyExW(
@@ -1025,21 +1044,39 @@ fn set_startup_enabled(enable: bool) {
             return;
         }
 
-        let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
-
         if enable {
-            let mut exe_buf = [0u16; 260];
-            let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
-            if len > 0 {
-                // Write the wide string including null terminator
-                let byte_len = ((len + 1) * 2) as u32;
+            let mut target_exe = None;
+
+            // Copy executable to fixed local appdata directory for reliable auto-start
+            if let (Some(curr), Some(fixed)) = (get_current_exe_path(), get_fixed_startup_exe_path()) {
+                if let Some(parent) = fixed.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if curr != fixed {
+                    let _ = std::fs::copy(&curr, &fixed);
+                }
+                if fixed.exists() {
+                    target_exe = Some(fixed);
+                }
+            }
+
+            if target_exe.is_none() {
+                target_exe = get_current_exe_path();
+            }
+
+            if let Some(exe_path) = target_exe {
+                let exe_str = exe_path.to_string_lossy();
+                let reg_val = format!("\"{exe_str}\"");
+                let wide_val = native_interop::wide_str(&reg_val);
+
+                let byte_len = (wide_val.len() * 2) as u32;
                 let _ = RegSetValueExW(
                     hkey,
                     PCWSTR::from_raw(key_name.as_ptr()),
                     0,
                     REG_SZ,
                     Some(std::slice::from_raw_parts(
-                        exe_buf.as_ptr() as *const u8,
+                        wide_val.as_ptr() as *const u8,
                         byte_len as usize,
                     )),
                 );
