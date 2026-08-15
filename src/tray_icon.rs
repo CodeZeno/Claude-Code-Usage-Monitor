@@ -1,313 +1,47 @@
+use std::sync::Mutex;
+
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_WARNING,
-    NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    ExtractIconExW, Shell_NotifyIconGetRect, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE,
+    NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
-use crate::native_interop::{self, Color, WM_APP_TRAY};
+use crate::native_interop::WM_APP_TRAY;
 
-const CLAUDE_TRAY_ICON_ID: u32 = 1;
-const CODEX_TRAY_ICON_ID: u32 = 2;
-const ANTIGRAVITY_TRAY_ICON_ID: u32 = 3;
+const APP_TRAY_ICON_ID: u32 = 1;
+const THEME_TRAY_ICON_ID_BASE: u32 = 1_000;
 
-/// Menu item ID for toggling widget visibility (used by window.rs context menu).
-pub const IDM_TOGGLE_WIDGET: u16 = 70;
+static REGISTERED_THEME_ICON_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+
+/// Rasterized Theme Studio root to expose as a genuine notification-area icon.
+pub struct ThemedTrayIcon {
+    pub surface_index: usize,
+    pub tooltip: String,
+    pub width: u32,
+    pub height: u32,
+    pub pixels: Vec<u32>,
+}
 
 /// Actions the tray message handler can request from the main window.
 pub enum TrayAction {
     None,
-    ToggleWidget,
+    OpenDashboard,
     ShowContextMenu,
 }
 
-#[derive(Clone, Copy)]
-pub enum TrayIconKind {
-    Claude,
-    Codex,
-    Antigravity,
-}
-
-pub struct TrayIconData {
-    pub kind: TrayIconKind,
-    pub percent: Option<f64>,
-    pub tooltip: String,
-}
-
-impl TrayIconKind {
-    fn id(self) -> u32 {
-        match self {
-            Self::Claude => CLAUDE_TRAY_ICON_ID,
-            Self::Codex => CODEX_TRAY_ICON_ID,
-            Self::Antigravity => ANTIGRAVITY_TRAY_ICON_ID,
-        }
-    }
-}
-
-fn lerp_channel(start: u8, end: u8, t: f64) -> u8 {
-    (start as f64 + (end as f64 - start as f64) * t.clamp(0.0, 1.0)).round() as u8
-}
-
-fn lerp_color(start: Color, end: Color, t: f64) -> Color {
-    Color::new(
-        lerp_channel(start.r, end.r, t),
-        lerp_channel(start.g, end.g, t),
-        lerp_channel(start.b, end.b, t),
-    )
-}
-
-fn interpolated_fill(percent: f64) -> Color {
-    if percent <= 50.0 {
-        return Color::from_hex("#D97757");
-    }
-
-    let stops = [
-        (50.0, Color::from_hex("#D97757")),
-        (70.0, Color::from_hex("#D08540")),
-        (85.0, Color::from_hex("#CC8C20")),
-        (95.0, Color::from_hex("#C45020")),
-        (100.0, Color::from_hex("#B82020")),
-    ];
-
-    for pair in stops.windows(2) {
-        let (start_pct, start_color) = pair[0];
-        let (end_pct, end_color) = pair[1];
-        if percent <= end_pct {
-            let span = (end_pct - start_pct).max(f64::EPSILON);
-            let t = (percent - start_pct) / span;
-            return lerp_color(start_color, end_color, t);
-        }
-    }
-
-    stops[stops.len() - 1].1
-}
-
-fn codex_fill(percent: f64) -> Color {
-    if percent >= 90.0 {
-        Color::from_hex("#FFFFFF")
-    } else {
-        Color::from_hex("#111111")
-    }
-}
-
-fn antigravity_fill(percent: f64) -> Color {
-    if percent >= 90.0 {
-        Color::from_hex("#FFFFFF")
-    } else {
-        Color::from_hex("#4285F4")
-    }
-}
-
-/// Create a rounded-rectangle tray icon badge showing the usage percentage.
-/// For Claude, `percent` = None uses the embedded app icon as the loading state.
-/// For Codex and Antigravity, `percent` = None uses a provider placeholder badge.
-pub fn create_icon(kind: TrayIconKind, percent: Option<f64>) -> HICON {
-    if matches!(kind, TrayIconKind::Claude) && percent.is_none() {
-        let app_icon = load_embedded_app_icon();
-        if !app_icon.is_invalid() {
-            return app_icon;
-        }
-    }
-
-    let size = 64_i32;
-    let margin = 0_i32;
-    let radius = 2_i32;
-    let outline = if matches!(kind, TrayIconKind::Codex | TrayIconKind::Antigravity) {
-        3_i32
-    } else {
-        0_i32
-    };
-
-    let fill = match kind {
-        TrayIconKind::Claude => interpolated_fill(percent.unwrap_or(0.0)),
-        TrayIconKind::Codex => codex_fill(percent.unwrap_or(0.0)),
-        TrayIconKind::Antigravity => antigravity_fill(percent.unwrap_or(0.0)),
-    };
-    let text_col = match kind {
-        TrayIconKind::Claude => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Codex if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
-        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Antigravity if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#1967D2"),
-        TrayIconKind::Antigravity => Color::from_hex("#FFFFFF"),
-    };
-    let outline_col = match kind {
-        TrayIconKind::Claude => fill,
-        TrayIconKind::Codex if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#111111"),
-        TrayIconKind::Codex => Color::from_hex("#FFFFFF"),
-        TrayIconKind::Antigravity if percent.unwrap_or(0.0) >= 90.0 => Color::from_hex("#1967D2"),
-        TrayIconKind::Antigravity => Color::from_hex("#FFFFFF"),
-    };
-
-    let display_text = match percent {
-        Some(p) => format!("{}", p.round().clamp(0.0, 999.0) as u32),
-        None => match kind {
-            TrayIconKind::Claude => String::new(),
-            TrayIconKind::Codex => "C".to_string(),
-            TrayIconKind::Antigravity => "A".to_string(),
-        },
-    };
-
-    let font_h = match display_text.len() {
-        1 => -50,
-        2 => -42,
-        _ => -30,
-    };
-
-    unsafe {
-        let screen_dc = GetDC(HWND::default());
-        let mem_dc = CreateCompatibleDC(screen_dc);
-
-        let bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: size,
-                biHeight: -size,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: 0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-
-        let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
-        let dib =
-            CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, None, 0).unwrap_or_default();
-
-        if dib.is_invalid() {
-            let _ = DeleteDC(mem_dc);
-            ReleaseDC(HWND::default(), screen_dc);
-            return HICON::default();
-        }
-
-        let old_bmp = SelectObject(mem_dc, dib);
-
-        // Zero-fill (transparent background)
-        let pixel_data = std::slice::from_raw_parts_mut(bits as *mut u32, (size * size) as usize);
-        for px in pixel_data.iter_mut() {
-            *px = 0;
-        }
-
-        // Draw rounded rectangle badge
-        let null_pen = GetStockObject(NULL_PEN);
-        let old_pen = SelectObject(mem_dc, null_pen);
-
-        if outline > 0 {
-            let br_outline = CreateSolidBrush(COLORREF(outline_col.to_colorref()));
-            let old_brush = SelectObject(mem_dc, br_outline);
-            let _ = RoundRect(
-                mem_dc,
-                margin,
-                margin,
-                size - margin + 1,
-                size - margin + 1,
-                (radius + 1) * 2,
-                (radius + 1) * 2,
-            );
-            SelectObject(mem_dc, old_brush);
-            let _ = DeleteObject(br_outline);
-        }
-
-        let br_fill = CreateSolidBrush(COLORREF(fill.to_colorref()));
-        let old_brush = SelectObject(mem_dc, br_fill);
-        let _ = RoundRect(
-            mem_dc,
-            margin + outline,
-            margin + outline,
-            size - margin - outline + 1,
-            size - margin - outline + 1,
-            (radius - 1) * 2,
-            (radius - 1) * 2,
-        );
-
-        SelectObject(mem_dc, old_brush);
-        SelectObject(mem_dc, old_pen);
-        let _ = DeleteObject(br_fill);
-
-        // Draw centered percentage text
-        let font_name = native_interop::wide_str("Arial Bold");
-        let font = CreateFontW(
-            font_h,
-            0,
-            0,
-            0,
-            FW_BOLD.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_TT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            ANTIALIASED_QUALITY.0 as u32,
-            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
-            PCWSTR::from_raw(font_name.as_ptr()),
-        );
-        let old_font = SelectObject(mem_dc, font);
-        let _ = SetBkMode(mem_dc, TRANSPARENT);
-        let _ = SetTextColor(mem_dc, COLORREF(text_col.to_colorref()));
-
-        let mut text_rect = RECT {
-            left: margin,
-            top: margin,
-            right: size - margin,
-            bottom: size - margin,
-        };
-        let mut text_wide: Vec<u16> = display_text.encode_utf16().collect();
-        let _ = DrawTextW(
-            mem_dc,
-            &mut text_wide,
-            &mut text_rect,
-            DT_CENTER | DT_VCENTER | DT_SINGLELINE,
-        );
-
-        SelectObject(mem_dc, old_font);
-        let _ = DeleteObject(font);
-
-        // Set alpha: non-zero BGR pixel -> fully opaque; background stays transparent
-        for px in pixel_data.iter_mut() {
-            if *px != 0 {
-                *px = (*px & 0x00FF_FFFF) | 0xFF00_0000;
-            }
-        }
-
-        // Monochrome mask (per-pixel alpha from colour bitmap)
-        let mask_bytes = vec![0u8; ((size * size + 7) / 8) as usize];
-        let mask_bmp = CreateBitmap(
-            size,
-            size,
-            1,
-            1,
-            Some(mask_bytes.as_ptr() as *const std::ffi::c_void),
-        );
-
-        let icon_info = ICONINFO {
-            fIcon: TRUE,
-            xHotspot: 0,
-            yHotspot: 0,
-            hbmMask: mask_bmp,
-            hbmColor: dib,
-        };
-        let hicon = CreateIconIndirect(&icon_info).unwrap_or_default();
-
-        let _ = DeleteObject(mask_bmp);
-        SelectObject(mem_dc, old_bmp);
-        let _ = DeleteObject(dib);
-        let _ = DeleteDC(mem_dc);
-        ReleaseDC(HWND::default(), screen_dc);
-
-        hicon
-    }
-}
-
-fn load_embedded_app_icon() -> HICON {
+/// Load the application icons embedded by build.rs from src/icons/icon.ico.
+/// Native windows and the system tray share this source so Windows can choose
+/// the exact large or small icon instead of scaling a single bitmap.
+pub fn load_app_icons() -> (HICON, HICON) {
     unsafe {
         let mut exe_buf = [0u16; 260];
         let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
         if len == 0 {
-            return HICON::default();
+            return (HICON::default(), HICON::default());
         }
 
         let mut small_icon = HICON::default();
@@ -321,149 +55,280 @@ fn load_embedded_app_icon() -> HICON {
         );
 
         if extracted == 0 {
-            HICON::default()
-        } else if !small_icon.is_invalid() {
-            small_icon
+            (HICON::default(), HICON::default())
         } else {
-            large_icon
+            (large_icon, small_icon)
         }
     }
 }
 
-/// Show a Windows balloon notification from the tray icon.
-/// Used to alert the user when re-authentication is required.
-pub fn notify_balloon(hwnd: HWND, kind: TrayIconKind, title: &str, message: &str) {
-    unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = kind.id();
-        nid.uFlags = NIF_INFO;
-        nid.dwInfoFlags = NIIF_WARNING;
-        copy_wide(title, &mut nid.szInfoTitle);
-        copy_wide_256(message, &mut nid.szInfo);
-        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
-    }
-}
-
-/// Copy a string into a fixed-size wide buffer (truncates to fit).
-fn copy_wide<const N: usize>(s: &str, buf: &mut [u16; N]) {
-    let wide: Vec<u16> = s.encode_utf16().collect();
-    let len = wide.len().min(N - 1);
-    buf[..len].copy_from_slice(&wide[..len]);
-    buf[len] = 0;
-}
-
-/// Copy a string into a 256-wide buffer.
-fn copy_wide_256(s: &str, buf: &mut [u16; 256]) {
-    copy_wide(s, buf)
-}
-
-/// Register the tray icon with the shell.
-pub fn add(hwnd: HWND, kind: TrayIconKind, percent: Option<f64>, tooltip: &str) {
-    let hicon = create_icon(kind, percent);
-    unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = kind.id();
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-        nid.uCallbackMessage = WM_APP_TRAY;
-        nid.hIcon = hicon;
-        copy_to_tip(tooltip, &mut nid.szTip);
-        let _ = Shell_NotifyIconW(NIM_ADD, &nid);
-        if !hicon.is_invalid() {
-            let _ = DestroyIcon(hicon);
+fn load_app_icon() -> HICON {
+    let (large_icon, small_icon) = load_app_icons();
+    if !small_icon.is_invalid() {
+        if !large_icon.is_invalid() {
+            unsafe {
+                let _ = DestroyIcon(large_icon);
+            }
         }
+        small_icon
+    } else {
+        large_icon
     }
 }
 
-/// Update the tray icon colour and tooltip to reflect current usage.
-pub fn update(hwnd: HWND, kind: TrayIconKind, percent: Option<f64>, tooltip: &str) {
-    let hicon = create_icon(kind, percent);
+fn themed_icon_id(surface_index: usize) -> u32 {
+    THEME_TRAY_ICON_ID_BASE.saturating_add(surface_index.min(u32::MAX as usize) as u32)
+}
+
+pub fn themed_surface_index(id: u32) -> Option<usize> {
+    (id >= THEME_TRAY_ICON_ID_BASE).then(|| (id - THEME_TRAY_ICON_ID_BASE) as usize)
+}
+
+pub fn cursor_over_themed_icon(hwnd: HWND, surface_index: usize) -> bool {
     unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = kind.id();
-        nid.uFlags = NIF_ICON | NIF_TIP;
-        nid.hIcon = hicon;
-        copy_to_tip(tooltip, &mut nid.szTip);
-        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
-        if !hicon.is_invalid() {
-            let _ = DestroyIcon(hicon);
+        let identifier = NOTIFYICONIDENTIFIER {
+            cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
+            hWnd: hwnd,
+            uID: themed_icon_id(surface_index),
+            ..Default::default()
+        };
+        let Ok(rect) = Shell_NotifyIconGetRect(&identifier) else {
+            return false;
+        };
+        let mut point = POINT::default();
+        GetCursorPos(&mut point).is_ok()
+            && point.x >= rect.left
+            && point.x < rect.right
+            && point.y >= rect.top
+            && point.y < rect.bottom
+    }
+}
+
+fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
+    if icon.width == 0
+        || icon.height == 0
+        // Explorer ultimately displays one square notification-area slot. A
+        // bounded source prevents an accidental Studio expression from asking
+        // GDI and the shell to retain an enormous icon bitmap.
+        || icon.width > 512
+        || icon.height > 512
+        || icon.pixels.len() != icon.width as usize * icon.height as usize
+    {
+        return HICON::default();
+    }
+
+    unsafe {
+        let screen_dc = GetDC(HWND::default());
+        let memory_dc = CreateCompatibleDC(screen_dc);
+        let bitmap_info = BITMAPINFO {
+            bmiHeader: BITMAPINFOHEADER {
+                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biWidth: icon.width as i32,
+                // Theme pixels are top-down, so use a top-down DIB as well.
+                biHeight: -(icon.height as i32),
+                biPlanes: 1,
+                biBitCount: 32,
+                biCompression: BI_RGB.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let mut bits = std::ptr::null_mut();
+        let color_bitmap =
+            CreateDIBSection(memory_dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
+                .unwrap_or_default();
+        if color_bitmap.is_invalid() || bits.is_null() {
+            let _ = DeleteDC(memory_dc);
+            ReleaseDC(HWND::default(), screen_dc);
+            return HICON::default();
         }
+        std::ptr::copy_nonoverlapping(icon.pixels.as_ptr(), bits.cast::<u32>(), icon.pixels.len());
+
+        // A zero monochrome mask lets the 32-bit colour bitmap's alpha channel
+        // define the transparent pixels and antialiased edges.
+        let mask_bitmap = CreateBitmap(icon.width as i32, icon.height as i32, 1, 1, None);
+        let icon_info = ICONINFO {
+            fIcon: TRUE,
+            xHotspot: 0,
+            yHotspot: 0,
+            hbmMask: mask_bitmap,
+            hbmColor: color_bitmap,
+        };
+        let result = CreateIconIndirect(&icon_info).unwrap_or_default();
+
+        let _ = DeleteObject(mask_bitmap);
+        let _ = DeleteObject(color_bitmap);
+        let _ = DeleteDC(memory_dc);
+        ReleaseDC(HWND::default(), screen_dc);
+        result
     }
 }
 
-/// Remove the tray icon from the shell.
-pub fn remove(hwnd: HWND, kind: TrayIconKind) {
+fn remove_id(hwnd: HWND, id: u32) {
     unsafe {
         let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
         nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
         nid.hWnd = hwnd;
-        nid.uID = kind.id();
+        nid.uID = id;
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
 }
 
-pub fn sync(hwnd: HWND, icons: &[TrayIconData]) {
-    let show_claude = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Claude));
-    let show_codex = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Codex));
-    let show_antigravity = icons
-        .iter()
-        .find(|icon| matches!(icon.kind, TrayIconKind::Antigravity));
-
-    if let Some(icon) = show_claude {
-        add(hwnd, icon.kind, icon.percent, &icon.tooltip);
-        update(hwnd, icon.kind, icon.percent, &icon.tooltip);
-    } else {
-        remove(hwnd, TrayIconKind::Claude);
-    }
-
-    if let Some(icon) = show_codex {
-        add(hwnd, icon.kind, icon.percent, &icon.tooltip);
-        update(hwnd, icon.kind, icon.percent, &icon.tooltip);
-    } else {
-        remove(hwnd, TrayIconKind::Codex);
-    }
-
-    if let Some(icon) = show_antigravity {
-        add(hwnd, icon.kind, icon.percent, &icon.tooltip);
-        update(hwnd, icon.kind, icon.percent, &icon.tooltip);
-    } else {
-        remove(hwnd, TrayIconKind::Antigravity);
+fn remove_registered_theme_icons(hwnd: HWND) {
+    let mut registered = REGISTERED_THEME_ICON_IDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for id in registered.drain(..) {
+        remove_id(hwnd, id);
     }
 }
 
+/// Register or refresh the single persistent application tray icon.
+pub fn sync(hwnd: HWND, tooltip: &str) {
+    remove_registered_theme_icons(hwnd);
+    let hicon = load_app_icon();
+    if hicon.is_invalid() {
+        return;
+    }
+
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = APP_TRAY_ICON_ID;
+        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        nid.uCallbackMessage = WM_APP_TRAY;
+        nid.hIcon = hicon;
+        copy_to_tip(tooltip, &mut nid.szTip);
+
+        // NIM_ADD succeeds on first registration. If the icon is already
+        // present, NIM_MODIFY refreshes its image, callback and tooltip.
+        if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
+            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+        }
+        let _ = DestroyIcon(hicon);
+    }
+}
+
+/// Register Theme Studio roots as independent notification-area icons. The
+/// shell owns their order and overflow placement just like every other app icon.
+pub fn sync_themed(hwnd: HWND, icons: &[ThemedTrayIcon]) {
+    remove_id(hwnd, APP_TRAY_ICON_ID);
+    let mut refreshed_ids = Vec::with_capacity(icons.len());
+    for icon in icons {
+        let hicon = create_themed_icon(icon);
+        if hicon.is_invalid() {
+            continue;
+        }
+        let id = themed_icon_id(icon.surface_index);
+        unsafe {
+            let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+            nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+            nid.hWnd = hwnd;
+            nid.uID = id;
+            nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            nid.uCallbackMessage = WM_APP_TRAY;
+            nid.hIcon = hicon;
+            copy_to_tip(&icon.tooltip, &mut nid.szTip);
+            if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
+                let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            }
+            let _ = DestroyIcon(hicon);
+        }
+        refreshed_ids.push(id);
+    }
+
+    let mut registered = REGISTERED_THEME_ICON_IDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    for id in registered
+        .iter()
+        .copied()
+        .filter(|id| !refreshed_ids.contains(id))
+    {
+        remove_id(hwnd, id);
+    }
+    *registered = refreshed_ids;
+}
+
+/// Show a Windows balloon notification from the application tray icon.
+pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
+    let icon_id = REGISTERED_THEME_ICON_IDS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .first()
+        .copied()
+        .unwrap_or(APP_TRAY_ICON_ID);
+    unsafe {
+        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
+        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+        nid.hWnd = hwnd;
+        nid.uID = icon_id;
+        nid.uFlags = NIF_INFO;
+        nid.dwInfoFlags = NIIF_WARNING;
+        copy_wide(title, &mut nid.szInfoTitle);
+        copy_wide(message, &mut nid.szInfo);
+        let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+    }
+}
+
+/// Remove the application tray icon from the shell.
 pub fn remove_all(hwnd: HWND) {
-    remove(hwnd, TrayIconKind::Claude);
-    remove(hwnd, TrayIconKind::Codex);
-    remove(hwnd, TrayIconKind::Antigravity);
+    remove_id(hwnd, APP_TRAY_ICON_ID);
+    remove_registered_theme_icons(hwnd);
 }
 
 /// Interpret a tray callback message and return the action to take.
 pub fn handle_message(lparam: LPARAM) -> TrayAction {
     let mouse_msg = lparam.0 as u32;
     match mouse_msg {
-        WM_LBUTTONUP => TrayAction::ToggleWidget,
-        WM_RBUTTONUP => TrayAction::ShowContextMenu,
+        WM_LBUTTONUP | WM_LBUTTONDBLCLK => TrayAction::OpenDashboard,
+        WM_RBUTTONUP | WM_CONTEXTMENU => TrayAction::ShowContextMenu,
         _ => TrayAction::None,
     }
 }
 
-/// Copy a string into the fixed-size szTip field (max 127 chars + null).
-fn copy_to_tip(s: &str, tip: &mut [u16; 128]) {
-    let wide: Vec<u16> = s.encode_utf16().collect();
-    let mut len = wide.len().min(127);
-    // Don't leave a lone high surrogate at the truncation point
+fn copy_wide<const N: usize>(value: &str, buffer: &mut [u16; N]) {
+    let wide: Vec<u16> = value.encode_utf16().collect();
+    let mut len = wide.len().min(N - 1);
     if len > 0 && (0xD800..=0xDBFF).contains(&wide[len - 1]) {
         len -= 1;
     }
-    tip[..len].copy_from_slice(&wide[..len]);
-    tip[len] = 0;
+    buffer[..len].copy_from_slice(&wide[..len]);
+    buffer[len] = 0;
+}
+
+fn copy_to_tip(value: &str, tooltip: &mut [u16; 128]) {
+    copy_wide(value, tooltip);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_buttons_have_distinct_actions() {
+        assert!(matches!(
+            handle_message(LPARAM(WM_LBUTTONUP as isize)),
+            TrayAction::OpenDashboard
+        ));
+        assert!(matches!(
+            handle_message(LPARAM(WM_LBUTTONDBLCLK as isize)),
+            TrayAction::OpenDashboard
+        ));
+        assert!(matches!(
+            handle_message(LPARAM(WM_RBUTTONUP as isize)),
+            TrayAction::ShowContextMenu
+        ));
+        assert!(matches!(
+            handle_message(LPARAM(WM_CONTEXTMENU as isize)),
+            TrayAction::ShowContextMenu
+        ));
+    }
+
+    #[test]
+    fn theme_icon_ids_do_not_overlap_the_application_icon() {
+        assert_ne!(themed_icon_id(0), APP_TRAY_ICON_ID);
+        assert_ne!(themed_icon_id(42), themed_icon_id(43));
+    }
 }

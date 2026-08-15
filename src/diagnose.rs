@@ -11,11 +11,23 @@ struct DiagnoseState {
 static DIAGNOSE_STATE: OnceLock<DiagnoseState> = OnceLock::new();
 
 pub fn init() -> Result<PathBuf, String> {
+    init_file(false)
+}
+
+pub fn init_append() -> Result<PathBuf, String> {
+    init_file(true)
+}
+
+fn init_file(append: bool) -> Result<PathBuf, String> {
     let path = std::env::temp_dir().join("claude-code-usage-monitor.log");
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
+    let mut options = OpenOptions::new();
+    options.create(true);
+    if append {
+        options.append(true);
+    } else {
+        options.write(true).truncate(true);
+    }
+    let file = options
         .open(&path)
         .map_err(|e| format!("Unable to open diagnostic log file {}: {e}", path.display()))?;
 
@@ -23,7 +35,11 @@ pub fn init() -> Result<PathBuf, String> {
         file: Mutex::new(file),
     });
 
-    log("diagnostic logging enabled");
+    log(if append {
+        "diagnostic logging enabled for child process"
+    } else {
+        "diagnostic logging enabled"
+    });
     Ok(path)
 }
 

@@ -2,6 +2,10 @@ use super::Strings;
 
 pub(super) const UPDATE_VIA_WINGET_LABEL: &str = "Update via WinGet";
 
+pub(super) fn text(english: &'static str) -> &'static str {
+    english
+}
+
 pub(super) const STRINGS: Strings = Strings {
     window_title: "Claude Code Usage Monitor",
     refresh: "Refresh",
@@ -16,7 +20,6 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_model: "Antigravity",
     settings: "Settings",
     start_with_windows: "Start with Windows",
-    reset_position: "Reset Position",
     language: "Language",
     system_default: "System Default",
     check_for_updates: "Check for Updates",
@@ -31,7 +34,6 @@ pub(super) const STRINGS: Strings = Strings {
     update_available: "Update available",
     update_prompt_now: "Version {version} is available. Do you want to update now?",
     exit: "Exit",
-    show_widget: "Show Widget",
     session_window: "5h",
     weekly_window: "7d",
     now: "now",

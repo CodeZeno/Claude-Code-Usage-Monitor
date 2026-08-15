@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "id": "theme-minecraft",
+  "name": "Minecraft (Codex)",
+  "surfaces": [
+    {
+      "id": "layer-62744-2",
+      "name": "Minecraft",
+      "render": "1",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "taskbar",
+        "horizontal": "left",
+        "vertical": "bottom",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": -4,
+        "offset_y": 0
+      },
+      "width": "162",
+      "height": "44",
+      "background": {
+        "type": "none"
+      },
+      "border": null,
+      "mouse_events": {
+        "double_click": "show_dashboard()",
+        "right_click": "show_context_menu(\"dashboard-v2\")"
+      },
+      "corner_radius": "0",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "layer-63200-4",
+          "name": "Full Container",
+          "render": "1",
+          "visibility": "100",
+          "y": "2",
+          "width": "162/100 * codex.session.remaining",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "layer-63200-2",
+          "name": "Full State",
+          "render": "1",
+          "visibility": "100",
+          "parent": "layer-63200-4",
+          "width": "162",
+          "height": "18",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-full.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "object-63200-5",
+          "name": "Empty Container",
+          "render": "1",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "y": "2",
+          "width": "162/100 * codex.session.percentage",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "layer-63200-3",
+          "name": "Empty State",
+          "render": "1",
+          "visibility": "100",
+          "parent": "object-63200-5",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "width": "162",
+          "height": "18",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-empty.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "layer-62744-1",
+          "name": "Reset",
+          "render": "1",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "bottom"
+          },
+          "y": "2",
+          "width": "162",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Reset in {codex.session.reset.seconds:duration}",
+            "font_family": "Segoe UI Variable Text",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "antialiased",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "opacity": "1"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

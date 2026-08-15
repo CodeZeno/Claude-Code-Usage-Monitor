@@ -17,18 +17,21 @@ It sits in your taskbar and shows how much of your Claude Code, Codex, and/or An
 - Optional Antigravity model usage bars for Google's 5-hour and weekly Gemini quota windows
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
-- System tray icon badges showing your enabled model usage percentage
-- Left-click the tray icon to toggle the taskbar widget on or off
-- Right-click options for refresh, displayed models, update frequency, language, startup, widget visibility, and updates
+- A persistent application icon in the system tray
+- In the default Classic theme, left-click or double-click a provider tray icon to show or hide the taskbar widget; right-click it for its context menu
+- Dashboard controls for refresh, displayed providers, update frequency, language, startup, and updates
 - Multi-monitor taskbar placement, so the widget can live on the taskbar for the screen you prefer
+- A native settings dashboard and live theme studio
+- Unified scene objects with solid-colour, gradient, or image backgrounds, borders, text, data bars, and children
+- Combined monitor, taskbar, and system-tray targets for each display
 
 ## Who This Is For
 
 This app is for Windows users who already have **Claude Code (CLI or App) installed and signed in**.
 
-Codex support is optional. To show Codex usage, install and sign in to the Codex CLI, then enable Codex from the right-click **Models** menu.
+Codex support is optional. To show Codex usage, install and sign in to the Codex CLI, then enable Codex in the dashboard's **Providers** section.
 
-Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable the **Antigravity** model from the right-click **Models** menu.
+Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable it in the dashboard's **Providers** section.
 
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
@@ -59,17 +62,69 @@ After installing with WinGet, run:
 claude-code-usage-monitor
 ```
 
-Once running, it will appear in your taskbar and as one or more tray icons in the notification area.
+Once running, it will appear in your taskbar and as a persistent application icon in the notification area.
 
-- Drag the left divider to move the taskbar widget
-- On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen
-- Right-click the taskbar widget or tray icon for refresh, displayed models, update frequency, Start with Windows, reset position, language, updates, and exit
-- Left-click the tray icon to toggle the taskbar widget on or off
-- Enable `Start with Windows` from the right-click menu if you want it to launch automatically when you sign in
+- In the default Classic theme, left-click or double-click a provider tray icon to show or hide the taskbar widget; right-click it for its context menu
+- Use **Theme Studio** to position root objects against a monitor, taskbar, or system tray on any display
+- Enable `Start with Windows` from **Settings** if you want it to launch automatically when you sign in
+- Manage every setting or build a custom theme from the same dashboard
+
+You can also open the dashboard directly:
+
+```powershell
+claude-code-usage-monitor --dashboard
+```
+
+### Custom themes
+
+Theme Studio previews edits on its canvas and stores versioned JSON themes in:
+
+```text
+%APPDATA%\ClaudeCodeUsageMonitor\themes
+```
+
+Choose a theme from the Studio toolbar. The bundled Classic theme remains read-only so there is always a working design to return to. The bundled Minecraft theme is installed once as an editable starting point, keeps local changes, and stays removed if you delete it. Use **Duplicate** to name and create another editable copy. **Live apply** starts off; enable it when you want each edit saved and applied immediately. Unsaved edits are clearly marked, and closing the dashboard or replacing the current theme asks whether to save or discard them. Use **Undo**/**Redo** in the Studio toolbar (or `Ctrl+Z`/`Ctrl+Y`) to reverse theme edits, including position and size changes.
+
+The Studio scene tree, canvas, and inspector always share the available window width. Drag either narrow divider beside the canvas to resize the adjacent panel. Every entry is the same scene-object type. Use **Add layer** to create a layer beside the selected one at the same hierarchy level, or at the top level when no selection is available, then drag it by the right-side grip in the scene tree to reorder it or make it a child. Dropping a child between root surfaces promotes it back to a surface. Clicking anywhere on a scene row selects it; the disclosure arrow and preview icon also expand or collapse it, while double-clicking its truncated name selects all of it for inline renaming. Each row previews the object's background, border, corner radius, and content type. The inspector groups fields into collapsible **Layer**, **Appearance**, and **Positioning** sections and uses the selected object's name as its title. Root objects become native desktop windows and therefore expose a combined reference target such as **Monitor (Display 1)** or **System Tray (Display 2)**; child objects expose a parent anchor instead. Hovering any object in the tree temporarily outlines its resolved preview bounds in magenta without adding persistent resize controls to the canvas.
+
+The widget always uses a Theme Studio theme; the built-in **Classic v1** theme recreates the original `5h` and `7d` widget and is enabled by default. It adapts to the enabled providers with 10, 5, or 4 bar segments per provider. Themes are ordered object stacks. Create a surface, choose optional text or data-bar content, then independently configure its background as **None**, **Solid colour**, **Gradient**, or **Image**, along with its border, layout, and children. Gradients use Start and End colours; their angle runs clockwise, with `0` drawing left-to-right and `90` drawing top-to-bottom. Geometry, visibility, root size, progress values and segment counts, gradient angles, and paint opacity accept calculations with `+`, `-`, `*`, `/`, `%`, comparisons, `&&`, `||`, parentheses, and functions including `min`, `max`, `clamp`, `round`, `floor`, `ceil`, `abs`, `sqrt`, `pow`, `lerp`, and `if`. The code button converts a regular value to an expression and immediately opens the expression helper; use it again to reopen the helper. Hover an expression field to reveal its reset button.
+
+Every object supports **Freeform**, **Row**, and **Column** child layouts, whether its content is empty, text, an image, a shape, or a data bar. Row and column objects position rendered direct children automatically in scene order with configurable gap and cross-axis alignment. A child's X/Y values are offsets from its anchor, or optional fine offsets when its parent manages layout. `Render` accepts a boolean expression and removes false objects from layout; `Visibility` accepts an expression from 0–100 and fades an object without collapsing its space. Children are always clipped to their parent's bounds.
+
+Enable **Mouse events** on a layer to handle Click, Double click, Right click, Mouse enter, and Mouse leave. The action helper can insert `show_dashboard()`, `toggle_dashboard()`, `show_context_menu()`, `set(target, property, value)`, `increase(target, property, amount)`, `decrease(target, property, amount)`, `toggle(target, render)`, and `reset(target, property)`. Use `self` for the current layer or select another layer on any root surface; the helper stores its stable ID. Runtime actions can override Render, Visibility, X, Y, Width, Height, and Rotation without changing the saved expressions. Increase and decrease work with numeric properties and accumulate from the current effective value, while `reset` restores the saved expression. The context-menu action opens the same menu used by the tray icon at the current pointer position. When both Click and Double click are configured, Click waits for the Windows double-click interval and is suppressed by a double click. The canvas safely previews layer changes without opening dashboards or context menus. Tray Icon roots support the same events as one Explorer-owned hit target; their child layers cannot be hit-tested independently.
+
+### Context Menus
+
+The dashboard's **Context Menus** workspace manages reusable native Windows menus separately from themes. Create or duplicate a menu, add actions, separators, and nested submenus, reorder items, and save it under a stable id. Menu actions cover refresh, update frequency, providers, startup, language, updates, widget visibility, dashboard, and exit, along with the layer action language and `http` or `https` links. `set_update_frequency()` uses seconds, while older saved millisecond values are upgraded when loaded. URL actions only run after the user chooses the menu item. Context-menu files are stored under `%APPDATA%\ClaudeCodeUsageMonitor\context-menus`.
+
+Use `show_context_menu("menu-id")` or `show_context_menu("Unique Menu Name")` in a layer event. The action helper lists the saved menus and inserts their stable id. `show_context_menu()` uses the built-in **Classic v1** menu, and a missing or deleted reference safely falls back to that built-in menu. Dashboard v2 uses the stable id `dashboard-v2`; the previous `dashboard-and-exit` id remains a compatibility alias, as does `classic-v1-4-9` for Classic v1.
+
+Solid-colour and gradient background transparency is controlled directly by each RGBA colour. Use `#00000000` for fully transparent, or change the final two digits for partial opacity.
+
+Data names use the same structure for `claude`, `codex`, and `antigravity`:
+
+- `{provider}.session.percentage` and `{provider}.weekly.percentage`
+- `{provider}.session.remaining` and `{provider}.weekly.remaining`
+- `{provider}.{window}.reset.seconds`, `.minutes`, `.hours`, `.days`, and `.unix`
+- `{provider}.available`
+- `providers.count`
+- `providers.claude.enabled`, `providers.codex.enabled`, and `providers.antigravity.enabled`
+
+The `providers.*.enabled` values reflect the dashboard settings rather than temporary polling availability, so a provider error does not unexpectedly reflow the widget. For example, `ceil(10 / max(1, providers.count))` produces the classic adaptive segment count.
+
+Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Canvas size is available as `canvas.width` and `canvas.height`.
+
+The application version is available as the text value `{app.version}`. Numeric expressions can use `app.version.major`, `app.version.minor`, and `app.version.patch`.
+
+Image backgrounds support PNG, JPEG, GIF, BMP, and WebP. Theme Studio imports them into the shared `themes/assets` library so layers can reuse managed copies instead of depending on files elsewhere on the computer. Alpha channels are preserved, and image backgrounds can be combined with a border, text or data-bar content, layout, and children.
+
+Use **Import** in Theme Studio to open either a standalone theme JSON file or a Theme Studio ZIP package. **Export** creates a ZIP containing `theme.json`, `context-menu.json`, and every managed image used by the current theme under `assets/`, then opens a Save dialog for the destination. Imported package assets are copied into the managed asset library and renamed safely if a different image already uses the same name. Dropping a Theme Studio ZIP anywhere on the dashboard runs the same import flow. On the **Assets** page, dropping supported image files runs the same operation as **Add image**.
+
+Each root object has a **Nest**, a combined **Reference** dropdown, and two compact inline nine-point placement controls. Nest and Reference are independent: Nest controls which native shell host owns the window, while Reference only controls the coordinates used to position it. **Taskbar** nests are native children of the selected display's taskbar, so they appear and hide with it instead of covering fullscreen applications. **Tray Icon** nests are registered as genuine Windows notification-area icons; Explorer controls their drag order, overflow placement, and final DPI-scaled size while the themed root supplies their artwork. **Desktop** nests sit behind application windows and desktop icons. **Floating** nests preserve always-on-top placement but automatically hide while a fullscreen window occupies their display. The Reference dropdown selects a monitor, taskbar, or system tray on a specific display. The **reference point** selects a point on that region, and the **surface point** selects the point on the widget that attaches there. Child objects instead use a nine-point parent anchor, with expressions controlling width and height relative to the parent. For example, reference centre + surface centre keeps a resizing widget centred, while system-tray bottom-left + surface bottom-right keeps the widget immediately to the tray's left. To show the same design on another display, duplicate the root object and select that display.
 
 ### Models
 
-Use the right-click **Models** menu to choose what the widget displays:
+Use the dashboard's **Providers** section to choose what the widget displays:
 
 - **Claude Code** is enabled by default
 - **Codex** can be enabled alongside Claude Code or shown by itself
@@ -77,15 +132,13 @@ Use the right-click **Models** menu to choose what the widget displays:
 
 When multiple models are shown, each model has its own usage bar and matching usage text color. Antigravity prefers Google's Gemini quota summary when available and falls back to model quota data when needed.
 
-### System Tray Icon
+### System Tray Icons
 
-The tray icon shows your current 5-hour usage as a percentage badge.
+The default Classic theme includes separate Claude Code, Codex, and Antigravity tray-icon roots. Each root uses `providers.<provider>.enabled` as its Render expression, so only enabled providers are registered with Explorer. Clicking or double-clicking one toggles the `main` taskbar root's Render value, and right-clicking either a provider icon or the taskbar widget opens the built-in `classic-v1` context menu. A custom theme with no Tray Icon roots falls back to one persistent application icon using `src/icons/icon.ico`. When upgrading directly from v1.4.9, a saved `widget_visible: false` preference creates and selects a writable **Migrated Theme** copy with `main.render` set to `false`; user-selected custom themes are left unchanged.
 
-If multiple providers are enabled, the app shows one tray icon per provider. If only one model is enabled, it shows one tray icon.
+Theme Studio's **Context Menus** page supports action items, submenus, separators, and non-clickable Text items. Labels on Text, action, and submenu items are live text templates, so they can show usage values, reset countdowns, provider state, or the app version. The **ƒx Values** helper inserts the same usage and formatting tokens available to theme text layers.
 
-The Claude Code tray icon uses the same warm usage colors as the Claude bar. The Codex tray icon uses a black and white badge style. The Antigravity tray icon uses a blue badge style.
-
-Hovering over a tray icon shows the usage values for that model.
+Context menus currently use the native Windows menu renderer. Windows therefore controls their light/dark appearance, font, DPI scaling, padding, selection highlight, disabled-text colour, separators, submenu arrows, and checkmarks. Per-menu colours, fonts, backgrounds, rounded corners, and other custom item styling are not exposed; supporting those consistently would require replacing or owner-drawing the native menu. Text items are intentionally rendered using Windows' disabled informational-row style.
 
 ## Diagnostics
 
@@ -141,11 +194,11 @@ What the app stores locally:
 
 - Widget position
 - Selected taskbar / screen
-- Widget visibility
 - Polling frequency
 - Language preference
 - Last update check time
 - Displayed model preferences
+- Active custom theme, canvas placement, and theme files
 
 What it does **not** do:
 
