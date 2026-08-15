@@ -21,30 +21,19 @@ fn main() {
     res.set_icon("src/icons/icon.ico")
         // Declaring modern Windows compatibility enables WS_EX_LAYERED child
         // windows, which the Windows 11 raised desktop requires.
-        .set_manifest(
-            r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
-  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
-    <application>
-      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}" />
-      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}" />
-      <supportedOS Id="{4a2f28e3-53b9-4441-ba9c-d69d4a4a6e38}" />
-    </application>
-  </compatibility>
-  <application xmlns="urn:schemas-microsoft-com:asm.v3">
-    <windowsSettings>
-      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
-      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
-    </windowsSettings>
-  </application>
-</assembly>"#,
-        )
+        // Keep the manifest in a file so winres asks the resource compiler to
+        // embed it verbatim. `set_manifest` wraps every line in spaces, which
+        // puts whitespace before the XML declaration and breaks parsers such
+        // as wingetcreate's Vestris.ResourceLib.
+        .set_manifest_file("src/app.manifest")
         .set("FileVersion", version)
         .set("ProductVersion", version)
         .set_version_info(VersionInfo::FILEVERSION, numeric_version)
         .set_version_info(VersionInfo::PRODUCTVERSION, numeric_version);
 
     res.compile().expect("Failed to compile Windows resources");
+
+    println!("cargo:rerun-if-changed=src/app.manifest");
 }
 
 fn build_ui_fallback_subset() {
