@@ -13,6 +13,7 @@ pub enum ProviderId {
     Codex = 1,
     Antigravity = 2,
     OpenCode = 3,
+    Cursor = 4,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -31,7 +32,7 @@ pub struct ProviderDescriptor {
     pub default_enabled: bool,
 }
 
-pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 4] = [
+pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 5] = [
     ProviderDescriptor {
         id: ProviderId::Claude,
         key: "claude",
@@ -68,10 +69,25 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 4] = [
         native_menu_command_id: 63,
         default_enabled: false,
     },
+    ProviderDescriptor {
+        id: ProviderId::Cursor,
+        key: "cursor",
+        cache_key: "cursor",
+        display_name: "Cursor",
+        settings_description: "Collect usage from Cursor",
+        native_menu_command_id: 64,
+        default_enabled: false,
+    },
 ];
 
 impl ProviderId {
-    pub const ALL: [Self; 4] = [Self::Claude, Self::Codex, Self::Antigravity, Self::OpenCode];
+    pub const ALL: [Self; 5] = [
+        Self::Claude,
+        Self::Codex,
+        Self::Antigravity,
+        Self::OpenCode,
+        Self::Cursor,
+    ];
 
     pub const fn descriptor(self) -> &'static ProviderDescriptor {
         &PROVIDER_DESCRIPTORS[self as usize]

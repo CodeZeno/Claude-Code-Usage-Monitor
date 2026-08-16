@@ -1276,6 +1276,8 @@ impl DataContext {
         let strings = runtime.language.strings();
         context.insert_string("i18n.session_window", strings.session_window);
         context.insert_string("i18n.weekly_window", strings.weekly_window);
+        context.insert_string("i18n.cursor_auto_window", strings.cursor_auto_window);
+        context.insert_string("i18n.cursor_api_window", strings.cursor_api_window);
         context.insert_string("i18n.now", strings.now);
         context.insert_string("i18n.day_suffix", strings.day_suffix);
         context.insert_string("i18n.hour_suffix", strings.hour_suffix);

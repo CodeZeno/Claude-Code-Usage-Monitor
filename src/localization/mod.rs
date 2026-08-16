@@ -121,6 +121,7 @@ impl LanguageId {
             "Codex" => return strings.codex_model,
             "Antigravity" => return strings.antigravity_model,
             "OpenCode" => return strings.opencode_model,
+            "Cursor" => return strings.cursor_model,
             _ => {}
         }
         if let Some(translation) = helper_translations::text(self, english) {
@@ -173,6 +174,10 @@ impl LanguageId {
                 strings.opencode_token_expired_title,
                 strings.opencode_token_expired_body,
             ),
+            ProviderId::Cursor => (
+                strings.cursor_token_expired_title,
+                strings.cursor_token_expired_body,
+            ),
         }
     }
 
@@ -223,6 +228,7 @@ pub struct Strings {
     pub codex_model: &'static str,
     pub antigravity_model: &'static str,
     pub opencode_model: &'static str,
+    pub cursor_model: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub language: &'static str,
@@ -241,6 +247,8 @@ pub struct Strings {
     pub exit: &'static str,
     pub session_window: &'static str,
     pub weekly_window: &'static str,
+    pub cursor_auto_window: &'static str,
+    pub cursor_api_window: &'static str,
     pub now: &'static str,
     pub day_suffix: &'static str,
     pub hour_suffix: &'static str,
@@ -254,9 +262,12 @@ pub struct Strings {
     pub antigravity_token_expired_body: &'static str,
     pub opencode_token_expired_title: &'static str,
     pub opencode_token_expired_body: &'static str,
+    pub cursor_token_expired_title: &'static str,
+    pub cursor_token_expired_body: &'static str,
     pub codex_window_title: &'static str,
     pub antigravity_window_title: &'static str,
     pub opencode_window_title: &'static str,
+    pub cursor_window_title: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

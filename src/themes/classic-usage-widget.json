@@ -19,7 +19,7 @@
         "offset_x": 0,
         "offset_y": 0
       },
-      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + providers.opencode.enabled * 28",
+      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28",
       "height": "46",
       "mouse_events": {
         "right_click": "show_context_menu(\"classic-v1\")"
@@ -168,6 +168,202 @@
             "align": "left",
             "color": {
               "color": "#404040FF"
+            }
+          }
+        },
+        {
+          "id": "cursor-provider",
+          "name": "Cursor provider",
+          "render": "providers.cursor.enabled",
+          "parent": "provider-row",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 90",
+          "height": "46"
+        },
+        {
+          "id": "cursor-session-segments-dark",
+          "name": "dark Cursor Auto segments",
+          "render": "system.dark",
+          "parent": "cursor-provider",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "cursor.session.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5F5F5FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "cursor-session-value-dark",
+          "name": "dark Cursor Auto value",
+          "render": "system.dark",
+          "parent": "cursor-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.cursor_auto_window} {cursor.session:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#E0E0E0FF"
+            }
+          }
+        },
+        {
+          "id": "cursor-session-segments-light",
+          "name": "light Cursor Auto segments",
+          "render": "1 - system.dark",
+          "parent": "cursor-provider",
+          "y": "5",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "cursor.session.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1A1A1AFF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "cursor-session-value-light",
+          "name": "light Cursor Auto value",
+          "render": "1 - system.dark",
+          "parent": "cursor-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "5",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.cursor_auto_window} {cursor.session:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1A1A1AFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-weekly-segments-dark",
+          "name": "dark Cursor API segments",
+          "render": "system.dark",
+          "parent": "cursor-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "cursor.weekly.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5F5F5FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "cursor-weekly-value-dark",
+          "name": "dark Cursor API value",
+          "render": "system.dark",
+          "parent": "cursor-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.cursor_api_window} {cursor.weekly:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#E0E0E0FF"
+            }
+          }
+        },
+        {
+          "id": "cursor-weekly-segments-light",
+          "name": "light Cursor API segments",
+          "render": "1 - system.dark",
+          "parent": "cursor-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "cursor.weekly.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1A1A1AFF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "cursor-weekly-value-light",
+          "name": "light Cursor API value",
+          "render": "1 - system.dark",
+          "parent": "cursor-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.cursor_api_window} {cursor.weekly:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1A1A1AFF"
             }
           }
         },
@@ -1486,6 +1682,174 @@
             "align": "center",
             "color": {
               "color": "#1967D2FF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cursor-tray-icon",
+      "name": "Cursor usage",
+      "render": "providers.cursor.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "cursor-tray-high-outline",
+          "name": "Cursor high-usage black outline",
+          "render": "cursor.session.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "cursor-tray-low-fill",
+          "name": "Cursor normal black fill",
+          "render": "cursor.session.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "cursor-tray-high-fill",
+          "name": "Cursor high-usage white fill",
+          "render": "cursor.session.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "cursor-tray-placeholder",
+          "name": "Cursor loading placeholder",
+          "render": "data.poll_ok == 0 || cursor.available == 0",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "Cu",
+            "font_family": "Arial Bold",
+            "font_size": "34",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-low-one-digit",
+          "name": "Cursor normal one-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.session.percentage < 9.5",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.session.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-low-two-digits",
+          "name": "Cursor normal two-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 9.5 && cursor.session.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.session.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-high-two-digits",
+          "name": "Cursor high-usage two-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 90 && cursor.session.percentage < 99.5",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.session.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1A1A1AFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-high-three-digits",
+          "name": "Cursor high-usage three-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 99.5",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.session.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1A1A1AFF"
             }
           }
         }

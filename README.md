@@ -5,9 +5,9 @@
 
 ![Screenshot](.github/animation.gif)
 
-A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex, Google Antigravity, and OpenCode Go usage display.
+A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex, Google Antigravity, OpenCode Go, and Cursor usage display.
 
-It sits in your taskbar and shows how much of your Claude Code, Codex, Antigravity, and/or OpenCode Go usage window you have left, without needing to open the terminal or the provider site.
+It sits in your taskbar and shows how much of your Claude Code, Codex, Antigravity, OpenCode Go, and/or Cursor usage window you have left, without needing to open the terminal or the provider site.
 
 ## What You Get
 
@@ -16,6 +16,7 @@ It sits in your taskbar and shows how much of your Claude Code, Codex, Antigravi
 - Optional Codex usage bars alongside Claude Code
 - Optional Antigravity model usage bars for Google's 5-hour and weekly Gemini quota windows
 - Optional OpenCode Go usage bars for its 5-hour and most-constrained weekly/monthly window
+- Optional Cursor Auto and API plan usage bars
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
 - A persistent application icon in the system tray
@@ -47,6 +48,8 @@ For server-side usage, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOK
 
 The workspace ID comes from `https://opencode.ai/workspace/<workspace-id>/go`. The auth cookie comes from an authenticated `opencode.ai` browser session. `OPENCODE_GO_CONFIG_FILE` can point to a different config file. Compatible `opencode-bar` and `opencode-quota` config locations are also detected.
 
+Cursor support is optional. Sign in to Cursor and enable **Cursor** in the dashboard's **Providers** section. The monitor reads `cursorAuth/accessToken` from Cursor's `%APPDATA%\Cursor\User\globalStorage\state.vscdb` using the SQLite library built into Windows 10 and 11, then requests the Cursor usage summary. No SQLite engine is bundled. `CURSOR_SESSION_TOKEN` can override the detected session when needed.
+
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
 ## Requirements
@@ -56,6 +59,7 @@ It works best if you want a simple "how close am I to the limit?" display that i
 - Optional: Codex CLI installed and authenticated, if you want Codex usage
 - Optional: Google Antigravity installed and authenticated, if you want Antigravity usage
 - Optional: OpenCode installed and connected to OpenCode Go, if you want OpenCode usage
+- Optional: Cursor installed and authenticated, if you want Cursor usage
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
@@ -102,7 +106,7 @@ Choose a theme from the Studio toolbar. The bundled Classic theme remains read-o
 
 The Studio scene tree, canvas, and inspector always share the available window width. Drag either narrow divider beside the canvas to resize the adjacent panel. Every entry is the same scene-object type. Use **Add layer** to create a layer beside the selected one at the same hierarchy level, or at the top level when no selection is available, then drag it by the right-side grip in the scene tree to reorder it or make it a child. Dropping a child between root surfaces promotes it back to a surface. Clicking anywhere on a scene row selects it; the disclosure arrow and preview icon also expand or collapse it, while double-clicking its truncated name selects all of it for inline renaming. Each row previews the object's background, border, corner radius, and content type. The inspector groups fields into collapsible **Layer**, **Appearance**, and **Positioning** sections and uses the selected object's name as its title. Root objects become native desktop windows and therefore expose a combined reference target such as **Monitor (Display 1)** or **System Tray (Display 2)**; child objects expose a parent anchor instead. Hovering any object in the tree temporarily outlines its resolved preview bounds in magenta without adding persistent resize controls to the canvas.
 
-The widget always uses a Theme Studio theme; the built-in **Classic v1** theme recreates the original `5h` and `7d` widget and is enabled by default. It adapts to the enabled providers with 10, 5, or 4 bar segments per provider. Themes are ordered object stacks. Create a surface, choose optional text or data-bar content, then independently configure its background as **None**, **Solid colour**, **Gradient**, or **Image**, along with its border, layout, and children. Gradients use Start and End colours; their angle runs clockwise, with `0` drawing left-to-right and `90` drawing top-to-bottom. Geometry, visibility, root size, progress values and segment counts, gradient angles, and paint opacity accept calculations with `+`, `-`, `*`, `/`, `%`, comparisons, `&&`, `||`, parentheses, and functions including `min`, `max`, `clamp`, `round`, `floor`, `ceil`, `abs`, `sqrt`, `pow`, `lerp`, and `if`. The code button converts a regular value to an expression and immediately opens the expression helper; use it again to reopen the helper. Hover an expression field to reveal its reset button.
+The widget always uses a Theme Studio theme; the built-in **Classic v1** theme recreates the original `5h` and `7d` widget and is enabled by default. It adapts to the enabled providers with 10, 5, 4, 3, or 2 bar segments per provider. Themes are ordered object stacks. Create a surface, choose optional text or data-bar content, then independently configure its background as **None**, **Solid colour**, **Gradient**, or **Image**, along with its border, layout, and children. Gradients use Start and End colours; their angle runs clockwise, with `0` drawing left-to-right and `90` drawing top-to-bottom. Geometry, visibility, root size, progress values and segment counts, gradient angles, and paint opacity accept calculations with `+`, `-`, `*`, `/`, `%`, comparisons, `&&`, `||`, parentheses, and functions including `min`, `max`, `clamp`, `round`, `floor`, `ceil`, `abs`, `sqrt`, `pow`, `lerp`, and `if`. The code button converts a regular value to an expression and immediately opens the expression helper; use it again to reopen the helper. Hover an expression field to reveal its reset button.
 
 Every object supports **Freeform**, **Row**, and **Column** child layouts, whether its content is empty, text, an image, a shape, or a data bar. Row and column objects position rendered direct children automatically in scene order with configurable gap and cross-axis alignment. A child's X/Y values are offsets from its anchor, or optional fine offsets when its parent manages layout. `Render` accepts a boolean expression and removes false objects from layout; `Visibility` accepts an expression from 0–100 and fades an object without collapsing its space. Children are always clipped to their parent's bounds.
 
@@ -116,14 +120,14 @@ Use `show_context_menu("menu-id")` or `show_context_menu("Unique Menu Name")` in
 
 Solid-colour and gradient background transparency is controlled directly by each RGBA colour. Use `#00000000` for fully transparent, or change the final two digits for partial opacity.
 
-Data names use the same structure for `claude`, `codex`, and `antigravity`:
+Data names use the same structure for `claude`, `codex`, `antigravity`, `opencode`, and `cursor`:
 
 - `{provider}.session.percentage` and `{provider}.weekly.percentage`
 - `{provider}.session.remaining` and `{provider}.weekly.remaining`
 - `{provider}.{window}.reset.seconds`, `.minutes`, `.hours`, `.days`, and `.unix`
 - `{provider}.available`
 - `providers.count`
-- `providers.claude.enabled`, `providers.codex.enabled`, `providers.antigravity.enabled`, and `providers.opencode.enabled`
+- `providers.claude.enabled`, `providers.codex.enabled`, `providers.antigravity.enabled`, `providers.opencode.enabled`, and `providers.cursor.enabled`
 
 The `providers.*.enabled` values reflect the dashboard settings rather than temporary polling availability, so a provider error does not unexpectedly reflow the widget. For example, `ceil(10 / max(1, providers.count))` produces the classic adaptive segment count.
 
@@ -145,12 +149,13 @@ Use the dashboard's **Providers** section to choose what the widget displays:
 - **Codex** can be enabled alongside Claude Code or shown by itself
 - **Antigravity** can be enabled alongside the other providers or shown by itself as its own model column
 - **OpenCode** can be enabled alongside the other providers or shown by itself
+- **Cursor** can be enabled alongside the other providers or shown by itself
 
 When multiple models are shown, each model has its own usage bar and matching usage text color. Antigravity prefers Google's Gemini quota summary when available and falls back to model quota data when needed.
 
 ### System Tray Icons
 
-The default Classic theme includes separate Claude Code, Codex, Antigravity, and OpenCode tray-icon roots. Each root uses `providers.<provider>.enabled` as its Render expression, so only enabled providers are registered with Explorer. Clicking or double-clicking one toggles the `main` taskbar root's Render value, and right-clicking either a provider icon or the taskbar widget opens the built-in `classic-v1` context menu. A custom theme with no Tray Icon roots falls back to one persistent application icon using `src/icons/icon.ico`. When upgrading directly from v1.4.9, a saved `widget_visible: false` preference creates and selects a writable **Migrated Theme** copy with `main.render` set to `false`; user-selected custom themes are left unchanged.
+The default Classic theme includes separate Claude Code, Codex, Antigravity, OpenCode, and Cursor tray-icon roots. Each root uses `providers.<provider>.enabled` as its Render expression, so only enabled providers are registered with Explorer. Clicking or double-clicking one toggles the `main` taskbar root's Render value, and right-clicking either a provider icon or the taskbar widget opens the built-in `classic-v1` context menu. A custom theme with no Tray Icon roots falls back to one persistent application icon using `src/icons/icon.ico`. When upgrading directly from v1.4.9, a saved `widget_visible: false` preference creates and selects a writable **Migrated Theme** copy with `main.render` set to `false`; user-selected custom themes are left unchanged.
 
 Theme Studio's **Context Menus** page supports action items, submenus, separators, and non-clickable Text items. Labels on Text, action, and submenu items are live text templates, so they can show usage values, reset countdowns, provider state, or the app version. The **ƒx Values** helper inserts the same usage and formatting tokens available to theme text layers.
 
@@ -198,6 +203,7 @@ What the app reads:
 - If Codex is enabled, your local Codex credentials from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`
 - If Antigravity is enabled, your local Antigravity OAuth token from Windows Credential Manager target `gemini:antigravity`
 - If OpenCode is enabled, its dashboard workspace ID and auth cookie
+- If Cursor is enabled, its access token from Cursor's local `state.vscdb`, or `CURSOR_SESSION_TOKEN` when set
 
 OpenCode dashboard credentials supplied through a JSON config file are stored as plain text in that file. Protect it with the same care as a browser session cookie.
 
@@ -207,6 +213,7 @@ What the app sends over the network:
 - Requests to ChatGPT's Codex usage endpoint to read your Codex usage and rate-limit information, if Codex is enabled
 - Requests to Google's Cloud Code / Antigravity endpoints to read your Antigravity quota information, if Antigravity is enabled
 - Requests to the OpenCode workspace dashboard to read OpenCode Go usage, if OpenCode is enabled and dashboard credentials are configured
+- Requests to `cursor.com/api/usage-summary` to read Cursor plan usage, if Cursor is enabled
 - Requests to GitHub only if you use the app's update check / self-update feature
 - If proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` are set, those outbound requests may use that proxy
 
@@ -226,6 +233,7 @@ What it does **not** do:
 - It does not use a separate backend service
 - It does not collect analytics or telemetry
 - It does not upload your project files
+- It opens Cursor's SQLite database read-only and never modifies it
 - It does not directly edit your Codex credentials file
 
 Notes:

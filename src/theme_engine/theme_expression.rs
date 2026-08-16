@@ -317,7 +317,7 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     if parts.next().is_some()
         || !matches!(
             provider,
-            "active" | "claude" | "codex" | "antigravity" | "opencode"
+            "active" | "claude" | "codex" | "antigravity" | "opencode" | "cursor"
         )
         || !matches!(window, "session" | "weekly")
     {

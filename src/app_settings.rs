@@ -52,6 +52,8 @@ pub struct SettingsFile {
     show_antigravity: bool,
     #[serde(default)]
     show_opencode: bool,
+    #[serde(default)]
+    show_cursor: bool,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -77,6 +79,7 @@ impl Default for SettingsFile {
             show_codex: false,
             show_antigravity: false,
             show_opencode: false,
+            show_cursor: false,
             custom_theme_enabled: true,
             active_theme_path: None,
             dashboard_width: None,
@@ -150,6 +153,7 @@ impl SettingsFile {
             ProviderId::Codex => self.show_codex,
             ProviderId::Antigravity => self.show_antigravity,
             ProviderId::OpenCode => self.show_opencode,
+            ProviderId::Cursor => self.show_cursor,
         }
     }
 
@@ -159,6 +163,7 @@ impl SettingsFile {
             ProviderId::Codex => self.show_codex = enabled,
             ProviderId::Antigravity => self.show_antigravity = enabled,
             ProviderId::OpenCode => self.show_opencode = enabled,
+            ProviderId::Cursor => self.show_cursor = enabled,
         }
     }
 
@@ -339,6 +344,7 @@ mod tests {
             ProviderId::Codex,
             ProviderId::Antigravity,
             ProviderId::OpenCode,
+            ProviderId::Cursor,
         ]));
 
         let json = settings_json(&settings);
@@ -346,6 +352,7 @@ mod tests {
         assert_eq!(json["show_codex"], true);
         assert_eq!(json["show_antigravity"], true);
         assert_eq!(json["show_opencode"], true);
+        assert_eq!(json["show_cursor"], true);
 
         let decoded = decode_settings(&json.to_string()).unwrap();
         assert_eq!(decoded.enabled_providers(), settings.enabled_providers());

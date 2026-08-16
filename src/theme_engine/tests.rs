@@ -352,7 +352,7 @@ fn starter_theme_round_trips_and_validates() {
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring.
-    assert_eq!(segments, vec![10; 16]);
+    assert_eq!(segments, vec![10; 20]);
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -800,9 +800,14 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
             10,
         ),
         (
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Cursor])),
+            245,
+            10,
+        ),
+        (
             ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
-            471,
-            3,
+            545,
+            2,
         ),
     ] {
         assert_eq!(resolve_surface_size(&theme, 0, None, runtime), (width, 46));
@@ -877,7 +882,7 @@ fn starter_has_a_taskbar_widget_and_provider_tray_icons() {
         theme.surfaces[0].placement.reference.region,
         ReferenceRegion::SystemTray
     );
-    assert_eq!(theme.surfaces.len(), 5);
+    assert_eq!(theme.surfaces.len(), 6);
     assert!(theme.surfaces[1..]
         .iter()
         .all(|surface| surface.placement.nest == SurfaceNest::TrayIcon));
