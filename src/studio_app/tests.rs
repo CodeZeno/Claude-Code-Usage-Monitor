@@ -268,6 +268,7 @@ fn studio_preview_uses_cached_poll_failure_state_instead_of_stale_values() {
             },
             weekly: Default::default(),
             weekly_label: None,
+            ..Default::default()
         },
     )]));
     app.usage_poll_ok = false;

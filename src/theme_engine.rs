@@ -1321,6 +1321,22 @@ impl DataContext {
         self.insert(&format!("{name}.session.remaining"), 100.0 - session);
         self.insert(&format!("{name}.weekly.percentage"), weekly);
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
+        let monthly = usage.and_then(|usage| usage.monthly.as_ref());
+        if let Some(monthly) = monthly {
+            self.insert_string(&format!("{name}.monthly.label"), "30d");
+            self.insert(&format!("{name}.monthly.percentage"), monthly.percentage);
+            self.insert(
+                &format!("{name}.monthly.remaining"),
+                100.0 - monthly.percentage,
+            );
+        } else {
+            self.insert(&format!("{name}.monthly.percentage"), 0.0);
+            self.insert(&format!("{name}.monthly.remaining"), 100.0);
+        }
+        self.insert(
+            &format!("{name}.monthly.available"),
+            monthly.is_some() as u8 as f64,
+        );
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
         let reset_value = |reset: Option<std::time::SystemTime>| {
             let unix = reset
@@ -1337,9 +1353,12 @@ impl DataContext {
             reset_value(usage.and_then(|value| value.session.resets_at));
         let (weekly_unix, weekly_seconds) =
             reset_value(usage.and_then(|value| value.weekly.resets_at));
+        let (monthly_unix, monthly_seconds) =
+            reset_value(monthly.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
             ("session", session_unix, session_seconds),
             ("weekly", weekly_unix, weekly_seconds),
+            ("monthly", monthly_unix, monthly_seconds),
         ] {
             self.insert(&format!("{name}.{window}.reset.unix"), unix);
             self.insert(&format!("{name}.{window}.reset.seconds"), seconds);

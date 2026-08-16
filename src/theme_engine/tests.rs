@@ -294,6 +294,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
             },
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
+            ..Default::default()
         },
     )]);
     let ready = DataContext::from_usage_with_runtime(
@@ -463,6 +464,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
             },
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
+            ..Default::default()
         },
     )]);
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());
@@ -486,6 +488,47 @@ fn provider_specific_long_window_labels_are_available_to_templates() {
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());
     assert_eq!(format_template("{opencode.weekly.label}", &context), "30d");
     assert_eq!(format_template("{claude.weekly.label}", &context), "7d");
+}
+
+#[test]
+fn opencode_monthly_window_is_available_to_templates_when_present() {
+    let reset = std::time::SystemTime::now() + std::time::Duration::from_secs(1_713_621);
+    let usage = crate::models::AppUsageData::from_iter([(
+        ProviderId::OpenCode,
+        crate::models::UsageData {
+            weekly_label: Some("30d".into()),
+            monthly: Some(crate::models::UsageSection {
+                percentage: 43.0,
+                resets_at: Some(reset),
+            }),
+            ..Default::default()
+        },
+    )]);
+    let context = DataContext::from_usage(Some(&usage), &Canvas::default());
+    assert_eq!(
+        evaluate("opencode.monthly.percentage", &context).unwrap(),
+        43.0
+    );
+    assert_eq!(
+        evaluate("opencode.monthly.remaining", &context).unwrap(),
+        57.0
+    );
+    assert_eq!(
+        evaluate("opencode.monthly.available", &context).unwrap(),
+        1.0
+    );
+    assert_eq!(format_template("{opencode.monthly.label}", &context), "30d");
+    assert_eq!(
+        format_template("{opencode.monthly.percentage:0.0}%", &context),
+        "43.0%"
+    );
+    assert!(evaluate("opencode.monthly.reset.seconds", &context).unwrap() > 1_713_600.0);
+    // Providers without a monthly window expose safe zeros and an availability flag.
+    assert_eq!(evaluate("claude.monthly.available", &context).unwrap(), 0.0);
+    assert_eq!(
+        evaluate("claude.monthly.percentage", &context).unwrap(),
+        0.0
+    );
 }
 
 #[test]

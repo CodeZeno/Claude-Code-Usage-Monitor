@@ -129,6 +129,8 @@ Data names use the same structure for `claude`, `codex`, `antigravity`, `opencod
 - `providers.count`
 - `providers.claude.enabled`, `providers.codex.enabled`, `providers.antigravity.enabled`, `providers.opencode.enabled`, and `providers.cursor.enabled`
 
+The OpenCode Go provider additionally exposes its monthly window while it is available: `{opencode.monthly.percentage}`, `{opencode.monthly.remaining}`, `{opencode.monthly.label}` (`30d`), `{opencode.monthly.reset.*}`, and `{opencode.monthly.available}` (1 when monthly data is present, otherwise 0). The `weekly` bar keeps its automatic 7d/30d selection unchanged; use `{provider}.monthly.available` in a render expression to show monthly elements only when the dashboard reports a monthly window.
+
 The `providers.*.enabled` values reflect the dashboard settings rather than temporary polling availability, so a provider error does not unexpectedly reflow the widget. For example, `ceil(10 / max(1, providers.count))` produces the classic adaptive segment count.
 
 Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Canvas size is available as `canvas.width` and `canvas.height`.

@@ -18,6 +18,10 @@ pub struct UsageData {
     pub weekly: UsageSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_label: Option<String>,
+    /// Optional longer-window usage (e.g. the OpenCode Go monthly window).
+    /// Kept separate from `weekly` so themes can choose how to display it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monthly: Option<UsageSection>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -97,6 +101,10 @@ mod tests {
                 ProviderId::OpenCode,
                 UsageData {
                     weekly_label: Some("30d".into()),
+                    monthly: Some(UsageSection {
+                        percentage: 43.0,
+                        resets_at: None,
+                    }),
                     ..Default::default()
                 },
             ),
@@ -108,6 +116,7 @@ mod tests {
         assert!(json.get("claude_code").is_some());
         assert!(json.get("codex").is_some());
         assert_eq!(json["opencode"]["weekly_label"], "30d");
+        assert_eq!(json["opencode"]["monthly"]["percentage"], 43.0);
         assert!(json.get("claude").is_none());
 
         let decoded: AppUsageData = serde_json::from_value(json).unwrap();
