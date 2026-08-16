@@ -48,7 +48,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity Auth Error",
     antigravity_token_expired_body: "Open Antigravity and sign in again. After that, refresh or restart this app.",
     opencode_token_expired_title: "OpenCode Not Found",
-    opencode_token_expired_body: "Run OpenCode at least once so the local database exists, or set OPENCODE_GO_WORKSPACE_ID and OPENCODE_GO_AUTH_COOKIE for full subscription tracking. See the README. After that, refresh or restart this app.",
+    opencode_token_expired_body: "Set OPENCODE_GO_WORKSPACE_ID and OPENCODE_GO_AUTH_COOKIE for OpenCode Go usage tracking. See the README. After that, refresh or restart this app.",
     codex_window_title: "Codex Usage Monitor",
     antigravity_window_title: "Antigravity Usage Monitor",
     opencode_window_title: "OpenCode Usage Monitor",

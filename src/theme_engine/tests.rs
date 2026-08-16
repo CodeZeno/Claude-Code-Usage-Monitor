@@ -475,6 +475,20 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
 }
 
 #[test]
+fn provider_specific_long_window_labels_are_available_to_templates() {
+    let usage = crate::models::AppUsageData::from_iter([(
+        ProviderId::OpenCode,
+        crate::models::UsageData {
+            weekly_label: Some("30d".into()),
+            ..Default::default()
+        },
+    )]);
+    let context = DataContext::from_usage(Some(&usage), &Canvas::default());
+    assert_eq!(format_template("{opencode.weekly.label}", &context), "30d");
+    assert_eq!(format_template("{claude.weekly.label}", &context), "7d");
+}
+
+#[test]
 fn starter_theme_renders_transparent_pixels_at_declared_size() {
     let theme = ThemeDocument::starter();
     let rendered = render_theme(&theme, None);
@@ -780,6 +794,16 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
         (ThemeRuntime::new(true, false, true), 285, 5),
         (ThemeRuntime::new(false, true, true), 285, 5),
         (ThemeRuntime::new(true, true, true), 375, 4),
+        (
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::OpenCode])),
+            245,
+            10,
+        ),
+        (
+            ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
+            471,
+            3,
+        ),
     ] {
         assert_eq!(resolve_surface_size(&theme, 0, None, runtime), (width, 46));
         let (canvas_width, canvas_height) = resolve_surface_size(&theme, 0, None, runtime);

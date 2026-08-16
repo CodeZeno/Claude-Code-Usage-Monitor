@@ -338,12 +338,14 @@ mod tests {
         settings.set_enabled_providers(ProviderSet::from_enabled([
             ProviderId::Codex,
             ProviderId::Antigravity,
+            ProviderId::OpenCode,
         ]));
 
         let json = settings_json(&settings);
         assert_eq!(json["show_claude_code"], false);
         assert_eq!(json["show_codex"], true);
         assert_eq!(json["show_antigravity"], true);
+        assert_eq!(json["show_opencode"], true);
 
         let decoded = decode_settings(&json.to_string()).unwrap();
         assert_eq!(decoded.enabled_providers(), settings.enabled_providers());

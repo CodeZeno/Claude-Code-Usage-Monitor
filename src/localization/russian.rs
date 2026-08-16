@@ -192,7 +192,7 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Ошибка авторизации Antigravity",
     antigravity_token_expired_body: "Откройте Antigravity и войдите снова. После этого обновите или перезапустите приложение.",
     opencode_token_expired_title: "OpenCode не найден",
-    opencode_token_expired_body: "Запустите OpenCode хотя бы раз, чтобы существовала локальная база данных, либо задайте OPENCODE_GO_WORKSPACE_ID и OPENCODE_GO_AUTH_COOKIE для полного отслеживания подписки. См. README. После этого обновите или перезапустите приложение.",
+    opencode_token_expired_body: "Задайте OPENCODE_GO_WORKSPACE_ID и OPENCODE_GO_AUTH_COOKIE для отслеживания использования OpenCode Go. См. README. После этого обновите или перезапустите приложение.",
     codex_window_title: "Монитор использования Codex",
     antigravity_window_title: "Монитор использования Antigravity",
     opencode_window_title: "Монитор использования OpenCode",

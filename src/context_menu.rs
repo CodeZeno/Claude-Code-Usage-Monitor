@@ -667,6 +667,9 @@ mod tests {
         assert!(menu.validate().is_empty());
         assert!(menu.items.iter().any(|item| item.id == "refresh"));
         assert!(menu.items.iter().any(|item| item.id == "update-frequency"));
+        assert!(serde_json::to_string(&menu)
+            .unwrap()
+            .contains("provider-opencode"));
         assert!(menu.items.iter().any(|item| {
             item.id == "toggle-widget"
                 && matches!(

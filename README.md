@@ -34,7 +34,7 @@ Codex support is optional. To show Codex usage, install and sign in to the Codex
 
 Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable it in the dashboard's **Providers** section.
 
-OpenCode Go support is optional. Install OpenCode, connect an OpenCode Go account, and enable **OpenCode** in the dashboard's **Providers** section. The monitor prefers server-side dashboard usage and falls back to the local OpenCode database when dashboard credentials are not configured.
+OpenCode Go support is optional. Install OpenCode, connect an OpenCode Go account, and enable **OpenCode** in the dashboard's **Providers** section. The monitor reads the server-side 5-hour, weekly, and monthly usage windows from the OpenCode dashboard.
 
 For server-side usage, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
 
@@ -46,8 +46,6 @@ For server-side usage, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOK
 ```
 
 The workspace ID comes from `https://opencode.ai/workspace/<workspace-id>/go`. The auth cookie comes from an authenticated `opencode.ai` browser session. `OPENCODE_GO_CONFIG_FILE` can point to a different config file. Compatible `opencode-bar` and `opencode-quota` config locations are also detected.
-
-Without dashboard credentials, the monitor reads the OpenCode database in read-only mode from `OPENCODE_DB`, `%USERPROFILE%\.local\share\opencode\opencode.db`, or `%APPDATA%\opencode\opencode.db`. Local totals cover this machine only.
 
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
@@ -199,7 +197,9 @@ What the app reads:
 - If needed, the same credentials file inside an installed WSL distro
 - If Codex is enabled, your local Codex credentials from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`
 - If Antigravity is enabled, your local Antigravity OAuth token from Windows Credential Manager target `gemini:antigravity`
-- If OpenCode is enabled, its local SQLite usage database and optional dashboard workspace ID/auth cookie
+- If OpenCode is enabled, its dashboard workspace ID and auth cookie
+
+OpenCode dashboard credentials supplied through a JSON config file are stored as plain text in that file. Protect it with the same care as a browser session cookie.
 
 What the app sends over the network:
 

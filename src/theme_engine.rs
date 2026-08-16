@@ -1306,6 +1306,12 @@ impl DataContext {
     }
 
     fn insert_provider(&mut self, name: &str, usage: Option<&crate::models::UsageData>) {
+        let weekly_label = usage
+            .and_then(|usage| usage.weekly_label.as_deref())
+            .or_else(|| self.get_string("i18n.weekly_window"))
+            .unwrap_or("7d")
+            .to_string();
+        self.insert_string(&format!("{name}.weekly.label"), weekly_label);
         let (session, weekly) = usage
             .map(|usage| (usage.session.percentage, usage.weekly.percentage))
             .unwrap_or((0.0, 0.0));

@@ -93,6 +93,13 @@ mod tests {
         let data: AppUsageData = [
             (ProviderId::Claude, UsageData::default()),
             (ProviderId::Codex, UsageData::default()),
+            (
+                ProviderId::OpenCode,
+                UsageData {
+                    weekly_label: Some("30d".into()),
+                    ..Default::default()
+                },
+            ),
         ]
         .into_iter()
         .collect();
@@ -100,6 +107,7 @@ mod tests {
         let json = serde_json::to_value(&data).unwrap();
         assert!(json.get("claude_code").is_some());
         assert!(json.get("codex").is_some());
+        assert_eq!(json["opencode"]["weekly_label"], "30d");
         assert!(json.get("claude").is_none());
 
         let decoded: AppUsageData = serde_json::from_value(json).unwrap();
@@ -113,6 +121,7 @@ mod tests {
                 "claude_code": null,
                 "codex": {"session":{"percentage":42.0,"resets_at":null},"weekly":{"percentage":0.0,"resets_at":null}},
                 "antigravity": null
+                ,"opencode": null
             }"#,
         )
         .unwrap();
@@ -123,5 +132,6 @@ mod tests {
             42.0
         );
         assert!(decoded.get(ProviderId::Antigravity).is_none());
+        assert!(decoded.get(ProviderId::OpenCode).is_none());
     }
 }

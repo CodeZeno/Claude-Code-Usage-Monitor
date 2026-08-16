@@ -188,9 +188,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity 驗證錯誤",
     antigravity_token_expired_body: "請開啟 Antigravity 並重新登入。完成後，請重新整理或重新啟動此應用程式。",
     opencode_token_expired_title: "找不到 OpenCode",
-    opencode_token_expired_body: "請至少執行一次 OpenCode 以便建立本機資料庫，或設定 OPENCODE_GO_WORKSPACE_ID 和 OPENCODE_GO_AUTH_COOKIE 以進行完整的訂閱追蹤。請參閱 README。完成後，請重新整理或重新啟動此應用程式。",
+    opencode_token_expired_body: "請設定 OPENCODE_GO_WORKSPACE_ID 和 OPENCODE_GO_AUTH_COOKIE 以追蹤 OpenCode Go 使用量。請參閱 README，然後重新整理或重新啟動此應用程式。",
     codex_window_title: "Codex 使用量監控",
     antigravity_window_title: "Antigravity 使用量監控",
     opencode_window_title: "OpenCode 使用量監控",
-    second_suffix: "s",
+    second_suffix: "秒",
 };

@@ -192,9 +192,9 @@ pub(super) const STRINGS: Strings = Strings {
     antigravity_token_expired_title: "Antigravity 認証エラー",
     antigravity_token_expired_body: "Antigravity を開いて再度サインインしてください。その後、このアプリを更新するか再起動してください。",
     opencode_token_expired_title: "OpenCode が見つかりません",
-    opencode_token_expired_body: "ローカル データベースが存在するように OpenCode を少なくとも 1 回実行するか、完全なサブスクリプション追跡のために OPENCODE_GO_WORKSPACE_ID と OPENCODE_GO_AUTH_COOKIE を設定してください。README を参照。その後、このアプリを更新するか再起動してください。",
+    opencode_token_expired_body: "OpenCode Go の使用量を追跡するには、OPENCODE_GO_WORKSPACE_ID と OPENCODE_GO_AUTH_COOKIE を設定してください。README を参照し、その後このアプリを更新または再起動してください。",
     codex_window_title: "Codex 使用量モニター",
     antigravity_window_title: "Antigravity 使用量モニター",
     opencode_window_title: "OpenCode 使用量モニター",
-    second_suffix: "s",
+    second_suffix: "秒",
 };
