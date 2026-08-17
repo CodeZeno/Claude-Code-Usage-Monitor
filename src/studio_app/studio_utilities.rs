@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn languages(language: LanguageId) -> [(&'static str, &'static str); 12] {
+pub(super) fn languages(language: LanguageId) -> [(&'static str, &'static str); 13] {
     [
         ("system", language.text("System default")),
         ("en", LanguageId::English.native_name()),
@@ -14,6 +14,7 @@ pub(super) fn languages(language: LanguageId) -> [(&'static str, &'static str); 
         ("zh-CN", LanguageId::SimplifiedChinese.native_name()),
         ("ru", LanguageId::Russian.native_name()),
         ("pt-BR", LanguageId::PortugueseBrazil.native_name()),
+        ("tr", LanguageId::Turkish.native_name()),
     ]
 }
 pub(super) fn language_name(language: LanguageId, code: &str) -> &str {

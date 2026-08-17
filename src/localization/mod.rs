@@ -14,6 +14,7 @@ mod russian;
 mod simplified_chinese;
 mod spanish;
 mod traditional_chinese;
+mod turkish;
 
 use windows::core::PWSTR;
 use windows::Win32::Globalization::{
@@ -36,10 +37,11 @@ pub enum LanguageId {
     SimplifiedChinese,
     Russian,
     PortugueseBrazil,
+    Turkish,
 }
 
 impl LanguageId {
-    pub const ALL: [LanguageId; 11] = [
+    pub const ALL: [LanguageId; 12] = [
         LanguageId::English,
         LanguageId::Dutch,
         LanguageId::Spanish,
@@ -51,6 +53,7 @@ impl LanguageId {
         LanguageId::SimplifiedChinese,
         LanguageId::Russian,
         LanguageId::PortugueseBrazil,
+        LanguageId::Turkish,
     ];
 
     pub fn code(self) -> &'static str {
@@ -66,6 +69,7 @@ impl LanguageId {
             Self::SimplifiedChinese => "zh-CN",
             Self::Russian => "ru",
             Self::PortugueseBrazil => "pt-BR",
+            Self::Turkish => "tr",
         }
     }
 
@@ -82,6 +86,7 @@ impl LanguageId {
             Self::SimplifiedChinese => "简体中文",
             Self::Russian => "Русский",
             Self::PortugueseBrazil => "Português (Brasil)",
+            Self::Turkish => "Türkçe",
         }
     }
 
@@ -98,6 +103,7 @@ impl LanguageId {
             Self::SimplifiedChinese => simplified_chinese::STRINGS,
             Self::Russian => russian::STRINGS,
             Self::PortugueseBrazil => portuguese_brazil::STRINGS,
+            Self::Turkish => turkish::STRINGS,
         }
     }
 
@@ -139,6 +145,7 @@ impl LanguageId {
             Self::SimplifiedChinese => simplified_chinese::text(english),
             Self::Russian => russian::text(english),
             Self::PortugueseBrazil => portuguese_brazil::text(english),
+            Self::Turkish => turkish::text(english),
         }
     }
 
@@ -155,6 +162,7 @@ impl LanguageId {
             Self::SimplifiedChinese => simplified_chinese::UPDATE_VIA_WINGET_LABEL,
             Self::Russian => russian::UPDATE_VIA_WINGET_LABEL,
             Self::PortugueseBrazil => portuguese_brazil::UPDATE_VIA_WINGET_LABEL,
+            Self::Turkish => turkish::UPDATE_VIA_WINGET_LABEL,
         }
     }
 
@@ -209,6 +217,7 @@ impl LanguageId {
             }
             "ru" => Some(Self::Russian),
             "pt" => Some(Self::PortugueseBrazil),
+            "tr" => Some(Self::Turkish),
             _ => None,
         }
     }
@@ -440,5 +449,27 @@ mod tests {
             LanguageId::Japanese.text("A future specialist label"),
             "A future specialist label"
         );
+    }
+
+    #[test]
+    fn supported_locale_codes_are_recognized() {
+        let locales = [
+            ("en-US", LanguageId::English),
+            ("nl-NL", LanguageId::Dutch),
+            ("es-ES", LanguageId::Spanish),
+            ("fr-FR", LanguageId::French),
+            ("de-DE", LanguageId::German),
+            ("ja-JP", LanguageId::Japanese),
+            ("ko-KR", LanguageId::Korean),
+            ("zh-TW", LanguageId::TraditionalChinese),
+            ("zh-CN", LanguageId::SimplifiedChinese),
+            ("ru-RU", LanguageId::Russian),
+            ("pt-BR", LanguageId::PortugueseBrazil),
+            ("tr-TR", LanguageId::Turkish),
+        ];
+
+        for (code, expected) in locales {
+            assert_eq!(LanguageId::from_code(code), Some(expected), "{code}");
+        }
     }
 }

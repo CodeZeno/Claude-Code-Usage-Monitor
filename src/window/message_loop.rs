@@ -418,7 +418,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 | IDM_LANG_TRADITIONAL_CHINESE
                 | IDM_LANG_SIMPLIFIED_CHINESE
                 | IDM_LANG_RUSSIAN
-                | IDM_LANG_PORTUGUESE_BRAZIL => {
+                | IDM_LANG_PORTUGUESE_BRAZIL
+                | IDM_LANG_TURKISH => {
                     let language_override = match id {
                         IDM_LANG_SYSTEM => None,
                         IDM_LANG_ENGLISH => Some(LanguageId::English),
@@ -432,6 +433,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                         IDM_LANG_SIMPLIFIED_CHINESE => Some(LanguageId::SimplifiedChinese),
                         IDM_LANG_RUSSIAN => Some(LanguageId::Russian),
                         IDM_LANG_PORTUGUESE_BRAZIL => Some(LanguageId::PortugueseBrazil),
+                        IDM_LANG_TURKISH => Some(LanguageId::Turkish),
                         _ => None,
                     };
                     {

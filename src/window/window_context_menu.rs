@@ -269,6 +269,7 @@ pub(super) fn execute_context_menu_action(
                     LanguageId::SimplifiedChinese => IDM_LANG_SIMPLIFIED_CHINESE,
                     LanguageId::Russian => IDM_LANG_RUSSIAN,
                     LanguageId::PortugueseBrazil => IDM_LANG_PORTUGUESE_BRAZIL,
+                    LanguageId::Turkish => IDM_LANG_TURKISH,
                 })
             }
         }
