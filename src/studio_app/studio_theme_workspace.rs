@@ -1224,13 +1224,15 @@ impl StudioApp {
                     .size(16.0)
                     .strong(),
             );
-            crate::ui::components::zoom::zoom_control(
+            if crate::ui::components::zoom::zoom_control(
                 ui,
                 &mut self.zoom,
-                MIN_CANVAS_ZOOM..=MAX_CANVAS_ZOOM,
+                CANVAS_ZOOM_LEVELS,
                 1.0,
                 language,
-            );
+            ) {
+                self.preview_pan = egui::Vec2::ZERO;
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if self.dirty {
                     ui.colored_label(
@@ -1281,27 +1283,19 @@ impl StudioApp {
                 &rgba,
             );
             match self.preview.as_mut() {
-                Some(texture) => texture.set(image, egui::TextureOptions::LINEAR),
+                Some(texture) => texture.set(image, egui::TextureOptions::NEAREST),
                 None => {
                     self.preview = Some(ui.ctx().load_texture(
                         "theme-preview",
                         image,
-                        egui::TextureOptions::LINEAR,
+                        egui::TextureOptions::NEAREST,
                     ))
                 }
             }
             self.preview_dirty = false;
         }
         let available = ui.available_size();
-        let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click());
-        if response.hovered() {
-            let scroll_delta = ui.input(|input| input.smooth_scroll_delta().y);
-            if scroll_delta.abs() > f32::EPSILON {
-                self.zoom = (self.zoom * (scroll_delta * 0.002).exp())
-                    .clamp(MIN_CANVAS_ZOOM, MAX_CANVAS_ZOOM);
-                ui.ctx().request_repaint();
-            }
-        }
+        let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(13, 14, 17));
         let cell = 16.0;
@@ -1329,8 +1323,41 @@ impl StudioApp {
             let fit_factor = (rect.width() / texture_size.x)
                 .min(rect.height() / texture_size.y)
                 .min(1.0);
-            let size = texture_size * fit_factor * self.zoom;
-            let image_rect = egui::Rect::from_center_size(rect.center(), size);
+            let mut size = texture_size * fit_factor * self.zoom;
+            let mut center = clamp_preview_center(rect, size, rect.center() + self.preview_pan);
+
+            if response.hovered() {
+                let scroll_delta = ui.input(|input| {
+                    input
+                        .events
+                        .iter()
+                        .filter_map(|event| match event {
+                            egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+                            _ => None,
+                        })
+                        .sum::<f32>()
+                });
+                let previous_zoom = self.zoom;
+                if crate::ui::components::zoom::step_zoom(
+                    &mut self.zoom,
+                    CANVAS_ZOOM_LEVELS,
+                    scroll_delta,
+                ) {
+                    if let Some(pointer) = response.hover_pos() {
+                        center =
+                            preview_center_after_zoom(center, pointer, previous_zoom, self.zoom);
+                    }
+                    size = texture_size * fit_factor * self.zoom;
+                    ui.ctx().request_repaint();
+                }
+            }
+
+            if response.dragged_by(egui::PointerButton::Primary) {
+                center += ui.input(|input| input.pointer.delta());
+            }
+            center = clamp_preview_center(rect, size, center);
+            self.preview_pan = center - rect.center();
+            let image_rect = egui::Rect::from_center_size(center, size);
             painter.image(
                 texture.id(),
                 image_rect,
@@ -1338,7 +1365,14 @@ impl StudioApp {
                 egui::Color32::WHITE,
             );
             self.draw_scene_hover_outline(ui, image_rect, surface_index);
-            self.handle_preview_mouse(ui, &response, image_rect, surface_index);
+            if response.dragged_by(egui::PointerButton::Primary) {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+            } else {
+                if response.hovered() {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
+                self.handle_preview_mouse(ui, &response, image_rect, surface_index);
+            }
         }
     }
 
@@ -2459,5 +2493,84 @@ impl StudioApp {
             ),
         );
         self.selection = Selection::Surface(index);
+    }
+}
+
+fn preview_center_after_zoom(
+    center: egui::Pos2,
+    pointer: egui::Pos2,
+    previous_zoom: f32,
+    next_zoom: f32,
+) -> egui::Pos2 {
+    if !previous_zoom.is_finite() || previous_zoom <= 0.0 || !next_zoom.is_finite() {
+        return center;
+    }
+    pointer + (center - pointer) * (next_zoom / previous_zoom)
+}
+
+fn clamp_preview_center(
+    viewport: egui::Rect,
+    image_size: egui::Vec2,
+    center: egui::Pos2,
+) -> egui::Pos2 {
+    const MINIMUM_VISIBLE_POINTS: f32 = 32.0;
+
+    fn clamp_axis(start: f32, end: f32, image_length: f32, value: f32) -> f32 {
+        let half = image_length.max(0.0) / 2.0;
+        let (minimum, maximum) = if image_length <= end - start {
+            (start + half, end - half)
+        } else {
+            let visible = MINIMUM_VISIBLE_POINTS
+                .min(image_length)
+                .min((end - start).max(0.0));
+            (start + visible - half, end - visible + half)
+        };
+        value.clamp(minimum, maximum)
+    }
+
+    egui::pos2(
+        clamp_axis(viewport.left(), viewport.right(), image_size.x, center.x),
+        clamp_axis(viewport.top(), viewport.bottom(), image_size.y, center.y),
+    )
+}
+
+#[cfg(test)]
+mod preview_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn zoom_keeps_the_point_under_the_pointer_stationary() {
+        let center = egui::pos2(100.0, 80.0);
+        let pointer = egui::pos2(60.0, 50.0);
+        let next = preview_center_after_zoom(center, pointer, 2.0, 4.0);
+
+        assert_eq!(next, egui::pos2(140.0, 110.0));
+        assert_eq!((pointer - center) / 2.0, (pointer - next) / 4.0);
+    }
+
+    #[test]
+    fn small_previews_remain_fully_inside_the_viewport() {
+        let viewport = egui::Rect::from_min_size(egui::pos2(10.0, 20.0), egui::vec2(200.0, 100.0));
+        let size = egui::vec2(80.0, 40.0);
+
+        assert_eq!(
+            clamp_preview_center(viewport, size, egui::pos2(-100.0, 500.0)),
+            egui::pos2(50.0, 100.0)
+        );
+    }
+
+    #[test]
+    fn oversized_previews_always_leave_a_grabbable_area_visible() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0));
+        let size = egui::vec2(300.0, 160.0);
+
+        assert_eq!(
+            clamp_preview_center(viewport, size, egui::pos2(-500.0, -500.0)),
+            egui::pos2(-118.0, -48.0)
+        );
+        assert_eq!(
+            clamp_preview_center(viewport, size, egui::pos2(500.0, 500.0)),
+            egui::pos2(318.0, 148.0)
+        );
     }
 }

@@ -89,8 +89,8 @@ use crate::ui::components::tree_row::{
 };
 use crate::ui::theme::{accent, configure_style, menu_surface, muted};
 use crate::ui::tokens::{
-    CONTROL_HEIGHT, DEFAULT_DASHBOARD_HEIGHT, DEFAULT_DASHBOARD_WIDTH, DEFAULT_INSPECTOR_WIDTH,
-    DEFAULT_MENU_WIDTH, DEFAULT_SCENE_WIDTH, MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM,
+    CANVAS_ZOOM_LEVELS, CONTROL_HEIGHT, DEFAULT_DASHBOARD_HEIGHT, DEFAULT_DASHBOARD_WIDTH,
+    DEFAULT_INSPECTOR_WIDTH, DEFAULT_MENU_WIDTH, DEFAULT_SCENE_WIDTH,
 };
 
 const DEFAULT_LIVE_APPLY: bool = false;
@@ -453,6 +453,7 @@ struct StudioApp {
     dirty: bool,
     live_apply: bool,
     zoom: f32,
+    preview_pan: egui::Vec2,
     undo_stack: Vec<ThemeDocument>,
     redo_stack: Vec<ThemeDocument>,
     history_snapshot: ThemeDocument,

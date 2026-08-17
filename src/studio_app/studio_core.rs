@@ -86,6 +86,7 @@ impl StudioApp {
             dirty: false,
             live_apply: DEFAULT_LIVE_APPLY,
             zoom: 1.0,
+            preview_pan: egui::Vec2::ZERO,
             undo_stack: Vec::new(),
             redo_stack: Vec::new(),
             history_snapshot,

@@ -20,8 +20,7 @@ pub(crate) const INSPECTOR_LABEL_WIDTH: f32 = 104.0;
 pub(crate) const INSPECTOR_RIGHT_GUTTER: f32 = 18.0;
 pub(crate) const INSPECTOR_CONTROL_MAX_WIDTH: f32 = 180.0;
 
-pub(crate) const MIN_CANVAS_ZOOM: f32 = 0.25;
-pub(crate) const MAX_CANVAS_ZOOM: f32 = 4.0;
+pub(crate) const CANVAS_ZOOM_LEVELS: &[f32] = &[0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
 pub(crate) const DEFAULT_MENU_WIDTH: f32 = 150.0;
 pub(crate) const DEFAULT_SCENE_WIDTH: f32 = 240.0;
 pub(crate) const DEFAULT_CANVAS_WIDTH: f32 = 330.0;
