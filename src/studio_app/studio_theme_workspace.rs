@@ -500,7 +500,7 @@ impl StudioApp {
             TextTemplateHelperTarget::ContextMenu(_) => DataContext::from_usage_with_runtime(
                 self.usage.as_ref(),
                 &Canvas::default(),
-                self.theme_runtime(),
+                self.selected_theme_runtime(),
             ),
         };
         let action = show_text_helper(
@@ -859,11 +859,12 @@ impl StudioApp {
         let Some(surface) = self.theme.surfaces.get(surface_index) else {
             return DataContext::default();
         };
+        let runtime = self.theme_runtime_for_surface(surface_index);
         let (width, height) = theme_engine::resolve_surface_size(
             &self.theme,
             surface_index,
             self.usage.as_ref(),
-            self.theme_runtime(),
+            runtime,
         );
         let canvas = Canvas {
             width,
@@ -877,7 +878,7 @@ impl StudioApp {
                 | theme_engine::LayerBackground::Image { .. } => Paint::default(),
             },
         };
-        DataContext::from_usage_with_runtime(self.usage.as_ref(), &canvas, self.theme_runtime())
+        DataContext::from_usage_with_runtime(self.usage.as_ref(), &canvas, runtime)
     }
 
     pub(super) fn scene_tree(&mut self, ui: &mut egui::Ui, read_only: bool) {
@@ -924,7 +925,7 @@ impl StudioApp {
                         &self.theme,
                         surface_index,
                         self.usage.as_ref(),
-                        self.theme_runtime(),
+                        self.theme_runtime_for_surface(surface_index),
                     );
                     let preview_size = egui::vec2(preview_width as f32, preview_height as f32);
                     let roots: Vec<usize> = surface
@@ -1111,7 +1112,7 @@ impl StudioApp {
             surface,
             index,
             self.usage.as_ref(),
-            self.theme_runtime(),
+            self.theme_runtime_for_surface(surface),
         )
         .map(|(_, _, width, height)| egui::vec2(width as f32, height as f32))
         .unwrap_or_else(|| egui::vec2(24.0, 24.0));
@@ -1245,7 +1246,7 @@ impl StudioApp {
             }
         };
         if self.preview_dirty {
-            let runtime = self.theme_runtime();
+            let runtime = self.theme_runtime_for_surface(surface_index);
             let preview_theme = theme_engine::apply_mouse_action_overrides(
                 &self.theme,
                 &self.preview_mouse_overrides,
@@ -1352,12 +1353,9 @@ impl StudioApp {
         }
         let theme =
             theme_engine::apply_mouse_action_overrides(&self.theme, &self.preview_mouse_overrides);
-        let (width, height) = theme_engine::resolve_surface_size(
-            &theme,
-            surface_index,
-            self.usage.as_ref(),
-            self.theme_runtime(),
-        );
+        let runtime = self.theme_runtime_for_surface(surface_index);
+        let (width, height) =
+            theme_engine::resolve_surface_size(&theme, surface_index, self.usage.as_ref(), runtime);
         let x = (pointer.x - canvas_rect.left()) as f64 / canvas_rect.width().max(1.0) as f64
             * width as f64;
         let y = (pointer.y - canvas_rect.top()) as f64 / canvas_rect.height().max(1.0) as f64
@@ -1368,7 +1366,7 @@ impl StudioApp {
             x,
             y,
             self.usage.as_ref(),
-            self.theme_runtime(),
+            runtime,
         )
     }
 
@@ -1384,13 +1382,14 @@ impl StudioApp {
         else {
             return false;
         };
+        let runtime = self.theme_runtime_for_surface(surface_index);
         match theme_engine::execute_mouse_actions(
             &self.theme,
             surface_index,
             object_id,
             &source,
             self.usage.as_ref(),
-            self.theme_runtime(),
+            runtime,
             &mut self.preview_mouse_overrides,
         ) {
             Ok(_) => {
@@ -1501,12 +1500,13 @@ impl StudioApp {
             Selection::Object(hovered_surface, object_index)
                 if hovered_surface == surface_index =>
             {
+                let runtime = self.theme_runtime_for_surface(surface_index);
                 let Some((x, y, width, height)) = theme_engine::resolve_object_bounds_with_runtime(
                     &self.theme,
                     surface_index,
                     object_index,
                     self.usage.as_ref(),
-                    self.theme_runtime(),
+                    runtime,
                 ) else {
                     return;
                 };
@@ -1514,7 +1514,7 @@ impl StudioApp {
                     &self.theme,
                     surface_index,
                     self.usage.as_ref(),
-                    self.theme_runtime(),
+                    runtime,
                 );
                 let sx = canvas_rect.width() / canvas_width.max(1) as f32;
                 let sy = canvas_rect.height() / canvas_height.max(1) as f32;

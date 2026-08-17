@@ -131,7 +131,7 @@ Data names use the same structure for `claude`, `codex`, `antigravity`, `opencod
 
 The `providers.*.enabled` values reflect the dashboard settings rather than temporary polling availability, so a provider error does not unexpectedly reflow the widget. For example, `ceil(10 / max(1, providers.count))` produces the classic adaptive segment count.
 
-Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Canvas size is available as `canvas.width` and `canvas.height`.
+Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Canvas size is available as `canvas.width` and `canvas.height`. The selected native host is available as `host.width` and `host.height` in 96-DPI logical pixels, so a taskbar root can use an expression such as `min(46, host.height)`.
 
 The application version is available as the text value `{app.version}`. Numeric expressions can use `app.version.major`, `app.version.minor`, and `app.version.patch`.
 

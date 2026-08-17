@@ -21,6 +21,17 @@ impl StudioApp {
             .with_language(language)
     }
 
+    pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {
+        crate::window::theme_runtime_for_surface(&self.theme, surface_index, self.theme_runtime())
+    }
+
+    pub(super) fn selected_theme_runtime(&self) -> ThemeRuntime {
+        let surface_index = match self.selection {
+            Selection::Surface(index) | Selection::Object(index, _) => index,
+        };
+        self.theme_runtime_for_surface(surface_index)
+    }
+
     pub(super) fn new(
         context: &eframe::CreationContext<'_>,
         owner: isize,

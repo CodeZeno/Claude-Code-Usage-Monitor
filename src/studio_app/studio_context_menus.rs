@@ -542,7 +542,7 @@ impl StudioApp {
             );
         });
         ui.add_space(10.0);
-        let runtime = self.theme_runtime();
+        let runtime = self.selected_theme_runtime();
         let context =
             DataContext::from_usage_with_runtime(self.usage.as_ref(), &Canvas::default(), runtime);
         let effective_theme =
@@ -678,7 +678,7 @@ impl StudioApp {
         let label_context = DataContext::from_usage_with_runtime(
             self.usage.as_ref(),
             &Canvas::default(),
-            self.theme_runtime(),
+            self.selected_theme_runtime(),
         );
 
         if read_only {

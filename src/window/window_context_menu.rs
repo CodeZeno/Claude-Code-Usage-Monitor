@@ -57,11 +57,12 @@ pub(super) fn context_menu_data_context(origin: Option<&(usize, String)>) -> Dat
     let Some(state) = state.as_ref() else {
         return DataContext::from_usage(None, &Canvas::default());
     };
-    let runtime = theme_runtime_from_state(state);
+    let mut runtime = theme_runtime_from_state(state);
     let mut canvas = Canvas::default();
     if let Some(theme) = effective_theme_from_state(state) {
         let surface_index = origin.map_or(0, |(surface_index, _)| *surface_index);
         if theme.surfaces.get(surface_index).is_some() {
+            runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
             let (width, height) = theme_engine::resolve_surface_size(
                 &theme,
                 surface_index,
@@ -151,11 +152,16 @@ pub(super) fn context_menu_action_flags(
                     &state.mouse_action_overrides,
                 );
                 context_menu_widget_origin(&effective).map(|(surface_index, _)| {
+                    let runtime = theme_runtime_for_surface(
+                        &effective,
+                        surface_index,
+                        theme_runtime_from_state(state),
+                    );
                     theme_engine::surface_should_render(
                         &effective,
                         surface_index,
                         state.data.as_ref(),
-                        theme_runtime_from_state(state),
+                        runtime,
                     )
                 })
             })
@@ -182,11 +188,16 @@ pub(super) fn context_menu_action_flags(
                     .iter()
                     .position(|surface| surface.id.eq_ignore_ascii_case(target))
                     .map(|surface_index| {
+                        let runtime = theme_runtime_for_surface(
+                            &effective,
+                            surface_index,
+                            theme_runtime_from_state(state),
+                        );
                         theme_engine::surface_should_render(
                             &effective,
                             surface_index,
                             state.data.as_ref(),
-                            theme_runtime_from_state(state),
+                            runtime,
                         )
                     })
             })

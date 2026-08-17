@@ -7,12 +7,9 @@ pub(super) fn position_at_taskbar() {
         state.as_ref().and_then(|s| {
             if s.custom_theme_enabled {
                 effective_theme_from_state(s).map(|mut theme| {
-                    let (width, height) = theme_engine::resolve_surface_size(
-                        &theme,
-                        0,
-                        s.data.as_ref(),
-                        theme_runtime_from_state(s),
-                    );
+                    let runtime = theme_runtime_for_surface(&theme, 0, theme_runtime_from_state(s));
+                    let (width, height) =
+                        theme_engine::resolve_surface_size(&theme, 0, s.data.as_ref(), runtime);
                     theme.canvas.width = width;
                     theme.canvas.height = height;
                     let scale = theme_surface_scale(&theme, 0);
@@ -377,12 +374,14 @@ pub(super) fn sync_theme_window_visibility() {
                 let _ = ShowWindow(hwnd, SW_HIDE);
                 continue;
             }
-            let should_show =
-                theme_engine::surface_should_render(&theme, surface_index, data.as_ref(), runtime)
-                    && (nest != SurfaceNest::Floating
-                        || !foreground_is_fullscreen_on_display(
-                            surface.placement.reference.display,
-                        ));
+            let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
+            let should_show = theme_engine::surface_should_render(
+                &theme,
+                surface_index,
+                data.as_ref(),
+                surface_runtime,
+            ) && (nest != SurfaceNest::Floating
+                || !foreground_is_fullscreen_on_display(surface.placement.reference.display));
             if should_show {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
                 if nest == SurfaceNest::Floating {

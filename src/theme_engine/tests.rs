@@ -228,6 +228,19 @@ fn expressions_support_data_math_and_functions() {
 }
 
 #[test]
+fn host_dimensions_are_available_to_root_size_expressions() {
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].width = Expression("host.width".into());
+    theme.surfaces[0].height = Expression("min(46, host.height)".into());
+    let runtime = ThemeRuntime::default().with_host_dimensions(220, 30);
+
+    assert_eq!(resolve_surface_size(&theme, 0, None, runtime), (220, 30));
+    let rendered = render_theme_surface_with_runtime_at_scale(&theme, 0, None, runtime, 1.25);
+    assert_eq!((rendered.width, rendered.height), (275, 38));
+    assert!(rendered.warnings.is_empty());
+}
+
+#[test]
 fn templates_apply_numeric_character_formats() {
     let mut context = DataContext::default();
     context.insert("claude.session.percentage", 73.45);

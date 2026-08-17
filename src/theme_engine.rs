@@ -1174,15 +1174,17 @@ pub struct DataContext {
     strings: HashMap<String, String>,
 }
 
-/// Settings-controlled provider state used by theme expressions and layout.
-/// This is deliberately independent of polling availability so a temporary
-/// provider error never causes the widget to jump or resize.
+/// Runtime environment used by theme expressions and layout. Provider state is
+/// deliberately independent of polling availability so a temporary provider
+/// error never causes the widget to jump or resize.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ThemeRuntime {
     providers: ProviderSet,
     pub poll_ok: bool,
     pub has_error: bool,
     pub language: LanguageId,
+    host_width: u32,
+    host_height: u32,
 }
 
 impl Default for ThemeRuntime {
@@ -1192,6 +1194,8 @@ impl Default for ThemeRuntime {
             poll_ok: true,
             has_error: false,
             language: LanguageId::English,
+            host_width: default_canvas_width(),
+            host_height: default_canvas_height(),
         }
     }
 }
@@ -1217,6 +1221,8 @@ impl ThemeRuntime {
             poll_ok: true,
             has_error: false,
             language: LanguageId::English,
+            host_width: default_canvas_width(),
+            host_height: default_canvas_height(),
         }
     }
 
@@ -1228,6 +1234,14 @@ impl ThemeRuntime {
 
     pub fn with_language(mut self, language: LanguageId) -> Self {
         self.language = language;
+        self
+    }
+
+    /// Supply the selected native host's 96-DPI logical dimensions. Theme
+    /// expressions consume these as `host.width` and `host.height`.
+    pub fn with_host_dimensions(mut self, width: u32, height: u32) -> Self {
+        self.host_width = width.max(1);
+        self.host_height = height.max(1);
         self
     }
 
@@ -1255,6 +1269,8 @@ impl DataContext {
         context.insert("canvas.height", canvas.height as f64);
         context.insert("parent.width", canvas.width as f64);
         context.insert("parent.height", canvas.height as f64);
+        context.insert("host.width", runtime.host_width as f64);
+        context.insert("host.height", runtime.host_height as f64);
         context.insert("pi", std::f64::consts::PI);
         context.insert("e", std::f64::consts::E);
         context.insert("true", 1.0);

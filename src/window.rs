@@ -204,6 +204,10 @@ fn display_scale(display_index: usize) -> f64 {
     else {
         return 1.0;
     };
+    monitor_scale(display)
+}
+
+fn monitor_scale(display: native_interop::DisplayMonitor) -> f64 {
     let mut dpi_x = 96;
     let mut dpi_y = 96;
     if unsafe { GetDpiForMonitor(display.handle, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
@@ -254,6 +258,55 @@ fn theme_surface_scale(theme: &ThemeDocument, surface_index: usize) -> f64 {
         .map(|surface| surface.placement.reference.display)
         .unwrap_or(theme.placement.reference.display);
     display_scale(display_index)
+}
+
+fn logical_host_dimension(physical: i32, scale: f64) -> u32 {
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+    (physical.max(1) as f64 / scale)
+        .round()
+        .clamp(1.0, u32::MAX as f64) as u32
+}
+
+pub(crate) fn theme_runtime_for_surface(
+    theme: &ThemeDocument,
+    surface_index: usize,
+    runtime: ThemeRuntime,
+) -> ThemeRuntime {
+    let Some(surface) = theme.surfaces.get(surface_index) else {
+        return runtime;
+    };
+    let displays = native_interop::find_monitors();
+    let Some(display) = displays
+        .get(surface.placement.reference.display)
+        .copied()
+        .or_else(|| displays.first().copied())
+    else {
+        return runtime;
+    };
+    let nest = surface
+        .placement
+        .nest
+        .resolve(surface.placement.reference.region);
+    let host_rect = if matches!(nest, SurfaceNest::Taskbar | SurfaceNest::TrayIcon) {
+        native_interop::find_taskbars()
+            .into_iter()
+            .find(|taskbar| unsafe {
+                MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
+            })
+            .map(|taskbar| taskbar.rect)
+            .unwrap_or(display.rect)
+    } else {
+        display.rect
+    };
+    let scale = monitor_scale(display);
+    runtime.with_host_dimensions(
+        logical_host_dimension(host_rect.right - host_rect.left, scale),
+        logical_host_dimension(host_rect.bottom - host_rect.top, scale),
+    )
 }
 
 fn scaled_theme_dimension(logical: u32, scale: f64) -> i32 {
@@ -447,6 +500,8 @@ fn sync_tray_icon(hwnd: HWND) {
                 .iter()
                 .enumerate()
                 .filter(|(surface_index, surface)| {
+                    let surface_runtime =
+                        theme_runtime_for_surface(&theme, *surface_index, runtime);
                     surface
                         .placement
                         .nest
@@ -456,15 +511,16 @@ fn sync_tray_icon(hwnd: HWND) {
                             &theme,
                             *surface_index,
                             data.as_ref(),
-                            runtime,
+                            surface_runtime,
                         )
                 })
                 .filter_map(|(surface_index, surface)| {
+                    let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
                     let (logical_width, logical_height) = theme_engine::resolve_surface_size(
                         &theme,
                         surface_index,
                         data.as_ref(),
-                        runtime,
+                        surface_runtime,
                     );
                     let max_dimension = logical_width.max(logical_height) as f64;
                     let scale =
@@ -484,7 +540,7 @@ fn sync_tray_icon(hwnd: HWND) {
                         &theme,
                         surface_index,
                         data.as_ref(),
-                        runtime,
+                        surface_runtime,
                         scale,
                     );
                     Some(tray_icon::ThemedTrayIcon {
@@ -995,13 +1051,8 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
     effective_theme_from_state(state)
         .as_ref()
         .map_or(1, |theme| {
-            theme_engine::resolve_surface_size(
-                theme,
-                0,
-                state.data.as_ref(),
-                theme_runtime_from_state(state),
-            )
-            .0 as i32
+            let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
+            theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).0 as i32
         })
 }
 
@@ -1314,13 +1365,8 @@ fn total_widget_height_for_state(state: &AppState) -> i32 {
     effective_theme_from_state(state)
         .as_ref()
         .map_or(1, |theme| {
-            theme_engine::resolve_surface_size(
-                theme,
-                0,
-                state.data.as_ref(),
-                theme_runtime_from_state(state),
-            )
-            .1 as i32
+            let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
+            theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).1 as i32
         })
 }
 
@@ -1507,6 +1553,7 @@ pub fn run() {
         let (initial_width, initial_height) = active_theme
             .as_ref()
             .map(|theme| {
+                let initial_runtime = theme_runtime_for_surface(theme, 0, initial_runtime);
                 let (width, height) =
                     theme_engine::resolve_surface_size(theme, 0, None, initial_runtime);
                 let scale = theme_surface_scale(theme, 0);
@@ -1702,6 +1749,7 @@ fn render_layered() {
             continue;
         };
         let surface = &theme.surfaces[surface_index];
+        let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
         let nest = surface
             .placement
             .nest
@@ -1725,8 +1773,12 @@ fn render_layered() {
             }
             continue;
         }
-        if !theme_engine::surface_should_render(&theme, surface_index, usage_data.as_ref(), runtime)
-        {
+        if !theme_engine::surface_should_render(
+            &theme,
+            surface_index,
+            usage_data.as_ref(),
+            surface_runtime,
+        ) {
             unsafe {
                 let _ = ShowWindow(target_hwnd, SW_HIDE);
             }
@@ -1738,19 +1790,23 @@ fn render_layered() {
             &theme,
             surface_index,
             usage_data.as_ref(),
-            runtime,
+            surface_runtime,
             scale,
         );
         let mut positioned = theme_for_surface(&theme, surface_index);
-        let (logical_width, logical_height) =
-            theme_engine::resolve_surface_size(&theme, surface_index, usage_data.as_ref(), runtime);
+        let (logical_width, logical_height) = theme_engine::resolve_surface_size(
+            &theme,
+            surface_index,
+            usage_data.as_ref(),
+            surface_runtime,
+        );
         positioned.canvas.width = logical_width;
         positioned.canvas.height = logical_height;
         let placement = theme_engine::resolve_surface_placement(
             &theme,
             surface_index,
             usage_data.as_ref(),
-            runtime,
+            surface_runtime,
         );
         positioned.placement.offset_x = placement.offset_x;
         positioned.placement.offset_y = placement.offset_y;

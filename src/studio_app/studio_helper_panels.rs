@@ -853,6 +853,8 @@ pub(super) fn expression_variables_panel(
                     "canvas.height",
                     "parent.width",
                     "parent.height",
+                    "host.width",
+                    "host.height",
                 ];
                 expression_variable_group(
                     ui,

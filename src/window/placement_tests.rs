@@ -26,6 +26,14 @@ fn theme_dimensions_scale_from_logical_to_physical_pixels() {
 }
 
 #[test]
+fn physical_host_dimensions_are_normalized_to_logical_pixels() {
+    assert_eq!(logical_host_dimension(38, 1.25), 30);
+    assert_eq!(logical_host_dimension(46, 1.0), 46);
+    assert_eq!(logical_host_dimension(92, 2.0), 46);
+    assert_eq!(logical_host_dimension(30, 0.0), 30);
+}
+
+#[test]
 fn legacy_physical_offset_becomes_a_leftward_logical_theme_offset() {
     assert_eq!(legacy_offset_to_theme_offset(120, 1.25), -96);
     assert_eq!(legacy_offset_to_theme_offset(120, 1.0), -120);

@@ -30,6 +30,7 @@ pub(super) fn mouse_target_at(hwnd: HWND, lparam: LPARAM) -> Option<(usize, Stri
     let surface_index = surface_index_for_window(state, hwnd)?;
     let theme = effective_theme_from_state(state)?;
     let scale = theme_surface_scale(&theme, surface_index).max(0.01);
+    let runtime = theme_runtime_for_surface(&theme, surface_index, theme_runtime_from_state(state));
     let (x, y) = mouse_client_point(lparam);
     let object_id = theme_engine::hit_test_mouse_event(
         &theme,
@@ -37,7 +38,7 @@ pub(super) fn mouse_target_at(hwnd: HWND, lparam: LPARAM) -> Option<(usize, Stri
         x / scale,
         y / scale,
         state.data.as_ref(),
-        theme_runtime_from_state(state),
+        runtime,
     )?;
     Some((surface_index, object_id))
 }
@@ -92,7 +93,8 @@ pub(super) fn execute_mouse_action_source(
             return false;
         };
         let data = state.data.clone();
-        let runtime = theme_runtime_from_state(state);
+        let runtime =
+            theme_runtime_for_surface(&theme, surface_index, theme_runtime_from_state(state));
         theme_engine::execute_mouse_actions(
             &theme,
             surface_index,
