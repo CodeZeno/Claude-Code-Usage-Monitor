@@ -1,6 +1,9 @@
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Globalization::GetLocaleInfoW;
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -25,6 +28,7 @@ pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
 pub const TIMER_DRAG: usize = 5;
 pub const TIMER_WIDGET_KEEPALIVE: usize = 6;
+pub const TIMER_FULLSCREEN_CHECK: usize = 7;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -254,6 +258,63 @@ pub fn get_window_rect_safe(hwnd: HWND) -> Option<RECT> {
         } else {
             None
         }
+    }
+}
+
+/// True when the foreground window covers its entire monitor with no chrome,
+/// i.e. the same condition Windows itself uses to auto-hide the real taskbar.
+pub fn foreground_window_is_fullscreen(self_hwnd: HWND) -> bool {
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.0.is_null() || fg == self_hwnd {
+            return false;
+        }
+
+        let mut class_name = [0u16; 64];
+        let len = GetClassNameW(fg, &mut class_name);
+        if len > 0 {
+            let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
+            // Desktop/shell windows are never "fullscreen apps" in this sense.
+            // Windows.UI.Core.CoreWindow in particular backs several always-present,
+            // full-monitor-sized shell overlays (Search/Widgets/Action Center) that
+            // can be reported as foreground without anything visible on screen.
+            if matches!(
+                class_name.as_str(),
+                "Progman"
+                    | "WorkerW"
+                    | "Shell_TrayWnd"
+                    | "Shell_SecondaryTrayWnd"
+                    | "Windows.UI.Core.CoreWindow"
+            ) {
+                return false;
+            }
+        }
+
+        // Real fullscreen apps (video players, games) drop their title bar/border;
+        // an ordinary maximized window keeps WS_CAPTION and still leaves the real
+        // taskbar visible, so it must not hide this widget either.
+        let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+        if style & WS_CAPTION.0 != 0 {
+            return false;
+        }
+
+        let Some(win_rect) = get_window_rect_safe(fg) else {
+            return false;
+        };
+
+        let monitor = MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() == false {
+            return false;
+        }
+
+        win_rect.left <= info.rcMonitor.left
+            && win_rect.top <= info.rcMonitor.top
+            && win_rect.right >= info.rcMonitor.right
+            && win_rect.bottom >= info.rcMonitor.bottom
     }
 }
 

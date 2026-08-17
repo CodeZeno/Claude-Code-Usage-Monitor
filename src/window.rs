@@ -20,8 +20,8 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_POLL, TIMER_RESET_POLL, TIMER_UPDATE_CHECK,
-    TIMER_WIDGET_KEEPALIVE,
+    self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_FULLSCREEN_CHECK, TIMER_POLL,
+    TIMER_RESET_POLL, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
     WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
@@ -111,6 +111,10 @@ struct AppState {
     layered_position_valid: bool,
 
     widget_visible: bool,
+    /// True while a fullscreen app has focus and we've hidden the popup for it.
+    /// Anything that re-asserts window visibility (tray relayout, keepalive)
+    /// must respect this or it will fight sync_fullscreen_visibility and flicker.
+    hidden_for_fullscreen: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -1375,7 +1379,7 @@ const DIVIDER_RIGHT_MARGIN: i32 = 10;
 const LABEL_WIDTH: i32 = 18;
 const LABEL_RIGHT_MARGIN: i32 = 10;
 const BAR_RIGHT_MARGIN: i32 = 4;
-const TEXT_WIDTH: i32 = 62;
+const TEXT_WIDTH: i32 = 76;
 const MODEL_RIGHT_MARGIN: i32 = 3;
 const RIGHT_MARGIN: i32 = 1;
 const WIDGET_HEIGHT: i32 = 46;
@@ -1715,6 +1719,7 @@ pub fn run() {
                 layered_screen_y: 0,
                 layered_position_valid: false,
                 widget_visible: settings.widget_visible,
+                hidden_for_fullscreen: false,
             });
         }
 
@@ -1762,6 +1767,7 @@ pub fn run() {
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
         SetTimer(hwnd, TIMER_WIDGET_KEEPALIVE, 15_000, None);
+        SetTimer(hwnd, TIMER_FULLSCREEN_CHECK, 500, None);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
         // icon (the shell discards tray registrations when it restarts). This
@@ -2829,7 +2835,44 @@ fn ensure_popup_visible() {
         return;
     }
     position_at_taskbar();
-    render_layered();
+    let hidden_for_fullscreen = lock_state()
+        .as_ref()
+        .map(|s| s.hidden_for_fullscreen)
+        .unwrap_or(false);
+    if !hidden_for_fullscreen {
+        render_layered();
+    }
+}
+
+/// The floating popup is HWND_TOPMOST so it can track the real taskbar's tray
+/// icons, but that also puts it above fullscreen apps/videos, which the real
+/// taskbar never does. Hide it while a fullscreen app has focus, matching
+/// "only shown when the taskbar would be shown".
+fn sync_fullscreen_visibility(hwnd: HWND) {
+    let (visible, dragging, embedded) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.widget_visible, s.dragging, s.embedded),
+            None => return,
+        }
+    };
+    if !visible || dragging || embedded {
+        return;
+    }
+    let is_fullscreen = unsafe { native_interop::foreground_window_is_fullscreen(hwnd) };
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.hidden_for_fullscreen = is_fullscreen;
+        }
+    }
+    unsafe {
+        if is_fullscreen {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        } else {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+    }
 }
 
 fn position_at_taskbar() {
@@ -2992,7 +3035,11 @@ fn position_at_taskbar() {
             native_interop::pin_band_right(taskbar_hwnd, taskbar_rect)
         ));
     }
-    if widget_visible {
+    let hidden_for_fullscreen = lock_state()
+        .as_ref()
+        .map(|s| s.hidden_for_fullscreen)
+        .unwrap_or(false);
+    if widget_visible && !hidden_for_fullscreen {
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
@@ -3046,7 +3093,13 @@ unsafe extern "system" fn on_tray_location_changed(
         };
         if should_reposition {
             position_at_taskbar();
-            render_layered();
+            let hidden_for_fullscreen = lock_state()
+                .as_ref()
+                .map(|s| s.hidden_for_fullscreen)
+                .unwrap_or(false);
+            if !hidden_for_fullscreen {
+                render_layered();
+            }
         }
     }
 }
@@ -3163,6 +3216,9 @@ unsafe extern "system" fn wnd_proc(
                 }
                 TIMER_WIDGET_KEEPALIVE => {
                     ensure_popup_visible();
+                }
+                TIMER_FULLSCREEN_CHECK => {
+                    sync_fullscreen_visibility(hwnd);
                 }
                 TIMER_DRAG => {
                     let (dragging, embedded, tray_offset) = {
