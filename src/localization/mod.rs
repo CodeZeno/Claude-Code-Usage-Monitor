@@ -411,6 +411,7 @@ mod tests {
             "Enter actions...",
             "Show dashboard",
             "Toggle dashboard",
+            "Context Menus",
             "Show context menu",
             "Set property",
             "Reset property",
