@@ -69,6 +69,9 @@ impl StudioApp {
         let usage_cache = app_settings::load_usage_cache();
         let usage_poll_ok = usage_cache.as_ref().is_some_and(|cache| cache.poll_ok);
         let usage_has_error = usage_cache.as_ref().is_some_and(|cache| !cache.poll_ok);
+        let usage = usage_cache.map(|cache| cache.data);
+        let next_preview_countdown_refresh = preview_countdown_refresh_delay(usage.as_ref())
+            .and_then(|delay| Instant::now().checked_add(delay));
         Self {
             owner,
             page: initial_page,
@@ -79,10 +82,14 @@ impl StudioApp {
             selection: Selection::Surface(0),
             preview: None,
             preview_dirty: true,
-            usage: usage_cache.map(|cache| cache.data),
+            preview_renderer: PreviewRenderer::new(context.egui_ctx.clone()),
+            preview_generation: 0,
+            preview_render_key: None,
+            usage,
             usage_poll_ok,
             usage_has_error,
             last_cache_read: Instant::now(),
+            next_preview_countdown_refresh,
             dirty: false,
             live_apply: DEFAULT_LIVE_APPLY,
             zoom: 1.0,
@@ -715,15 +722,36 @@ impl StudioApp {
         }
     }
 
+    pub(super) fn update_usage_cache(&mut self, cache: UsageCache) -> bool {
+        let poll_ok = cache.poll_ok;
+        let has_error = !poll_ok;
+        let changed = self.usage.as_ref() != Some(&cache.data)
+            || self.usage_poll_ok != poll_ok
+            || self.usage_has_error != has_error;
+        if changed {
+            self.usage = Some(cache.data);
+            self.usage_poll_ok = poll_ok;
+            self.usage_has_error = has_error;
+        }
+        changed
+    }
+
     pub(super) fn refresh_usage_cache(&mut self) {
-        if self.last_cache_read.elapsed() >= Duration::from_secs(1) {
-            self.last_cache_read = Instant::now();
-            if let Some(cache) = app_settings::load_usage_cache() {
-                self.usage = Some(cache.data);
-                self.usage_poll_ok = cache.poll_ok;
-                self.usage_has_error = !cache.poll_ok;
-                self.preview_dirty = true;
-            }
+        if self.last_cache_read.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        let now = Instant::now();
+        self.last_cache_read = now;
+        let usage_changed =
+            app_settings::load_usage_cache().is_some_and(|cache| self.update_usage_cache(cache));
+        let countdown_due = self
+            .next_preview_countdown_refresh
+            .is_some_and(|deadline| now >= deadline);
+        if usage_changed || countdown_due {
+            self.preview_dirty = true;
+            self.next_preview_countdown_refresh =
+                preview_countdown_refresh_delay(self.usage.as_ref())
+                    .and_then(|delay| now.checked_add(delay));
         }
     }
 

@@ -309,10 +309,14 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         selection: Selection::Surface(0),
         preview: None,
         preview_dirty: true,
+        preview_renderer: PreviewRenderer::new(egui::Context::default()),
+        preview_generation: 0,
+        preview_render_key: None,
         usage: None,
         usage_poll_ok: false,
         usage_has_error: false,
         last_cache_read: Instant::now(),
+        next_preview_countdown_refresh: None,
         dirty: false,
         live_apply: DEFAULT_LIVE_APPLY,
         zoom: 1.0,
@@ -348,6 +352,95 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         context_menu_action_helper: None,
         delete_context_menu_confirmation: None,
     }
+}
+
+#[test]
+fn preview_render_scale_bounds_monitor_sized_themes_to_the_viewport() {
+    let (scale, width, height) = preview_render_scale(3440, 1440, egui::vec2(1200.0, 800.0), 1.0);
+    assert!((scale - 1200.0 / 3440.0).abs() < 0.0001);
+    assert_eq!((width, height), (1200, 502));
+    assert!(u64::from(width) * u64::from(height) < 3440 * 1440 / 8);
+}
+
+#[test]
+fn preview_render_mailbox_keeps_only_the_latest_request() {
+    let request = |generation| PreviewRenderRequest {
+        generation,
+        key: PreviewRenderKey {
+            surface_index: 0,
+            width: 200,
+            height: 100,
+        },
+        theme: ThemeDocument::starter(),
+        usage: None,
+        runtime: ThemeRuntime::default(),
+        scale: 1.0,
+    };
+    let mut mailbox = PreviewRenderMailbox::default();
+    mailbox.replace(request(1));
+    mailbox.replace(request(2));
+    assert_eq!(mailbox.pending.unwrap().generation, 2);
+}
+
+#[test]
+fn preview_renderer_returns_results_from_its_worker_thread() {
+    let renderer = PreviewRenderer::new(egui::Context::default());
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].width = 40.0.into();
+    theme.surfaces[0].height = 20.0.into();
+    renderer.request(PreviewRenderRequest {
+        generation: 7,
+        key: PreviewRenderKey {
+            surface_index: 0,
+            width: 40,
+            height: 20,
+        },
+        theme,
+        usage: None,
+        runtime: ThemeRuntime::default(),
+        scale: 1.0,
+    });
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(result) = renderer.take_latest() {
+            assert_eq!(result.generation, 7);
+            assert_eq!((result.width, result.height), (40, 20));
+            assert_eq!(result.rgba.len(), 40 * 20 * 4);
+            break;
+        }
+        assert!(Instant::now() < deadline, "preview render timed out");
+        std::thread::yield_now();
+    }
+}
+
+#[test]
+fn unchanged_usage_cache_does_not_invalidate_the_preview() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    let cache = UsageCache {
+        poll_ok: false,
+        ..Default::default()
+    };
+    assert!(app.update_usage_cache(cache.clone()));
+    app.preview_dirty = false;
+    assert!(!app.update_usage_cache(cache));
+    assert!(!app.preview_dirty);
+}
+
+#[test]
+fn preview_countdowns_refresh_on_minute_boundaries_until_the_final_minute() {
+    assert_eq!(
+        preview_countdown_delay(Duration::from_secs(125)),
+        Duration::from_secs(6)
+    );
+    assert_eq!(
+        preview_countdown_delay(Duration::from_secs(119)),
+        Duration::from_secs(60)
+    );
+    assert_eq!(
+        preview_countdown_delay(Duration::from_secs(59)),
+        Duration::from_secs(1)
+    );
 }
 
 #[test]

@@ -1247,40 +1247,49 @@ impl StudioApp {
                 index.min(self.theme.surfaces.len().saturating_sub(1))
             }
         };
-        if self.preview_dirty {
-            let runtime = self.theme_runtime_for_surface(surface_index);
+        let available = ui.available_size();
+        let runtime = self.theme_runtime_for_surface(surface_index);
+        let (logical_width, logical_height) = theme_engine::resolve_surface_size(
+            &self.theme,
+            surface_index,
+            self.usage.as_ref(),
+            runtime,
+        );
+        let (render_scale, render_width, render_height) = preview_render_scale(
+            logical_width,
+            logical_height,
+            available,
+            ui.ctx().pixels_per_point(),
+        );
+        let render_key = PreviewRenderKey {
+            surface_index,
+            width: render_width,
+            height: render_height,
+        };
+        if self.preview_dirty || self.preview_render_key != Some(render_key) {
             let preview_theme = theme_engine::apply_mouse_action_overrides(
                 &self.theme,
                 &self.preview_mouse_overrides,
             );
-            let should_render = theme_engine::surface_should_render(
-                &preview_theme,
-                surface_index,
-                self.usage.as_ref(),
+            self.preview_generation = self.preview_generation.wrapping_add(1);
+            self.preview_renderer.request(PreviewRenderRequest {
+                generation: self.preview_generation,
+                key: render_key,
+                theme: preview_theme,
+                usage: self.usage.clone(),
                 runtime,
-            );
-            let mut rendered = theme_engine::render_theme_surface_with_runtime(
-                &preview_theme,
-                surface_index,
-                self.usage.as_ref(),
-                runtime,
-            );
-            if !should_render {
-                rendered.pixels.fill(0);
-            }
-            let _render_warnings = &rendered.warnings;
-            let mut rgba = Vec::with_capacity(rendered.pixels.len() * 4);
-            for pixel in rendered.pixels {
-                rgba.extend_from_slice(&[
-                    ((pixel >> 16) & 0xff) as u8,
-                    ((pixel >> 8) & 0xff) as u8,
-                    (pixel & 0xff) as u8,
-                    ((pixel >> 24) & 0xff) as u8,
-                ]);
-            }
+                scale: render_scale,
+            });
+            self.preview_render_key = Some(render_key);
+            self.preview_dirty = false;
+        }
+        if let Some(result) = self.preview_renderer.take_latest().filter(|result| {
+            result.generation == self.preview_generation
+                && self.preview_render_key == Some(result.key)
+        }) {
             let image = egui::ColorImage::from_rgba_premultiplied(
-                [rendered.width as usize, rendered.height as usize],
-                &rgba,
+                [result.width as usize, result.height as usize],
+                &result.rgba,
             );
             match self.preview.as_mut() {
                 Some(texture) => texture.set(image, egui::TextureOptions::NEAREST),
@@ -1292,9 +1301,7 @@ impl StudioApp {
                     ))
                 }
             }
-            self.preview_dirty = false;
         }
-        let available = ui.available_size();
         let (rect, response) = ui.allocate_exact_size(available, egui::Sense::click_and_drag());
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, egui::Color32::from_rgb(13, 14, 17));
@@ -1319,11 +1326,11 @@ impl StudioApp {
             row += 1;
         }
         if let Some(texture) = &self.preview {
-            let texture_size = texture.size_vec2();
-            let fit_factor = (rect.width() / texture_size.x)
-                .min(rect.height() / texture_size.y)
+            let logical_size = egui::vec2(logical_width as f32, logical_height as f32);
+            let fit_factor = (rect.width() / logical_size.x.max(1.0))
+                .min(rect.height() / logical_size.y.max(1.0))
                 .min(1.0);
-            let mut size = texture_size * fit_factor * self.zoom;
+            let mut size = logical_size * fit_factor * self.zoom;
             let mut center = clamp_preview_center(rect, size, rect.center() + self.preview_pan);
 
             if response.hovered() {
@@ -1347,7 +1354,7 @@ impl StudioApp {
                         center =
                             preview_center_after_zoom(center, pointer, previous_zoom, self.zoom);
                     }
-                    size = texture_size * fit_factor * self.zoom;
+                    size = logical_size * fit_factor * self.zoom;
                     ui.ctx().request_repaint();
                 }
             }
@@ -1357,7 +1364,10 @@ impl StudioApp {
             }
             center = clamp_preview_center(rect, size, center);
             self.preview_pan = center - rect.center();
-            let image_rect = egui::Rect::from_center_size(center, size);
+            let image_rect = snap_preview_rect_to_pixels(
+                egui::Rect::from_center_size(center, size),
+                ui.ctx().pixels_per_point(),
+            );
             painter.image(
                 texture.id(),
                 image_rect,
@@ -2508,6 +2518,19 @@ fn preview_center_after_zoom(
     pointer + (center - pointer) * (next_zoom / previous_zoom)
 }
 
+fn snap_preview_rect_to_pixels(rect: egui::Rect, pixels_per_point: f32) -> egui::Rect {
+    let pixels_per_point = if pixels_per_point.is_finite() && pixels_per_point > 0.0 {
+        pixels_per_point
+    } else {
+        1.0
+    };
+    let snapped_min = egui::pos2(
+        (rect.min.x * pixels_per_point).round() / pixels_per_point,
+        (rect.min.y * pixels_per_point).round() / pixels_per_point,
+    );
+    egui::Rect::from_min_size(snapped_min, rect.size())
+}
+
 fn clamp_preview_center(
     viewport: egui::Rect,
     image_size: egui::Vec2,
@@ -2572,5 +2595,28 @@ mod preview_navigation_tests {
             clamp_preview_center(viewport, size, egui::pos2(500.0, 500.0)),
             egui::pos2(318.0, 148.0)
         );
+    }
+
+    #[test]
+    fn preview_rect_snaps_odd_height_centering_to_physical_pixels() {
+        let viewport = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 101.0));
+        let centered = egui::Rect::from_center_size(viewport.center(), egui::vec2(162.0, 44.0));
+
+        assert_eq!(centered.min, egui::pos2(19.0, 28.5));
+        let snapped = snap_preview_rect_to_pixels(centered, 1.0);
+
+        assert_eq!(snapped.min, egui::pos2(19.0, 29.0));
+        assert_eq!(snapped.size(), egui::vec2(162.0, 44.0));
+    }
+
+    #[test]
+    fn preview_rect_snaps_to_the_active_dpi_pixel_grid() {
+        let rect = egui::Rect::from_min_size(egui::pos2(10.25, 20.25), egui::vec2(81.0, 22.0));
+        let snapped = snap_preview_rect_to_pixels(rect, 2.0);
+
+        assert_eq!(snapped.min, egui::pos2(10.5, 20.5));
+        assert_eq!(snapped.size(), rect.size());
+        assert_eq!(snapped.min.x * 2.0, (snapped.min.x * 2.0).round());
+        assert_eq!(snapped.min.y * 2.0, (snapped.min.y * 2.0).round());
     }
 }

@@ -2,6 +2,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc, Condvar, Mutex};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
@@ -32,8 +34,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::app_settings::{
-    self, SettingsFile, POLL_15_MIN, POLL_15_MIN_SECONDS, POLL_1_HOUR, POLL_1_HOUR_SECONDS,
-    POLL_1_MIN, POLL_1_MIN_SECONDS, POLL_5_MIN, POLL_5_MIN_SECONDS,
+    self, SettingsFile, UsageCache, POLL_15_MIN, POLL_15_MIN_SECONDS, POLL_1_HOUR,
+    POLL_1_HOUR_SECONDS, POLL_1_MIN, POLL_1_MIN_SECONDS, POLL_5_MIN, POLL_5_MIN_SECONDS,
 };
 use crate::context_menu::{
     self, ContextMenuAction, ContextMenuDocument, ContextMenuItem, ContextMenuItemKind,
@@ -436,6 +438,206 @@ struct AssetDeletionConfirmation {
     asset: theme_engine::ManagedAsset,
 }
 
+const PREVIEW_RENDER_MAX_EDGE: f32 = 1600.0;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PreviewRenderKey {
+    surface_index: usize,
+    width: u32,
+    height: u32,
+}
+
+struct PreviewRenderRequest {
+    generation: u64,
+    key: PreviewRenderKey,
+    theme: ThemeDocument,
+    usage: Option<AppUsageData>,
+    runtime: ThemeRuntime,
+    scale: f64,
+}
+
+struct PreviewRenderResult {
+    generation: u64,
+    key: PreviewRenderKey,
+    width: u32,
+    height: u32,
+    rgba: Vec<u8>,
+}
+
+#[derive(Default)]
+struct PreviewRenderMailbox {
+    pending: Option<PreviewRenderRequest>,
+    shutdown: bool,
+}
+
+impl PreviewRenderMailbox {
+    fn replace(&mut self, request: PreviewRenderRequest) {
+        self.pending = Some(request);
+    }
+}
+
+struct PreviewRenderer {
+    mailbox: Arc<(Mutex<PreviewRenderMailbox>, Condvar)>,
+    results: mpsc::Receiver<PreviewRenderResult>,
+    worker: Option<JoinHandle<()>>,
+}
+
+impl PreviewRenderer {
+    fn new(context: egui::Context) -> Self {
+        let mailbox = Arc::new((Mutex::new(PreviewRenderMailbox::default()), Condvar::new()));
+        let worker_mailbox = mailbox.clone();
+        let (result_sender, results) = mpsc::channel();
+        let worker = std::thread::Builder::new()
+            .name("theme-preview-render".into())
+            .spawn(move || loop {
+                let request = {
+                    let (lock, ready) = &*worker_mailbox;
+                    let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    while state.pending.is_none() && !state.shutdown {
+                        state = ready.wait(state).unwrap_or_else(|error| error.into_inner());
+                    }
+                    if state.shutdown {
+                        return;
+                    }
+                    state.pending.take().expect("pending preview request")
+                };
+
+                let mut rendered = if (request.scale - 1.0).abs() < f64::EPSILON {
+                    theme_engine::render_theme_surface_with_runtime(
+                        &request.theme,
+                        request.key.surface_index,
+                        request.usage.as_ref(),
+                        request.runtime,
+                    )
+                } else {
+                    theme_engine::render_theme_surface_with_runtime_at_scale(
+                        &request.theme,
+                        request.key.surface_index,
+                        request.usage.as_ref(),
+                        request.runtime,
+                        request.scale,
+                    )
+                };
+                let _render_warnings = &rendered.warnings;
+                if !theme_engine::surface_should_render(
+                    &request.theme,
+                    request.key.surface_index,
+                    request.usage.as_ref(),
+                    request.runtime,
+                ) {
+                    rendered.pixels.fill(0);
+                }
+
+                let superseded = {
+                    let (lock, _) = &*worker_mailbox;
+                    let state = lock.lock().unwrap_or_else(|error| error.into_inner());
+                    state.shutdown
+                        || state
+                            .pending
+                            .as_ref()
+                            .is_some_and(|pending| pending.generation != request.generation)
+                };
+                if superseded {
+                    continue;
+                }
+
+                let mut rgba = Vec::with_capacity(rendered.pixels.len() * 4);
+                for pixel in rendered.pixels {
+                    rgba.extend_from_slice(&[
+                        ((pixel >> 16) & 0xff) as u8,
+                        ((pixel >> 8) & 0xff) as u8,
+                        (pixel & 0xff) as u8,
+                        ((pixel >> 24) & 0xff) as u8,
+                    ]);
+                }
+                if result_sender
+                    .send(PreviewRenderResult {
+                        generation: request.generation,
+                        key: request.key,
+                        width: rendered.width,
+                        height: rendered.height,
+                        rgba,
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+                context.request_repaint();
+            })
+            .expect("unable to start theme preview renderer");
+        Self {
+            mailbox,
+            results,
+            worker: Some(worker),
+        }
+    }
+
+    fn request(&self, request: PreviewRenderRequest) {
+        let (lock, ready) = &*self.mailbox;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.replace(request);
+        ready.notify_one();
+    }
+
+    fn take_latest(&self) -> Option<PreviewRenderResult> {
+        self.results.try_iter().last()
+    }
+}
+
+impl Drop for PreviewRenderer {
+    fn drop(&mut self) {
+        let (lock, ready) = &*self.mailbox;
+        let mut state = lock.lock().unwrap_or_else(|error| error.into_inner());
+        state.shutdown = true;
+        state.pending = None;
+        ready.notify_one();
+        drop(state);
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn preview_render_scale(
+    logical_width: u32,
+    logical_height: u32,
+    available: egui::Vec2,
+    pixels_per_point: f32,
+) -> (f64, u32, u32) {
+    let pixels_per_point = if pixels_per_point.is_finite() {
+        pixels_per_point.max(1.0)
+    } else {
+        1.0
+    };
+    let target_width = (available.x.max(1.0) * pixels_per_point).min(PREVIEW_RENDER_MAX_EDGE);
+    let target_height = (available.y.max(1.0) * pixels_per_point).min(PREVIEW_RENDER_MAX_EDGE);
+    let scale = (target_width as f64 / logical_width.max(1) as f64)
+        .min(target_height as f64 / logical_height.max(1) as f64)
+        .clamp(0.25, 1.0);
+    let width = (logical_width.max(1) as f64 * scale).round().max(1.0) as u32;
+    let height = (logical_height.max(1) as f64 * scale).round().max(1.0) as u32;
+    (scale, width, height)
+}
+
+fn preview_countdown_refresh_delay(data: Option<&AppUsageData>) -> Option<Duration> {
+    let now = std::time::SystemTime::now();
+    data?
+        .iter()
+        .flat_map(|(_, usage)| [&usage.session, &usage.weekly])
+        .filter_map(|section| section.resets_at?.duration_since(now).ok())
+        .map(preview_countdown_delay)
+        .min()
+}
+
+fn preview_countdown_delay(remaining: Duration) -> Duration {
+    let seconds = remaining.as_secs();
+    if seconds >= 60 {
+        Duration::from_secs(seconds % 60 + 1)
+    } else {
+        Duration::from_secs(1)
+    }
+}
+
 struct StudioApp {
     owner: isize,
     page: Page,
@@ -446,10 +648,14 @@ struct StudioApp {
     selection: Selection,
     preview: Option<egui::TextureHandle>,
     preview_dirty: bool,
+    preview_renderer: PreviewRenderer,
+    preview_generation: u64,
+    preview_render_key: Option<PreviewRenderKey>,
     usage: Option<AppUsageData>,
     usage_poll_ok: bool,
     usage_has_error: bool,
     last_cache_read: Instant,
+    next_preview_countdown_refresh: Option<Instant>,
     dirty: bool,
     live_apply: bool,
     zoom: f32,
