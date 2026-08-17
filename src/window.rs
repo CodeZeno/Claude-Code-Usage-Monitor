@@ -148,24 +148,25 @@ const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_VERSION_ACTION: u16 = 31;
-const IDM_LANG_SYSTEM: u16 = 40;
-const IDM_LANG_ENGLISH: u16 = 41;
-const IDM_LANG_DUTCH: u16 = 42;
-const IDM_LANG_SPANISH: u16 = 43;
-const IDM_LANG_FRENCH: u16 = 44;
-const IDM_LANG_GERMAN: u16 = 45;
-const IDM_LANG_JAPANESE: u16 = 46;
-const IDM_LANG_KOREAN: u16 = 47;
-const IDM_LANG_TRADITIONAL_CHINESE: u16 = 48;
-const IDM_LANG_RUSSIAN: u16 = 49;
-const IDM_LANG_PORTUGUESE_BRAZIL: u16 = 50;
-const IDM_LANG_SIMPLIFIED_CHINESE: u16 = 51;
-const IDM_LANG_TURKISH: u16 = 52;
+const IDM_LANG_SYSTEM: u16 = 100;
+const IDM_LANG_FIRST: u16 = 101;
 const IDM_DASHBOARD: u16 = 71;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
+
+fn language_menu_command_id(language: LanguageId) -> u16 {
+    IDM_LANG_FIRST
+        .checked_add(u16::try_from(language.index()).expect("language index exceeds u16"))
+        .expect("language menu command id exceeds u16")
+}
+
+fn language_from_menu_command_id(command: u16) -> Option<LanguageId> {
+    command
+        .checked_sub(IDM_LANG_FIRST)
+        .and_then(|index| LanguageId::from_index(index.into()))
+}
 
 /// How often the watchdog thread polls for an explorer.exe restart (which
 /// recreates the taskbar and wipes our tray-icon registration).
@@ -2089,3 +2090,19 @@ use window_context_menu::*;
 
 #[cfg(test)]
 mod placement_tests;
+
+#[cfg(test)]
+mod language_menu_tests {
+    use super::*;
+
+    #[test]
+    fn generated_language_menu_commands_round_trip() {
+        assert_eq!(language_from_menu_command_id(IDM_LANG_SYSTEM), None);
+        for language in LanguageId::ALL {
+            assert_eq!(
+                language_from_menu_command_id(language_menu_command_id(language)),
+                Some(language)
+            );
+        }
+    }
+}

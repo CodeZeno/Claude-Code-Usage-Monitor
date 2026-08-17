@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.2.3"
+version = "2.2.4"
 edition = "2021"
 license = "MIT"
 description = "Claude Code Usage Monitor"
@@ -60,6 +60,7 @@ heck = "0.5"
 lucide-icons = "1.30"
 oxifont-subset = "0.2.2"
 proc-macro2 = "1"
+toml = "0.8"
 winres = "0.1"
 
 [profile.release]

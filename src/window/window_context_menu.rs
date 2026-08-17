@@ -257,20 +257,7 @@ pub(super) fn execute_context_menu_action(
             if language.eq_ignore_ascii_case("system") {
                 Some(IDM_LANG_SYSTEM)
             } else {
-                LanguageId::from_code(language).map(|language| match language {
-                    LanguageId::English => IDM_LANG_ENGLISH,
-                    LanguageId::Dutch => IDM_LANG_DUTCH,
-                    LanguageId::Spanish => IDM_LANG_SPANISH,
-                    LanguageId::French => IDM_LANG_FRENCH,
-                    LanguageId::German => IDM_LANG_GERMAN,
-                    LanguageId::Japanese => IDM_LANG_JAPANESE,
-                    LanguageId::Korean => IDM_LANG_KOREAN,
-                    LanguageId::TraditionalChinese => IDM_LANG_TRADITIONAL_CHINESE,
-                    LanguageId::SimplifiedChinese => IDM_LANG_SIMPLIFIED_CHINESE,
-                    LanguageId::Russian => IDM_LANG_RUSSIAN,
-                    LanguageId::PortugueseBrazil => IDM_LANG_PORTUGUESE_BRAZIL,
-                    LanguageId::Turkish => IDM_LANG_TURKISH,
-                })
+                LanguageId::from_code(language).map(language_menu_command_id)
             }
         }
         ContextMenuAction::CheckForUpdates => Some(IDM_VERSION_ACTION),

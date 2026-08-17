@@ -262,7 +262,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
         &canvas,
         ThemeRuntime::default()
             .with_poll_state(false, false)
-            .with_language(LanguageId::Dutch),
+            .with_language(LanguageId::from_code("nl").unwrap()),
     );
     assert_eq!(format_template("{i18n.session_window}", &loading), "5u");
     assert_eq!(
@@ -299,7 +299,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
     let ready = DataContext::from_usage_with_runtime(
         Some(&usage),
         &canvas,
-        ThemeRuntime::default().with_language(LanguageId::Korean),
+        ThemeRuntime::default().with_language(LanguageId::from_code("ko").unwrap()),
     );
     assert_eq!(
         format_template("{claude.session:usage_line}", &ready),

@@ -185,13 +185,7 @@ fn load_language_fonts(
             .into_iter()
             .filter(|language| *language != preferred_language),
     ) {
-        let candidate = match language {
-            LanguageId::Japanese => Some(("yu-gothic-ui", "YuGothM.ttc")),
-            LanguageId::Korean => Some(("malgun-gothic", "malgun.ttf")),
-            LanguageId::TraditionalChinese => Some(("microsoft-jhenghei", "msjh.ttc")),
-            LanguageId::SimplifiedChinese => Some(("microsoft-yahei", "msyh.ttc")),
-            _ => None,
-        };
+        let candidate = language.windows_font();
         if let Some((name, file_name)) = candidate {
             if !family.iter().any(|existing| existing == name)
                 && load_windows_font(fonts, name, file_name)

@@ -407,34 +407,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     sync_tray_icon(hwnd);
                     request_poll(hwnd);
                 }
-                IDM_LANG_SYSTEM
-                | IDM_LANG_ENGLISH
-                | IDM_LANG_DUTCH
-                | IDM_LANG_SPANISH
-                | IDM_LANG_FRENCH
-                | IDM_LANG_GERMAN
-                | IDM_LANG_JAPANESE
-                | IDM_LANG_KOREAN
-                | IDM_LANG_TRADITIONAL_CHINESE
-                | IDM_LANG_SIMPLIFIED_CHINESE
-                | IDM_LANG_RUSSIAN
-                | IDM_LANG_PORTUGUESE_BRAZIL
-                | IDM_LANG_TURKISH => {
-                    let language_override = match id {
-                        IDM_LANG_SYSTEM => None,
-                        IDM_LANG_ENGLISH => Some(LanguageId::English),
-                        IDM_LANG_DUTCH => Some(LanguageId::Dutch),
-                        IDM_LANG_SPANISH => Some(LanguageId::Spanish),
-                        IDM_LANG_FRENCH => Some(LanguageId::French),
-                        IDM_LANG_GERMAN => Some(LanguageId::German),
-                        IDM_LANG_JAPANESE => Some(LanguageId::Japanese),
-                        IDM_LANG_KOREAN => Some(LanguageId::Korean),
-                        IDM_LANG_TRADITIONAL_CHINESE => Some(LanguageId::TraditionalChinese),
-                        IDM_LANG_SIMPLIFIED_CHINESE => Some(LanguageId::SimplifiedChinese),
-                        IDM_LANG_RUSSIAN => Some(LanguageId::Russian),
-                        IDM_LANG_PORTUGUESE_BRAZIL => Some(LanguageId::PortugueseBrazil),
-                        IDM_LANG_TURKISH => Some(LanguageId::Turkish),
-                        _ => None,
+                id if id == IDM_LANG_SYSTEM || language_from_menu_command_id(id).is_some() => {
+                    let language_override = if id == IDM_LANG_SYSTEM {
+                        None
+                    } else {
+                        language_from_menu_command_id(id)
                     };
                     {
                         let mut state = lock_state();

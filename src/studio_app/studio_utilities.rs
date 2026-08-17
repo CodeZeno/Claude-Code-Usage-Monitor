@@ -1,21 +1,13 @@
 use super::*;
 
-pub(super) fn languages(language: LanguageId) -> [(&'static str, &'static str); 13] {
-    [
-        ("system", language.text("System default")),
-        ("en", LanguageId::English.native_name()),
-        ("nl", LanguageId::Dutch.native_name()),
-        ("es", LanguageId::Spanish.native_name()),
-        ("fr", LanguageId::French.native_name()),
-        ("de", LanguageId::German.native_name()),
-        ("ja", LanguageId::Japanese.native_name()),
-        ("ko", LanguageId::Korean.native_name()),
-        ("zh-TW", LanguageId::TraditionalChinese.native_name()),
-        ("zh-CN", LanguageId::SimplifiedChinese.native_name()),
-        ("ru", LanguageId::Russian.native_name()),
-        ("pt-BR", LanguageId::PortugueseBrazil.native_name()),
-        ("tr", LanguageId::Turkish.native_name()),
-    ]
+pub(super) fn languages(language: LanguageId) -> Vec<(&'static str, &'static str)> {
+    std::iter::once(("system", language.text("System default")))
+        .chain(
+            LanguageId::ALL
+                .into_iter()
+                .map(|language| (language.code(), language.native_name())),
+        )
+        .collect()
 }
 pub(super) fn language_name(language: LanguageId, code: &str) -> &str {
     languages(language)
