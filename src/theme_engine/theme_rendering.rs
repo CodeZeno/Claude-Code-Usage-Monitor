@@ -1437,8 +1437,7 @@ pub(super) fn draw_progress(
                 } else {
                     y
                 };
-                let segment_extent = extent as f64 / count as f64;
-                visible = (position as f64 % segment_extent) < (segment_extent - gap).max(1.0);
+                visible = segmented_position_visible(position, extent, count, gap);
             }
             if visible {
                 let index = (y * width + x) as usize;
@@ -1446,6 +1445,27 @@ pub(super) fn draw_progress(
             }
         }
     }
+}
+
+pub(super) fn segmented_position_visible(position: u32, extent: u32, count: u32, gap: f64) -> bool {
+    if count <= 1 || extent <= 1 {
+        return true;
+    }
+
+    // Gaps exist only between segments. Clamp pathological inputs so every
+    // segment can retain at least one physical pixel when the bar is wide
+    // enough, then sample each pixel at its centre against cumulative bounds.
+    // This keeps both outer edges intact and distributes DPI rounding across
+    // the internal segments and gaps instead of dropping the final pixel.
+    let count = count.min(extent);
+    let gap = if gap.is_finite() { gap.max(0.0) } else { 0.0 };
+    let max_gap = (extent - count) as f64 / (count - 1) as f64;
+    let gap = gap.min(max_gap);
+    let segment_extent = (extent as f64 - gap * (count - 1) as f64) / count as f64;
+    let stride = segment_extent + gap;
+    let pixel_center = position.min(extent - 1) as f64 + 0.5;
+    let segment = ((pixel_center / stride).floor() as u32).min(count - 1);
+    segment == count - 1 || pixel_center - segment as f64 * stride < segment_extent
 }
 
 pub(super) fn premultiply(color: Rgba) -> u32 {

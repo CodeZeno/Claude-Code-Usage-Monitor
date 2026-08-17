@@ -560,6 +560,51 @@ fn theme_surfaces_rasterize_at_requested_dpi_scales() {
 }
 
 #[test]
+fn segmented_progress_reserves_gaps_only_between_segments() {
+    let mask = (0..34)
+        .map(|position| segmented_position_visible(position, 34, 5, 1.0))
+        .collect::<Vec<_>>();
+
+    assert_eq!(mask.iter().filter(|visible| **visible).count(), 30);
+    assert_eq!(
+        mask.iter()
+            .enumerate()
+            .filter_map(|(position, visible)| (!visible).then_some(position))
+            .collect::<Vec<_>>(),
+        vec![6, 13, 20, 27]
+    );
+    assert!(mask[0]);
+    assert!(mask[33]);
+}
+
+#[test]
+fn segmented_progress_preserves_both_rounded_outer_edges() {
+    let mut pixels = vec![0; 34 * 12];
+    draw_progress(
+        &mut pixels,
+        34,
+        12,
+        Rgba {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255,
+        },
+        2.0,
+        1.0,
+        ProgressDirection::LeftToRight,
+        5,
+        1.0,
+    );
+
+    assert_ne!(pixels[6 * 34], 0);
+    assert_ne!(pixels[6 * 34 + 33], 0);
+    for gap in [6, 13, 20, 27] {
+        assert_eq!(pixels[6 * 34 + gap], 0);
+    }
+}
+
+#[test]
 fn invalid_render_scales_fall_back_to_one() {
     let theme = ThemeDocument::starter();
     for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
