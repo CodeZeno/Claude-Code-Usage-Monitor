@@ -366,8 +366,10 @@ fn starter_theme_round_trips_and_validates() {
         })
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
-    // 1.4.9 palette follows the taskbar mode without runtime recolouring.
-    assert_eq!(segments, vec![10; 20]);
+    // 1.4.9 palette follows the taskbar mode without runtime recolouring:
+    // five providers over two windows in two modes, plus a credit overlay on
+    // the weekly row of the two providers that report credits.
+    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2]);
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -1449,4 +1451,41 @@ fn headline_follows_the_window_closest_to_its_limit() {
         ..Default::default()
     });
     assert_eq!(on_credits.get("codex.headline.percentage"), Some(41.0));
+}
+
+#[test]
+fn credit_badges_abbreviate_a_balance_too_wide_for_the_tray() {
+    use crate::models::{CreditsSection, UsageData};
+
+    let context = |balance: f64| {
+        DataContext::from_usage(
+            Some(&AppUsageData::from_iter([(
+                ProviderId::Codex,
+                UsageData {
+                    credits: Some(CreditsSection {
+                        percentage: 10.0,
+                        remaining: balance,
+                        total: 2000.0,
+                    }),
+                    ..Default::default()
+                },
+            )])),
+            &Canvas::default(),
+        )
+    };
+
+    // Up to three figures the badge shows whole dollars.
+    assert_eq!(
+        format_template("{codex.credits.balance:0}", &context(39.25)),
+        "39"
+    );
+    assert_eq!(
+        format_template("{codex.credits.balance:0}", &context(450.0)),
+        "450"
+    );
+    // Four will not fit, so the tray falls back to thousands.
+    assert_eq!(
+        format_template("{codex.credits.balance / 1000:0.0}k", &context(1234.0)),
+        "1.2k"
+    );
 }

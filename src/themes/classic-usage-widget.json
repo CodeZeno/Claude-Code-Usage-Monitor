@@ -549,7 +549,7 @@
         {
           "id": "claude-weekly-value-dark",
           "name": "dark Claude Code 7-day value",
-          "render": "system.dark",
+          "render": "(system.dark) && !claude.credits.available",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -596,7 +596,7 @@
         {
           "id": "claude-weekly-value-light",
           "name": "light Claude Code 7-day value",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && !claude.credits.available",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -745,7 +745,7 @@
         {
           "id": "codex-weekly-value-dark",
           "name": "dark Codex 7-day value",
-          "render": "system.dark",
+          "render": "(system.dark) && !codex.credits.available",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -792,7 +792,7 @@
         {
           "id": "codex-weekly-value-light",
           "name": "light Codex 7-day value",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && !codex.credits.available",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1203,6 +1203,206 @@
               "color": "#1B5E20FF"
             }
           }
+        },
+        {
+          "id": "claude-credits-segments-dark",
+          "name": "dark claude credit overlay",
+          "render": "(system.dark) && claude.credits.available",
+          "parent": "claude-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "claude.credits.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-credits-value-dark",
+          "name": "dark claude credit balance",
+          "render": "(system.dark) && claude.credits.available",
+          "parent": "claude-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${claude.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-credits-segments-light",
+          "name": "light claude credit overlay",
+          "render": "(1 - system.dark) && claude.credits.available",
+          "parent": "claude-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "claude.credits.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-credits-value-light",
+          "name": "light claude credit balance",
+          "render": "(1 - system.dark) && claude.credits.available",
+          "parent": "claude-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${claude.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-credits-segments-dark",
+          "name": "dark codex credit overlay",
+          "render": "(system.dark) && codex.credits.available",
+          "parent": "codex-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "codex.credits.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-credits-value-dark",
+          "name": "dark codex credit balance",
+          "render": "(system.dark) && codex.credits.available",
+          "parent": "codex-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${codex.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F5A623FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-credits-segments-light",
+          "name": "light codex credit overlay",
+          "render": "(1 - system.dark) && codex.credits.available",
+          "parent": "codex-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "codex.credits.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#00000000",
+              "opacity": "0"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-credits-value-light",
+          "name": "light codex credit balance",
+          "render": "(1 - system.dark) && codex.credits.available",
+          "parent": "codex-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "62",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "${codex.credits.balance:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C77700FF",
+              "opacity": "1"
+            }
+          }
         }
       ]
     },
@@ -1231,7 +1431,7 @@
         {
           "id": "claude-tray-70-color",
           "name": "Claude 50 to 70 percent colour transition",
-          "render": "claude.session.percentage > 50",
+          "render": "claude.headline.percentage > 50",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
@@ -1247,7 +1447,7 @@
         {
           "id": "claude-tray-85-color",
           "name": "Claude 70 to 85 percent colour transition",
-          "render": "claude.session.percentage > 70",
+          "render": "claude.headline.percentage > 70",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
@@ -1263,7 +1463,7 @@
         {
           "id": "claude-tray-95-color",
           "name": "Claude 85 to 95 percent colour transition",
-          "render": "claude.session.percentage > 85",
+          "render": "claude.headline.percentage > 85",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
@@ -1279,7 +1479,7 @@
         {
           "id": "claude-tray-100-color",
           "name": "Claude 95 to 100 percent colour transition",
-          "render": "claude.session.percentage > 95",
+          "render": "claude.headline.percentage > 95",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
@@ -1295,13 +1495,13 @@
         {
           "id": "claude-tray-one-digit",
           "name": "Claude one-digit percentage",
-          "render": "data.poll_ok && claude.available && claude.session.percentage < 9.5",
+          "render": "(data.poll_ok && claude.available && claude.headline.percentage < 9.5) && claude.credits.available == 0",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{claude.session.percentage:0}",
+            "template": "{claude.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "50",
             "weight": "bold",
@@ -1314,13 +1514,13 @@
         {
           "id": "claude-tray-two-digits",
           "name": "Claude two-digit percentage",
-          "render": "data.poll_ok && claude.available && claude.session.percentage >= 9.5 && claude.session.percentage < 99.5",
+          "render": "(data.poll_ok && claude.available && claude.headline.percentage >= 9.5 && claude.headline.percentage < 99.5) && claude.credits.available == 0",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{claude.session.percentage:0}",
+            "template": "{claude.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1333,13 +1533,89 @@
         {
           "id": "claude-tray-three-digits",
           "name": "Claude three-digit percentage",
-          "render": "data.poll_ok && claude.available && claude.session.percentage >= 99.5",
+          "render": "(data.poll_ok && claude.available && claude.headline.percentage >= 99.5) && claude.credits.available == 0",
           "parent": "claude-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{claude.session.percentage:0}",
+            "template": "{claude.headline.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-one-digit",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance < 9.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-two-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 9.5 && claude.credits.balance < 99.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-three-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 99.5 && claude.credits.balance < 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-thousands",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance / 1000:0.0}k",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",
@@ -1376,7 +1652,7 @@
         {
           "id": "codex-tray-high-outline",
           "name": "Codex high-usage dark outline",
-          "render": "codex.session.percentage >= 90",
+          "render": "codex.headline.percentage >= 90",
           "parent": "codex-tray-icon",
           "width": "64",
           "height": "64",
@@ -1391,7 +1667,7 @@
         {
           "id": "codex-tray-low-fill",
           "name": "Codex normal dark fill",
-          "render": "codex.session.percentage < 90",
+          "render": "codex.headline.percentage < 90",
           "parent": "codex-tray-icon",
           "x": "3",
           "y": "3",
@@ -1408,7 +1684,7 @@
         {
           "id": "codex-tray-high-fill",
           "name": "Codex high-usage white fill",
-          "render": "codex.session.percentage >= 90",
+          "render": "codex.headline.percentage >= 90",
           "parent": "codex-tray-icon",
           "x": "3",
           "y": "3",
@@ -1444,13 +1720,13 @@
         {
           "id": "codex-tray-low-one-digit",
           "name": "Codex normal one-digit percentage",
-          "render": "data.poll_ok && codex.available && codex.session.percentage < 9.5",
+          "render": "(data.poll_ok && codex.available && codex.headline.percentage < 9.5) && codex.credits.available == 0",
           "parent": "codex-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{codex.session.percentage:0}",
+            "template": "{codex.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "50",
             "weight": "bold",
@@ -1463,13 +1739,13 @@
         {
           "id": "codex-tray-low-two-digits",
           "name": "Codex normal two-digit percentage",
-          "render": "data.poll_ok && codex.available && codex.session.percentage >= 9.5 && codex.session.percentage < 90",
+          "render": "(data.poll_ok && codex.available && codex.headline.percentage >= 9.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
           "parent": "codex-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{codex.session.percentage:0}",
+            "template": "{codex.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1482,13 +1758,13 @@
         {
           "id": "codex-tray-high-two-digits",
           "name": "Codex high-usage two-digit percentage",
-          "render": "data.poll_ok && codex.available && codex.session.percentage >= 90 && codex.session.percentage < 99.5",
+          "render": "(data.poll_ok && codex.available && codex.headline.percentage >= 90 && codex.headline.percentage < 99.5) && codex.credits.available == 0",
           "parent": "codex-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{codex.session.percentage:0}",
+            "template": "{codex.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1501,13 +1777,89 @@
         {
           "id": "codex-tray-high-three-digits",
           "name": "Codex high-usage three-digit percentage",
-          "render": "data.poll_ok && codex.available && codex.session.percentage >= 99.5",
+          "render": "(data.poll_ok && codex.available && codex.headline.percentage >= 99.5) && codex.credits.available == 0",
           "parent": "codex-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{codex.session.percentage:0}",
+            "template": "{codex.headline.percentage:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-one-digit",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance < 9.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-two-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 9.5 && codex.credits.balance < 99.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-three-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 99.5 && codex.credits.balance < 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-thousands",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance / 1000:0.0}k",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",
@@ -1544,7 +1896,7 @@
         {
           "id": "antigravity-tray-high-outline",
           "name": "Antigravity high-usage blue outline",
-          "render": "antigravity.session.percentage >= 90",
+          "render": "antigravity.headline.percentage >= 90",
           "parent": "antigravity-tray-icon",
           "width": "64",
           "height": "64",
@@ -1559,7 +1911,7 @@
         {
           "id": "antigravity-tray-low-fill",
           "name": "Antigravity normal blue fill",
-          "render": "antigravity.session.percentage < 90",
+          "render": "antigravity.headline.percentage < 90",
           "parent": "antigravity-tray-icon",
           "x": "3",
           "y": "3",
@@ -1576,7 +1928,7 @@
         {
           "id": "antigravity-tray-high-fill",
           "name": "Antigravity high-usage white fill",
-          "render": "antigravity.session.percentage >= 90",
+          "render": "antigravity.headline.percentage >= 90",
           "parent": "antigravity-tray-icon",
           "x": "3",
           "y": "3",
@@ -1612,13 +1964,13 @@
         {
           "id": "antigravity-tray-low-one-digit",
           "name": "Antigravity normal one-digit percentage",
-          "render": "data.poll_ok && antigravity.available && antigravity.session.percentage < 9.5",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.percentage < 9.5",
           "parent": "antigravity-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{antigravity.session.percentage:0}",
+            "template": "{antigravity.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "50",
             "weight": "bold",
@@ -1631,13 +1983,13 @@
         {
           "id": "antigravity-tray-low-two-digits",
           "name": "Antigravity normal two-digit percentage",
-          "render": "data.poll_ok && antigravity.available && antigravity.session.percentage >= 9.5 && antigravity.session.percentage < 90",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.percentage >= 9.5 && antigravity.headline.percentage < 90",
           "parent": "antigravity-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{antigravity.session.percentage:0}",
+            "template": "{antigravity.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1650,13 +2002,13 @@
         {
           "id": "antigravity-tray-high-two-digits",
           "name": "Antigravity high-usage two-digit percentage",
-          "render": "data.poll_ok && antigravity.available && antigravity.session.percentage >= 90 && antigravity.session.percentage < 99.5",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.percentage >= 90 && antigravity.headline.percentage < 99.5",
           "parent": "antigravity-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{antigravity.session.percentage:0}",
+            "template": "{antigravity.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1669,13 +2021,13 @@
         {
           "id": "antigravity-tray-high-three-digits",
           "name": "Antigravity high-usage three-digit percentage",
-          "render": "data.poll_ok && antigravity.available && antigravity.session.percentage >= 99.5",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.percentage >= 99.5",
           "parent": "antigravity-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{antigravity.session.percentage:0}",
+            "template": "{antigravity.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",
@@ -1712,7 +2064,7 @@
         {
           "id": "cursor-tray-high-outline",
           "name": "Cursor high-usage black outline",
-          "render": "cursor.session.percentage >= 90",
+          "render": "cursor.headline.percentage >= 90",
           "parent": "cursor-tray-icon",
           "width": "64",
           "height": "64",
@@ -1727,7 +2079,7 @@
         {
           "id": "cursor-tray-low-fill",
           "name": "Cursor normal black fill",
-          "render": "cursor.session.percentage < 90",
+          "render": "cursor.headline.percentage < 90",
           "parent": "cursor-tray-icon",
           "x": "3",
           "y": "3",
@@ -1744,7 +2096,7 @@
         {
           "id": "cursor-tray-high-fill",
           "name": "Cursor high-usage white fill",
-          "render": "cursor.session.percentage >= 90",
+          "render": "cursor.headline.percentage >= 90",
           "parent": "cursor-tray-icon",
           "x": "3",
           "y": "3",
@@ -1780,13 +2132,13 @@
         {
           "id": "cursor-tray-low-one-digit",
           "name": "Cursor normal one-digit percentage",
-          "render": "data.poll_ok && cursor.available && cursor.session.percentage < 9.5",
+          "render": "data.poll_ok && cursor.available && cursor.headline.percentage < 9.5",
           "parent": "cursor-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{cursor.session.percentage:0}",
+            "template": "{cursor.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "50",
             "weight": "bold",
@@ -1799,13 +2151,13 @@
         {
           "id": "cursor-tray-low-two-digits",
           "name": "Cursor normal two-digit percentage",
-          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 9.5 && cursor.session.percentage < 90",
+          "render": "data.poll_ok && cursor.available && cursor.headline.percentage >= 9.5 && cursor.headline.percentage < 90",
           "parent": "cursor-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{cursor.session.percentage:0}",
+            "template": "{cursor.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1818,13 +2170,13 @@
         {
           "id": "cursor-tray-high-two-digits",
           "name": "Cursor high-usage two-digit percentage",
-          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 90 && cursor.session.percentage < 99.5",
+          "render": "data.poll_ok && cursor.available && cursor.headline.percentage >= 90 && cursor.headline.percentage < 99.5",
           "parent": "cursor-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{cursor.session.percentage:0}",
+            "template": "{cursor.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1837,13 +2189,13 @@
         {
           "id": "cursor-tray-high-three-digits",
           "name": "Cursor high-usage three-digit percentage",
-          "render": "data.poll_ok && cursor.available && cursor.session.percentage >= 99.5",
+          "render": "data.poll_ok && cursor.available && cursor.headline.percentage >= 99.5",
           "parent": "cursor-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{cursor.session.percentage:0}",
+            "template": "{cursor.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",
@@ -1880,7 +2232,7 @@
         {
           "id": "opencode-tray-high-outline",
           "name": "OpenCode high-usage green outline",
-          "render": "opencode.session.percentage >= 90",
+          "render": "opencode.headline.percentage >= 90",
           "parent": "opencode-tray-icon",
           "width": "64",
           "height": "64",
@@ -1895,7 +2247,7 @@
         {
           "id": "opencode-tray-low-fill",
           "name": "OpenCode normal green fill",
-          "render": "opencode.session.percentage < 90",
+          "render": "opencode.headline.percentage < 90",
           "parent": "opencode-tray-icon",
           "x": "3",
           "y": "3",
@@ -1912,7 +2264,7 @@
         {
           "id": "opencode-tray-high-fill",
           "name": "OpenCode high-usage white fill",
-          "render": "opencode.session.percentage >= 90",
+          "render": "opencode.headline.percentage >= 90",
           "parent": "opencode-tray-icon",
           "x": "3",
           "y": "3",
@@ -1948,13 +2300,13 @@
         {
           "id": "opencode-tray-low-one-digit",
           "name": "OpenCode normal one-digit percentage",
-          "render": "data.poll_ok && opencode.available && opencode.session.percentage < 9.5",
+          "render": "data.poll_ok && opencode.available && opencode.headline.percentage < 9.5",
           "parent": "opencode-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{opencode.session.percentage:0}",
+            "template": "{opencode.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "50",
             "weight": "bold",
@@ -1967,13 +2319,13 @@
         {
           "id": "opencode-tray-low-two-digits",
           "name": "OpenCode normal two-digit percentage",
-          "render": "data.poll_ok && opencode.available && opencode.session.percentage >= 9.5 && opencode.session.percentage < 90",
+          "render": "data.poll_ok && opencode.available && opencode.headline.percentage >= 9.5 && opencode.headline.percentage < 90",
           "parent": "opencode-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{opencode.session.percentage:0}",
+            "template": "{opencode.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -1986,13 +2338,13 @@
         {
           "id": "opencode-tray-high-two-digits",
           "name": "OpenCode high-usage two-digit percentage",
-          "render": "data.poll_ok && opencode.available && opencode.session.percentage >= 90 && opencode.session.percentage < 99.5",
+          "render": "data.poll_ok && opencode.available && opencode.headline.percentage >= 90 && opencode.headline.percentage < 99.5",
           "parent": "opencode-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{opencode.session.percentage:0}",
+            "template": "{opencode.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "42",
             "weight": "bold",
@@ -2005,13 +2357,13 @@
         {
           "id": "opencode-tray-high-three-digits",
           "name": "OpenCode high-usage three-digit percentage",
-          "render": "data.poll_ok && opencode.available && opencode.session.percentage >= 99.5",
+          "render": "data.poll_ok && opencode.available && opencode.headline.percentage >= 99.5",
           "parent": "opencode-tray-icon",
           "width": "64",
           "height": "64",
           "content": {
             "type": "text",
-            "template": "{opencode.session.percentage:0}",
+            "template": "{opencode.headline.percentage:0}",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",
