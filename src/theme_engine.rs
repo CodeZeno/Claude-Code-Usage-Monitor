@@ -1360,6 +1360,17 @@ impl DataContext {
             &format!("{name}.credits.available"),
             credits.is_some() as u8 as f64,
         );
+        // The single figure a badge should show: whatever is closest to its
+        // limit. A provider can switch a window off entirely -- Codex has its
+        // five-hour window disabled -- so binding a badge to one window alone
+        // leaves it reporting 0% while another allowance is spent.
+        self.insert(
+            &format!("{name}.headline.percentage"),
+            match credits {
+                Some(credits) => credits.percentage,
+                None => session.max(weekly),
+            },
+        );
         let reset_value = |reset: Option<std::time::SystemTime>| {
             let unix = reset
                 .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())

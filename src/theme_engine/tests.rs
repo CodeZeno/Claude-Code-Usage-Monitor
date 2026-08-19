@@ -1403,3 +1403,48 @@ fn hit_testing_selects_the_topmost_interactive_layer() {
         Some("top".into())
     );
 }
+
+#[test]
+fn headline_follows_the_window_closest_to_its_limit() {
+    use crate::models::{CreditsSection, UsageData, UsageSection};
+
+    let percent = |value: f64| UsageSection {
+        percentage: value,
+        resets_at: None,
+    };
+    let context = |usage: UsageData| {
+        DataContext::from_usage(
+            Some(&AppUsageData::from_iter([(ProviderId::Codex, usage)])),
+            &Canvas::default(),
+        )
+    };
+
+    // A disabled session window must not hold the badge at zero while the
+    // weekly allowance is spent.
+    let spent_weekly = context(UsageData {
+        session: percent(0.0),
+        weekly: percent(100.0),
+        ..Default::default()
+    });
+    assert_eq!(spent_weekly.get("codex.headline.percentage"), Some(100.0));
+
+    let busy_session = context(UsageData {
+        session: percent(72.0),
+        weekly: percent(12.0),
+        ..Default::default()
+    });
+    assert_eq!(busy_session.get("codex.headline.percentage"), Some(72.0));
+
+    // Once credits are covering the overflow they are the live figure.
+    let on_credits = context(UsageData {
+        session: percent(0.0),
+        weekly: percent(100.0),
+        credits: Some(CreditsSection {
+            percentage: 41.0,
+            remaining: 24.1,
+            total: 40.83,
+        }),
+        ..Default::default()
+    });
+    assert_eq!(on_credits.get("codex.headline.percentage"), Some(41.0));
+}
