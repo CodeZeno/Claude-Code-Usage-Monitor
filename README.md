@@ -63,6 +63,8 @@ It works best if you want a simple "how close am I to the limit?" display that i
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
+If you only ever run Claude Code inside the Claude desktop app, there is nothing else to install. The standalone CLI login writes `~/.claude/.credentials.json`, but the desktop app keeps its own encrypted token cache in `%APPDATA%\Claude\config.json`. The monitor reads that cache read-only, through the same Windows DPAPI and AES-GCM scheme the app itself uses, when no CLI credentials are available.
+
 ## Install
 
 Install the latest version from WinGet:
@@ -235,10 +237,11 @@ What it does **not** do:
 - It does not upload your project files
 - It opens Cursor's SQLite database read-only and never modifies it
 - It does not directly edit your Codex credentials file
+- It opens the Claude desktop app's token cache read-only and never modifies it
 
 Notes:
 
-- If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
+- If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background. When the token came from the Claude desktop app, the desktop app refreshes it instead, so open the app and sign in again if it has lapsed.
 - If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository

@@ -1,10 +1,11 @@
 use std::os::windows::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
+use super::claude_desktop;
 use super::{
     build_agent, get_header_f64, get_header_i64, parse_iso8601, unix_to_system_time, PollError,
 };
@@ -34,10 +35,16 @@ struct Credentials {
     source: CredentialSource,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 enum CredentialSource {
     Windows(PathBuf),
-    Wsl { distro: String },
+    /// The Claude desktop app's own token cache, used when Claude Code has
+    /// only ever run inside the desktop app and no CLI login wrote
+    /// `~/.claude/.credentials.json`.
+    DesktopApp(PathBuf),
+    Wsl {
+        distro: String,
+    },
 }
 
 pub(super) fn poll_claude_code() -> Result<UsageData, PollError> {
@@ -244,6 +251,11 @@ fn refresh_or_fallback(mut credentials: Credentials) -> Result<Credentials, Poll
 fn cli_refresh_token(source: &CredentialSource) {
     match source {
         CredentialSource::Windows(_) => cli_refresh_windows_token(),
+        // The desktop app owns this token and refreshes it itself, so there is
+        // nothing to drive from here; re-reading the cache is the whole retry.
+        CredentialSource::DesktopApp(_) => {
+            diagnose::log("Claude desktop app refreshes its own token; re-reading the cache")
+        }
         CredentialSource::Wsl { distro } => cli_refresh_wsl_token(distro),
     }
 }
@@ -346,22 +358,49 @@ fn resolve_windows_claude_path() -> String {
         }
     }
 
+    if let Some(bundled) = bundled_desktop_claude_path() {
+        return bundled.to_string_lossy().into_owned();
+    }
+
     "claude.cmd".to_string()
 }
 
-fn read_first_credentials() -> Option<Credentials> {
-    read_windows_credentials().or_else(|| {
-        list_wsl_distros()
-            .into_iter()
-            .find_map(|distro| read_wsl_credentials(&distro))
-    })
+/// The desktop app ships its own Claude Code build under
+/// `%APPDATA%\Claude\claude-code\<version>\claude.exe`, which is the only
+/// Claude binary present when the standalone CLI was never installed.
+fn bundled_desktop_claude_path() -> Option<PathBuf> {
+    let versions = dirs::config_dir()?.join("Claude").join("claude-code");
+    let mut candidates: Vec<PathBuf> = std::fs::read_dir(versions)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path().join("claude.exe"))
+        .filter(|path| path.is_file())
+        .collect();
+    // Directory order is not version order; the newest install wins.
+    candidates.sort_by(|left, right| {
+        bundled_claude_version(left)
+            .cmp(&bundled_claude_version(right))
+            .then_with(|| left.cmp(right))
+    });
+    candidates.pop()
 }
 
-fn read_windows_credentials() -> Option<Credentials> {
-    let CredentialSource::Windows(path) = windows_credential_source()? else {
-        return None;
-    };
-    let content = match std::fs::read_to_string(&path) {
+fn bundled_claude_version(path: &Path) -> Option<Vec<u64>> {
+    path.parent()?
+        .file_name()?
+        .to_str()?
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()
+}
+
+fn read_first_credentials() -> Option<Credentials> {
+    credential_sources_in_order().find_map(|source| read_credentials_from_source(&source))
+}
+
+fn read_windows_credentials(path: &Path) -> Option<Credentials> {
+    let content = match std::fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) => {
             if diagnose::is_enabled() {
@@ -373,15 +412,23 @@ fn read_windows_credentials() -> Option<Credentials> {
             return None;
         }
     };
-    parse_credentials(&content, CredentialSource::Windows(path))
+    parse_credentials(&content, CredentialSource::Windows(path.to_path_buf()))
+}
+
+fn read_desktop_app_credentials(path: &Path) -> Option<Credentials> {
+    let token = claude_desktop::read_token(path)?;
+    diagnose::log("using the Claude desktop app token cache");
+    Some(Credentials {
+        access_token: token.access_token,
+        expires_at: token.expires_at,
+        source: CredentialSource::DesktopApp(path.to_path_buf()),
+    })
 }
 
 fn read_credentials_from_source(source: &CredentialSource) -> Option<Credentials> {
     match source {
-        CredentialSource::Windows(path) => {
-            let content = std::fs::read_to_string(path).ok()?;
-            parse_credentials(&content, source.clone())
-        }
+        CredentialSource::Windows(path) => read_windows_credentials(path),
+        CredentialSource::DesktopApp(path) => read_desktop_app_credentials(path),
         CredentialSource::Wsl { distro } => read_wsl_credentials(distro),
     }
 }
@@ -429,33 +476,27 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
 }
 
 fn read_next_credentials_after(source: &CredentialSource) -> Option<Credentials> {
-    let distros = list_wsl_distros();
-    let candidates: Box<dyn Iterator<Item = String>> = match source {
-        CredentialSource::Windows(_) => Box::new(distros.into_iter()),
-        CredentialSource::Wsl { distro } => Box::new(
-            distros
-                .into_iter()
-                .skip_while({
-                    let distro = distro.clone();
-                    move |candidate| candidate != &distro
-                })
-                .skip(1),
-        ),
-    };
-    candidates
-        .filter_map(|distro| read_wsl_credentials(&distro))
-        .next()
+    credential_sources_in_order()
+        .skip_while(|candidate| candidate != source)
+        .skip(1)
+        .find_map(|candidate| read_credentials_from_source(&candidate))
+}
+
+/// Credential sources, cheapest first. The WSL probe stays lazy so a machine
+/// that resolves a token locally never has to spawn `wsl.exe`.
+fn credential_sources_in_order() -> impl Iterator<Item = CredentialSource> {
+    windows_credential_source()
+        .into_iter()
+        .chain(desktop_app_credential_source())
+        .chain(
+            std::iter::once_with(list_wsl_distros)
+                .flatten()
+                .map(|distro| CredentialSource::Wsl { distro }),
+        )
 }
 
 fn all_known_credential_sources() -> Vec<CredentialSource> {
-    windows_credential_source()
-        .into_iter()
-        .chain(
-            list_wsl_distros()
-                .into_iter()
-                .map(|distro| CredentialSource::Wsl { distro }),
-        )
-        .collect()
+    credential_sources_in_order().collect()
 }
 
 fn windows_credential_source() -> Option<CredentialSource> {
@@ -464,9 +505,14 @@ fn windows_credential_source() -> Option<CredentialSource> {
     ))
 }
 
+fn desktop_app_credential_source() -> Option<CredentialSource> {
+    claude_desktop::config_path().map(CredentialSource::DesktopApp)
+}
+
 fn credential_watch_signature(source: &CredentialSource) -> Option<String> {
     match source {
         CredentialSource::Windows(path) => Some(windows_credential_watch_signature(path)),
+        CredentialSource::DesktopApp(path) => Some(claude_desktop::watch_signature(path)),
         CredentialSource::Wsl { distro } => wsl_credential_watch_signature(distro),
     }
 }
@@ -608,5 +654,26 @@ fn wait_for_refresh(child: &mut std::process::Child) {
             Ok(None) => std::thread::sleep(Duration::from_millis(500)),
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_claude_version;
+    use std::path::Path;
+
+    #[test]
+    fn bundled_claude_versions_sort_numerically() {
+        let older = bundled_claude_version(Path::new("Claude/claude-code/2.1.9/claude.exe"));
+        let newer = bundled_claude_version(Path::new("Claude/claude-code/2.1.10/claude.exe"));
+
+        assert!(newer > older);
+    }
+
+    #[test]
+    fn bundled_claude_versions_reject_non_numeric_directories() {
+        let version = bundled_claude_version(Path::new("Claude/claude-code/current/claude.exe"));
+
+        assert_eq!(version, None);
     }
 }
