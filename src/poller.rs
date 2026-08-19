@@ -65,6 +65,7 @@ fn poll_with(
 
 mod antigravity;
 mod claude;
+mod claude_desktop;
 mod codex;
 mod cursor;
 mod opencode;
