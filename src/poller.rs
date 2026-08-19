@@ -30,6 +30,31 @@ pub fn poll(enabled_providers: ProviderSet) -> Result<AppUsageData, PollFailure>
     poll_with(enabled_providers, poll_provider)
 }
 
+/// Keep the previous reading for any enabled provider that failed this cycle.
+///
+/// A poll succeeds as long as one provider answers, so without this a single
+/// provider's outage blanks its row on every refresh while the others carry
+/// on updating. The carried figures are marked stale rather than passed off as
+/// current.
+pub fn carry_forward_failures(
+    fresh: AppUsageData,
+    previous: &AppUsageData,
+    enabled: ProviderSet,
+) -> AppUsageData {
+    let mut merged = fresh;
+    for provider in enabled.iter() {
+        if merged.get(provider).is_some() {
+            continue;
+        }
+        if let Some(last) = previous.get(provider) {
+            let mut carried = last.clone();
+            carried.stale = true;
+            merged.insert(provider, carried);
+        }
+    }
+    merged
+}
+
 fn poll_with(
     enabled_providers: ProviderSet,
     mut poll_provider: impl FnMut(ProviderId) -> Result<UsageData, PollError>,

@@ -1893,8 +1893,12 @@ fn do_poll_once(hwnd: HWND) {
 
     match poller::poll(enabled_providers) {
         Ok(data) => {
-            let cache_data = data.clone();
             let mut state = lock_state();
+            let data = match state.as_ref().and_then(|s| s.data.as_ref()) {
+                Some(previous) => poller::carry_forward_failures(data, previous, enabled_providers),
+                None => data,
+            };
+            let cache_data = data.clone();
             if let Some(s) = state.as_mut() {
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {

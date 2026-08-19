@@ -10,7 +10,7 @@ use super::{
     build_agent, get_header_f64, get_header_i64, parse_iso8601, unix_to_system_time, PollError,
 };
 use crate::diagnose;
-use crate::models::UsageData;
+use crate::models::{CreditsSection, UsageData};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -21,6 +21,30 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 struct UsageResponse {
     five_hour: Option<UsageBucket>,
     seven_day: Option<UsageBucket>,
+    spend: Option<SpendResponse>,
+}
+
+/// Paid credits that carry the account past its plan limits. Amounts are
+/// minor units with their own exponent, so the currency is self-describing.
+#[derive(Deserialize)]
+struct SpendResponse {
+    #[serde(default)]
+    enabled: bool,
+    used: Option<SpendAmount>,
+    limit: Option<SpendAmount>,
+}
+
+#[derive(Deserialize)]
+struct SpendAmount {
+    amount_minor: f64,
+    #[serde(default)]
+    exponent: u32,
+}
+
+impl SpendAmount {
+    fn major(&self) -> f64 {
+        self.amount_minor / 10f64.powi(self.exponent as i32)
+    }
 }
 
 #[derive(Deserialize)]
@@ -98,13 +122,24 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         .call()
     {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!(
-                "usage endpoint returned auth error status {code}; re-login required"
-            ));
-            return Err(PollError::AuthRequired);
-        }
-        Err(_) => return Ok(None),
+        Err(error) => match classify_usage_failure(&error) {
+            UsageEndpointFailure::Auth => {
+                diagnose::log(format!(
+                    "usage endpoint returned an auth error ({error}); re-login required"
+                ));
+                return Err(PollError::AuthRequired);
+            }
+            UsageEndpointFailure::Transient => {
+                diagnose::log(format!("usage endpoint temporarily unavailable ({error})"));
+                return Err(PollError::RequestFailed);
+            }
+            UsageEndpointFailure::Unsupported => {
+                diagnose::log(format!(
+                    "usage endpoint unavailable for this account ({error}); trying the Messages API"
+                ));
+                return Ok(None);
+            }
+        },
     };
 
     let response: UsageResponse = match resp.into_json() {
@@ -123,7 +158,63 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
 
+    data.credits = response
+        .spend
+        .as_ref()
+        .and_then(|spend| claude_credits(spend, &data));
+
     Ok(Some(data))
+}
+
+/// What a failed call to the usage endpoint actually tells us.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UsageEndpointFailure {
+    /// The credentials were rejected.
+    Auth,
+    /// Rate limited, a server-side fault, or the network. Retrying later is
+    /// the right move. Asking the Messages API instead would spend real quota
+    /// on a request whose only purpose is to read headers, and during a rate
+    /// limit it would add to the load that caused it.
+    Transient,
+    /// The endpoint is not usable on this account, which is what the Messages
+    /// API fallback exists for.
+    Unsupported,
+}
+
+fn classify_usage_failure(error: &ureq::Error) -> UsageEndpointFailure {
+    match error {
+        ureq::Error::Status(401 | 403, _) => UsageEndpointFailure::Auth,
+        ureq::Error::Status(429, _) => UsageEndpointFailure::Transient,
+        ureq::Error::Status(code, _) if *code >= 500 => UsageEndpointFailure::Transient,
+        ureq::Error::Status(_, _) => UsageEndpointFailure::Unsupported,
+        ureq::Error::Transport(_) => UsageEndpointFailure::Transient,
+    }
+}
+
+/// Unlike Codex, the plan states its own ceiling, so the gauge needs no
+/// history: `used` is already the spend against the current cap, and a
+/// non-zero figure is the same "credits are in play" observation that the
+/// Codex balance gives by falling. Accounts with extra usage switched off
+/// report it disabled and get no gauge rather than an empty one.
+fn claude_credits(spend: &SpendResponse, data: &UsageData) -> Option<CreditsSection> {
+    let used = spend.used.as_ref()?.major();
+    let total = spend.limit.as_ref()?.major();
+    if !spend.enabled || !total.is_finite() || total <= 0.0 {
+        return None;
+    }
+
+    // Hold the ordinary windows until one of them is spent and credits have
+    // started covering the overflow.
+    let limit_reached = data.session.percentage >= 100.0 || data.weekly.percentage >= 100.0;
+    if !limit_reached || used <= 0.0 {
+        return None;
+    }
+
+    Some(CreditsSection {
+        percentage: ((used / total) * 100.0).clamp(0.0, 100.0),
+        remaining: (total - used).max(0.0),
+        total,
+    })
 }
 
 pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
@@ -659,7 +750,7 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 
 #[cfg(test)]
 mod tests {
-    use super::bundled_claude_version;
+    use super::*;
     use std::path::Path;
 
     #[test]
@@ -675,5 +766,129 @@ mod tests {
         let version = bundled_claude_version(Path::new("Claude/claude-code/current/claude.exe"));
 
         assert_eq!(version, None);
+    }
+
+    fn usage_from_json(json: &str) -> UsageData {
+        let response: UsageResponse =
+            serde_json::from_str(json).expect("the fixture should deserialize");
+        let mut data = UsageData::default();
+        if let Some(bucket) = &response.seven_day {
+            data.weekly.percentage = bucket.utilization;
+        }
+        if let Some(bucket) = &response.five_hour {
+            data.session.percentage = bucket.utilization;
+        }
+        data.credits = response
+            .spend
+            .as_ref()
+            .and_then(|spend| claude_credits(spend, &data));
+        data
+    }
+
+    fn status_error(code: u16) -> ureq::Error {
+        ureq::Error::Status(
+            code,
+            ureq::Response::new(code, "status", "").expect("response"),
+        )
+    }
+
+    #[test]
+    fn rate_limits_and_server_faults_do_not_trigger_the_messages_fallback() {
+        // Spending quota on a Messages request is the wrong answer to being
+        // rate limited, and it feeds the condition that caused it.
+        assert_eq!(
+            classify_usage_failure(&status_error(429)),
+            UsageEndpointFailure::Transient
+        );
+        assert_eq!(
+            classify_usage_failure(&status_error(500)),
+            UsageEndpointFailure::Transient
+        );
+        assert_eq!(
+            classify_usage_failure(&status_error(503)),
+            UsageEndpointFailure::Transient
+        );
+    }
+
+    #[test]
+    fn rejected_credentials_are_kept_separate_from_an_absent_endpoint() {
+        assert_eq!(
+            classify_usage_failure(&status_error(401)),
+            UsageEndpointFailure::Auth
+        );
+        assert_eq!(
+            classify_usage_failure(&status_error(403)),
+            UsageEndpointFailure::Auth
+        );
+        // A 404 is the case the Messages API fallback exists to cover.
+        assert_eq!(
+            classify_usage_failure(&status_error(404)),
+            UsageEndpointFailure::Unsupported
+        );
+    }
+
+    #[test]
+    fn spend_becomes_a_credit_gauge_against_the_plan_cap() {
+        // Shape taken from a live /api/oauth/usage response.
+        let data = usage_from_json(
+            r#"{
+                "seven_day": {"utilization": 100.0, "resets_at": null},
+                "spend": {
+                    "used": {"amount_minor": 1359, "currency": "USD", "exponent": 2},
+                    "limit": {"amount_minor": 5000, "currency": "USD", "exponent": 2},
+                    "percent": 27,
+                    "enabled": true
+                }
+            }"#,
+        );
+
+        let credits = data.credits.expect("enabled spend should expose a gauge");
+        assert!((credits.percentage - 27.18).abs() < 0.01, "{credits:?}");
+        assert!((credits.remaining - 36.41).abs() < 0.001, "{credits:?}");
+        assert_eq!(credits.total, 50.0);
+    }
+
+    #[test]
+    fn disabled_or_uncapped_spend_gets_no_gauge() {
+        assert!(usage_from_json(
+            r#"{"seven_day": {"utilization": 100.0},
+                "spend": {"used": {"amount_minor": 0, "exponent": 2},
+                          "limit": {"amount_minor": 5000, "exponent": 2}, "enabled": false}}"#
+        )
+        .credits
+        .is_none());
+
+        assert!(usage_from_json(
+            r#"{"seven_day": {"utilization": 100.0},
+                "spend": {"used": {"amount_minor": 10, "exponent": 2},
+                          "limit": {"amount_minor": 0, "exponent": 2}, "enabled": true}}"#
+        )
+        .credits
+        .is_none());
+
+        assert!(usage_from_json(r#"{"seven_day": {"utilization": 1.0}}"#)
+            .credits
+            .is_none());
+    }
+
+    #[test]
+    fn the_gauge_waits_for_a_spent_window_and_for_credits_to_be_in_play() {
+        let spend = r#""spend": {"used": {"amount_minor": 1359, "exponent": 2},
+                                 "limit": {"amount_minor": 5000, "exponent": 2}, "enabled": true}"#;
+
+        // Room left in both windows, so the bars stay on the ordinary limits.
+        let json = format!(r#"{{"five_hour": {{"utilization": 40.0}}, {spend}}}"#);
+        assert!(usage_from_json(&json).credits.is_none());
+
+        // A spent five-hour window is enough; it need not be the weekly one.
+        let json = format!(r#"{{"five_hour": {{"utilization": 100.0}}, {spend}}}"#);
+        assert!(usage_from_json(&json).credits.is_some());
+
+        // Spent window, but nothing charged to credits yet.
+        let json = r#"{"five_hour": {"utilization": 100.0},
+                       "spend": {"used": {"amount_minor": 0, "exponent": 2},
+                                 "limit": {"amount_minor": 5000, "exponent": 2},
+                                 "enabled": true}}"#;
+        assert!(usage_from_json(json).credits.is_none());
     }
 }

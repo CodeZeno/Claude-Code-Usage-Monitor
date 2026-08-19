@@ -307,6 +307,8 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
             },
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
+            credits: None,
+            stale: false,
         },
     )]);
     let ready = DataContext::from_usage_with_runtime(
@@ -364,8 +366,10 @@ fn starter_theme_round_trips_and_validates() {
         })
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
-    // 1.4.9 palette follows the taskbar mode without runtime recolouring.
-    assert_eq!(segments, vec![10; 20]);
+    // 1.4.9 palette follows the taskbar mode without runtime recolouring:
+    // five providers over two windows in two modes, plus a credit overlay on
+    // the weekly row of the two providers that report credits.
+    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2]);
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -476,6 +480,8 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
             },
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
+            credits: None,
+            stale: false,
         },
     )]);
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());
@@ -1399,5 +1405,87 @@ fn hit_testing_selects_the_topmost_interactive_layer() {
     assert_eq!(
         hit_test_mouse_event(&theme, 0, 25.0, 25.0, None, ThemeRuntime::default()),
         Some("top".into())
+    );
+}
+
+#[test]
+fn headline_follows_the_window_closest_to_its_limit() {
+    use crate::models::{CreditsSection, UsageData, UsageSection};
+
+    let percent = |value: f64| UsageSection {
+        percentage: value,
+        resets_at: None,
+    };
+    let context = |usage: UsageData| {
+        DataContext::from_usage(
+            Some(&AppUsageData::from_iter([(ProviderId::Codex, usage)])),
+            &Canvas::default(),
+        )
+    };
+
+    // A disabled session window must not hold the badge at zero while the
+    // weekly allowance is spent.
+    let spent_weekly = context(UsageData {
+        session: percent(0.0),
+        weekly: percent(100.0),
+        ..Default::default()
+    });
+    assert_eq!(spent_weekly.get("codex.headline.percentage"), Some(100.0));
+
+    let busy_session = context(UsageData {
+        session: percent(72.0),
+        weekly: percent(12.0),
+        ..Default::default()
+    });
+    assert_eq!(busy_session.get("codex.headline.percentage"), Some(72.0));
+
+    // Once credits are covering the overflow they are the live figure.
+    let on_credits = context(UsageData {
+        session: percent(0.0),
+        weekly: percent(100.0),
+        credits: Some(CreditsSection {
+            percentage: 41.0,
+            remaining: 24.1,
+            total: 40.83,
+        }),
+        ..Default::default()
+    });
+    assert_eq!(on_credits.get("codex.headline.percentage"), Some(41.0));
+}
+
+#[test]
+fn credit_badges_abbreviate_a_balance_too_wide_for_the_tray() {
+    use crate::models::{CreditsSection, UsageData};
+
+    let context = |balance: f64| {
+        DataContext::from_usage(
+            Some(&AppUsageData::from_iter([(
+                ProviderId::Codex,
+                UsageData {
+                    credits: Some(CreditsSection {
+                        percentage: 10.0,
+                        remaining: balance,
+                        total: 2000.0,
+                    }),
+                    ..Default::default()
+                },
+            )])),
+            &Canvas::default(),
+        )
+    };
+
+    // Up to three figures the badge shows whole dollars.
+    assert_eq!(
+        format_template("{codex.credits.balance:0}", &context(39.25)),
+        "39"
+    );
+    assert_eq!(
+        format_template("{codex.credits.balance:0}", &context(450.0)),
+        "450"
+    );
+    // Four will not fit, so the tray falls back to thousands.
+    assert_eq!(
+        format_template("{codex.credits.balance / 1000:0.0}k", &context(1234.0)),
+        "1.2k"
     );
 }

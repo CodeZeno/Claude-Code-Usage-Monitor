@@ -12,12 +12,52 @@ pub struct UsageSection {
     pub resets_at: Option<SystemTime>,
 }
 
+/// Paid credits that carry a provider past its included allowance.
+///
+/// `None` on [`UsageData`] means the provider has nothing to show: credits are
+/// switched off, unavailable on the plan, or not yet in play because the
+/// included allowance still has room.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CreditsSection {
+    /// Share of the current allowance already consumed, 0 to 100.
+    pub percentage: f64,
+    /// What is left, in whole currency units.
+    pub remaining: f64,
+    /// What `percentage` is measured against, in whole currency units: a
+    /// plan's cap where there is one, otherwise the balance recorded at the
+    /// last top-up.
+    pub total: f64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageData {
     pub session: UsageSection,
     pub weekly: UsageSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<CreditsSection>,
+    /// True when this reading was carried over from an earlier poll because
+    /// the provider failed this cycle. The figures are real, just not current.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
+}
+
+/// Codex reports a credit balance with no ceiling, so the denominator has to
+/// be learned: any rise in the balance is a top-up, and the balance recorded
+/// at that moment becomes what the gauge measures against until the next one.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct CodexCreditsState {
+    /// Account whose balance this state belongs to. Older state files did not
+    /// record it and are deliberately re-seeded when an account ID is now
+    /// available, rather than risking a gauge based on another account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+    /// Balance seen at the previous poll, in raw credits.
+    pub balance: f64,
+    /// Balance recorded at the last observed top-up, in raw credits. Seeded
+    /// from the first balance we ever see.
+    pub baseline: f64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]

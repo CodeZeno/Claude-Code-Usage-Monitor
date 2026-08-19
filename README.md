@@ -245,6 +245,7 @@ Notes:
 - If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository
+- If the Claude usage endpoint is rate limited or briefly unavailable, the app keeps showing your last known figures and retries with a backoff, rather than spending quota on a request just to read its rate limit headers
 - Proxies should be trusted because proxied usage requests include your OAuth bearer token inside the TLS connection
 
 ## How It Works

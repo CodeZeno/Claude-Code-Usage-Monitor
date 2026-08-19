@@ -319,7 +319,7 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
             provider,
             "active" | "claude" | "codex" | "antigravity" | "opencode" | "cursor"
         )
-        || !matches!(window, "session" | "weekly")
+        || !matches!(window, "session" | "weekly" | "credits")
     {
         return None;
     }
