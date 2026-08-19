@@ -48,6 +48,11 @@ pub struct UsageData {
 /// at that moment becomes what the gauge measures against until the next one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct CodexCreditsState {
+    /// Account whose balance this state belongs to. Older state files did not
+    /// record it and are deliberately re-seeded when an account ID is now
+    /// available, rather than risking a gauge based on another account.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Balance seen at the previous poll, in raw credits.
     pub balance: f64,
     /// Balance recorded at the last observed top-up, in raw credits. Seeded
