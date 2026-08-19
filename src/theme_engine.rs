@@ -1308,33 +1308,63 @@ impl DataContext {
         }
         if let Some(data) = data {
             for descriptor in PROVIDER_DESCRIPTORS {
-                context.insert_provider(descriptor.key, data.get(descriptor.id));
+                context.insert_provider(
+                    descriptor.key,
+                    data.get(descriptor.id),
+                    descriptor.id == ProviderId::Codex,
+                );
             }
             let active = ProviderId::ALL
                 .into_iter()
-                .find_map(|provider| data.get(provider));
-            context.insert_provider("active", active);
+                .find_map(|provider| data.get(provider).map(|usage| (provider, usage)));
+            context.insert_provider(
+                "active",
+                active.map(|(_, usage)| usage),
+                active.is_some_and(|(provider, _)| provider == ProviderId::Codex),
+            );
         } else {
             for descriptor in PROVIDER_DESCRIPTORS {
-                context.insert_provider(descriptor.key, None);
+                context.insert_provider(descriptor.key, None, descriptor.id == ProviderId::Codex);
             }
-            context.insert_provider("active", None);
+            context.insert_provider("active", None, false);
         }
         context
     }
 
-    fn insert_provider(&mut self, name: &str, usage: Option<&crate::models::UsageData>) {
+    fn insert_provider(
+        &mut self,
+        name: &str,
+        usage: Option<&crate::models::UsageData>,
+        codex_compatibility: bool,
+    ) {
         let weekly_label = usage
             .and_then(|usage| usage.weekly_label.as_deref())
             .or_else(|| self.get_string("i18n.weekly_window"))
             .unwrap_or("7d")
             .to_string();
         self.insert_string(&format!("{name}.weekly.label"), weekly_label);
-        let (session, weekly) = usage
+        let (five_hour, weekly) = usage
             .map(|usage| (usage.session.percentage, usage.weekly.percentage))
             .unwrap_or((0.0, 0.0));
+        // Before Codex windows were classified by duration, a weekly-only
+        // response arrived in the primary slot and was exposed to themes as
+        // `codex.session`. Keep that established binding working for existing
+        // custom themes, while `codex.five_hour` always means the real window.
+        let use_codex_session_fallback = codex_compatibility
+            && usage.is_some_and(|usage| {
+                usage.session.resets_at.is_none()
+                    && usage.session.percentage == 0.0
+                    && (usage.weekly.resets_at.is_some() || usage.weekly.percentage != 0.0)
+            });
+        let session = if use_codex_session_fallback {
+            weekly
+        } else {
+            five_hour
+        };
         self.insert(&format!("{name}.session.percentage"), session);
         self.insert(&format!("{name}.session.remaining"), 100.0 - session);
+        self.insert(&format!("{name}.five_hour.percentage"), five_hour);
+        self.insert(&format!("{name}.five_hour.remaining"), 100.0 - five_hour);
         self.insert(&format!("{name}.weekly.percentage"), weekly);
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
@@ -1373,7 +1403,7 @@ impl DataContext {
             &format!("{name}.headline.percentage"),
             match credits {
                 Some(credits) => credits.percentage,
-                None => session.max(weekly),
+                None => five_hour.max(weekly),
             },
         );
         let reset_value = |reset: Option<std::time::SystemTime>| {
@@ -1387,12 +1417,18 @@ impl DataContext {
                 .unwrap_or(0.0);
             (unix, seconds)
         };
-        let (session_unix, session_seconds) =
+        let (five_hour_unix, five_hour_seconds) =
             reset_value(usage.and_then(|value| value.session.resets_at));
         let (weekly_unix, weekly_seconds) =
             reset_value(usage.and_then(|value| value.weekly.resets_at));
+        let (session_unix, session_seconds) = if use_codex_session_fallback {
+            (weekly_unix, weekly_seconds)
+        } else {
+            (five_hour_unix, five_hour_seconds)
+        };
         for (window, unix, seconds) in [
             ("session", session_unix, session_seconds),
+            ("five_hour", five_hour_unix, five_hour_seconds),
             ("weekly", weekly_unix, weekly_seconds),
         ] {
             self.insert(&format!("{name}.{window}.reset.unix"), unix);

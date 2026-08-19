@@ -161,6 +161,30 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Codex",
+        label: "Five-hour summary (exact)",
+        expression: "codex.five_hour",
+        kind: TextTemplateValueKind::UsageSummary,
+    },
+    TextTemplateValue {
+        group: "Codex",
+        label: "Five-hour used (exact)",
+        expression: "codex.five_hour.percentage",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Codex",
+        label: "Five-hour remaining (exact)",
+        expression: "codex.five_hour.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Codex",
+        label: "Five-hour reset (exact)",
+        expression: "codex.five_hour.reset.seconds",
+        kind: TextTemplateValueKind::Duration,
+    },
+    TextTemplateValue {
+        group: "Codex",
         label: "Weekly summary",
         expression: "codex.weekly",
         kind: TextTemplateValueKind::UsageSummary,
@@ -901,7 +925,12 @@ pub(super) fn expression_variables_panel(
                         .map(|descriptor| (descriptor.display_name, descriptor.key)),
                 ) {
                     let mut names = vec![format!("{provider}.available")];
-                    for window in ["session", "weekly"] {
+                    let windows = if matches!(provider, "active" | "codex") {
+                        &["session", "five_hour", "weekly"][..]
+                    } else {
+                        &["session", "weekly"][..]
+                    };
+                    for window in windows {
                         for metric in ["percentage", "remaining"] {
                             names.push(format!("{provider}.{window}.{metric}"));
                         }

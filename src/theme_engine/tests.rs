@@ -1454,6 +1454,71 @@ fn headline_follows_the_window_closest_to_its_limit() {
 }
 
 #[test]
+fn codex_session_bindings_fall_back_without_hiding_the_exact_five_hour_window() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let reset = UNIX_EPOCH + Duration::from_secs(1_787_198_224);
+    let usage = UsageData {
+        session: UsageSection::default(),
+        weekly: UsageSection {
+            percentage: 83.0,
+            resets_at: Some(reset),
+        },
+        ..Default::default()
+    };
+    let context = DataContext::from_usage(
+        Some(&AppUsageData::from_iter([(ProviderId::Codex, usage)])),
+        &Canvas::default(),
+    );
+
+    // Existing custom themes keep the primary-window behavior they saw
+    // before Codex windows were classified by duration.
+    assert_eq!(context.get("codex.session.percentage"), Some(83.0));
+    assert_eq!(context.get("codex.session.remaining"), Some(17.0));
+    assert_eq!(
+        context.get("codex.session.reset.unix"),
+        context.get("codex.weekly.reset.unix")
+    );
+    assert_eq!(context.get("active.session.percentage"), Some(83.0));
+
+    // New and bundled themes can still address the actual five-hour window.
+    assert_eq!(context.get("codex.five_hour.percentage"), Some(0.0));
+    assert_eq!(context.get("codex.five_hour.remaining"), Some(100.0));
+    assert_eq!(context.get("codex.five_hour.reset.unix"), Some(0.0));
+    assert_eq!(context.get("codex.weekly.percentage"), Some(83.0));
+}
+
+#[test]
+fn codex_session_bindings_use_the_real_five_hour_window_when_present() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let usage = UsageData {
+        session: UsageSection {
+            percentage: 12.0,
+            resets_at: Some(UNIX_EPOCH + Duration::from_secs(1_787_100_000)),
+        },
+        weekly: UsageSection {
+            percentage: 83.0,
+            resets_at: Some(UNIX_EPOCH + Duration::from_secs(1_787_198_224)),
+        },
+        ..Default::default()
+    };
+    let context = DataContext::from_usage(
+        Some(&AppUsageData::from_iter([(ProviderId::Codex, usage)])),
+        &Canvas::default(),
+    );
+
+    assert_eq!(context.get("codex.session.percentage"), Some(12.0));
+    assert_eq!(context.get("codex.five_hour.percentage"), Some(12.0));
+    assert_ne!(
+        context.get("codex.session.reset.unix"),
+        context.get("codex.weekly.reset.unix")
+    );
+}
+
+#[test]
 fn credit_badges_abbreviate_a_balance_too_wide_for_the_tray() {
     use crate::models::{CreditsSection, UsageData};
 
