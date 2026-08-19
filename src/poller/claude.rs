@@ -377,8 +377,22 @@ fn bundled_desktop_claude_path() -> Option<PathBuf> {
         .filter(|path| path.is_file())
         .collect();
     // Directory order is not version order; the newest install wins.
-    candidates.sort();
+    candidates.sort_by(|left, right| {
+        bundled_claude_version(left)
+            .cmp(&bundled_claude_version(right))
+            .then_with(|| left.cmp(right))
+    });
     candidates.pop()
+}
+
+fn bundled_claude_version(path: &Path) -> Option<Vec<u64>> {
+    path.parent()?
+        .file_name()?
+        .to_str()?
+        .split('.')
+        .map(str::parse)
+        .collect::<Result<_, _>>()
+        .ok()
 }
 
 fn read_first_credentials() -> Option<Credentials> {
@@ -640,5 +654,26 @@ fn wait_for_refresh(child: &mut std::process::Child) {
             Ok(None) => std::thread::sleep(Duration::from_millis(500)),
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::bundled_claude_version;
+    use std::path::Path;
+
+    #[test]
+    fn bundled_claude_versions_sort_numerically() {
+        let older = bundled_claude_version(Path::new("Claude/claude-code/2.1.9/claude.exe"));
+        let newer = bundled_claude_version(Path::new("Claude/claude-code/2.1.10/claude.exe"));
+
+        assert!(newer > older);
+    }
+
+    #[test]
+    fn bundled_claude_versions_reject_non_numeric_directories() {
+        let version = bundled_claude_version(Path::new("Claude/claude-code/current/claude.exe"));
+
+        assert_eq!(version, None);
     }
 }
