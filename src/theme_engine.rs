@@ -1338,6 +1338,28 @@ impl DataContext {
         self.insert(&format!("{name}.weekly.percentage"), weekly);
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
+        // Credits are absent for most accounts, so `credits.available` is what
+        // a theme should gate the overlay on rather than `available`.
+        let credits = usage.and_then(|usage| usage.credits.as_ref());
+        let credits_percentage = credits.map(|credits| credits.percentage).unwrap_or(0.0);
+        self.insert(&format!("{name}.credits.percentage"), credits_percentage);
+        self.insert(
+            &format!("{name}.credits.remaining"),
+            100.0 - credits_percentage,
+        );
+        // Currency, unlike the percentages either side of it.
+        self.insert(
+            &format!("{name}.credits.balance"),
+            credits.map(|credits| credits.remaining).unwrap_or(0.0),
+        );
+        self.insert(
+            &format!("{name}.credits.total"),
+            credits.map(|credits| credits.total).unwrap_or(0.0),
+        );
+        self.insert(
+            &format!("{name}.credits.available"),
+            credits.is_some() as u8 as f64,
+        );
         let reset_value = |reset: Option<std::time::SystemTime>| {
             let unix = reset
                 .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())

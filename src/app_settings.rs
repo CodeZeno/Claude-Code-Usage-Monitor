@@ -9,7 +9,7 @@ use windows::Win32::Storage::FileSystem::{
     MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
 };
 
-use crate::models::AppUsageData;
+use crate::models::{AppUsageData, CodexCreditsState};
 use crate::providers::{ProviderId, ProviderSet};
 
 pub const POLL_1_MIN_SECONDS: u32 = 60;
@@ -247,6 +247,18 @@ fn settings_json(settings: &SettingsFile) -> serde_json::Value {
         }
     }
     value
+}
+
+pub fn codex_credits_path() -> PathBuf {
+    app_data_directory().join("codex-credits.json")
+}
+
+pub fn load_codex_credits() -> Option<CodexCreditsState> {
+    read_json(&codex_credits_path())
+}
+
+pub fn save_codex_credits(state: &CodexCreditsState) -> Result<(), String> {
+    write_json_atomic(&codex_credits_path(), state)
 }
 
 pub fn load_usage_cache() -> Option<UsageCache> {

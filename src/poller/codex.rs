@@ -6,8 +6,9 @@ use std::time::{Duration, UNIX_EPOCH};
 use serde::Deserialize;
 
 use super::{build_agent, unix_to_system_time, PollError};
+use crate::app_settings;
 use crate::diagnose;
-use crate::models::{UsageData, UsageSection};
+use crate::models::{CodexCreditsState, CreditsSection, UsageData, UsageSection};
 
 const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -26,19 +27,48 @@ struct CodexTokenData {
 #[derive(Deserialize)]
 pub(super) struct CodexUsageResponse {
     rate_limit: Option<Option<Box<CodexRateLimitDetails>>>,
+    credits: Option<Option<Box<CodexCredits>>>,
 }
+
+#[derive(Deserialize)]
+struct CodexCredits {
+    #[serde(default)]
+    has_credits: bool,
+    #[serde(default)]
+    unlimited: bool,
+    #[serde(default)]
+    overage_limit_reached: bool,
+    /// Sent as a decimal string, in credits rather than currency.
+    balance: Option<String>,
+}
+
+/// Codex bills credits at 25 to the dollar. Only the displayed amount depends
+/// on this, never the gauge: a ratio of two credit figures is unit-free, so a
+/// change to this rate cannot make the bar wrong.
+const CODEX_CREDITS_PER_DOLLAR: f64 = 25.0;
 
 #[derive(Deserialize)]
 struct CodexRateLimitDetails {
     primary_window: Option<Option<Box<CodexRateLimitWindow>>>,
     secondary_window: Option<Option<Box<CodexRateLimitWindow>>>,
+    /// True once any window is spent, whichever one it was. Better than
+    /// reading a percentage back out of a window we mapped ourselves, and it
+    /// keeps working if the five-hour window is switched on again.
+    #[serde(default)]
+    limit_reached: bool,
 }
 
 #[derive(Deserialize)]
 pub(super) struct CodexRateLimitWindow {
     used_percent: f64,
     reset_at: i64,
+    limit_window_seconds: Option<i64>,
 }
+
+/// A window at or above this length is a weekly allowance rather than a
+/// session one. Codex currently sends 604800 for weekly and 18000 for the
+/// five-hour window, so anything from a day up is unambiguously weekly.
+const WEEKLY_WINDOW_THRESHOLD_SECONDS: i64 = 86_400;
 
 pub(super) fn poll_codex() -> Result<UsageData, PollError> {
     let creds = match read_codex_credentials() {
@@ -100,18 +130,102 @@ pub(super) fn fetch_codex_usage(
 }
 
 pub(super) fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> {
+    let credits = response.credits.flatten();
     let details = *response.rate_limit.flatten()?;
     let mut data = UsageData::default();
 
-    if let Some(window) = details.primary_window.flatten() {
-        data.session = codex_section_from_window(&window);
+    // Assign by window length, not by slot. Codex has shipped the weekly
+    // allowance in `primary_window` with `secondary_window` empty while the
+    // five-hour window is switched off, so trusting the slot order puts a
+    // weekly figure in the session bar.
+    for window in [
+        details.primary_window.flatten(),
+        details.secondary_window.flatten(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let section = codex_section_from_window(&window);
+        if window_is_weekly(&window) {
+            data.weekly = section;
+        } else {
+            data.session = section;
+        }
     }
 
-    if let Some(window) = details.secondary_window.flatten() {
-        data.weekly = codex_section_from_window(&window);
-    }
+    data.credits = credits.and_then(|credits| {
+        let previous = app_settings::load_codex_credits();
+        let (state, section) = codex_credits(previous, &credits, details.limit_reached);
+        if let Err(error) = app_settings::save_codex_credits(&state) {
+            diagnose::log(format!("unable to persist Codex credit baseline: {error}"));
+        }
+        section
+    });
 
     Some(data)
+}
+
+/// Tracks the balance across polls and turns it into a gauge.
+///
+/// The balance only ever falls as credits are spent, so any rise is a top-up
+/// and re-baselines the gauge. Tracking continues whether or not the gauge is
+/// shown, because a top-up that happens while the bar is hidden still has to
+/// move the baseline.
+fn codex_credits(
+    previous: Option<CodexCreditsState>,
+    credits: &CodexCredits,
+    limit_reached: bool,
+) -> (CodexCreditsState, Option<CreditsSection>) {
+    let balance = credits
+        .balance
+        .as_deref()
+        .and_then(|balance| balance.parse::<f64>().ok())
+        .filter(|balance| balance.is_finite() && *balance >= 0.0)
+        .unwrap_or_default();
+
+    let baseline = match previous {
+        // A rise can only come from a top-up. Seed from the first balance we
+        // see, which reads as untouched until the next top-up corrects it.
+        Some(previous) if balance <= previous.balance => previous.baseline.max(balance),
+        _ => balance,
+    };
+    let state = CodexCreditsState { balance, baseline };
+
+    // The bars stay on the ordinary windows until two things are true at once:
+    // an allowance is spent, and credits have actually started going down
+    // against the current top-up. The second half is an observation rather
+    // than an assumption about when a provider decides to bill credits, and it
+    // holds steady while idle, so the gauge does not flicker away on a poll
+    // that happens to see no change.
+    let in_use = balance < baseline;
+    let applicable =
+        credits.has_credits && !credits.unlimited && limit_reached && in_use && baseline > 0.0;
+    if !applicable {
+        return (state, None);
+    }
+
+    let percentage = if credits.overage_limit_reached {
+        100.0
+    } else {
+        (((baseline - balance) / baseline) * 100.0).clamp(0.0, 100.0)
+    };
+
+    (
+        state,
+        Some(CreditsSection {
+            percentage,
+            remaining: balance / CODEX_CREDITS_PER_DOLLAR,
+            total: baseline / CODEX_CREDITS_PER_DOLLAR,
+        }),
+    )
+}
+
+/// Falls back to treating an unlabelled window as a session window, which is
+/// what Codex sent before it started reporting `limit_window_seconds`.
+fn window_is_weekly(window: &CodexRateLimitWindow) -> bool {
+    window
+        .limit_window_seconds
+        .is_some_and(|seconds| seconds >= WEEKLY_WINDOW_THRESHOLD_SECONDS)
 }
 
 pub(super) fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
@@ -259,5 +373,176 @@ fn wait_for_refresh(child: &mut std::process::Child) {
             Ok(None) => std::thread::sleep(Duration::from_millis(500)),
             Err(_) => break,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn usage_from_json(json: &str) -> UsageData {
+        let response: CodexUsageResponse =
+            serde_json::from_str(json).expect("the fixture should deserialize");
+        codex_usage_from_response(response).expect("the fixture should carry rate limits")
+    }
+
+    fn credits(balance: &str, has_credits: bool) -> CodexCredits {
+        CodexCredits {
+            has_credits,
+            unlimited: false,
+            overage_limit_reached: false,
+            balance: Some(balance.into()),
+        }
+    }
+
+    #[test]
+    fn the_first_balance_seeds_the_baseline_and_reads_untouched() {
+        let (state, section) = codex_credits(None, &credits("1026.112935", true), true);
+
+        assert_eq!(state.baseline, 1026.112935);
+        // Nothing has been drawn against the seeded baseline yet, so the bars
+        // stay on the ordinary windows until a later poll sees it fall.
+        assert!(section.is_none());
+
+        // That later poll, with 25 credits to the dollar.
+        let previous = state;
+        let (_, section) = codex_credits(Some(previous), &credits("1016.190898", true), true);
+        let section = section.expect("a falling balance should expose the gauge");
+        assert!(
+            (section.remaining - 40.64763592).abs() < 1e-6,
+            "{section:?}"
+        );
+    }
+
+    #[test]
+    fn spending_against_a_baseline_fills_the_gauge() {
+        let previous = CodexCreditsState {
+            balance: 2500.0,
+            baseline: 2500.0,
+        };
+        let (state, section) = codex_credits(Some(previous), &credits("1250.0", true), true);
+
+        assert_eq!(state.baseline, 2500.0);
+        let section = section.expect("gauge");
+        assert_eq!(section.percentage, 50.0);
+        assert_eq!(section.remaining, 50.0);
+        assert_eq!(section.total, 100.0);
+    }
+
+    #[test]
+    fn a_rise_in_the_balance_is_a_reload_and_rebaselines() {
+        let previous = CodexCreditsState {
+            balance: 100.0,
+            baseline: 2500.0,
+        };
+        let (state, section) = codex_credits(Some(previous), &credits("2600.0", true), true);
+
+        assert_eq!(state.baseline, 2600.0);
+        // A fresh top-up has nothing spent against it, so the gauge stands
+        // down until credits start being drawn on again.
+        assert!(section.is_none());
+    }
+
+    #[test]
+    fn the_gauge_hides_while_an_allowance_remains() {
+        let previous = CodexCreditsState {
+            balance: 2000.0,
+            baseline: 2500.0,
+        };
+        let (state, section) = codex_credits(Some(previous), &credits("1000.0", true), false);
+
+        // Tracking continues while hidden so a reload still moves the baseline.
+        assert_eq!(state.balance, 1000.0);
+        assert_eq!(state.baseline, 2500.0);
+        assert!(section.is_none());
+    }
+
+    #[test]
+    fn accounts_without_credits_get_no_gauge() {
+        let (_, section) = codex_credits(None, &credits("0", false), true);
+        assert!(section.is_none());
+
+        let unlimited = CodexCredits {
+            unlimited: true,
+            ..credits("1000.0", true)
+        };
+        let (_, section) = codex_credits(None, &unlimited, true);
+        assert!(section.is_none());
+    }
+
+    #[test]
+    fn a_reached_overage_limit_pins_the_gauge_full() {
+        let previous = CodexCreditsState {
+            balance: 500.0,
+            baseline: 1000.0,
+        };
+        let reached = CodexCredits {
+            overage_limit_reached: true,
+            ..credits("500.0", true)
+        };
+        let (_, section) = codex_credits(Some(previous), &reached, true);
+
+        assert_eq!(section.expect("gauge").percentage, 100.0);
+    }
+
+    #[test]
+    fn a_lone_weekly_window_lands_in_the_weekly_bar() {
+        // Codex ships this shape while the five-hour window is switched off:
+        // the weekly allowance arrives in `primary_window`.
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 100,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1787198224
+                    },
+                    "secondary_window": null
+                }
+            }"#,
+        );
+
+        assert_eq!(data.weekly.percentage, 100.0);
+        assert_eq!(data.session.percentage, 0.0);
+        assert!(data.weekly.resets_at.is_some());
+        assert!(data.session.resets_at.is_none());
+    }
+
+    #[test]
+    fn windows_are_assigned_by_length_regardless_of_slot_order() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 80,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1787198224
+                    },
+                    "secondary_window": {
+                        "used_percent": 20,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1787100000
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(data.weekly.percentage, 80.0);
+        assert_eq!(data.session.percentage, 20.0);
+    }
+
+    #[test]
+    fn an_unlabelled_window_stays_in_the_session_bar() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {"used_percent": 42, "reset_at": 1787100000},
+                    "secondary_window": null
+                }
+            }"#,
+        );
+
+        assert_eq!(data.session.percentage, 42.0);
+        assert_eq!(data.weekly.percentage, 0.0);
     }
 }
