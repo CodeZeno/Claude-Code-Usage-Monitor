@@ -37,6 +37,10 @@ pub struct UsageData {
     pub weekly_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits: Option<CreditsSection>,
+    /// True when this reading was carried over from an earlier poll because
+    /// the provider failed this cycle. The figures are real, just not current.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stale: bool,
 }
 
 /// Codex reports a credit balance with no ceiling, so the denominator has to

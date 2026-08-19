@@ -308,6 +308,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
             credits: None,
+            stale: false,
         },
     )]);
     let ready = DataContext::from_usage_with_runtime(
@@ -478,6 +479,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
             credits: None,
+            stale: false,
         },
     )]);
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());

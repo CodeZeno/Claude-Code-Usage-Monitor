@@ -85,6 +85,7 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         weekly,
         weekly_label,
         credits: None,
+        stale: false,
     })
 }
 

@@ -172,6 +172,7 @@ pub(super) fn fetch_antigravity_usage_from_endpoint(
         weekly,
         weekly_label: None,
         credits: None,
+        stale: false,
     })
 }
 

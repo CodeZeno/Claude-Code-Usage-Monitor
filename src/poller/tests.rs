@@ -9,6 +9,7 @@ fn usage_with_session_percent(percentage: f64) -> UsageData {
         weekly: UsageSection::default(),
         weekly_label: None,
         credits: None,
+        stale: false,
     }
 }
 
@@ -203,4 +204,51 @@ fn antigravity_summary_prefers_gemini_group() {
     assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
     assert!(usage.weekly.resets_at.is_some());
     assert!(usage.session.resets_at.is_some());
+}
+
+#[test]
+fn one_provider_failing_does_not_blank_its_row() {
+    let previous: AppUsageData = [
+        (ProviderId::Claude, usage_with_session_percent(21.0)),
+        (ProviderId::Codex, usage_with_session_percent(3.0)),
+    ]
+    .into_iter()
+    .collect();
+
+    // Only Codex answered this cycle.
+    let fresh: AppUsageData = [(ProviderId::Codex, usage_with_session_percent(9.0))]
+        .into_iter()
+        .collect();
+
+    let merged = carry_forward_failures(
+        fresh,
+        &previous,
+        ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]),
+    );
+
+    let claude = merged.get(ProviderId::Claude).expect("claude is kept");
+    assert_eq!(claude.session.percentage, 21.0);
+    assert!(claude.stale, "a carried reading must be marked stale");
+
+    let codex = merged.get(ProviderId::Codex).expect("codex refreshed");
+    assert_eq!(codex.session.percentage, 9.0);
+    assert!(!codex.stale, "a fresh reading must not be marked stale");
+}
+
+#[test]
+fn a_disabled_provider_is_not_resurrected() {
+    let previous: AppUsageData = [(ProviderId::Claude, usage_with_session_percent(21.0))]
+        .into_iter()
+        .collect();
+    let fresh: AppUsageData = [(ProviderId::Codex, usage_with_session_percent(9.0))]
+        .into_iter()
+        .collect();
+
+    let merged = carry_forward_failures(
+        fresh,
+        &previous,
+        ProviderSet::from_enabled([ProviderId::Codex]),
+    );
+
+    assert!(merged.get(ProviderId::Claude).is_none());
 }

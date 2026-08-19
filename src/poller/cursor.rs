@@ -233,6 +233,7 @@ fn cursor_usage_from_summary(response: CursorUsageSummaryResponse) -> Option<Usa
         },
         weekly_label: Some("API".into()),
         credits: None,
+        stale: false,
     })
 }
 
