@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn window_state_timer_is_only_needed_for_floating_surfaces() {
+    let mut theme = ThemeDocument::starter();
+    assert!(!theme_has_floating_surface(&theme));
+
+    theme.surfaces[0].placement.nest = SurfaceNest::Floating;
+    assert!(theme_has_floating_surface(&theme));
+
+    theme.surfaces[0].placement.nest = SurfaceNest::Auto;
+    theme.surfaces[0].placement.reference.region = ReferenceRegion::Monitor;
+    assert!(theme_has_floating_surface(&theme));
+}
+
+#[test]
 fn center_points_keep_a_surface_centered_as_it_resizes() {
     assert_eq!(aligned_origin(0, 1920, 300, 0.5, 0.5, 0), 810);
     assert_eq!(aligned_origin(0, 1920, 500, 0.5, 0.5, 0), 710);

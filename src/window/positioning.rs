@@ -327,7 +327,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
 }
 
 pub(super) fn sync_theme_window_visibility() {
-    let (theme, data, runtime, windows, desktop_windows) = {
+    let (theme, data, runtime, windows) = {
         let state = lock_state();
         let Some(state) = state.as_ref() else {
             return;
@@ -345,59 +345,54 @@ pub(super) fn sync_theme_window_visibility() {
             std::iter::once(state.hwnd)
                 .chain(state.mirror_hwnds.iter().copied())
                 .collect::<Vec<_>>(),
-            state.desktop_hwnds.clone(),
         )
     };
     unsafe {
         for (surface_index, surface) in theme.surfaces.iter().enumerate() {
-            let Some(regular_window) = windows.get(surface_index) else {
-                continue;
-            };
             let nest = surface
                 .placement
                 .nest
                 .resolve(surface.placement.reference.region);
-            let window = if nest == SurfaceNest::Desktop {
-                let _ = ShowWindow(regular_window.to_hwnd(), SW_HIDE);
-                desktop_windows
-                    .get(surface_index)
-                    .and_then(|window| *window)
-                    .unwrap_or(*regular_window)
-            } else {
-                *regular_window
+            if nest != SurfaceNest::Floating {
+                continue;
+            }
+            let Some(regular_window) = windows.get(surface_index) else {
+                continue;
             };
-            let hwnd = window.to_hwnd();
+            let hwnd = regular_window.to_hwnd();
             if !IsWindow(hwnd).as_bool() {
                 continue;
             }
-            if nest == SurfaceNest::TrayIcon {
-                let _ = ShowWindow(hwnd, SW_HIDE);
+            let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
+            let should_show =
+                theme_engine::surface_should_render(
+                    &theme,
+                    surface_index,
+                    data.as_ref(),
+                    surface_runtime,
+                ) && !foreground_is_fullscreen_on_display(surface.placement.reference.display);
+            if should_show == IsWindowVisible(hwnd).as_bool() {
                 continue;
             }
-            let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
-            let should_show = theme_engine::surface_should_render(
-                &theme,
-                surface_index,
-                data.as_ref(),
-                surface_runtime,
-            ) && (nest != SurfaceNest::Floating
-                || !foreground_is_fullscreen_on_display(surface.placement.reference.display));
             if should_show {
-                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-                if nest == SurfaceNest::Floating {
-                    let _ = SetWindowPos(
-                        hwnd,
-                        HWND_TOPMOST,
-                        0,
-                        0,
-                        0,
-                        0,
-                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-                    );
-                }
-            } else {
-                let _ = ShowWindow(hwnd, SW_HIDE);
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
             }
+            let _ = ShowWindow(
+                hwnd,
+                if should_show {
+                    SW_SHOWNOACTIVATE
+                } else {
+                    SW_HIDE
+                },
+            );
         }
     }
 }

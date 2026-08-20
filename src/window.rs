@@ -155,6 +155,7 @@ const IDM_DASHBOARD: u16 = 71;
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
+const WINDOW_STATE_INTERVAL_MS: u32 = 250;
 
 fn language_menu_command_id(language: LanguageId) -> u16 {
     IDM_LANG_FIRST
@@ -434,6 +435,36 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
     state.active_theme.as_ref().map(|theme| {
         theme_engine::apply_mouse_action_overrides(theme, &state.mouse_action_overrides)
     })
+}
+
+fn theme_has_floating_surface(theme: &ThemeDocument) -> bool {
+    theme.surfaces.iter().any(|surface| {
+        surface
+            .placement
+            .nest
+            .resolve(surface.placement.reference.region)
+            == SurfaceNest::Floating
+    })
+}
+
+fn sync_window_state_timer(hwnd: HWND) {
+    let required = {
+        let state = lock_state();
+        state.as_ref().is_some_and(|state| {
+            state.custom_theme_enabled
+                && state
+                    .active_theme
+                    .as_ref()
+                    .is_some_and(theme_has_floating_surface)
+        })
+    };
+    unsafe {
+        if required {
+            SetTimer(hwnd, TIMER_WINDOW_STATE, WINDOW_STATE_INTERVAL_MS, None);
+        } else {
+            let _ = KillTimer(hwnd, TIMER_WINDOW_STATE);
+        }
+    }
 }
 
 fn save_state_settings() {
@@ -1104,6 +1135,7 @@ fn apply_custom_theme(
         );
     }
     sync_custom_mirrors();
+    sync_window_state_timer(hwnd);
     Ok(())
 }
 
@@ -1674,7 +1706,7 @@ pub fn run() {
                 .unwrap_or(POLL_15_MIN)
         };
         SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
-        SetTimer(hwnd, TIMER_WINDOW_STATE, 250, None);
+        sync_window_state_timer(hwnd);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
         // icon (the shell discards tray registrations when it restarts). This
