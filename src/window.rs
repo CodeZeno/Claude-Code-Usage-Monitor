@@ -177,7 +177,7 @@ static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None)
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
 static POLL_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
-static POLL_GENERATION: AtomicU32 = AtomicU32::new(0);
+static POLL_PENDING: AtomicBool = AtomicBool::new(false);
 
 /// Re-query the monitor DPI for our window and update the cached value.
 /// Uses GetDpiForWindow which returns the live DPI (unlike GetDpiForSystem
@@ -1851,11 +1851,22 @@ fn theme_for_surface(theme: &ThemeDocument, surface_index: usize) -> ThemeDocume
 }
 
 fn request_poll(hwnd: HWND) {
-    POLL_GENERATION.fetch_add(1, Ordering::AcqRel);
+    request_poll_inner(hwnd, true);
+}
+
+/// Request a timer-driven poll without extending an already-running poll cycle.
+fn request_scheduled_poll(hwnd: HWND) {
+    request_poll_inner(hwnd, false);
+}
+
+fn request_poll_inner(hwnd: HWND, queue_if_busy: bool) {
     if POLL_IN_FLIGHT
         .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
         .is_err()
     {
+        if queue_if_busy {
+            POLL_PENDING.store(true, Ordering::Release);
+        }
         return;
     }
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
@@ -1864,15 +1875,19 @@ fn request_poll(hwnd: HWND) {
 
 fn poll_worker(send_hwnd: SendHwnd) {
     loop {
-        let generation = POLL_GENERATION.load(Ordering::Acquire);
         do_poll_once(send_hwnd.to_hwnd());
-        if generation != POLL_GENERATION.load(Ordering::Acquire) {
+        if POLL_PENDING.swap(false, Ordering::AcqRel) {
             continue;
         }
+
         POLL_IN_FLIGHT.store(false, Ordering::Release);
-        if generation == POLL_GENERATION.load(Ordering::Acquire) {
+        if !POLL_PENDING.swap(false, Ordering::AcqRel) {
             break;
         }
+
+        // A request can arrive between the pending check and releasing the
+        // in-flight flag. Reacquire ownership unless that request already
+        // started a replacement worker.
         if POLL_IN_FLIGHT
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()

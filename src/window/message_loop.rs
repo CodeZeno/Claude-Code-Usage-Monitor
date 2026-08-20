@@ -62,7 +62,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             }
                         }
                         Some((false, _, _)) => {
-                            request_poll(hwnd);
+                            request_scheduled_poll(hwnd);
                         }
                         None => {}
                     }
@@ -81,7 +81,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             .unwrap_or(false)
                     };
                     if should_poll {
-                        request_poll(hwnd);
+                        request_scheduled_poll(hwnd);
                     }
                 }
                 TIMER_UPDATE_CHECK => {

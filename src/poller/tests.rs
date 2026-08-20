@@ -15,6 +15,19 @@ fn usage_with_session_percent(percentage: f64) -> UsageData {
 }
 
 #[test]
+fn stale_usage_does_not_trigger_reset_polling() {
+    let mut usage = usage_with_session_percent(42.0);
+    usage.session.resets_at = Some(UNIX_EPOCH);
+    usage.stale = true;
+
+    assert!(!is_past_reset(&usage));
+
+    let mut app_usage = AppUsageData::default();
+    app_usage.insert(ProviderId::Claude, usage);
+    assert!(!app_is_past_reset(&app_usage));
+}
+
+#[test]
 fn every_registered_provider_has_a_poller() {
     for provider in ProviderId::ALL {
         assert!(

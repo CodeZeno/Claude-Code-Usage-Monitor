@@ -275,6 +275,9 @@ fn time_until_display_change_from_secs(total_secs: u64) -> Duration {
 
 /// Returns true if either section has reached "now" (reset time has passed).
 pub fn is_past_reset(data: &UsageData) -> bool {
+    if data.stale {
+        return false;
+    }
     let now = SystemTime::now();
     let past = |s: &UsageSection| matches!(s.resets_at, Some(t) if now.duration_since(t).is_ok());
     past(&data.session) || past(&data.weekly)
