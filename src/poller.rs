@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::diagnose;
@@ -27,7 +28,7 @@ pub struct PollFailure {
 }
 
 pub fn poll(enabled_providers: ProviderSet) -> Result<AppUsageData, PollFailure> {
-    poll_with(enabled_providers, poll_provider)
+    poll_concurrently_with(enabled_providers, poll_provider)
 }
 
 /// Keep the previous reading for any enabled provider that failed this cycle.
@@ -59,10 +60,61 @@ fn poll_with(
     enabled_providers: ProviderSet,
     mut poll_provider: impl FnMut(ProviderId) -> Result<UsageData, PollError>,
 ) -> Result<AppUsageData, PollFailure> {
+    let results = enabled_providers
+        .iter()
+        .map(|provider| (provider, poll_provider(provider)))
+        .collect::<Vec<_>>();
+    merge_poll_results(enabled_providers, results)
+}
+
+const MAX_CONCURRENT_PROVIDER_POLLS: usize = 3;
+
+fn poll_concurrently_with<F>(
+    enabled_providers: ProviderSet,
+    poll_provider: F,
+) -> Result<AppUsageData, PollFailure>
+where
+    F: Fn(ProviderId) -> Result<UsageData, PollError> + Sync,
+{
+    let providers = enabled_providers.iter().collect::<Vec<_>>();
+    if providers.len() <= 1 {
+        return poll_with(enabled_providers, poll_provider);
+    }
+
+    let worker_count = providers.len().min(MAX_CONCURRENT_PROVIDER_POLLS);
+    let next_provider = std::sync::atomic::AtomicUsize::new(0);
+    let mut results = std::thread::scope(|scope| {
+        let (sender, receiver) = std::sync::mpsc::channel();
+        for _ in 0..worker_count {
+            let sender = sender.clone();
+            let providers = &providers;
+            let poll_provider = &poll_provider;
+            let next_provider = &next_provider;
+            scope.spawn(move || loop {
+                let index = next_provider.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let Some(provider) = providers.get(index).copied() else {
+                    break;
+                };
+                if sender.send((provider, poll_provider(provider))).is_err() {
+                    break;
+                }
+            });
+        }
+        drop(sender);
+        receiver.into_iter().collect::<Vec<_>>()
+    });
+    results.sort_by_key(|(provider, _)| *provider);
+    merge_poll_results(enabled_providers, results)
+}
+
+fn merge_poll_results(
+    enabled_providers: ProviderSet,
+    results: impl IntoIterator<Item = (ProviderId, Result<UsageData, PollError>)>,
+) -> Result<AppUsageData, PollFailure> {
     let mut data = AppUsageData::default();
     let mut first_error = None;
-    for provider in enabled_providers.iter() {
-        match poll_provider(provider) {
+    for (provider, result) in results {
+        match result {
             Ok(usage) => {
                 data.insert(provider, usage);
             }
@@ -158,11 +210,17 @@ fn antigravity_credential_watch_snapshot(_all_sources: bool) -> CredentialWatchS
 }
 
 fn build_agent() -> Result<ureq::Agent, PollError> {
-    let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
-    Ok(ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .tls_connector(std::sync::Arc::new(tls))
-        .build())
+    static AGENT: OnceLock<Result<ureq::Agent, PollError>> = OnceLock::new();
+    // Agent clones share their connection pool, cookies, and TLS configuration.
+    AGENT
+        .get_or_init(|| {
+            let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
+            Ok(ureq::AgentBuilder::new()
+                .timeout(Duration::from_secs(30))
+                .tls_connector(std::sync::Arc::new(tls))
+                .build())
+        })
+        .clone()
 }
 
 fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {

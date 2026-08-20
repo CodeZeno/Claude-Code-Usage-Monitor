@@ -139,6 +139,50 @@ fn returns_first_error_when_no_enabled_provider_succeeds() {
 }
 
 #[test]
+fn concurrent_polling_is_bounded_and_preserves_results() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let active = AtomicUsize::new(0);
+    let peak = AtomicUsize::new(0);
+    let data = poll_concurrently_with(ProviderSet::from_enabled(ProviderId::ALL), |provider| {
+        let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+        peak.fetch_max(current, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(20));
+        active.fetch_sub(1, Ordering::SeqCst);
+        Ok(usage_with_session_percent(f64::from(provider as u8)))
+    })
+    .expect("all concurrent provider polls should succeed");
+
+    assert_eq!(data.iter().count(), ProviderId::ALL.len());
+    assert!(peak.load(Ordering::SeqCst) > 1);
+    assert!(peak.load(Ordering::SeqCst) <= MAX_CONCURRENT_PROVIDER_POLLS);
+}
+
+#[test]
+fn concurrent_polling_reports_the_first_provider_error_deterministically() {
+    let error = poll_concurrently_with(
+        ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]),
+        |provider| {
+            if provider == ProviderId::Claude {
+                std::thread::sleep(Duration::from_millis(20));
+                Err(PollError::AuthRequired)
+            } else {
+                Err(PollError::RequestFailed)
+            }
+        },
+    )
+    .expect_err("both provider polls should fail");
+
+    assert_eq!(
+        error,
+        PollFailure {
+            provider: ProviderId::Claude,
+            error: PollError::AuthRequired,
+        }
+    );
+}
+
+#[test]
 fn antigravity_failure_does_not_block_codex_when_both_are_enabled() {
     let data = poll_with(
         ProviderSet::from_enabled([ProviderId::Codex, ProviderId::Antigravity]),
