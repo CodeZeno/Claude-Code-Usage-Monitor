@@ -186,47 +186,50 @@ fn unix_to_system_time(unix_secs: Option<i64>) -> Option<SystemTime> {
 
 /// Parse an ISO 8601 timestamp string into a SystemTime.
 fn parse_iso8601(s: Option<&str>) -> Option<SystemTime> {
-    let s = s?;
-    // Strip timezone offset to get "YYYY-MM-DDTHH:MM:SS" or with fractional seconds
-    // The API returns formats like "2026-03-05T08:00:00.321598+00:00"
-    let datetime_part = s.split('+').next().unwrap_or(s);
-    let datetime_part = datetime_part.split('Z').next().unwrap_or(datetime_part);
-
-    // Try parsing with and without fractional seconds
-    let formats = ["%Y-%m-%dT%H:%M:%S%.f", "%Y-%m-%dT%H:%M:%S"];
-    for fmt in &formats {
-        if let Ok(secs) = parse_datetime_to_unix(datetime_part, fmt) {
-            return Some(UNIX_EPOCH + Duration::from_secs(secs));
-        }
-    }
-    None
+    let unix_secs = parse_datetime_to_unix(s?)?;
+    UNIX_EPOCH.checked_add(Duration::from_secs(unix_secs))
 }
 
 /// Minimal datetime parser — avoids pulling in chrono/time crates.
-fn parse_datetime_to_unix(s: &str, _fmt: &str) -> Result<u64, ()> {
-    // Extract date and time parts from "YYYY-MM-DDTHH:MM:SS[.frac]"
-    let (date_str, time_str) = s.split_once('T').ok_or(())?;
-    let date_parts: Vec<&str> = date_str.split('-').collect();
-    if date_parts.len() != 3 {
-        return Err(());
+fn parse_datetime_to_unix(s: &str) -> Option<u64> {
+    let (datetime, offset_seconds) = split_timezone(s)?;
+    let datetime = match datetime.split_once('.') {
+        Some((base, fraction))
+            if !fraction.is_empty() && fraction.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            base
+        }
+        Some(_) => return None,
+        None => datetime,
+    };
+    let bytes = datetime.as_bytes();
+    if bytes.len() != 19
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
     }
 
-    let year: u64 = date_parts[0].parse().map_err(|_| ())?;
-    let month: u64 = date_parts[1].parse().map_err(|_| ())?;
-    let day: u64 = date_parts[2].parse().map_err(|_| ())?;
-
-    // Strip fractional seconds
-    let time_base = time_str.split('.').next().unwrap_or(time_str);
-    let time_parts: Vec<&str> = time_base.split(':').collect();
-    if time_parts.len() != 3 {
-        return Err(());
+    let year = parse_digits(&bytes[0..4])?;
+    let month = parse_digits(&bytes[5..7])?;
+    let day = parse_digits(&bytes[8..10])?;
+    let hour = parse_digits(&bytes[11..13])?;
+    let minute = parse_digits(&bytes[14..16])?;
+    let second = parse_digits(&bytes[17..19])?;
+    if !(1970..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
     }
 
-    let hour: u64 = time_parts[0].parse().map_err(|_| ())?;
-    let min: u64 = time_parts[1].parse().map_err(|_| ())?;
-    let sec: u64 = time_parts[2].parse().map_err(|_| ())?;
-
-    // Days from year (using a simplified calculation for dates after 1970)
     let mut days: u64 = 0;
     for y in 1970..year {
         days += if is_leap(y) { 366 } else { 365 };
@@ -241,7 +244,59 @@ fn parse_datetime_to_unix(s: &str, _fmt: &str) -> Result<u64, ()> {
     }
     days += day - 1;
 
-    Ok(days * 86400 + hour * 3600 + min * 60 + sec)
+    let local_seconds = days
+        .checked_mul(86_400)?
+        .checked_add(hour * 3_600 + minute * 60 + second)?;
+    u64::try_from(
+        i64::try_from(local_seconds)
+            .ok()?
+            .checked_sub(offset_seconds)?,
+    )
+    .ok()
+}
+
+fn split_timezone(s: &str) -> Option<(&str, i64)> {
+    if let Some(datetime) = s.strip_suffix('Z') {
+        return Some((datetime, 0));
+    }
+
+    if s.len() >= 25 {
+        let offset_start = s.len() - 6;
+        let offset = &s.as_bytes()[offset_start..];
+        if matches!(offset[0], b'+' | b'-') && offset[3] == b':' {
+            let hours = parse_digits(&offset[1..3])?;
+            let minutes = parse_digits(&offset[4..6])?;
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let seconds = i64::try_from(hours * 3_600 + minutes * 60).ok()?;
+            return Some((
+                &s[..offset_start],
+                if offset[0] == b'+' { seconds } else { -seconds },
+            ));
+        }
+    }
+
+    Some((s, 0))
+}
+
+fn parse_digits(bytes: &[u8]) -> Option<u64> {
+    if bytes.is_empty() || !bytes.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bytes.iter().try_fold(0_u64, |value, byte| {
+        value.checked_mul(10)?.checked_add(u64::from(byte - b'0'))
+    })
+}
+
+fn days_in_month(year: u64, month: u64) -> u64 {
+    match month {
+        2 if is_leap(year) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        _ => 0,
+    }
 }
 
 fn is_leap(y: u64) -> bool {

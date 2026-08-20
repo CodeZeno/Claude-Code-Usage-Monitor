@@ -28,6 +28,41 @@ fn stale_usage_does_not_trigger_reset_polling() {
 }
 
 #[test]
+fn iso8601_parser_applies_timezone_offsets() {
+    assert_eq!(
+        parse_iso8601(Some("1970-01-01T01:00:00+01:00")),
+        Some(UNIX_EPOCH)
+    );
+    assert_eq!(
+        parse_iso8601(Some("1970-01-01T00:00:00-01:00")),
+        Some(UNIX_EPOCH + Duration::from_secs(3_600))
+    );
+    assert_eq!(
+        parse_iso8601(Some("2026-03-05T08:00:00.321598Z")),
+        parse_iso8601(Some("2026-03-05T08:00:00+00:00"))
+    );
+}
+
+#[test]
+fn iso8601_parser_validates_calendar_and_time_fields() {
+    assert!(parse_iso8601(Some("2024-02-29T23:59:59Z")).is_some());
+    for invalid in [
+        "2023-02-29T00:00:00Z",
+        "2026-00-01T00:00:00Z",
+        "2026-14-01T00:00:00Z",
+        "2026-01-00T00:00:00Z",
+        "2026-01-01T24:00:00Z",
+        "2026-01-01T00:60:00Z",
+        "2026-01-01T00:00:60Z",
+        "2026-01-01T00:00:00.Z",
+        "2026-01-01T00:00:00+24:00",
+        "1969-12-31T23:59:59Z",
+    ] {
+        assert_eq!(parse_iso8601(Some(invalid)), None, "accepted {invalid}");
+    }
+}
+
+#[test]
 fn every_registered_provider_has_a_poller() {
     for provider in ProviderId::ALL {
         assert!(
