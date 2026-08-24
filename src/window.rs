@@ -30,9 +30,9 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL, TIMER_TRAY_HOVER,
-    TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW,
-    WM_APP_SETTINGS_UPDATED, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL,
+    TIMER_TRAY_HOVER, TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT,
+    WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::providers::{ProviderId, ProviderSet};
@@ -116,6 +116,8 @@ struct AppState {
     custom_theme_enabled: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
+    theme_clock_interval: Option<Duration>,
+    tray_theme_uses_current_time: bool,
     mirror_hwnds: Vec<SendHwnd>,
     desktop_hwnds: Vec<Option<SendHwnd>>,
     mouse_action_overrides: HashMap<MouseActionOverrideKey, theme_engine::Expression>,
@@ -588,6 +590,25 @@ fn sync_tray_icon(hwnd: HWND) {
         }
     }
     tray_icon::sync(hwnd, &tray_icon_tooltip_from_state());
+}
+
+fn theme_tray_uses_current_time(theme: &ThemeDocument) -> bool {
+    theme
+        .surfaces
+        .iter()
+        .enumerate()
+        .filter(|(_, surface)| {
+            surface
+                .placement
+                .nest
+                .resolve(surface.placement.reference.region)
+                == SurfaceNest::TrayIcon
+        })
+        .any(|(surface_index, _)| {
+            theme
+                .surface_current_time_refresh_interval(surface_index)
+                .is_some()
+        })
 }
 
 fn taskbar_created_message() -> u32 {
@@ -1101,6 +1122,8 @@ fn apply_custom_theme(
             .and_then(|state| state.active_theme.clone()),
     };
     let loaded = loaded.unwrap_or_else(ThemeDocument::starter);
+    let theme_clock_interval = loaded.current_time_refresh_interval();
+    let tray_theme_uses_current_time = theme_tray_uses_current_time(&loaded);
     let old_hook = {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
@@ -1108,6 +1131,8 @@ fn apply_custom_theme(
         };
         state.custom_theme_enabled = true;
         state.active_theme = Some(loaded);
+        state.theme_clock_interval = theme_clock_interval;
+        state.tray_theme_uses_current_time = tray_theme_uses_current_time;
         state.mouse_action_overrides.clear();
         state.hovered_mouse_layer = None;
         state.pending_mouse_click = None;
@@ -1136,6 +1161,8 @@ fn apply_custom_theme(
     }
     sync_custom_mirrors();
     sync_window_state_timer(hwnd);
+    schedule_countdown_timer();
+    schedule_clock_timer();
     Ok(())
 }
 
@@ -1563,6 +1590,12 @@ pub fn run() {
                 (path, theme)
             });
         let custom_theme_enabled = true;
+        let theme_clock_interval = active_theme
+            .as_ref()
+            .and_then(ThemeDocument::current_time_refresh_interval);
+        let tray_theme_uses_current_time = active_theme
+            .as_ref()
+            .is_some_and(theme_tray_uses_current_time);
         if let Some(path) = &active_theme_path {
             let path = path.to_string_lossy().into_owned();
             if settings.active_theme_path.as_deref() != Some(path.as_str())
@@ -1665,6 +1698,8 @@ pub fn run() {
                 custom_theme_enabled,
                 active_theme_path,
                 active_theme,
+                theme_clock_interval,
+                tray_theme_uses_current_time,
                 mirror_hwnds: Vec::new(),
                 desktop_hwnds: Vec::new(),
                 mouse_action_overrides: HashMap::new(),
@@ -1692,6 +1727,8 @@ pub fn run() {
 
         // Initial render using the presenter selected by the surface nest.
         render_layered();
+        schedule_countdown_timer();
+        schedule_clock_timer();
 
         if open_dashboard_on_start {
             crate::dashboard::show(hwnd);
@@ -2081,23 +2118,19 @@ fn schedule_countdown_timer() {
         return;
     }
 
-    let data = match &s.data {
-        Some(d) => d,
-        None => return,
-    };
-
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if poller::app_is_past_reset(data) {
+    if s.data.as_ref().is_some_and(poller::app_is_past_reset) {
         unsafe {
             SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
         }
     }
 
-    let min_delay = data
-        .iter()
-        .flat_map(|(_, usage)| [&usage.session, &usage.weekly])
-        .filter_map(|section| poller::time_until_display_change(section.resets_at))
-        .min();
+    let min_delay = s.data.as_ref().and_then(|data| {
+        data.iter()
+            .flat_map(|(_, usage)| [&usage.session, &usage.weekly])
+            .filter_map(|section| poller::time_until_display_change(section.resets_at))
+            .min()
+    });
 
     let ms = min_delay
         .unwrap_or(Duration::from_secs(60))
@@ -2107,6 +2140,34 @@ fn schedule_countdown_timer() {
     unsafe {
         SetTimer(hwnd, TIMER_COUNTDOWN, ms, None);
     }
+}
+
+fn schedule_clock_timer() {
+    let state = lock_state();
+    let Some(s) = state.as_ref() else {
+        return;
+    };
+    let hwnd = s.hwnd.to_hwnd();
+    let Some(interval) = s.theme_clock_interval else {
+        unsafe {
+            let _ = KillTimer(hwnd, TIMER_CLOCK);
+        }
+        return;
+    };
+    let ms = time_until_next_clock_refresh(interval).as_millis().max(1) as u32;
+    unsafe {
+        SetTimer(hwnd, TIMER_CLOCK, ms, None);
+    }
+}
+
+fn time_until_next_clock_refresh(interval: Duration) -> Duration {
+    let interval_ms = interval.as_millis().max(1);
+    let elapsed_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    let remaining_ms = interval_ms - elapsed_ms % interval_ms;
+    Duration::from_millis(remaining_ms as u64)
 }
 
 fn check_theme_change() {

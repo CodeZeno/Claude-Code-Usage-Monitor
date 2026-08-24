@@ -320,6 +320,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         usage_has_error: false,
         last_cache_read: Instant::now(),
         next_preview_countdown_refresh: None,
+        next_preview_clock_refresh: None,
         dirty: false,
         live_apply: DEFAULT_LIVE_APPLY,
         zoom: 1.0,

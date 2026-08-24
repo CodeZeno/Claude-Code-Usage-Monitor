@@ -1,5 +1,14 @@
 use super::*;
 
+fn clock_refresh_delay(interval: Duration) -> Duration {
+    let interval_ms = interval.as_millis().max(1);
+    let elapsed_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    Duration::from_millis((interval_ms - elapsed_ms % interval_ms) as u64)
+}
+
 impl StudioApp {
     pub(super) fn language(&self) -> LanguageId {
         localization::resolve_language(
@@ -72,6 +81,9 @@ impl StudioApp {
         let usage = usage_cache.map(|cache| cache.data);
         let next_preview_countdown_refresh = preview_countdown_refresh_delay(usage.as_ref())
             .and_then(|delay| Instant::now().checked_add(delay));
+        let next_preview_clock_refresh = theme
+            .current_time_refresh_interval()
+            .and_then(|interval| Instant::now().checked_add(clock_refresh_delay(interval)));
         Self {
             owner,
             page: initial_page,
@@ -90,6 +102,7 @@ impl StudioApp {
             usage_has_error,
             last_cache_read: Instant::now(),
             next_preview_countdown_refresh,
+            next_preview_clock_refresh,
             dirty: false,
             live_apply: DEFAULT_LIVE_APPLY,
             zoom: 1.0,
@@ -747,11 +760,23 @@ impl StudioApp {
         let countdown_due = self
             .next_preview_countdown_refresh
             .is_some_and(|deadline| now >= deadline);
-        if usage_changed || countdown_due {
+        let clock_interval = self.theme.current_time_refresh_interval();
+        let clock_due = clock_interval.is_some()
+            && self
+                .next_preview_clock_refresh
+                .is_none_or(|deadline| now >= deadline);
+        if usage_changed || countdown_due || clock_due {
             self.preview_dirty = true;
             self.next_preview_countdown_refresh =
                 preview_countdown_refresh_delay(self.usage.as_ref())
                     .and_then(|delay| now.checked_add(delay));
+        }
+        if clock_interval.is_none() {
+            self.next_preview_clock_refresh = None;
+        } else if clock_due {
+            self.next_preview_clock_refresh = clock_interval
+                .map(clock_refresh_delay)
+                .and_then(|delay| now.checked_add(delay));
         }
     }
 

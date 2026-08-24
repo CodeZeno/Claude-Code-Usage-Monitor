@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use eframe::egui;
 use lucide_icons::Icon as LucideIcon;
@@ -656,6 +656,7 @@ struct StudioApp {
     usage_has_error: bool,
     last_cache_read: Instant,
     next_preview_countdown_refresh: Option<Instant>,
+    next_preview_clock_refresh: Option<Instant>,
     dirty: bool,
     live_apply: bool,
     zoom: f32,

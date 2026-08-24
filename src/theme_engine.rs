@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use windows::core::PCWSTR;
@@ -1290,6 +1291,7 @@ impl DataContext {
             (!runtime.poll_ok && !runtime.has_error) as u8 as f64,
         );
         let strings = runtime.language.strings();
+        context.insert_string("i18n.locale", runtime.language.code());
         context.insert_string("i18n.session_window", strings.session_window);
         context.insert_string("i18n.weekly_window", strings.weekly_window);
         context.insert_string("i18n.cursor_auto_window", strings.cursor_auto_window);
@@ -1300,6 +1302,27 @@ impl DataContext {
         context.insert_string("i18n.minute_suffix", strings.minute_suffix);
         context.insert_string("i18n.second_suffix", strings.second_suffix);
         context.insert("providers.count", runtime.provider_count() as f64);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_secs_f64())
+            .unwrap_or(0.0);
+        context.insert("time.now.unix", now);
+        context.insert("time.now.milliseconds", now * 1000.0);
+        for (zone, local) in [("local", true), ("utc", false)] {
+            if let Some(value) = timestamp_parts(now, local) {
+                for (component, value) in [
+                    ("year", value.year),
+                    ("month", value.month),
+                    ("day", value.day),
+                    ("weekday", value.weekday),
+                    ("hour", value.hour),
+                    ("minute", value.minute),
+                    ("second", value.second),
+                ] {
+                    context.insert(&format!("time.{zone}.{component}"), f64::from(value));
+                }
+            }
+        }
         for descriptor in PROVIDER_DESCRIPTORS {
             context.insert(
                 &format!("providers.{}.enabled", descriptor.key),
@@ -1882,6 +1905,16 @@ pub fn execute_mouse_actions(
 }
 
 impl ThemeDocument {
+    /// How often a live clock can visibly change. Minute-only clocks avoid the
+    /// much more expensive second-by-second surface rendering path.
+    pub fn current_time_refresh_interval(&self) -> Option<Duration> {
+        current_time_refresh_interval_for(self)
+    }
+
+    pub fn surface_current_time_refresh_interval(&self, surface_index: usize) -> Option<Duration> {
+        current_time_refresh_interval_for(self.surfaces.get(surface_index)?)
+    }
+
     pub fn is_builtin(&self) -> bool {
         is_builtin_theme_id(&self.id)
     }
@@ -2062,6 +2095,68 @@ impl ThemeDocument {
         }
         errors
     }
+}
+
+fn current_time_refresh_interval_for(value: &impl Serialize) -> Option<Duration> {
+    let source = serde_json::to_string(value).ok()?.to_ascii_lowercase();
+    let uses_clock =
+        source.contains("time.now") || source.contains("time.local") || source.contains("time.utc");
+    if !uses_clock {
+        return None;
+    }
+
+    let needs_seconds = source.contains("time.now.milliseconds")
+        || source.contains("time.local.second")
+        || source.contains("time.utc.second")
+        || unix_clock_requires_second_refresh(&source);
+    Some(Duration::from_secs(if needs_seconds { 1 } else { 60 }))
+}
+
+fn unix_clock_requires_second_refresh(source: &str) -> bool {
+    let mut remaining = source;
+    while let Some(index) = remaining.find("time.now.unix") {
+        let after_clock = &remaining[index + "time.now.unix".len()..];
+        let Some(token_end) = after_clock.find('}') else {
+            return true;
+        };
+        let token_tail = &after_clock[..token_end];
+        let Some((_, format)) = token_tail.rsplit_once(':') else {
+            return true;
+        };
+        if !is_minute_or_slower_clock_format(format) {
+            return true;
+        }
+        remaining = &after_clock[token_end + 1..];
+    }
+    false
+}
+
+fn is_minute_or_slower_clock_format(format: &str) -> bool {
+    let format = format.trim().strip_prefix("utc_").unwrap_or(format.trim());
+    matches!(
+        format,
+        "weekday_2"
+            | "weekday_short"
+            | "weekday_long"
+            | "day"
+            | "day_2"
+            | "month"
+            | "month_2"
+            | "month_short"
+            | "month_long"
+            | "year_2"
+            | "year"
+            | "date"
+            | "date_short"
+            | "date_long"
+            | "time"
+            | "time_short"
+            | "time_24"
+            | "time_12"
+            | "am_pm"
+            | "datetime_short"
+            | "iso_date"
+    )
 }
 
 fn validate_scene_mouse_events(
@@ -2337,6 +2432,9 @@ pub use theme_rendering::*;
 
 mod theme_expression;
 pub use theme_expression::*;
+
+mod theme_datetime;
+use theme_datetime::*;
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }

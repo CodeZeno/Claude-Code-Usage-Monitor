@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.6.13"
+version = "2.7.13"
 edition = "2021"
 license = "MIT"
 description = "Claude Code Usage Monitor"
@@ -39,6 +39,7 @@ features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",
     "Win32_System_Registry",
+    "Win32_System_Time",
     "Win32_System_Threading",
     "Win32_Security",
     "Win32_UI_Input_KeyboardAndMouse",

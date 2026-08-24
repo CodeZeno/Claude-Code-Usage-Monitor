@@ -498,6 +498,9 @@ pub(super) fn localized<'a>(context: &'a DataContext, name: &str, fallback: &'a 
 }
 
 pub(super) fn format_value(value: f64, format: &str, context: &DataContext) -> String {
+    if let Some(value) = format_timestamp(value, format, context) {
+        return value;
+    }
     if format.eq_ignore_ascii_case("duration_short") {
         let seconds = value.max(0.0).round() as u64;
         let days = seconds / 86_400;

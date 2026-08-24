@@ -72,6 +72,16 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     sync_tray_icon(hwnd);
                     schedule_countdown_timer();
                 }
+                TIMER_CLOCK => {
+                    render_layered();
+                    let refresh_tray = lock_state()
+                        .as_ref()
+                        .is_some_and(|state| state.tray_theme_uses_current_time);
+                    if refresh_tray {
+                        sync_tray_icon(hwnd);
+                    }
+                    schedule_clock_timer();
+                }
                 TIMER_RESET_POLL => {
                     let should_poll = {
                         let state = lock_state();
@@ -115,6 +125,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             check_language_change();
             render_layered();
             schedule_countdown_timer();
+            schedule_clock_timer();
             suppress_tray_reposition_for(Duration::from_millis(
                 TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS,
             ));

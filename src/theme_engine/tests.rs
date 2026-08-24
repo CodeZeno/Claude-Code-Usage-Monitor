@@ -291,6 +291,115 @@ fn text_templates_can_select_weekdays_from_a_reset_epoch() {
 }
 
 #[test]
+fn timestamps_support_localized_and_iso_date_time_formats() {
+    let mut context = DataContext::default();
+    context.insert_string("i18n.locale", "en-US");
+    // Monday, 5 January 1970 at 13:04:09 UTC.
+    context.insert("timestamp", 392_649.0);
+    assert_eq!(format_template("{timestamp:utc_weekday_2}", &context), "Mo");
+    assert_eq!(
+        format_template("{timestamp:utc_weekday_short}", &context),
+        "Mon"
+    );
+    assert_eq!(
+        format_template("{timestamp:utc_month_long}", &context),
+        "January"
+    );
+    assert_eq!(
+        format_template("{timestamp:utc_iso_datetime}", &context),
+        "1970-01-05T13:04:09Z"
+    );
+    assert_eq!(
+        format_template("{timestamp:utc_time_24}", &context),
+        "13:04"
+    );
+    for format in [
+        "weekday_2",
+        "weekday_short",
+        "weekday_long",
+        "day",
+        "day_2",
+        "month",
+        "month_2",
+        "month_short",
+        "month_long",
+        "year_2",
+        "year",
+        "date_short",
+        "date_long",
+        "time_short",
+        "time_seconds",
+        "time_24",
+        "time_24_seconds",
+        "time_12",
+        "time_12_seconds",
+        "am_pm",
+        "datetime_short",
+        "datetime_long",
+        "iso_date",
+        "iso_time",
+        "iso_datetime",
+    ] {
+        let template = format!("{{timestamp:utc_{format}}}");
+        let rendered = format_template(&template, &context);
+        assert!(!rendered.is_empty() && rendered != "--", "{format}");
+    }
+}
+
+#[test]
+fn current_time_components_are_available_to_expressions() {
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert!(context.get("time.now.unix").unwrap_or(0.0) > 1_700_000_000.0);
+    assert!(matches!(context.get("time.local.weekday"), Some(0.0..=6.0)));
+    assert!(matches!(context.get("time.local.hour"), Some(0.0..=23.0)));
+    assert!(matches!(context.get("time.utc.month"), Some(1.0..=12.0)));
+}
+
+#[test]
+fn themes_report_when_they_need_live_clock_refreshes() {
+    let mut theme = ThemeDocument::starter();
+    assert_eq!(theme.current_time_refresh_interval(), None);
+    theme.surfaces[0].content = SceneContent::Text {
+        template: "{time.now.unix:time_24}".into(),
+        font_family: default_font_family(),
+        font_size: default_font_size(),
+        weight: FontWeight::default(),
+        rendering: FontRendering::default(),
+        contrast: default_font_contrast(),
+        align: TextAlign::default(),
+        color: default_text_paint(),
+    };
+    assert_eq!(
+        theme.current_time_refresh_interval(),
+        Some(std::time::Duration::from_secs(60))
+    );
+
+    let set_template = |theme: &mut ThemeDocument, value: &str| {
+        let SceneContent::Text { template, .. } = &mut theme.surfaces[0].content else {
+            unreachable!();
+        };
+        *template = value.into();
+    };
+    set_template(&mut theme, "{time.now.unix:time_24_seconds}");
+    assert_eq!(
+        theme.current_time_refresh_interval(),
+        Some(std::time::Duration::from_secs(1))
+    );
+
+    set_template(&mut theme, "{time.local.minute:0}");
+    assert_eq!(
+        theme.current_time_refresh_interval(),
+        Some(std::time::Duration::from_secs(60))
+    );
+
+    set_template(&mut theme, "{time.utc.second:0}");
+    assert_eq!(
+        theme.current_time_refresh_interval(),
+        Some(std::time::Duration::from_secs(1))
+    );
+}
+
+#[test]
 fn numeric_expressions_reject_string_results() {
     let context = DataContext::from_usage(None, &Canvas::default());
     assert_eq!(
