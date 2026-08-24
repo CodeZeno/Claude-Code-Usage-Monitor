@@ -253,6 +253,53 @@ fn templates_apply_numeric_character_formats() {
 }
 
 #[test]
+fn text_templates_allow_if_to_return_quoted_strings() {
+    let mut context = DataContext::default();
+    context.insert("weekday", 1.0);
+    assert_eq!(
+        format_template(
+            r#"{if(weekday == 0, "Mo", if(weekday == 1, "Tu", "We"))}"#,
+            &context,
+        ),
+        "Tu"
+    );
+    assert_eq!(
+        format_template(r#"{if("Mo" == "Mo", 'Monday', 'Other')}"#, &context),
+        "Monday"
+    );
+    assert_eq!(
+        format_template(r#"{if(weekday == 1, "Day: 1", "Day: 2")}"#, &context,),
+        "Day: 1"
+    );
+    assert!(validate_template(
+        r#"{if(weekday == 0, "Mo", if(weekday == 1, "Tu", "We"))}"#,
+        &context,
+    )
+    .is_empty());
+}
+
+#[test]
+fn text_templates_can_select_weekdays_from_a_reset_epoch() {
+    let mut context = DataContext::default();
+    // Seven days before this reset is Monday, 5 January 1970 in UTC+10.
+    context.insert("codex.weekly.reset.unix", 950_400.0);
+    let day = "(floor((codex.weekly.reset.unix - 604800 + 36000) / 86400) + 3) % 7";
+    let template = format!(
+        "{{if({day} == 0, \"Mo\", if({day} == 1, \"Tu\", if({day} == 2, \"We\", if({day} == 3, \"Th\", if({day} == 4, \"Fr\", if({day} == 5, \"Sa\", \"Su\"))))))}}"
+    );
+    assert_eq!(format_template(&template, &context), "Mo");
+}
+
+#[test]
+fn numeric_expressions_reject_string_results() {
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert_eq!(
+        evaluate(r#"if(true, "Mo", "Tu")"#, &context).unwrap_err(),
+        "Expected a number, found text"
+    );
+}
+
+#[test]
 fn application_version_is_available_to_templates_and_numeric_expressions() {
     let context = DataContext::from_usage(None, &Canvas::default());
     assert_eq!(

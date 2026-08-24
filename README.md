@@ -137,7 +137,7 @@ The `providers.*.enabled` values reflect the dashboard settings rather than temp
 
 For Codex, `codex.session.*` remains backward compatible with themes created before window-duration classification: when Codex omits its five-hour window, it falls back to the reported weekly window. Use `codex.five_hour.*` when a theme needs the exact five-hour window, `codex.weekly.*` for the exact weekly window, or `codex.headline.percentage` for whichever live allowance is most relevant.
 
-Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Canvas size is available as `canvas.width` and `canvas.height`. The selected native host is available as `host.width` and `host.height` in 96-DPI logical pixels, so a taskbar root can use an expression such as `min(46, host.height)`.
+Text templates insert expressions in braces. For example, `{claude.session.percentage:0.0}%` fixes one decimal place and `{codex.weekly.reset.seconds:duration}` produces a compact countdown. Text expressions can return quoted strings, including from conditionals such as `{if(system.dark, "Dark", "Light")}`; numeric-only fields continue to require a number. Canvas size is available as `canvas.width` and `canvas.height`. The selected native host is available as `host.width` and `host.height` in 96-DPI logical pixels, so a taskbar root can use an expression such as `min(46, host.height)`.
 
 The application version is available as the text value `{app.version}`. Numeric expressions can use `app.version.major`, `app.version.minor`, and `app.version.patch`.
 

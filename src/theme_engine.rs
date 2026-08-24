@@ -2254,7 +2254,7 @@ pub fn validate_template(template: &str, context: &DataContext) -> Vec<String> {
             break;
         };
         let token = &remaining[..end];
-        let (expression, format) = token.rsplit_once(':').unwrap_or((token, "0.##"));
+        let (expression, format) = split_template_token(token);
         let expression = expression.trim();
         let format = format.trim();
         if context.get_string(expression).is_some()
@@ -2266,7 +2266,7 @@ pub fn validate_template(template: &str, context: &DataContext) -> Vec<String> {
             remaining = &remaining[end + 1..];
             continue;
         }
-        if let Err(error) = evaluate(expression, context) {
+        if let Err(error) = evaluate_value(expression, context) {
             errors.push(error);
         }
         remaining = &remaining[end + 1..];

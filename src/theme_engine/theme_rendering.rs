@@ -22,7 +22,7 @@ pub fn format_template(template: &str, context: &DataContext) -> String {
         };
         let end = index + 1 + relative_end;
         let token: String = chars[index + 1..end].iter().collect();
-        let (expression, format) = token.rsplit_once(':').unwrap_or((&token, "0.##"));
+        let (expression, format) = split_template_token(&token);
         let expression = expression.trim();
         let format = format.trim();
         if let Some(value) = context.get_string(expression) {
@@ -33,8 +33,11 @@ pub fn format_template(template: &str, context: &DataContext) -> String {
             output
                 .push_str(&format_usage_badge(expression, context).unwrap_or_else(|| "--".into()));
         } else {
-            match evaluate(expression, context) {
-                Ok(value) => output.push_str(&format_value(value, format, context)),
+            match evaluate_value(expression, context) {
+                Ok(ExpressionValue::Number(value)) => {
+                    output.push_str(&format_value(value, format, context));
+                }
+                Ok(ExpressionValue::Text(value)) => output.push_str(&value),
                 Err(_) => output.push_str("--"),
             }
         }
