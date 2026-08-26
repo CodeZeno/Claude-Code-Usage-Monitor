@@ -4,7 +4,7 @@ use std::ffi::c_void;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::process::Command;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
@@ -19,6 +19,96 @@ use crate::models::{AccountUsage, AppUsageData, UsageData, UsageSection};
 static LAST_KNOWN_ACCOUNT: Mutex<Option<AccountUsage>> = Mutex::new(None);
 // Ensures disk cache is read at most once per process lifetime.
 static DISK_CACHE_LOADED: AtomicBool = AtomicBool::new(false);
+
+/// Full poll-result cache: skip redundant HTTP when credentials are unchanged.
+static POLL_RESULT_CACHE: Mutex<Option<PollResultCache>> = Mutex::new(None);
+static POLL_CACHE_FORCE_REFRESH: AtomicBool = AtomicBool::new(false);
+
+/// How long a successful poll result may be reused without hitting the API.
+const POLL_RESULT_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
+#[derive(Clone)]
+struct PollResultCache {
+    data: AppUsageData,
+    fetched_at: Instant,
+    providers: (bool, bool, bool),
+    /// Credential-file signatures; changes when Claude/Codex/Antigravity auth updates.
+    activity_signature: String,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PollOptions {
+    /// Bypass the in-memory poll cache (manual refresh, post-reset fast poll, startup).
+    pub force_refresh: bool,
+}
+
+/// Drop cached poll results so the next poll hits the network.
+pub fn invalidate_poll_cache() {
+    POLL_CACHE_FORCE_REFRESH.store(true, Ordering::Relaxed);
+}
+
+fn poll_activity_signature(show_claude_code: bool, show_codex: bool, show_antigravity: bool) -> String {
+    let mut parts = Vec::new();
+    if show_claude_code {
+        parts.extend(credential_watch_snapshot(CredentialWatchMode::ActiveSource));
+    }
+    if show_codex {
+        if let Some(path) = codex_auth_path() {
+            parts.push(windows_credential_watch_signature(&path));
+        }
+    }
+    if show_antigravity {
+        parts.push(antigravity_credential_watch_signature());
+    }
+    parts.sort();
+    parts.dedup();
+    parts.join("|")
+}
+
+fn try_poll_result_cache(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    options: PollOptions,
+) -> Option<AppUsageData> {
+    if options.force_refresh || POLL_CACHE_FORCE_REFRESH.swap(false, Ordering::Relaxed) {
+        return None;
+    }
+
+    let providers = (show_claude_code, show_codex, show_antigravity);
+    let activity_signature = poll_activity_signature(show_claude_code, show_codex, show_antigravity);
+    let cached = POLL_RESULT_CACHE.lock().ok()?.clone()?;
+    if cached.providers != providers {
+        return None;
+    }
+    if cached.activity_signature != activity_signature {
+        diagnose::log("poll cache miss: credential activity signature changed");
+        return None;
+    }
+    if cached.fetched_at.elapsed() > POLL_RESULT_CACHE_TTL {
+        return None;
+    }
+
+    diagnose::log("poll cache hit: reusing last successful usage data");
+    Some(cached.data)
+}
+
+fn store_poll_result_cache(
+    data: &AppUsageData,
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+) {
+    let entry = PollResultCache {
+        data: data.clone(),
+        fetched_at: Instant::now(),
+        providers: (show_claude_code, show_codex, show_antigravity),
+        activity_signature: poll_activity_signature(show_claude_code, show_codex, show_antigravity),
+    };
+    if let Ok(mut cache) = POLL_RESULT_CACHE.lock() {
+        *cache = Some(entry);
+    }
+}
 
 #[derive(Serialize, Deserialize, Default)]
 struct CachedAccountDisk {
@@ -270,14 +360,39 @@ pub fn poll(
     show_codex: bool,
     show_antigravity: bool,
 ) -> Result<AppUsageData, PollError> {
-    poll_with(
+    poll_with_options(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        PollOptions::default(),
+    )
+}
+
+pub fn poll_with_options(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    options: PollOptions,
+) -> Result<AppUsageData, PollError> {
+    if let Some(data) = try_poll_result_cache(show_claude_code, show_codex, show_antigravity, options)
+    {
+        return Ok(data);
+    }
+
+    let result = poll_with(
         show_claude_code,
         show_codex,
         show_antigravity,
         poll_claude_code,
         poll_codex,
         poll_antigravity,
-    )
+    );
+    if result.is_ok() {
+        if let Ok(ref data) = result {
+            store_poll_result_cache(data, show_claude_code, show_codex, show_antigravity);
+        }
+    }
+    result
 }
 
 fn poll_with(
@@ -2270,6 +2385,22 @@ mod tests {
             CredentialSource::Windows(PathBuf::from("dummy"))
         )
         .is_none());
+    }
+
+    #[test]
+    fn poll_result_cache_hits_without_network_when_signature_unchanged() {
+        let sample = AppUsageData {
+            claude_code: Some(usage_with_session_percent(12.0)),
+            ..Default::default()
+        };
+        store_poll_result_cache(&sample, true, false, false);
+
+        let cached = try_poll_result_cache(true, false, false, PollOptions::default())
+            .expect("cache should serve last successful poll");
+        assert_eq!(cached.claude_code.unwrap().session.percentage, 12.0);
+
+        invalidate_poll_cache();
+        assert!(try_poll_result_cache(true, false, false, PollOptions::default()).is_none());
     }
 }
 

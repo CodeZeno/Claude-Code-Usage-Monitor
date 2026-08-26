@@ -1,19 +1,19 @@
 use std::time::SystemTime;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsageSection {
     pub percentage: f64,
     pub resets_at: Option<SystemTime>,
     pub has_bucket: bool,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsageData {
     pub session: UsageSection,
     pub weekly: UsageSection,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AccountUsage {
     pub credit_pct: f64,
     pub credit_expiry: Option<SystemTime>,
@@ -21,7 +21,7 @@ pub struct AccountUsage {
     pub spend_limit: f64,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SpendPaceSlots {
     pub month_actual: f64,
     pub month_cap: f64,
@@ -37,14 +37,14 @@ pub struct SpendPaceSlots {
     pub day_level: u8,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpendPaceView {
     pub credit_pct: f64,
     pub credit_expiry: Option<SystemTime>,
     pub slots: SpendPaceSlots,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct AppUsageData {
     pub claude_code: Option<UsageData>,
     pub codex: Option<UsageData>,

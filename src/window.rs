@@ -109,6 +109,12 @@ struct AppState {
     layered_screen_x: i32,
     layered_screen_y: i32,
     layered_position_valid: bool,
+    /// Last popup screen layout applied by position_at_taskbar (skip redundant SetWindowPos/render).
+    last_layout_x: i32,
+    last_layout_y: i32,
+    last_layout_w: i32,
+    last_layout_h: i32,
+    last_layout_valid: bool,
 
     widget_visible: bool,
     /// True while a fullscreen app has focus and we've hidden the popup for it.
@@ -319,8 +325,22 @@ fn spawn_taskbar_watchdog() {
         } else {
             let taskbar_ok = old_taskbar.is_some_and(|taskbar| unsafe { IsWindow(taskbar).as_bool() });
             if taskbar_ok {
-                unsafe {
-                    let _ = PostMessageW(widget_hwnd, WM_APP_ENSURE_VISIBLE, WPARAM(0), LPARAM(0));
+                TASKBAR_RECOVER_FAILURES.store(0, Ordering::Relaxed);
+                // Only nudge visibility when Windows hid the popup — not every second.
+                let (hidden_for_fullscreen, visible) = {
+                    let state = lock_state();
+                    match state.as_ref() {
+                        Some(s) => (
+                            s.hidden_for_fullscreen,
+                            unsafe { IsWindowVisible(widget_hwnd).as_bool() },
+                        ),
+                        None => (false, true),
+                    }
+                };
+                if !visible && !hidden_for_fullscreen {
+                    unsafe {
+                        let _ = PostMessageW(widget_hwnd, WM_APP_ENSURE_VISIBLE, WPARAM(0), LPARAM(0));
+                    }
                 }
                 continue;
             }
@@ -1718,6 +1738,11 @@ pub fn run() {
                 layered_screen_x: 0,
                 layered_screen_y: 0,
                 layered_position_valid: false,
+                last_layout_x: 0,
+                last_layout_y: 0,
+                last_layout_w: 0,
+                last_layout_h: 0,
+                last_layout_valid: false,
                 widget_visible: settings.widget_visible,
                 hidden_for_fullscreen: false,
             });
@@ -1780,7 +1805,7 @@ pub fn run() {
         let send_hwnd = SendHwnd::from_hwnd(hwnd);
         std::thread::spawn(move || {
             diagnose::log("initial poll thread started");
-            do_poll(send_hwnd);
+            do_poll(send_hwnd, true);
         });
 
         schedule_auto_update_check(hwnd);
@@ -2309,7 +2334,7 @@ fn paint_content(
     }
 }
 
-fn do_poll(send_hwnd: SendHwnd) {
+fn do_poll(send_hwnd: SendHwnd, force_refresh: bool) {
     let hwnd = send_hwnd.to_hwnd();
     let (show_claude_code, show_codex, show_antigravity) = {
         let state = lock_state();
@@ -2319,8 +2344,24 @@ fn do_poll(send_hwnd: SendHwnd) {
             .unwrap_or((true, false, false))
     };
 
-    match poller::poll(show_claude_code, show_codex, show_antigravity) {
+    match poller::poll_with_options(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        poller::PollOptions { force_refresh },
+    ) {
         Ok(data) => {
+            let unchanged = {
+                let state = lock_state();
+                state
+                    .as_ref()
+                    .and_then(|s| s.data.as_ref())
+                    .is_some_and(|prev| prev == &data)
+            };
+            if unchanged {
+                return;
+            }
+
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 if let Some(claude_code) = data.claude_code.as_ref() {
@@ -2374,6 +2415,7 @@ fn do_poll(send_hwnd: SendHwnd) {
             }
         }
         Err(e) => {
+            poller::invalidate_poll_cache();
             let auth_watch = match e {
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired
                     if show_antigravity && !show_claude_code && !show_codex =>
@@ -2823,25 +2865,56 @@ fn finish_drag_reposition() -> bool {
     was_dragging
 }
 
+fn popup_layout_unchanged(screen_x: i32, screen_y: i32, width: i32, height: i32) -> bool {
+    lock_state().as_ref().is_some_and(|s| {
+        s.last_layout_valid
+            && s.last_layout_x == screen_x
+            && s.last_layout_y == screen_y
+            && s.last_layout_w == width
+            && s.last_layout_h == height
+    })
+}
+
+fn store_popup_layout(screen_x: i32, screen_y: i32, width: i32, height: i32) {
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.last_layout_x = screen_x;
+        s.last_layout_y = screen_y;
+        s.last_layout_w = width;
+        s.last_layout_h = height;
+        s.last_layout_valid = true;
+    }
+}
+
+fn invalidate_popup_layout() {
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.last_layout_valid = false;
+    }
+}
+
 fn ensure_popup_visible() {
-    let (visible, dragging, embedded) = {
+    let (visible, dragging, embedded, hidden_for_fullscreen, already_visible, layout_valid) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (s.widget_visible, s.dragging, s.embedded),
+            Some(s) => (
+                s.widget_visible,
+                s.dragging,
+                s.embedded,
+                s.hidden_for_fullscreen,
+                unsafe { IsWindowVisible(s.hwnd.to_hwnd()).as_bool() },
+                s.last_layout_valid,
+            ),
             None => return,
         }
     };
-    if !visible || dragging || embedded {
+    if !visible || dragging || embedded || hidden_for_fullscreen {
+        return;
+    }
+    if already_visible && layout_valid {
         return;
     }
     position_at_taskbar();
-    let hidden_for_fullscreen = lock_state()
-        .as_ref()
-        .map(|s| s.hidden_for_fullscreen)
-        .unwrap_or(false);
-    if !hidden_for_fullscreen {
-        render_layered();
-    }
 }
 
 /// The floating popup is HWND_TOPMOST so it can track the real taskbar's tray
@@ -2860,6 +2933,13 @@ fn sync_fullscreen_visibility(hwnd: HWND) {
         return;
     }
     let is_fullscreen = unsafe { native_interop::foreground_window_is_fullscreen(hwnd) };
+    let was_hidden = lock_state()
+        .as_ref()
+        .map(|s| s.hidden_for_fullscreen)
+        .unwrap_or(false);
+    if is_fullscreen == was_hidden {
+        return;
+    }
     {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
@@ -2993,6 +3073,9 @@ fn position_at_taskbar() {
         let y_child = compute_anchor_y(anchor_top, anchor_height, widget_height) - anchor_top;
         let screen_x = taskbar_rect.left + x;
         let screen_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+        if popup_layout_unchanged(screen_x, screen_y, widget_width, widget_height) {
+            return;
+        }
         {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
@@ -3001,6 +3084,7 @@ fn position_at_taskbar() {
             }
         }
         native_interop::move_window(hwnd, x, y_child, widget_width, widget_height);
+        store_popup_layout(screen_x, screen_y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned embedded widget at x={x} y={y_child} screen=({screen_x},{screen_y}) w={widget_width} h={widget_height} content_left={content_left}"
         ));
@@ -3014,6 +3098,9 @@ fn position_at_taskbar() {
             max_offset,
             max_x,
         );
+        if popup_layout_unchanged(x, y, widget_width, widget_height) {
+            return;
+        }
         {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
@@ -3030,6 +3117,7 @@ fn position_at_taskbar() {
             widget_width,
             widget_height,
         );
+        store_popup_layout(x, y, widget_width, widget_height);
         diagnose::log(format!(
             "positioned popup widget at x={x} y={y} w={widget_width} h={widget_height} pin_right={} content_left={content_left}",
             native_interop::pin_band_right(taskbar_hwnd, taskbar_rect)
@@ -3188,7 +3276,7 @@ unsafe extern "system" fn wnd_proc(
                     }
                     let sh = SendHwnd::from_hwnd(hwnd);
                     std::thread::spawn(move || {
-                        do_poll(sh);
+                        do_poll(sh, false);
                     });
                 }
                 TIMER_COUNTDOWN => {
@@ -3207,7 +3295,7 @@ unsafe extern "system" fn wnd_proc(
                     if should_poll {
                         let sh = SendHwnd::from_hwnd(hwnd);
                         std::thread::spawn(move || {
-                            do_poll(sh);
+                            do_poll(sh, true);
                         });
                     }
                 }
@@ -3368,9 +3456,10 @@ unsafe extern "system" fn wnd_proc(
                         }
                     }
                     render_layered();
+                    poller::invalidate_poll_cache();
                     let sh = SendHwnd::from_hwnd(hwnd);
                     std::thread::spawn(move || {
-                        do_poll(sh);
+                        do_poll(sh, true);
                     });
                 }
                 IDM_VERSION_ACTION => {
@@ -3422,6 +3511,7 @@ unsafe extern "system" fn wnd_proc(
                             s.tray_offset = TRAY_OFFSET_LEFTMOST;
                         }
                     }
+                    invalidate_popup_layout();
                     save_state_settings();
                     position_at_taskbar();
                 }
@@ -3482,9 +3572,10 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                     sync_tray_icons(hwnd);
+                    poller::invalidate_poll_cache();
                     let sh = SendHwnd::from_hwnd(hwnd);
                     std::thread::spawn(move || {
-                        do_poll(sh);
+                        do_poll(sh, true);
                     });
                 }
                 IDM_LANG_SYSTEM
