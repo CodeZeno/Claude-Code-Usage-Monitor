@@ -878,7 +878,19 @@ impl StudioApp {
                 | theme_engine::LayerBackground::Image { .. } => Paint::default(),
             },
         };
-        DataContext::from_usage_with_runtime(self.usage.as_ref(), &canvas, runtime)
+        let mut context =
+            DataContext::from_usage_with_runtime(self.usage.as_ref(), &canvas, runtime);
+        let object = match selection {
+            Selection::Surface(_) => Some(surface),
+            Selection::Object(_, object_index) => surface.children.get(object_index),
+        };
+        if let Some(gap) = object
+            .and_then(|object| theme_engine::evaluate(&object.gap.0, &context).ok())
+            .filter(|value| value.is_finite())
+        {
+            context.insert("this.gap", gap.max(0.0));
+        }
+        context
     }
 
     pub(super) fn scene_tree(&mut self, ui: &mut egui::Ui, read_only: bool) {

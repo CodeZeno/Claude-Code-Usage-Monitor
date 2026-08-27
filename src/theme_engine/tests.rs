@@ -208,6 +208,8 @@ fn text_mask_preserves_solid_pixels_and_reduces_antialiased_edges() {
 fn expressions_support_data_math_and_functions() {
     let mut context = DataContext::default();
     context.insert("claude.session.percentage", 73.4);
+    context.insert("this.gap", 4.0);
+    context.insert("parent.width", 320.0);
     assert_eq!(
         evaluate("clamp(claude.session.percentage * 2, 0, 100)", &context).unwrap(),
         100.0
@@ -222,9 +224,49 @@ fn expressions_support_data_math_and_functions() {
         1.0
     );
     assert_eq!(evaluate("lerp(10, 20, 0.25)", &context).unwrap(), 12.5);
+    assert_eq!(evaluate("get(this, gap)", &context).unwrap(), 4.0);
+    assert_eq!(evaluate("get(this.gap)", &context).unwrap(), 4.0);
+    assert_eq!(evaluate("get(self, gap)", &context).unwrap(), 4.0);
+    assert_eq!(evaluate("get(parent, width)", &context).unwrap(), 320.0);
+    assert!(evaluate("get(this, missing)", &context)
+        .unwrap_err()
+        .contains("this.missing"));
     let context = DataContext::from_usage(None, &Canvas::default());
     assert_eq!(evaluate("true", &context).unwrap(), 1.0);
     assert_eq!(evaluate("false", &context).unwrap(), 0.0);
+}
+
+#[test]
+fn layer_width_can_get_its_own_resolved_gap() {
+    let mut theme = ThemeDocument::starter();
+    let surface = &mut theme.surfaces[0];
+    let mut row = SceneObject::object("days", "Days");
+    row.gap = 4.0.into();
+    row.width = Expression("8 * 24 + 7 * get(this, gap)".into());
+    row.height = 24.0.into();
+    surface.children = vec![row];
+
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    let (width, height) = resolve_surface_size(&theme, 0, None, ThemeRuntime::default());
+    let surface = &theme.surfaces[0];
+    let canvas = Canvas {
+        width,
+        width_expression: Some(surface.width.clone()),
+        height,
+        height_expression: Some(surface.height.clone()),
+        background: surface.background.canvas_paint(),
+    };
+    let (layers, warnings) = resolve_objects_for(
+        surface,
+        &canvas,
+        &surface.children,
+        None,
+        ThemeRuntime::default(),
+    );
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(layers[0].width, 220.0);
+    assert_eq!(layers[0].gap, 4.0);
 }
 
 #[test]

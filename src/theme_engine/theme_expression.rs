@@ -226,6 +226,9 @@ impl Parser<'_> {
         self.skip_space();
         if self.peek() == Some(b'(') {
             self.index += 1;
+            if identifier.eq_ignore_ascii_case("get") {
+                return self.parse_get();
+            }
             let mut arguments = Vec::new();
             self.skip_space();
             if self.peek() != Some(b')') {
@@ -251,6 +254,51 @@ impl Parser<'_> {
             Ok(ExpressionValue::Text(value.to_string()))
         } else {
             Err(format!("Unknown value '{identifier}'"))
+        }
+    }
+    fn parse_get(&mut self) -> Result<ExpressionValue, String> {
+        self.skip_space();
+        if self.peek() == Some(b')') {
+            return Err("get expects get(target, property) or get(target.property)".into());
+        }
+
+        let first = self.parse_get_name()?;
+        self.skip_space();
+        let mut key = if self.peek() == Some(b',') {
+            self.index += 1;
+            self.skip_space();
+            let property = self.parse_get_name()?;
+            format!("{first}.{property}")
+        } else {
+            first
+        };
+        self.skip_space();
+        if self.peek() != Some(b')') {
+            return Err("get expects get(target, property) or get(target.property)".into());
+        }
+        self.index += 1;
+
+        if key.eq_ignore_ascii_case("self") {
+            key = "this".into();
+        } else if key
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("self."))
+        {
+            key.replace_range(..4, "this");
+        }
+        if let Some(value) = self.context.get(&key) {
+            Ok(ExpressionValue::Number(value))
+        } else if let Some(value) = self.context.get_string(&key) {
+            Ok(ExpressionValue::Text(value.to_string()))
+        } else {
+            Err(format!("get could not find '{key}'"))
+        }
+    }
+    fn parse_get_name(&mut self) -> Result<String, String> {
+        if matches!(self.peek(), Some(b'"' | b'\'')) {
+            self.parse_string()
+        } else {
+            self.parse_identifier()
         }
     }
     fn parse_number(&mut self) -> Result<f64, String> {

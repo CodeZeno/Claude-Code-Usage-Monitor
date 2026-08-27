@@ -1146,6 +1146,7 @@ pub struct ResolvedObject<'a> {
     pub height: f64,
     pub parent_width: f64,
     pub parent_height: f64,
+    pub gap: f64,
     pub opacity: f64,
     pub rotation: f64,
     pub clip: Vec<ClipRegion>,
@@ -1504,6 +1505,11 @@ impl DataContext {
         self.insert("object.y", object.y);
         self.insert("object.width", object.width);
         self.insert("object.height", object.height);
+        self.insert("this.x", object.x);
+        self.insert("this.y", object.y);
+        self.insert("this.width", object.width);
+        self.insert("this.height", object.height);
+        self.insert("this.gap", object.gap);
         self.insert("parent.width", object.parent_width);
         self.insert("parent.height", object.parent_height);
         self
@@ -2187,6 +2193,13 @@ fn validate_scene_mouse_events(
 }
 
 fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object: &SceneObject) {
+    let mut object_context = context.clone();
+    let gap = evaluate(&object.gap.0, context)
+        .ok()
+        .filter(|value| value.is_finite())
+        .unwrap_or(0.0)
+        .max(0.0);
+    object_context.insert("this.gap", gap);
     for (property, expression) in [
         ("render", &object.render),
         ("visibility", &object.visibility),
@@ -2200,7 +2213,11 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
     ] {
         validate_expression(
             errors,
-            context,
+            if property == "gap" {
+                context
+            } else {
+                &object_context
+            },
             &format!("{}.{}", object.name, property),
             expression,
         );
@@ -2209,26 +2226,26 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
         LayerBackground::None => {}
         LayerBackground::Colour { colour } => validate_paint(
             errors,
-            context,
+            &object_context,
             &format!("{}.background.colour", object.name),
             colour,
         ),
         LayerBackground::Gradient { start, end, angle } => {
             validate_paint(
                 errors,
-                context,
+                &object_context,
                 &format!("{}.background.gradient.start", object.name),
                 start,
             );
             validate_paint(
                 errors,
-                context,
+                &object_context,
                 &format!("{}.background.gradient.end", object.name),
                 end,
             );
             validate_expression(
                 errors,
-                context,
+                &object_context,
                 &format!("{}.background.gradient.angle", object.name),
                 angle,
             );
@@ -2242,13 +2259,13 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
     if let Some(border) = &object.border {
         validate_paint(
             errors,
-            context,
+            &object_context,
             &format!("{}.border", object.name),
             &border.color,
         );
         validate_expression(
             errors,
-            context,
+            &object_context,
             &format!("{}.border.width", object.name),
             &border.width,
         );
@@ -2264,18 +2281,23 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
         } => {
             validate_expression(
                 errors,
-                context,
+                &object_context,
                 &format!("{}.font_size", object.name),
                 font_size,
             );
             validate_expression(
                 errors,
-                context,
+                &object_context,
                 &format!("{}.contrast", object.name),
                 contrast,
             );
-            validate_paint(errors, context, &format!("{}.color", object.name), color);
-            for error in validate_template(template, context) {
+            validate_paint(
+                errors,
+                &object_context,
+                &format!("{}.color", object.name),
+                color,
+            );
+            for error in validate_template(template, &object_context) {
                 errors.push(format!("{}.template: {error}", object.name));
             }
         }
@@ -2295,7 +2317,7 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
             ] {
                 validate_expression(
                     errors,
-                    context,
+                    &object_context,
                     &format!("{}.{}", object.name, name),
                     expression,
                 );
@@ -2303,13 +2325,23 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
             if let Some(expression) = segments_expression {
                 validate_expression(
                     errors,
-                    context,
+                    &object_context,
                     &format!("{}.segments", object.name),
                     expression,
                 );
             }
-            validate_paint(errors, context, &format!("{}.fill", object.name), fill);
-            validate_paint(errors, context, &format!("{}.track", object.name), track);
+            validate_paint(
+                errors,
+                &object_context,
+                &format!("{}.fill", object.name),
+                fill,
+            );
+            validate_paint(
+                errors,
+                &object_context,
+                &format!("{}.track", object.name),
+                track,
+            );
         }
     }
 }

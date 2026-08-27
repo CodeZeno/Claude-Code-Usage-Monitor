@@ -1146,6 +1146,12 @@ pub(super) fn expression_functions_panel(
             .max_height((height - 72.0).max(80.0))
             .show(ui, |ui| {
                 for (name, signature, insertion, detail) in [
+                    (
+                        "get",
+                        "get(this, property)",
+                        "get(this, gap)",
+                        "Value expression",
+                    ),
                     ("min", "min(a, b)", "min(0, 0)", "Smaller value"),
                     ("max", "max(a, b)", "max(0, 0)", "Larger value"),
                     (

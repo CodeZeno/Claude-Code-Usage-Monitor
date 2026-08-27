@@ -102,6 +102,7 @@ pub fn render_theme_surface_with_runtime_at_scale(
         height: logical_height as f64,
         parent_width: logical_width as f64,
         parent_height: logical_height as f64,
+        gap: evaluate(&surface.gap.0, &context).unwrap_or(0.0).max(0.0),
         opacity: 1.0,
         rotation: evaluate(&surface.rotation.0, &context).unwrap_or(0.0),
         clip: Vec::new(),
@@ -270,6 +271,7 @@ pub(super) fn resolve_objects_for<'a>(
             height: geometry.height,
             parent_width: geometry.parent_width,
             parent_height: geometry.parent_height,
+            gap: geometry.gap,
             opacity: geometry.opacity,
             rotation: geometry.rotation,
             clip: geometry.clip,
@@ -417,7 +419,22 @@ pub(super) fn resolve_object_size(
     warnings: &mut Vec<String>,
 ) -> (u32, u32) {
     let fallback = Canvas::default();
-    let context = DataContext::from_usage_with_runtime(data, &fallback, runtime);
+    let mut context = DataContext::from_usage_with_runtime(data, &fallback, runtime);
+    let gap = match evaluate(&object.gap.0, &context) {
+        Ok(value) if value.is_finite() => value.max(0.0),
+        Ok(_) => {
+            warnings.push(format!(
+                "{}.gap did not produce a finite value",
+                object.name
+            ));
+            0.0
+        }
+        Err(error) => {
+            warnings.push(format!("{}.gap: {error}", object.name));
+            0.0
+        }
+    };
+    context.insert("this.gap", gap);
     let mut resolve = |label: &str, expression: &Expression, fallback: u32| match evaluate(
         &expression.0,
         &context,
@@ -517,6 +534,7 @@ pub(super) struct ObjectGeometry {
     height: f64,
     parent_width: f64,
     parent_height: f64,
+    gap: f64,
     opacity: f64,
     rotation: f64,
     clip: Vec<ClipRegion>,
@@ -576,6 +594,7 @@ pub(super) fn resolve_geometry(
                 height: canvas.height as f64,
                 parent_width: canvas.width as f64,
                 parent_height: canvas.height as f64,
+                gap: evaluate(&root.gap.0, context).unwrap_or(0.0).max(0.0),
                 opacity: 1.0,
                 rotation: evaluate(&root.rotation.0, context).unwrap_or(0.0),
                 clip: Vec::new(),
@@ -613,6 +632,7 @@ pub(super) fn resolve_geometry(
             height: canvas.height as f64,
             parent_width: canvas.width as f64,
             parent_height: canvas.height as f64,
+            gap: evaluate(&root.gap.0, context).unwrap_or(0.0).max(0.0),
             opacity: 1.0,
             rotation: evaluate(&root.rotation.0, context).unwrap_or(0.0),
             clip: Vec::new(),
@@ -623,6 +643,22 @@ pub(super) fn resolve_geometry(
     let mut object_context = context.clone();
     object_context.insert("parent.width", parent.width);
     object_context.insert("parent.height", parent.height);
+    object_context.insert("parent.gap", parent.gap);
+    let gap = match evaluate(&object.gap.0, &object_context) {
+        Ok(value) if value.is_finite() => value.max(0.0),
+        Ok(_) => {
+            warnings.push(format!(
+                "{}.gap did not produce a finite value",
+                object.name
+            ));
+            0.0
+        }
+        Err(error) => {
+            warnings.push(format!("{}.gap: {error}", object.name));
+            0.0
+        }
+    };
+    object_context.insert("this.gap", gap);
     let mut value = |name: &str, expression: &Expression, fallback: f64| match evaluate(
         &expression.0,
         &object_context,
@@ -647,13 +683,10 @@ pub(super) fn resolve_geometry(
     let parent_object = parent_index
         .map(|parent_index| &layers[parent_index])
         .unwrap_or(root);
-    let managed_layout = (parent_object.layout != ChildLayout::Freeform).then_some((
-        parent_object.layout,
-        parent_object.align,
-        &parent_object.gap,
-    ));
-    let (local_x, local_y) = if let Some((layout, align, gap)) = managed_layout {
-        let gap = value("parent.gap", gap, 0.0).max(0.0);
+    let managed_layout = (parent_object.layout != ChildLayout::Freeform)
+        .then_some((parent_object.layout, parent_object.align));
+    let (local_x, local_y) = if let Some((layout, align)) = managed_layout {
+        let gap = parent.gap;
         let mut cursor = 0.0;
         for sibling_index in 0..index {
             let same_parent = match parent_index {
@@ -750,6 +783,7 @@ pub(super) fn resolve_geometry(
         height,
         parent_width: parent.width,
         parent_height: parent.height,
+        gap,
         opacity: parent.opacity
             * (value("visibility", &object.visibility, 100.0).clamp(0.0, 100.0) / 100.0),
         rotation,
