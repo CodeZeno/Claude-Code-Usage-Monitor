@@ -50,6 +50,7 @@ impl StudioApp {
         let language = localization::resolve_language(
             settings.language.as_deref().and_then(LanguageId::from_code),
         );
+        egui_extras::install_image_loaders(&context.egui_ctx);
         configure_style(&context.egui_ctx, language);
         style_native_titlebar(context);
         let classic_theme_path = theme_engine::ensure_starter_theme().ok();
@@ -781,6 +782,8 @@ impl StudioApp {
     }
 
     pub(super) fn shell(&mut self, ui: &mut egui::Ui) {
+        const GITHUB_URL: &str = "https://github.com/CodeZeno/Claude-Code-Usage-Monitor";
+
         let language = self.language();
         let full_height = ui.available_height();
         ui.horizontal(|ui| {
@@ -819,6 +822,13 @@ impl StudioApp {
                                 language.text("Context Menus"),
                             );
                             nav(ui, &mut self.page, Page::Assets, language.text("Assets"));
+                            ui.allocate_ui_with_layout(
+                                ui.available_size(),
+                                egui::Layout::bottom_up(egui::Align::Min),
+                                |ui| {
+                                    crate::ui::components::navigation::github_link(ui, GITHUB_URL);
+                                },
+                            );
                         });
                 },
             );

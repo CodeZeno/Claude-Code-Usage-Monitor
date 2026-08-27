@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.7.13"
+version = "2.7.14"
 edition = "2021"
 license = "MIT"
 description = "Claude Code Usage Monitor"
@@ -24,6 +24,7 @@ serde_json = "1"
 dirs = "6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 eframe = { version = "0.35", default-features = false, features = ["glow"] }
+egui_extras = { version = "0.35", features = ["svg"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
 zip = { version = "7.2", default-features = false, features = ["deflate"] }
