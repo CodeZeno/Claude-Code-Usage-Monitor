@@ -68,7 +68,8 @@ mod tests {
                     ui.label("Content");
                 });
             modal_rect = context.memory(|memory| memory.area_rect("fixed-modal-size-test"));
-            let _ = context.end_pass();
+            let mut output = context.end_pass();
+            output.textures_delta.clear();
         }
 
         let modal_rect = modal_rect.expect("modal should be visible");

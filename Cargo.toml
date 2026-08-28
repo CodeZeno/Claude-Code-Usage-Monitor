@@ -1,7 +1,8 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.8.15"
+version = "2.8.16"
 edition = "2021"
+rust-version = "1.95"
 license = "MIT"
 description = "Claude Code Usage Monitor"
 homepage = "https://codezeno.com.au"
@@ -17,20 +18,19 @@ Comments = "https://codezeno.com.au"
 LegalCopyright = "Copyright (C) 2026 Code Zeno Pty Ltd"
 
 [dependencies]
-ureq = { version = "2", default-features = false, features = ["native-tls", "json", "proxy-from-env"] }
-native-tls = "0.2"
+ureq = { version = "3.4", default-features = false, features = ["native-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
-eframe = { version = "0.35", default-features = false, features = ["glow"] }
-egui_extras = { version = "0.35", features = ["svg"] }
+eframe = { version = "0.36", default-features = false, features = ["glow"] }
+egui_extras = { version = "0.36", features = ["svg"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
-zip = { version = "7.2", default-features = false, features = ["deflate"] }
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
 
 [dependencies.windows]
-version = "0.58"
+version = "0.62"
 features = [
     "Win32_Foundation",
     "Win32_Globalization",
@@ -57,12 +57,12 @@ features = [
 ]
 
 [build-dependencies]
-epaint_default_fonts = "0.35"
+epaint_default_fonts = "0.36"
 heck = "0.5"
 lucide-icons = "1.30"
 oxifont-subset = "0.2.2"
 proc-macro2 = "1"
-toml = "0.8"
+toml = "1.1"
 winres = "0.1"
 
 [profile.release]

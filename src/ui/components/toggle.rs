@@ -79,7 +79,7 @@ mod tests {
     #[test]
     fn toggle_reserves_one_fixed_height_row() {
         let context = egui::Context::default();
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let mut value = false;
             let top = ui.cursor().top();
             Toggle::new(&mut value).labels("Yes", "No").show(ui);
@@ -87,5 +87,6 @@ mod tests {
 
             assert_eq!(consumed_height, CONTROL_HEIGHT);
         });
+        output.textures_delta.clear();
     }
 }

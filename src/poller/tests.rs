@@ -15,6 +15,23 @@ fn usage_with_session_percent(percentage: f64) -> UsageData {
 }
 
 #[test]
+fn configured_https_transport_does_not_panic() {
+    let request = std::panic::catch_unwind(|| {
+        // Port 1 should refuse immediately; reaching the connector is enough to
+        // verify that the configured TLS provider was compiled into ureq.
+        let _ = build_agent()
+            .expect("HTTP agent should build")
+            .get("https://127.0.0.1:1")
+            .call();
+    });
+
+    assert!(
+        request.is_ok(),
+        "the configured HTTPS provider must be enabled in ureq"
+    );
+}
+
+#[test]
 fn stale_usage_does_not_trigger_reset_polling() {
     let mut usage = usage_with_session_percent(42.0);
     usage.session.resets_at = Some(UNIX_EPOCH);

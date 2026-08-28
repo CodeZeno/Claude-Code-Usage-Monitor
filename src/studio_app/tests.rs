@@ -1,11 +1,16 @@
 use super::*;
 
+fn run_test_ui(context: &egui::Context, input: egui::RawInput, run_ui: impl FnMut(&mut egui::Ui)) {
+    let mut output = context.run_ui(input, run_ui);
+    output.textures_delta.clear();
+}
+
 #[test]
 fn configured_fonts_render_fallback_text_and_lucide_icons() {
     let context = egui::Context::default();
     configure_style(&context, LanguageId::English);
 
-    let _ = context.run_ui(egui::RawInput::default(), |ui| {
+    run_test_ui(&context, egui::RawInput::default(), |ui| {
         let fallback = ui.ctx().fonts_mut(|fonts| {
             fonts.layout_no_wrap(
                 "Fallback — ‘ready’".into(),
@@ -88,7 +93,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
         .events
         .push(egui::Event::PointerMoved(egui::pos2(50.0, 20.0)));
     let mut popup_rect = None;
-    let _ = context.run_ui(input, |ui| {
+    run_test_ui(&context, input, |ui| {
         let (_, popup) = preview_context_menu_submenu(
             ui,
             egui::Button::new("").min_size(egui::vec2(120.0, 24.0)),
@@ -111,7 +116,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
         popup_rect.center().y,
     )));
     let mut remained_open = false;
-    let _ = context.run_ui(input, |ui| {
+    run_test_ui(&context, input, |ui| {
         let (_, popup) = preview_context_menu_submenu(
             ui,
             egui::Button::new("").min_size(egui::vec2(120.0, 24.0)),
@@ -136,7 +141,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
         .events
         .push(egui::Event::PointerMoved(popup_rect.center()));
     remained_open = false;
-    let _ = context.run_ui(input, |ui| {
+    run_test_ui(&context, input, |ui| {
         let (_, popup) = preview_context_menu_submenu(
             ui,
             egui::Button::new("").min_size(egui::vec2(120.0, 24.0)),
@@ -174,7 +179,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
         },
     ]);
     remained_open = true;
-    let _ = context.run_ui(input, |ui| {
+    run_test_ui(&context, input, |ui| {
         preview_context_menu_submenu(
             ui,
             egui::Button::new("").min_size(egui::vec2(120.0, 24.0)),
@@ -200,7 +205,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
         screen_rect: Some(screen_rect),
         ..Default::default()
     };
-    let _ = context.run_ui(input, |ui| {
+    run_test_ui(&context, input, |ui| {
         let (_, popup) = preview_context_menu_submenu(
             ui,
             egui::Button::new("").min_size(egui::vec2(120.0, 24.0)),

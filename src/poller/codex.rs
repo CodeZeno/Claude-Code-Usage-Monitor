@@ -98,16 +98,16 @@ pub(super) fn fetch_codex_usage(
     let agent = build_agent()?;
     let mut request = agent
         .get(CODEX_USAGE_URL)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("User-Agent", "codex-cli");
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("User-Agent", "codex-cli");
 
     if let Some(account_id) = account_id {
-        request = request.set("ChatGPT-Account-Id", account_id);
+        request = request.header("ChatGPT-Account-Id", account_id);
     }
 
-    let resp = match request.call() {
+    let mut resp = match request.call() {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+        Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
             diagnose::log(format!(
                 "Codex usage endpoint returned auth error status {code}; refresh required"
             ));
@@ -119,7 +119,7 @@ pub(super) fn fetch_codex_usage(
         }
     };
 
-    let response: CodexUsageResponse = match resp.into_json() {
+    let response: CodexUsageResponse = match resp.body_mut().read_json() {
         Ok(response) => response,
         Err(error) => {
             diagnose::log_error("unable to parse Codex usage response", error);

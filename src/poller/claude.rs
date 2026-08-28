@@ -7,7 +7,8 @@ use serde::Deserialize;
 
 use super::claude_desktop;
 use super::{
-    build_agent, get_header_f64, get_header_i64, parse_iso8601, unix_to_system_time, PollError,
+    build_agent, get_header_f64, get_header_i64, parse_iso8601, unix_to_system_time, HttpResponse,
+    PollError,
 };
 use crate::diagnose;
 use crate::models::{CreditsSection, UsageData};
@@ -115,10 +116,10 @@ pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollEr
 pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
     let agent = build_agent()?;
 
-    let resp = match agent
+    let mut resp = match agent
         .get(USAGE_URL)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("anthropic-beta", "oauth-2025-04-20")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("anthropic-beta", "oauth-2025-04-20")
         .call()
     {
         Ok(resp) => resp,
@@ -142,7 +143,7 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         },
     };
 
-    let response: UsageResponse = match resp.into_json() {
+    let response: UsageResponse = match resp.body_mut().read_json() {
         Ok(response) => response,
         Err(_) => return Ok(None),
     };
@@ -183,11 +184,11 @@ enum UsageEndpointFailure {
 
 fn classify_usage_failure(error: &ureq::Error) -> UsageEndpointFailure {
     match error {
-        ureq::Error::Status(401 | 403, _) => UsageEndpointFailure::Auth,
-        ureq::Error::Status(429, _) => UsageEndpointFailure::Transient,
-        ureq::Error::Status(code, _) if *code >= 500 => UsageEndpointFailure::Transient,
-        ureq::Error::Status(_, _) => UsageEndpointFailure::Unsupported,
-        ureq::Error::Transport(_) => UsageEndpointFailure::Transient,
+        ureq::Error::StatusCode(401 | 403) => UsageEndpointFailure::Auth,
+        ureq::Error::StatusCode(429) => UsageEndpointFailure::Transient,
+        ureq::Error::StatusCode(code) if *code >= 500 => UsageEndpointFailure::Transient,
+        ureq::Error::StatusCode(_) => UsageEndpointFailure::Unsupported,
+        _ => UsageEndpointFailure::Transient,
     }
 }
 
@@ -229,25 +230,33 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
 
         let response = match agent
             .post(MESSAGES_URL)
-            .set("Authorization", &format!("Bearer {token}"))
-            .set("anthropic-version", "2023-06-01")
-            .set("anthropic-beta", "oauth-2025-04-20")
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-beta", "oauth-2025-04-20")
+            .config()
+            .http_status_as_error(false)
+            .build()
             .send_json(&body)
         {
             Ok(resp) => resp,
-            Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-                diagnose::log(format!(
-                    "messages endpoint returned auth error status {code}; re-login required"
-                ));
-                return Err(PollError::AuthRequired);
-            }
-            Err(ureq::Error::Status(_code, resp)) => resp,
             Err(_) => continue,
         };
 
-        let h5 = response.header("anthropic-ratelimit-unified-5h-utilization");
-        let h7 = response.header("anthropic-ratelimit-unified-7d-utilization");
-        let hs = response.header("anthropic-ratelimit-unified-status");
+        let status = response.status().as_u16();
+        if status == 401 || status == 403 {
+            diagnose::log(format!(
+                "messages endpoint returned auth error status {status}; re-login required"
+            ));
+            return Err(PollError::AuthRequired);
+        }
+
+        let h5 = response
+            .headers()
+            .get("anthropic-ratelimit-unified-5h-utilization");
+        let h7 = response
+            .headers()
+            .get("anthropic-ratelimit-unified-7d-utilization");
+        let hs = response.headers().get("anthropic-ratelimit-unified-status");
 
         if h5.is_some() || h7.is_some() || hs.is_some() {
             return Ok(parse_rate_limit_headers(&response));
@@ -257,7 +266,7 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
     Err(PollError::RequestFailed)
 }
 
-pub(super) fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
+pub(super) fn parse_rate_limit_headers(response: &HttpResponse) -> UsageData {
     let mut data = UsageData::default();
 
     data.session.percentage =
@@ -277,9 +286,15 @@ pub(super) fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
     let overall_reset = get_header_i64(response, "anthropic-ratelimit-unified-reset");
 
     if data.session.percentage == 0.0 && data.weekly.percentage == 0.0 {
-        let status = response.header("anthropic-ratelimit-unified-status");
+        let status = response
+            .headers()
+            .get("anthropic-ratelimit-unified-status")
+            .and_then(|value| value.to_str().ok());
         if status == Some("rejected") {
-            let claim = response.header("anthropic-ratelimit-unified-representative-claim");
+            let claim = response
+                .headers()
+                .get("anthropic-ratelimit-unified-representative-claim")
+                .and_then(|value| value.to_str().ok());
             match claim {
                 Some("five_hour") => data.session.percentage = 100.0,
                 Some("seven_day") => data.weekly.percentage = 100.0,
@@ -786,10 +801,7 @@ mod tests {
     }
 
     fn status_error(code: u16) -> ureq::Error {
-        ureq::Error::Status(
-            code,
-            ureq::Response::new(code, "status", "").expect("response"),
-        )
+        ureq::Error::StatusCode(code)
     }
 
     #[test]

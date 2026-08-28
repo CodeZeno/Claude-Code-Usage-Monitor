@@ -1,7 +1,8 @@
 use std::sync::Mutex;
 
+use windows::core::BOOL;
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
@@ -84,7 +85,7 @@ pub fn find_monitors() -> Vec<DisplayMonitor> {
     let mut result: Vec<DisplayMonitor> = Vec::new();
     unsafe {
         let _ = EnumDisplayMonitors(
-            HDC::default(),
+            None,
             None,
             Some(enum_proc),
             LPARAM(&mut result as *mut _ as isize),
@@ -130,8 +131,8 @@ pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
     unsafe {
         let class = wide_str(class_name);
         match FindWindowExW(
-            parent,
-            HWND::default(),
+            Some(parent),
+            None,
             PCWSTR::from_raw(class.as_ptr()),
             PCWSTR::null(),
         ) {
@@ -210,11 +211,11 @@ pub fn embed_as_child(hwnd: HWND, parent: HWND) {
         let _ = SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
 
         if current_parent != Some(parent) {
-            let _ = SetParent(hwnd, parent);
+            let _ = SetParent(hwnd, Some(parent));
         }
         let _ = SetWindowPos(
             hwnd,
-            HWND_TOP,
+            Some(HWND_TOP),
             0,
             0,
             0,
@@ -230,7 +231,7 @@ pub fn make_popup(hwnd: HWND, topmost: bool) {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let new_style = (style & !WS_CHILD_STYLE & !WS_CLIPSIBLINGS_STYLE) | WS_POPUP_STYLE;
         let _ = SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
-        let _ = SetParent(hwnd, HWND::default());
+        let _ = SetParent(hwnd, None);
 
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
         let ex_style = if topmost {
@@ -241,11 +242,11 @@ pub fn make_popup(hwnd: HWND, topmost: bool) {
         let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style);
         let _ = SetWindowPos(
             hwnd,
-            if topmost {
+            Some(if topmost {
                 HWND_TOPMOST
             } else {
                 HWND_NOTOPMOST
-            },
+            }),
             0,
             0,
             0,
@@ -265,8 +266,8 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
             let class = wide_str("WorkerW");
             if let Ok(worker) = unsafe {
                 FindWindowExW(
-                    HWND::default(),
-                    hwnd,
+                    None,
+                    Some(hwnd),
                     PCWSTR::from_raw(class.as_ptr()),
                     PCWSTR::null(),
                 )
@@ -288,8 +289,12 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
         if let Some((parent_value, insert_after_value)) = cached {
             let parent = HWND(parent_value as *mut _);
             let insert_after = HWND(insert_after_value as *mut _);
-            let sibling_is_valid = insert_after == HWND_BOTTOM || IsWindow(insert_after).as_bool();
-            if IsWindow(parent).as_bool() && IsWindowVisible(parent).as_bool() && sibling_is_valid {
+            let sibling_is_valid =
+                insert_after == HWND_BOTTOM || IsWindow(Some(insert_after)).as_bool();
+            if IsWindow(Some(parent)).as_bool()
+                && IsWindowVisible(parent).as_bool()
+                && sibling_is_valid
+            {
                 return Some(DesktopHost {
                     parent,
                     insert_after,

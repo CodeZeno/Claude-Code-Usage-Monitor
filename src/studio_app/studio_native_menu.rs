@@ -94,7 +94,7 @@ pub(super) struct NativeMenuThemeColors {
 pub(super) fn native_menu_theme_colors() -> Option<NativeMenuThemeColors> {
     unsafe {
         let class = native_interop::wide_str("Menu");
-        let theme = OpenThemeData(HWND::default(), PCWSTR::from_raw(class.as_ptr()));
+        let theme = OpenThemeData(None, PCWSTR::from_raw(class.as_ptr()));
         if theme.is_invalid() {
             return None;
         }

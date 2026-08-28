@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use eframe::egui;
-use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Gdi::{
     CreateFontIndirectW, DeleteObject, GetDC, GetFontData, ReleaseDC, SelectObject, GDI_ERROR,
 };
@@ -127,16 +126,16 @@ fn load_native_menu_font(fonts: &mut egui::FontDefinitions) -> Option<String> {
             return Some("native-menu-face".into());
         }
 
-        let hdc = GetDC(HWND::default());
+        let hdc = GetDC(None);
         if hdc.is_invalid() {
             return None;
         }
         let font = CreateFontIndirectW(std::ptr::from_ref(&metrics.lfMenuFont));
         if font.is_invalid() {
-            ReleaseDC(HWND::default(), hdc);
+            ReleaseDC(None, hdc);
             return None;
         }
-        let previous = SelectObject(hdc, font);
+        let previous = SelectObject(hdc, font.into());
         let size = GetFontData(hdc, 0, 0, None, 0);
         let mut bytes = if size == GDI_ERROR as u32 || size == 0 {
             None
@@ -147,8 +146,8 @@ fn load_native_menu_font(fonts: &mut egui::FontDefinitions) -> Option<String> {
         if !previous.is_invalid() {
             SelectObject(hdc, previous);
         }
-        let _ = DeleteObject(font);
-        ReleaseDC(HWND::default(), hdc);
+        let _ = DeleteObject(font.into());
+        ReleaseDC(None, hdc);
 
         let bytes = bytes.take()?;
         let name = "native-menu-face".to_string();

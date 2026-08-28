@@ -103,7 +103,7 @@ pub fn start_request_listener(owner: HWND) -> Result<(), String> {
         let owner = HWND(owner_value as *mut _);
         if unsafe {
             PostMessageW(
-                owner,
+                Some(owner),
                 crate::native_interop::WM_APP_OPEN_DASHBOARD,
                 WPARAM(0),
                 LPARAM(0),
@@ -152,7 +152,7 @@ pub fn report_launch_failure(owner: HWND, detail: &str) {
         let title = crate::native_interop::wide_str(language().text("Unable to open dashboard"));
         let message = crate::native_interop::wide_str(detail);
         let _ = MessageBoxW(
-            owner,
+            Some(owner),
             PCWSTR::from_raw(message.as_ptr()),
             PCWSTR::from_raw(title.as_ptr()),
             MB_OK | MB_ICONERROR,
@@ -178,7 +178,7 @@ pub fn close_existing() -> bool {
         let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title.as_ptr())) else {
             return false;
         };
-        PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok()
+        PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok()
     }
 }
 

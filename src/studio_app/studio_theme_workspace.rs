@@ -294,13 +294,11 @@ impl StudioApp {
     pub(super) fn handle_dropped_files(&mut self, context: &egui::Context) {
         let dropped = context.input(|input| input.raw.dropped_files.clone());
         for file in dropped {
-            let Some(path) = file.path else {
-                continue;
-            };
-            if theme_package::is_theme_package(&path) {
-                self.import_theme_path(&path);
+            let path = file.path();
+            if theme_package::is_theme_package(path) {
+                self.import_theme_path(path);
             } else if self.page == Page::Assets {
-                if let Some(asset) = self.import_asset_path(&path) {
+                if let Some(asset) = self.import_asset_path(path) {
                     self.asset_page_selected = Some(asset.relative_path);
                 }
             }

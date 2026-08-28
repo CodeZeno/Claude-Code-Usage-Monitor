@@ -55,11 +55,12 @@ mod tests {
     #[test]
     fn percentage_slider_reserves_one_fixed_height_row() {
         let context = egui::Context::default();
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let mut value = 50.0;
             let response = percentage_slider(ui, &mut value, 240.0);
 
             assert_eq!(response.rect.height(), CONTROL_HEIGHT);
         });
+        output.textures_delta.clear();
     }
 }

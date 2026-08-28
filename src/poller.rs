@@ -214,24 +214,36 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
     // Agent clones share their connection pool, cookies, and TLS configuration.
     AGENT
         .get_or_init(|| {
-            let tls = native_tls::TlsConnector::new().map_err(|_| PollError::RequestFailed)?;
-            Ok(ureq::AgentBuilder::new()
-                .timeout(Duration::from_secs(30))
-                .tls_connector(std::sync::Arc::new(tls))
-                .build())
+            let tls = ureq::tls::TlsConfig::builder()
+                .provider(ureq::tls::TlsProvider::NativeTls)
+                .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+                .build();
+            Ok(ureq::Agent::config_builder()
+                .timeout_global(Some(Duration::from_secs(30)))
+                .tls_config(tls)
+                .build()
+                .into())
         })
         .clone()
 }
 
-fn get_header_f64(response: &ureq::Response, name: &str) -> f64 {
+type HttpResponse = ureq::http::Response<ureq::Body>;
+
+fn get_header_f64(response: &HttpResponse, name: &str) -> f64 {
     response
-        .header(name)
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0)
 }
 
-fn get_header_i64(response: &ureq::Response, name: &str) -> Option<i64> {
-    response.header(name).and_then(|s| s.parse::<i64>().ok())
+fn get_header_i64(response: &HttpResponse, name: &str) -> Option<i64> {
+    response
+        .headers()
+        .get(name)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|s| s.parse::<i64>().ok())
 }
 
 fn unix_to_system_time(unix_secs: Option<i64>) -> Option<SystemTime> {

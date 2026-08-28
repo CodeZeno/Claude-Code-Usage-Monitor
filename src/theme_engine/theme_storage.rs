@@ -405,8 +405,9 @@ pub(super) fn migrate_minecraft_context_menu(theme: &mut ThemeDocument) -> bool 
         }
         changed
     }
-    theme
-        .surfaces
-        .iter_mut()
-        .fold(false, |changed, surface| migrate_object(surface) || changed)
+    let mut changed = false;
+    for surface in &mut theme.surfaces {
+        changed |= migrate_object(surface);
+    }
+    changed
 }

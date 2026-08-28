@@ -1099,7 +1099,7 @@ pub(super) fn render_text_mask(
         return;
     }
     unsafe {
-        let memory_dc = CreateCompatibleDC(HDC::default());
+        let memory_dc = CreateCompatibleDC(None);
         if memory_dc.is_invalid() {
             return;
         }
@@ -1116,13 +1116,20 @@ pub(super) fn render_text_mask(
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(memory_dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
-            .unwrap_or_default();
+        let bitmap = CreateDIBSection(
+            Some(memory_dc),
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            None,
+            0,
+        )
+        .unwrap_or_default();
         if bitmap.is_invalid() || bits.is_null() {
             let _ = DeleteDC(memory_dc);
             return;
         }
-        let old_bitmap = SelectObject(memory_dc, bitmap);
+        let old_bitmap = SelectObject(memory_dc, bitmap.into());
         std::ptr::write_bytes(bits, 0, width as usize * height as usize * 4);
         let font_name: Vec<u16> = font_family.encode_utf16().chain(Some(0)).collect();
         let font = CreateFontW(
@@ -1134,14 +1141,14 @@ pub(super) fn render_text_mask(
             0,
             0,
             0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_TT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            rendering.gdi_quality(),
+            DEFAULT_CHARSET,
+            OUT_TT_PRECIS,
+            CLIP_DEFAULT_PRECIS,
+            windows::Win32::Graphics::Gdi::FONT_QUALITY(rendering.gdi_quality() as u8),
             (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
             PCWSTR::from_raw(font_name.as_ptr()),
         );
-        let old_font = SelectObject(memory_dc, font);
+        let old_font = SelectObject(memory_dc, font.into());
         let _ = SetBkMode(memory_dc, TRANSPARENT);
         let _ = SetTextColor(memory_dc, COLORREF(0x00FF_FFFF));
         let mut rect = RECT {
@@ -1170,9 +1177,9 @@ pub(super) fn render_text_mask(
             }
         }
         SelectObject(memory_dc, old_font);
-        let _ = DeleteObject(font);
+        let _ = DeleteObject(font.into());
         SelectObject(memory_dc, old_bitmap);
-        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(memory_dc);
     }
 }

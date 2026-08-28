@@ -198,13 +198,8 @@ fn preferred_ui_languages() -> Vec<String> {
     unsafe {
         let mut num_languages = 0u32;
         let mut buffer_len = 0u32;
-        if GetUserPreferredUILanguages(
-            MUI_LANGUAGE_NAME,
-            &mut num_languages,
-            PWSTR::null(),
-            &mut buffer_len,
-        )
-        .is_err()
+        if GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &mut num_languages, None, &mut buffer_len)
+            .is_err()
             || buffer_len == 0
         {
             return Vec::new();
@@ -214,7 +209,7 @@ fn preferred_ui_languages() -> Vec<String> {
         if GetUserPreferredUILanguages(
             MUI_LANGUAGE_NAME,
             &mut num_languages,
-            PWSTR(buffer.as_mut_ptr()),
+            Some(PWSTR(buffer.as_mut_ptr())),
             &mut buffer_len,
         )
         .is_err()

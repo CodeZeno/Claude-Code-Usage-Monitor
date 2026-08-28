@@ -188,15 +188,15 @@ pub(super) fn fetch_antigravity_project(
         }
     });
 
-    let resp = match agent
+    let mut resp = match agent
         .post(&format!("{base_url}/v1internal:loadCodeAssist"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "antigravity")
         .send_json(&body)
     {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+        Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
             diagnose::log(format!(
                 "Antigravity loadCodeAssist returned auth error status {code}"
             ));
@@ -208,7 +208,7 @@ pub(super) fn fetch_antigravity_project(
         }
     };
 
-    let response: AntigravityLoadResponse = match resp.into_json() {
+    let response: AntigravityLoadResponse = match resp.body_mut().read_json() {
         Ok(response) => response,
         Err(error) => {
             diagnose::log_error("unable to parse Antigravity loadCodeAssist response", error);
@@ -230,15 +230,15 @@ pub(super) fn fetch_antigravity_model_quota(
         None => serde_json::json!({}),
     };
 
-    let resp = match agent
+    let mut resp = match agent
         .post(&format!("{base_url}/v1internal:fetchAvailableModels"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "antigravity")
         .send_json(&body)
     {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+        Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
             diagnose::log(format!(
                 "Antigravity fetchAvailableModels returned auth error status {code}"
             ));
@@ -250,7 +250,7 @@ pub(super) fn fetch_antigravity_model_quota(
         }
     };
 
-    let response: AntigravityModelsResponse = match resp.into_json() {
+    let response: AntigravityModelsResponse = match resp.body_mut().read_json() {
         Ok(response) => response,
         Err(error) => {
             diagnose::log_error(
@@ -279,15 +279,15 @@ pub(super) fn fetch_antigravity_quota_summary(
     let agent = build_agent()?;
     let body = serde_json::json!({ "project": project });
 
-    let resp = match agent
+    let mut resp = match agent
         .post(&format!("{base_url}/v1internal:retrieveUserQuotaSummary"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Content-Type", "application/json")
+        .header("User-Agent", "antigravity")
         .send_json(&body)
     {
         Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
+        Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
             return Err(PollError::AuthRequired);
         }
         Err(error) => {
@@ -296,7 +296,7 @@ pub(super) fn fetch_antigravity_quota_summary(
         }
     };
 
-    let response: AntigravityQuotaSummaryResponse = match resp.into_json() {
+    let response: AntigravityQuotaSummaryResponse = match resp.body_mut().read_json() {
         Ok(response) => response,
         Err(error) => {
             diagnose::log_error(

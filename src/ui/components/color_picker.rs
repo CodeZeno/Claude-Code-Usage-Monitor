@@ -321,10 +321,11 @@ mod tests {
         let context = egui::Context::default();
         crate::ui::theme::configure_style(&context, crate::localization::LanguageId::English);
         let mut size = egui::Vec2::ZERO;
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let mut value = "#FFFFFFFF".to_owned();
             size = color_string_field(ui, &mut value, 240.0).rect.size();
         });
+        output.textures_delta.clear();
 
         assert_eq!(size, egui::vec2(240.0, CONTROL_HEIGHT));
     }

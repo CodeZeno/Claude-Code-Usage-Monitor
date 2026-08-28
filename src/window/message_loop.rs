@@ -101,7 +101,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     sync_theme_window_visibility();
                 }
                 TIMER_MOUSE_CLICK => {
-                    let _ = KillTimer(hwnd, TIMER_MOUSE_CLICK);
+                    let _ = KillTimer(Some(hwnd), TIMER_MOUSE_CLICK);
                     let pending = lock_state()
                         .as_mut()
                         .and_then(|state| state.pending_mouse_click.take());
@@ -401,7 +401,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     }
                     save_state_settings();
                     // Reset the poll timer with the new interval
-                    SetTimer(hwnd, TIMER_POLL, new_interval, None);
+                    SetTimer(Some(hwnd), TIMER_POLL, new_interval, None);
                 }
                 id if ProviderId::from_native_menu_command_id(id).is_some() => {
                     {

@@ -163,22 +163,22 @@ fn fetch_dashboard_usage(credentials: &DashboardCredentials) -> Result<Dashboard
         format!("auth={}", credentials.auth_cookie)
     };
 
-    let response = match build_agent()?
+    let mut response = match build_agent()?
         .get(&url)
-        .set("Accept", "text/html,application/xhtml+xml")
-        .set("Cookie", &cookie)
-        .set("User-Agent", DASHBOARD_USER_AGENT)
+        .header("Accept", "text/html,application/xhtml+xml")
+        .header("Cookie", &cookie)
+        .header("User-Agent", DASHBOARD_USER_AGENT)
         .call()
     {
         Ok(response) => response,
-        Err(ureq::Error::Status(401 | 403, _)) => return Err(PollError::AuthRequired),
+        Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),
         Err(error) => {
             diagnose::log_error("OpenCode Go dashboard request failed", error);
             return Err(PollError::RequestFailed);
         }
     };
 
-    let html = response.into_string().map_err(|error| {
+    let html = response.body_mut().read_to_string().map_err(|error| {
         diagnose::log_error("OpenCode Go dashboard response is not UTF-8", error);
         PollError::RequestFailed
     })?;

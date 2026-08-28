@@ -38,7 +38,7 @@ pub(super) fn show_context_menu_document(
             TPM_RIGHTBUTTON | TPM_RETURNCMD,
             point.x,
             point.y,
-            0,
+            None,
             hwnd,
             None,
         )
@@ -281,7 +281,7 @@ pub(super) fn execute_context_menu_action(
     };
     if let Some(command) = static_command {
         unsafe {
-            let _ = PostMessageW(hwnd, WM_COMMAND, WPARAM(command as usize), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_COMMAND, WPARAM(command as usize), LPARAM(0));
         }
         return;
     }
@@ -314,7 +314,7 @@ pub(super) fn execute_context_menu_action(
             let operation = native_interop::wide_str("open");
             let url = native_interop::wide_str(url.trim());
             let result = ShellExecuteW(
-                hwnd,
+                Some(hwnd),
                 PCWSTR::from_raw(operation.as_ptr()),
                 PCWSTR::from_raw(url.as_ptr()),
                 PCWSTR::null(),

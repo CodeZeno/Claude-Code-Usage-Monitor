@@ -20,7 +20,7 @@ fn is_light_theme() -> bool {
         let result = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR::from_raw(path.as_ptr()),
-            0,
+            None,
             KEY_READ,
             &mut hkey,
         );

@@ -66,13 +66,14 @@ mod tests {
         egui_extras::install_image_loaders(&context);
         crate::ui::theme::configure_style(&context, crate::localization::LanguageId::English);
         let mut heights = [0.0; 2];
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             ui.set_width(134.0);
             heights[0] = navigation_item(ui, false, "Settings").rect.height();
             heights[1] = github_link(ui, "https://github.com/example/repository")
                 .rect
                 .height();
         });
+        output.textures_delta.clear();
 
         assert_eq!(heights, [ITEM_HEIGHT; 2]);
     }

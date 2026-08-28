@@ -412,7 +412,7 @@ fn spawn_taskbar_watchdog() {
         }
         let invalid = windows
             .iter()
-            .any(|window| unsafe { !IsWindow(window.to_hwnd()).as_bool() });
+            .any(|window| unsafe { !IsWindow(Some(window.to_hwnd())).as_bool() });
         if invalid && !native_interop::find_taskbars().is_empty() {
             diagnose::log("watchdog: shell-hosted surface was destroyed -> relaunching");
             relaunch_self();
@@ -462,9 +462,14 @@ fn sync_window_state_timer(hwnd: HWND) {
     };
     unsafe {
         if required {
-            SetTimer(hwnd, TIMER_WINDOW_STATE, WINDOW_STATE_INTERVAL_MS, None);
+            SetTimer(
+                Some(hwnd),
+                TIMER_WINDOW_STATE,
+                WINDOW_STATE_INTERVAL_MS,
+                None,
+            );
         } else {
-            let _ = KillTimer(hwnd, TIMER_WINDOW_STATE);
+            let _ = KillTimer(Some(hwnd), TIMER_WINDOW_STATE);
         }
     }
 }
@@ -752,9 +757,9 @@ fn schedule_auto_update_check(hwnd: HWND) {
     };
 
     unsafe {
-        let _ = KillTimer(hwnd, TIMER_UPDATE_CHECK);
+        let _ = KillTimer(Some(hwnd), TIMER_UPDATE_CHECK);
         if let Some(delay_ms) = delay_ms {
-            SetTimer(hwnd, TIMER_UPDATE_CHECK, delay_ms.max(1), None);
+            SetTimer(Some(hwnd), TIMER_UPDATE_CHECK, delay_ms.max(1), None);
         }
     }
 }
@@ -771,7 +776,7 @@ fn show_info_message(hwnd: HWND, title: &str, message: &str) {
         let title_wide = native_interop::wide_str(title);
         let message_wide = native_interop::wide_str(message);
         let _ = MessageBoxW(
-            hwnd,
+            Some(hwnd),
             PCWSTR::from_raw(message_wide.as_ptr()),
             PCWSTR::from_raw(title_wide.as_ptr()),
             MB_OK | MB_ICONINFORMATION,
@@ -784,7 +789,7 @@ fn show_error_message(hwnd: HWND, title: &str, message: &str) {
         let title_wide = native_interop::wide_str(title);
         let message_wide = native_interop::wide_str(message);
         let _ = MessageBoxW(
-            hwnd,
+            Some(hwnd),
             PCWSTR::from_raw(message_wide.as_ptr()),
             PCWSTR::from_raw(title_wide.as_ptr()),
             MB_OK | MB_ICONERROR,
@@ -801,7 +806,7 @@ fn show_update_prompt(hwnd: HWND, strings: Strings, release: &ReleaseDescriptor)
         let title_wide = native_interop::wide_str(strings.update_available);
         let message_wide = native_interop::wide_str(&message);
         MessageBoxW(
-            hwnd,
+            Some(hwnd),
             PCWSTR::from_raw(message_wide.as_ptr()),
             PCWSTR::from_raw(title_wide.as_ptr()),
             MB_YESNO | MB_ICONQUESTION,
@@ -877,7 +882,12 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     show_info_message(hwnd, strings.updates, strings.up_to_date);
                 }
                 unsafe {
-                    let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(
+                        Some(hwnd),
+                        WM_APP_UPDATE_CHECK_COMPLETE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
                 }
             }
             Ok(UpdateCheckResult::Available(release)) => {
@@ -896,7 +906,12 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     }
                 }
                 unsafe {
-                    let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(
+                        Some(hwnd),
+                        WM_APP_UPDATE_CHECK_COMPLETE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
                 }
             }
             Err(error) => {
@@ -913,7 +928,12 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     show_error_message(hwnd, strings.updates, &message);
                 }
                 unsafe {
-                    let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(
+                        Some(hwnd),
+                        WM_APP_UPDATE_CHECK_COMPLETE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
                 }
             }
         }
@@ -948,7 +968,7 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
         let hwnd = send_hwnd.to_hwnd();
         match updater::begin_self_update(&release) {
             Ok(()) => unsafe {
-                let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             },
             Err(error) => {
                 {
@@ -960,7 +980,12 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
                 let message = format!("{}.\n\n{}", strings.update_failed, error);
                 show_error_message(hwnd, strings.updates, &message);
                 unsafe {
-                    let _ = PostMessageW(hwnd, WM_APP_UPDATE_CHECK_COMPLETE, WPARAM(0), LPARAM(0));
+                    let _ = PostMessageW(
+                        Some(hwnd),
+                        WM_APP_UPDATE_CHECK_COMPLETE,
+                        WPARAM(0),
+                        LPARAM(0),
+                    );
                 }
             }
         }
@@ -976,7 +1001,7 @@ fn begin_winget_update(hwnd: HWND) {
 
     match updater::begin_winget_update() {
         Ok(()) => unsafe {
-            let _ = PostMessageW(hwnd, WM_CLOSE, WPARAM(0), LPARAM(0));
+            let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         },
         Err(error) => {
             let message = format!("{}.\n\n{}", strings.update_failed, error);
@@ -998,7 +1023,7 @@ pub(crate) fn is_startup_enabled() -> bool {
         let result = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR::from_raw(path.as_ptr()),
-            0,
+            None,
             KEY_READ,
             &mut hkey,
         );
@@ -1064,7 +1089,7 @@ pub(crate) fn set_startup_enabled(enable: bool) {
         let result = RegOpenKeyExW(
             HKEY_CURRENT_USER,
             PCWSTR::from_raw(path.as_ptr()),
-            0,
+            None,
             KEY_SET_VALUE,
             &mut hkey,
         );
@@ -1083,7 +1108,7 @@ pub(crate) fn set_startup_enabled(enable: bool) {
                 let _ = RegSetValueExW(
                     hkey,
                     PCWSTR::from_raw(key_name.as_ptr()),
-                    0,
+                    None,
                     REG_SZ,
                     Some(std::slice::from_raw_parts(
                         exe_buf.as_ptr() as *const u8,
@@ -1151,7 +1176,7 @@ fn apply_custom_theme(
         reset_layered_window(hwnd);
         let _ = SetWindowPos(
             hwnd,
-            HWND_NOTOPMOST,
+            Some(HWND_NOTOPMOST),
             0,
             0,
             0,
@@ -1238,7 +1263,7 @@ fn sync_custom_mirrors() {
         for (surface_index, window) in state.desktop_hwnds.iter_mut().enumerate() {
             let wanted = desktop_surfaces.get(surface_index) == Some(&true);
             let valid =
-                window.is_some_and(|window| unsafe { IsWindow(window.to_hwnd()).as_bool() });
+                window.is_some_and(|window| unsafe { IsWindow(Some(window.to_hwnd())).as_bool() });
             if !wanted || !valid {
                 if let Some(window) = window.take() {
                     stale.push(window);
@@ -1295,7 +1320,7 @@ unsafe fn create_desktop_surface_window() -> HWND {
         style: CS_DBLCLKS,
         lpfnWndProc: Some(mirror_wnd_proc),
         hInstance: HINSTANCE(instance.0),
-        hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
+        hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
         hbrBackground: HBRUSH::default(),
         lpszClassName: PCWSTR::from_raw(class.as_ptr()),
         ..Default::default()
@@ -1314,9 +1339,9 @@ unsafe fn create_desktop_surface_window() -> HWND {
         0,
         198,
         144,
-        desktop.parent,
+        Some(desktop.parent),
         None,
-        instance,
+        Some(HINSTANCE(instance.0)),
         None,
     )
     .unwrap_or_default();
@@ -1336,7 +1361,7 @@ unsafe fn create_mirror_window() -> HWND {
         style: CS_DBLCLKS,
         lpfnWndProc: Some(mirror_wnd_proc),
         hInstance: HINSTANCE(instance.0),
-        hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
+        hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
         hbrBackground: HBRUSH::default(),
         lpszClassName: PCWSTR::from_raw(class.as_ptr()),
         ..Default::default()
@@ -1352,9 +1377,9 @@ unsafe fn create_mirror_window() -> HWND {
         0,
         1,
         1,
-        HWND::default(),
-        HMENU::default(),
-        instance,
+        None,
+        None,
+        Some(HINSTANCE(instance.0)),
         None,
     )
     .unwrap_or_default()
@@ -1514,7 +1539,7 @@ pub fn run() {
             hInstance: HINSTANCE(hinstance.0),
             hIcon: large_icon,
             hIconSm: small_icon,
-            hCursor: LoadCursorW(HINSTANCE::default(), IDC_ARROW).unwrap_or_default(),
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
             hbrBackground: HBRUSH(std::ptr::null_mut()),
             lpszClassName: PCWSTR::from_raw(class_name.as_ptr()),
             ..Default::default()
@@ -1637,9 +1662,9 @@ pub fn run() {
             0,
             initial_width,
             initial_height,
-            HWND::default(),
-            HMENU::default(),
-            hinstance,
+            None,
+            None,
+            Some(HINSTANCE(hinstance.0)),
             None,
         )
         .unwrap();
@@ -1648,16 +1673,16 @@ pub fn run() {
             let _ = SendMessageW(
                 hwnd,
                 WM_SETICON,
-                WPARAM(ICON_BIG as usize),
-                LPARAM(large_icon.0 as isize),
+                Some(WPARAM(ICON_BIG as usize)),
+                Some(LPARAM(large_icon.0 as isize)),
             );
         }
         if !small_icon.is_invalid() {
             let _ = SendMessageW(
                 hwnd,
                 WM_SETICON,
-                WPARAM(ICON_SMALL as usize),
-                LPARAM(small_icon.0 as isize),
+                Some(WPARAM(ICON_SMALL as usize)),
+                Some(LPARAM(small_icon.0 as isize)),
             );
         }
 
@@ -1742,7 +1767,7 @@ pub fn run() {
                 .map(|s| s.poll_interval_ms)
                 .unwrap_or(POLL_15_MIN)
         };
-        SetTimer(hwnd, TIMER_POLL, initial_poll_ms, None);
+        SetTimer(Some(hwnd), TIMER_POLL, initial_poll_ms, None);
         sync_window_state_timer(hwnd);
 
         // Watch for explorer.exe restarts so we can re-embed and re-add the tray
@@ -1777,7 +1802,7 @@ pub fn run() {
 
         // Message loop
         let mut msg = MSG::default();
-        while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+        while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -1987,7 +2012,7 @@ fn do_poll_once(hwnd: HWND) {
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
                     unsafe {
-                        let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+                        let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
                     }
                 }
 
@@ -1999,7 +2024,7 @@ fn do_poll_once(hwnd: HWND) {
                     s.retry_count = 0;
                     let interval = s.poll_interval_ms;
                     unsafe {
-                        SetTimer(hwnd, TIMER_POLL, interval, None);
+                        SetTimer(Some(hwnd), TIMER_POLL, interval, None);
                     }
                 }
                 s.force_notify_auth_error = false;
@@ -2013,7 +2038,7 @@ fn do_poll_once(hwnd: HWND) {
             let _ = app_settings::save_usage_cache(&cache_data, true);
 
             unsafe {
-                let _ = PostMessageW(hwnd, WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
         }
         Err(failure) => {
@@ -2046,10 +2071,10 @@ fn do_poll_once(hwnd: HWND) {
                             s.auth_watch_snapshot = watch_snapshot;
                             s.retry_count = s.retry_count.saturating_add(1);
                             unsafe {
-                                let _ = KillTimer(hwnd, TIMER_POLL);
-                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
-                                let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
-                                SetTimer(hwnd, TIMER_POLL, s.poll_interval_ms, None);
+                                let _ = KillTimer(Some(hwnd), TIMER_POLL);
+                                let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
+                                let _ = KillTimer(Some(hwnd), TIMER_COUNTDOWN);
+                                SetTimer(Some(hwnd), TIMER_POLL, s.poll_interval_ms, None);
                             }
                         }
                         _ => {
@@ -2066,8 +2091,8 @@ fn do_poll_once(hwnd: HWND) {
                             );
                             let retry_ms = backoff.min(s.poll_interval_ms);
                             unsafe {
-                                let _ = KillTimer(hwnd, TIMER_RESET_POLL);
-                                SetTimer(hwnd, TIMER_POLL, retry_ms, None);
+                                let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
+                                SetTimer(Some(hwnd), TIMER_POLL, retry_ms, None);
                             }
                         }
                     }
@@ -2096,7 +2121,7 @@ fn do_poll_once(hwnd: HWND) {
             }
 
             unsafe {
-                let _ = PostMessageW(hwnd, WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -2112,8 +2137,8 @@ fn schedule_countdown_timer() {
     let hwnd = s.hwnd.to_hwnd();
     if !s.last_poll_ok {
         unsafe {
-            let _ = KillTimer(hwnd, TIMER_COUNTDOWN);
-            let _ = KillTimer(hwnd, TIMER_RESET_POLL);
+            let _ = KillTimer(Some(hwnd), TIMER_COUNTDOWN);
+            let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
         }
         return;
     }
@@ -2121,7 +2146,7 @@ fn schedule_countdown_timer() {
     // If a reset time has passed, poll every 5s to pick up fresh data
     if s.data.as_ref().is_some_and(poller::app_is_past_reset) {
         unsafe {
-            SetTimer(hwnd, TIMER_RESET_POLL, 5_000, None);
+            SetTimer(Some(hwnd), TIMER_RESET_POLL, 5_000, None);
         }
     }
 
@@ -2138,7 +2163,7 @@ fn schedule_countdown_timer() {
         .max(1000) as u32;
 
     unsafe {
-        SetTimer(hwnd, TIMER_COUNTDOWN, ms, None);
+        SetTimer(Some(hwnd), TIMER_COUNTDOWN, ms, None);
     }
 }
 
@@ -2150,13 +2175,13 @@ fn schedule_clock_timer() {
     let hwnd = s.hwnd.to_hwnd();
     let Some(interval) = s.theme_clock_interval else {
         unsafe {
-            let _ = KillTimer(hwnd, TIMER_CLOCK);
+            let _ = KillTimer(Some(hwnd), TIMER_CLOCK);
         }
         return;
     };
     let ms = time_until_next_clock_refresh(interval).as_millis().max(1) as u32;
     unsafe {
-        SetTimer(hwnd, TIMER_CLOCK, ms, None);
+        SetTimer(Some(hwnd), TIMER_CLOCK, ms, None);
     }
 }
 
@@ -2213,7 +2238,7 @@ fn reload_external_settings(hwnd: HWND) {
         apply_language_to_state(state, language_override);
     }
     unsafe {
-        SetTimer(hwnd, TIMER_POLL, settings.poll_interval_ms, None);
+        SetTimer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);
     }
     let _ = apply_custom_theme(hwnd, settings.custom_theme_enabled, theme_path, None);
     if providers_changed {

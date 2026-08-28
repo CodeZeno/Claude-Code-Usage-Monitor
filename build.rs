@@ -129,8 +129,8 @@ fn build_locales() {
 fn read_locale(path: &Path) -> LocaleSource {
     let source = fs::read_to_string(path)
         .unwrap_or_else(|error| panic!("Failed to read {}: {error}", path.display()));
-    let value = source
-        .parse::<toml::Value>()
+    let source = source.strip_prefix('\u{feff}').unwrap_or(&source);
+    let value = toml::from_str::<toml::Value>(source)
         .unwrap_or_else(|error| panic!("Invalid locale file {}: {error}", path.display()));
     let table = value
         .as_table()

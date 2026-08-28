@@ -51,7 +51,7 @@ mod tests {
     #[test]
     fn number_field_reserves_one_fixed_height_row() {
         let context = egui::Context::default();
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let mut value = 12.0;
             let top = ui.cursor().top();
             NumberField::new(&mut value).show(ui, 120.0);
@@ -59,5 +59,6 @@ mod tests {
 
             assert_eq!(consumed_height, CONTROL_HEIGHT);
         });
+        output.textures_delta.clear();
     }
 }

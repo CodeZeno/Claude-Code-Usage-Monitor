@@ -132,7 +132,7 @@ mod tests {
         let context = egui::Context::default();
         crate::ui::theme::configure_style(&context, crate::localization::LanguageId::English);
         let mut heights = [0.0; 6];
-        let _ = context.run_ui(egui::RawInput::default(), |ui| {
+        let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             ui.horizontal(|ui| {
                 heights[0] = Dropdown::from_id_salt("probe")
                     .selected_text("Theme")
@@ -157,6 +157,7 @@ mod tests {
                     .height();
             });
         });
+        output.textures_delta.clear();
         assert_eq!(heights, [CONTROL_HEIGHT; 6]);
     }
 }

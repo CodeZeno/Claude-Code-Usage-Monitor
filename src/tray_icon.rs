@@ -118,8 +118,8 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
     }
 
     unsafe {
-        let screen_dc = GetDC(HWND::default());
-        let memory_dc = CreateCompatibleDC(screen_dc);
+        let screen_dc = GetDC(None);
+        let memory_dc = CreateCompatibleDC(Some(screen_dc));
         let bitmap_info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -134,12 +134,18 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        let color_bitmap =
-            CreateDIBSection(memory_dc, &bitmap_info, DIB_RGB_COLORS, &mut bits, None, 0)
-                .unwrap_or_default();
+        let color_bitmap = CreateDIBSection(
+            Some(memory_dc),
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut bits,
+            None,
+            0,
+        )
+        .unwrap_or_default();
         if color_bitmap.is_invalid() || bits.is_null() {
             let _ = DeleteDC(memory_dc);
-            ReleaseDC(HWND::default(), screen_dc);
+            ReleaseDC(None, screen_dc);
             return HICON::default();
         }
         std::ptr::copy_nonoverlapping(icon.pixels.as_ptr(), bits.cast::<u32>(), icon.pixels.len());
@@ -156,10 +162,10 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
         };
         let result = CreateIconIndirect(&icon_info).unwrap_or_default();
 
-        let _ = DeleteObject(mask_bitmap);
-        let _ = DeleteObject(color_bitmap);
+        let _ = DeleteObject(mask_bitmap.into());
+        let _ = DeleteObject(color_bitmap.into());
         let _ = DeleteDC(memory_dc);
-        ReleaseDC(HWND::default(), screen_dc);
+        ReleaseDC(None, screen_dc);
         result
     }
 }

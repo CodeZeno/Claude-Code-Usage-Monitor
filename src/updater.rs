@@ -173,16 +173,17 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
     let agent = build_agent()?;
 
-    let response = agent
+    let mut response = agent
         .get(&url)
-        .set("Accept", GITHUB_API_ACCEPT)
-        .set("User-Agent", user_agent())
-        .set("X-GitHub-Api-Version", GITHUB_API_VERSION)
+        .header("Accept", GITHUB_API_ACCEPT)
+        .header("User-Agent", user_agent())
+        .header("X-GitHub-Api-Version", GITHUB_API_VERSION)
         .call()
         .map_err(|e| format!("Unable to check GitHub releases: {e}"))?;
 
     let release: GitHubRelease = response
-        .into_json()
+        .body_mut()
+        .read_json()
         .map_err(|e| format!("Unable to parse GitHub release data: {e}"))?;
 
     let latest_version = release.tag_name.trim_start_matches('v').to_string();
@@ -211,23 +212,26 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
 }
 
 fn build_agent() -> Result<ureq::Agent, String> {
-    let tls = native_tls::TlsConnector::new()
-        .map_err(|e| format!("Unable to initialize TLS support for update checks: {e}"))?;
-    Ok(ureq::AgentBuilder::new()
-        .timeout(Duration::from_secs(30))
-        .tls_connector(std::sync::Arc::new(tls))
-        .build())
+    let tls = ureq::tls::TlsConfig::builder()
+        .provider(ureq::tls::TlsProvider::NativeTls)
+        .root_certs(ureq::tls::RootCerts::PlatformVerifier)
+        .build();
+    Ok(ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(30)))
+        .tls_config(tls)
+        .build()
+        .into())
 }
 
 fn download_release_asset(url: &str, partial_path: &Path, final_path: &Path) -> Result<(), String> {
     let agent = build_agent()?;
     let response = agent
         .get(url)
-        .set("User-Agent", user_agent())
+        .header("User-Agent", user_agent())
         .call()
         .map_err(|e| format!("Unable to download the latest release: {e}"))?;
 
-    let mut reader = response.into_reader();
+    let mut reader = response.into_body().into_reader();
     let mut file = File::create(partial_path)
         .map_err(|e| format!("Unable to create temporary download file: {e}"))?;
 
@@ -497,7 +501,7 @@ fn show_error_message(title: &str, message: &str) {
         let title_wide = wide_str(title);
         let message_wide = wide_str(message);
         let _ = MessageBoxW(
-            HWND::default(),
+            Some(HWND::default()),
             PCWSTR::from_raw(message_wide.as_ptr()),
             PCWSTR::from_raw(title_wide.as_ptr()),
             MB_OK | MB_ICONERROR,

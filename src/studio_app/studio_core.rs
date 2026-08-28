@@ -145,7 +145,7 @@ impl StudioApp {
         if self.owner != 0 {
             unsafe {
                 let _ = PostMessageW(
-                    HWND(self.owner as *mut _),
+                    Some(HWND(self.owner as *mut _)),
                     WM_APP_SETTINGS_UPDATED,
                     WPARAM(0),
                     LPARAM(0),
@@ -157,7 +157,12 @@ impl StudioApp {
     pub(super) fn post_owner(&self, message: u32) {
         if self.owner != 0 {
             unsafe {
-                let _ = PostMessageW(HWND(self.owner as *mut _), message, WPARAM(0), LPARAM(0));
+                let _ = PostMessageW(
+                    Some(HWND(self.owner as *mut _)),
+                    message,
+                    WPARAM(0),
+                    LPARAM(0),
+                );
             }
         }
     }

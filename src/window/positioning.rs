@@ -145,8 +145,8 @@ pub(super) fn render_custom_window(
         // UpdateLayeredWindow expects a screen-compatible destination DC. A
         // window DC happened to work for taskbar-hosted children, but desktop
         // WorkerW/DefView composition can discard the resulting surface.
-        let screen_dc = GetDC(HWND::default());
-        let memory_dc = CreateCompatibleDC(screen_dc);
+        let screen_dc = GetDC(None);
+        let memory_dc = CreateCompatibleDC(Some(screen_dc));
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -160,14 +160,14 @@ pub(super) fn render_custom_window(
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        let bitmap = CreateDIBSection(memory_dc, &info, DIB_RGB_COLORS, &mut bits, None, 0)
+        let bitmap = CreateDIBSection(Some(memory_dc), &info, DIB_RGB_COLORS, &mut bits, None, 0)
             .unwrap_or_default();
         if bitmap.is_invalid() || bits.is_null() {
             let _ = DeleteDC(memory_dc);
-            ReleaseDC(HWND::default(), screen_dc);
+            ReleaseDC(None, screen_dc);
             return;
         }
-        let old = SelectObject(memory_dc, bitmap);
+        let old = SelectObject(memory_dc, bitmap.into());
         let window_pixels = std::slice::from_raw_parts_mut(bits as *mut u32, rendered.pixels.len());
         for (target, source) in window_pixels.iter_mut().zip(&rendered.pixels) {
             // Windows normally lets mouse input pass through zero-alpha pixels in
@@ -192,10 +192,10 @@ pub(super) fn render_custom_window(
         };
         if let Err(error) = UpdateLayeredWindow(
             hwnd,
-            screen_dc,
+            Some(screen_dc),
             None,
             Some(&size),
-            memory_dc,
+            Some(memory_dc),
             Some(&source),
             COLORREF(0),
             Some(&blend),
@@ -207,9 +207,9 @@ pub(super) fn render_custom_window(
             ));
         }
         SelectObject(memory_dc, old);
-        let _ = DeleteObject(bitmap);
+        let _ = DeleteObject(bitmap.into());
         let _ = DeleteDC(memory_dc);
-        ReleaseDC(HWND::default(), screen_dc);
+        ReleaseDC(None, screen_dc);
     }
 }
 
@@ -283,10 +283,10 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                 };
                 native_interop::embed_as_child(hwnd, taskbar.hwnd);
                 let mut point = [POINT { x, y }];
-                MapWindowPoints(HWND::default(), taskbar.hwnd, &mut point);
+                MapWindowPoints(None, Some(taskbar.hwnd), &mut point);
                 let _ = SetWindowPos(
                     hwnd,
-                    HWND_TOP,
+                    Some(HWND_TOP),
                     point[0].x,
                     point[0].y,
                     width,
@@ -300,10 +300,10 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                         native_interop::embed_as_child(hwnd, desktop.parent);
                     }
                     let mut point = [POINT { x, y }];
-                    MapWindowPoints(HWND::default(), desktop.parent, &mut point);
+                    MapWindowPoints(None, Some(desktop.parent), &mut point);
                     let _ = SetWindowPos(
                         hwnd,
-                        desktop.insert_after,
+                        Some(desktop.insert_after),
                         point[0].x,
                         point[0].y,
                         width,
@@ -312,7 +312,8 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                     );
                 } else {
                     native_interop::make_popup(hwnd, false);
-                    let _ = SetWindowPos(hwnd, HWND_BOTTOM, x, y, width, height, SWP_NOACTIVATE);
+                    let _ =
+                        SetWindowPos(hwnd, Some(HWND_BOTTOM), x, y, width, height, SWP_NOACTIVATE);
                 }
             }
             SurfaceNest::TrayIcon => {
@@ -320,7 +321,15 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
             }
             SurfaceNest::Floating | SurfaceNest::Auto => {
                 native_interop::make_popup(hwnd, true);
-                let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, width, height, SWP_NOACTIVATE);
+                let _ = SetWindowPos(
+                    hwnd,
+                    Some(HWND_TOPMOST),
+                    x,
+                    y,
+                    width,
+                    height,
+                    SWP_NOACTIVATE,
+                );
             }
         }
     }
@@ -360,7 +369,7 @@ pub(super) fn sync_theme_window_visibility() {
                 continue;
             };
             let hwnd = regular_window.to_hwnd();
-            if !IsWindow(hwnd).as_bool() {
+            if !IsWindow(Some(hwnd)).as_bool() {
                 continue;
             }
             let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
@@ -377,7 +386,7 @@ pub(super) fn sync_theme_window_visibility() {
             if should_show {
                 let _ = SetWindowPos(
                     hwnd,
-                    HWND_TOPMOST,
+                    Some(HWND_TOPMOST),
                     0,
                     0,
                     0,

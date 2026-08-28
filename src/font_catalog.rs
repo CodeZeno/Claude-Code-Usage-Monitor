@@ -2,7 +2,7 @@
 
 use std::sync::OnceLock;
 
-use windows::Win32::Foundation::{HWND, LPARAM};
+use windows::Win32::Foundation::LPARAM;
 use windows::Win32::Graphics::Gdi::{
     EnumFontFamiliesExW, GetDC, ReleaseDC, DEFAULT_CHARSET, LOGFONTW, TEXTMETRICW,
 };
@@ -12,7 +12,7 @@ pub(crate) fn installed_font_families() -> &'static [String] {
     FAMILIES.get_or_init(|| {
         let mut families = Vec::new();
         unsafe {
-            let hdc = GetDC(HWND::default());
+            let hdc = GetDC(None);
             if !hdc.is_invalid() {
                 let mut query = LOGFONTW {
                     lfCharSet: DEFAULT_CHARSET,
@@ -25,7 +25,7 @@ pub(crate) fn installed_font_families() -> &'static [String] {
                     LPARAM((&raw mut families) as isize),
                     0,
                 );
-                ReleaseDC(HWND::default(), hdc);
+                ReleaseDC(None, hdc);
             }
         }
         if families.is_empty() {

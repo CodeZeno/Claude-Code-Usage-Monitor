@@ -189,24 +189,25 @@ fn query_cursor_access_token(path: &Path) -> Result<Option<String>, crate::winsq
 
 fn fetch_cursor_usage(cookie: &str) -> Result<UsageData, PollError> {
     let cookie_header = format!("WorkosCursorSessionToken={cookie}");
-    let response = match build_agent()?
+    let mut response = match build_agent()?
         .get(CURSOR_USAGE_SUMMARY_URL)
-        .set("Cookie", &cookie_header)
-        .set("User-Agent", "Mozilla/5.0")
+        .header("Cookie", &cookie_header)
+        .header("User-Agent", "Mozilla/5.0")
         .call()
     {
         Ok(response) => response,
-        Err(ureq::Error::Status(401 | 403, _)) => return Err(PollError::AuthRequired),
+        Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),
         Err(error) => {
             diagnose::log_error("Cursor usage-summary request failed", error);
             return Err(PollError::RequestFailed);
         }
     };
 
-    let response: CursorUsageSummaryResponse = response.into_json().map_err(|error| {
-        diagnose::log_error("unable to parse Cursor usage-summary response", error);
-        PollError::RequestFailed
-    })?;
+    let response: CursorUsageSummaryResponse =
+        response.body_mut().read_json().map_err(|error| {
+            diagnose::log_error("unable to parse Cursor usage-summary response", error);
+            PollError::RequestFailed
+        })?;
     cursor_usage_from_summary(response).ok_or_else(|| {
         diagnose::log("Cursor usage-summary response missing plan usage");
         PollError::RequestFailed
