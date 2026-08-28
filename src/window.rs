@@ -508,15 +508,54 @@ fn save_settings_or_log(settings: &SettingsFile, context: &str) {
     }
 }
 
-fn tray_icon_tooltip_from_state() -> String {
+fn tray_usage_summary_lines(
+    data: &AppUsageData,
+    providers: ProviderSet,
+    language: LanguageId,
+) -> Vec<String> {
+    let strings = language.strings();
+    providers
+        .iter()
+        .filter_map(|provider| {
+            let usage = data.get(provider)?;
+            let descriptor = provider.descriptor();
+            let weekly_label = usage
+                .weekly_label
+                .as_deref()
+                .unwrap_or(strings.weekly_window);
+            Some(format!(
+                "{} {}: {:.0}% | {}: {:.0}%",
+                language.text(descriptor.display_name),
+                strings.session_window,
+                usage.session.percentage,
+                weekly_label,
+                usage.weekly.percentage,
+            ))
+        })
+        .collect()
+}
+
+fn tray_usage_summary_from_state() -> Option<String> {
     let state = lock_state();
-    match state.as_ref() {
-        Some(state) => state.language.strings().window_title.to_string(),
-        None => "Claude Code Usage Monitor".to_string(),
+    let state = state.as_ref()?;
+    if !state.last_poll_ok {
+        return None;
     }
+    let lines = tray_usage_summary_lines(state.data.as_ref()?, state.providers, state.language);
+    (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn tray_icon_tooltip_from_state() -> String {
+    tray_usage_summary_from_state().unwrap_or_else(|| {
+        lock_state()
+            .as_ref()
+            .map(|state| state.language.strings().window_title.to_string())
+            .unwrap_or_else(|| "Claude Code Usage Monitor".to_string())
+    })
 }
 
 fn sync_tray_icon(hwnd: HWND) {
+    let usage_tooltip = tray_usage_summary_from_state();
     let themed = {
         let state = lock_state();
         state.as_ref().and_then(|state| {
@@ -583,7 +622,9 @@ fn sync_tray_icon(hwnd: HWND) {
                     );
                     Some(tray_icon::ThemedTrayIcon {
                         surface_index,
-                        tooltip: surface.name.clone(),
+                        tooltip: usage_tooltip
+                            .clone()
+                            .unwrap_or_else(|| surface.name.clone()),
                         width: rendered.width,
                         height: rendered.height,
                         pixels: rendered.pixels,
@@ -2297,5 +2338,61 @@ mod language_menu_tests {
                 Some(language)
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tray_usage_summary_tests {
+    use super::*;
+    use crate::models::{UsageData, UsageSection};
+
+    fn usage(session: f64, weekly: f64, weekly_label: Option<&str>) -> UsageData {
+        UsageData {
+            session: UsageSection {
+                percentage: session,
+                resets_at: None,
+            },
+            weekly: UsageSection {
+                percentage: weekly,
+                resets_at: None,
+            },
+            weekly_label: weekly_label.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn tray_summary_formats_enabled_provider_usage() {
+        let data = [(ProviderId::Claude, usage(4.6, 42.4, None))]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            tray_usage_summary_lines(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Claude]),
+                LanguageId::English,
+            ),
+            ["Claude Code 5h: 5% | 7d: 42%"]
+        );
+    }
+
+    #[test]
+    fn tray_summary_uses_provider_window_labels_and_selection() {
+        let data = [
+            (ProviderId::Claude, usage(10.0, 20.0, None)),
+            (ProviderId::OpenCode, usage(30.0, 40.0, Some("30d"))),
+        ]
+        .into_iter()
+        .collect();
+
+        assert_eq!(
+            tray_usage_summary_lines(
+                &data,
+                ProviderSet::from_enabled([ProviderId::OpenCode]),
+                LanguageId::English,
+            ),
+            ["OpenCode 5h: 30% | 30d: 40%"]
+        );
     }
 }
