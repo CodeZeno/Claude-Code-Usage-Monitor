@@ -445,6 +445,9 @@ pub enum MouseActionTarget {
 pub enum MouseAction {
     ShowDashboard,
     ToggleDashboard,
+    OpenUrl {
+        url: String,
+    },
     ShowContextMenu {
         menu: Option<String>,
     },
@@ -484,12 +487,14 @@ pub struct MouseActionOverrideKey {
 pub enum MouseActionEffect {
     ShowDashboard,
     ToggleDashboard,
+    OpenUrl(String),
     ShowContextMenu(Option<String>),
 }
 
 /// Parse the deliberately small, line-or-semicolon separated action language.
 /// Supported forms include `show_dashboard()`, `toggle_dashboard()`,
-/// `show_context_menu()`, `show_context_menu("menu-id")`, `set(self.render, false)`,
+/// `open_url("https://example.com")`, `show_context_menu()`,
+/// `show_context_menu("menu-id")`, `set(self.render, false)`,
 /// `increase("layer-id", height, 10)`, `decrease(self.width, 5)`,
 /// `toggle(self.render)`, and `reset("layer-id", height)`.
 pub fn parse_mouse_actions(source: &str) -> Result<Vec<MouseAction>, String> {
@@ -509,6 +514,14 @@ pub fn parse_mouse_actions(source: &str) -> Result<Vec<MouseAction>, String> {
             "show_dashboard" => return Err("show_dashboard() does not take arguments".into()),
             "toggle_dashboard" if args.is_empty() => actions.push(MouseAction::ToggleDashboard),
             "toggle_dashboard" => return Err("toggle_dashboard() does not take arguments".into()),
+            "open_url" if args.len() == 1 => {
+                let url = parse_quoted_action_string(&args[0], "URL")?;
+                if !crate::context_menu::supported_url(&url) {
+                    return Err("open_url URL must start with http:// or https://".into());
+                }
+                actions.push(MouseAction::OpenUrl { url });
+            }
+            "open_url" => return Err("open_url expects one quoted URL".into()),
             "show_context_menu" if args.is_empty() => {
                 actions.push(MouseAction::ShowContextMenu { menu: None })
             }
@@ -1624,6 +1637,7 @@ pub fn validate_mouse_action_script(
         let (target, property, value) = match action {
             MouseAction::ShowDashboard
             | MouseAction::ToggleDashboard
+            | MouseAction::OpenUrl { .. }
             | MouseAction::ShowContextMenu { .. } => continue,
             MouseAction::Set {
                 target,
@@ -1829,6 +1843,7 @@ pub fn execute_mouse_actions(
         match action {
             MouseAction::ShowDashboard => effects.push(MouseActionEffect::ShowDashboard),
             MouseAction::ToggleDashboard => effects.push(MouseActionEffect::ToggleDashboard),
+            MouseAction::OpenUrl { url } => effects.push(MouseActionEffect::OpenUrl(url)),
             MouseAction::ShowContextMenu { menu } => {
                 effects.push(MouseActionEffect::ShowContextMenu(menu))
             }

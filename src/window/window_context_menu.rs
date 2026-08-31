@@ -310,21 +310,9 @@ pub(super) fn execute_context_menu_action(
             };
             let _ = execute_mouse_action_source(surface_index, &self_id, &actions);
         }
-        ContextMenuAction::OpenUrl { url } if context_menu::supported_url(&url) => unsafe {
-            let operation = native_interop::wide_str("open");
-            let url = native_interop::wide_str(url.trim());
-            let result = ShellExecuteW(
-                Some(hwnd),
-                PCWSTR::from_raw(operation.as_ptr()),
-                PCWSTR::from_raw(url.as_ptr()),
-                PCWSTR::null(),
-                PCWSTR::null(),
-                SW_SHOWNORMAL,
-            );
-            if result.0 as isize <= 32 {
-                diagnose::log("context menu URL could not be opened");
-            }
-        },
+        ContextMenuAction::OpenUrl { url } => {
+            open_web_url(hwnd, &url, "context menu URL could not be opened")
+        }
         _ => {}
     }
 }

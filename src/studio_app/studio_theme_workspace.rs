@@ -719,6 +719,7 @@ impl StudioApp {
         let mut target = helper.target.clone();
         let mut property = helper.property;
         let mut value = helper.value.clone();
+        let mut url = helper.url.clone();
         let context_menus = context_menu::list_context_menus().unwrap_or_default();
         let mut context_menu_reference = helper.context_menu_reference.clone();
         let action = show_action_helper(
@@ -750,6 +751,7 @@ impl StudioApp {
                     &mut target,
                     &mut property,
                     &mut value,
+                    &mut url,
                     &context_menus,
                     &mut context_menu_reference,
                     &mut editor.draft,
@@ -784,6 +786,7 @@ impl StudioApp {
                 helper.target = target;
                 helper.property = property;
                 helper.value = value;
+                helper.url = url;
                 helper.context_menu_reference = context_menu_reference;
                 self.action_helper = Some(helper);
             }

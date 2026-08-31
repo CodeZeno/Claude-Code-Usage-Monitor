@@ -171,6 +171,27 @@ fn language_from_menu_command_id(command: u16) -> Option<LanguageId> {
         .and_then(|index| LanguageId::from_index(index.into()))
 }
 
+fn open_web_url(hwnd: HWND, url: &str, failure_message: &'static str) {
+    if !context_menu::supported_url(url) {
+        return;
+    }
+    unsafe {
+        let operation = native_interop::wide_str("open");
+        let url = native_interop::wide_str(url.trim());
+        let result = ShellExecuteW(
+            Some(hwnd),
+            PCWSTR::from_raw(operation.as_ptr()),
+            PCWSTR::from_raw(url.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+        if result.0 as isize <= 32 {
+            diagnose::log(failure_message);
+        }
+    }
+}
+
 /// How often the watchdog thread polls for an explorer.exe restart (which
 /// recreates the taskbar and wipes our tray-icon registration).
 const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;

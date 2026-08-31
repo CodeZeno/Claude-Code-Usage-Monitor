@@ -1445,19 +1445,19 @@ fn unsupported_theme_schemas_are_rejected_instead_of_migrated() {
 #[test]
 fn mouse_action_parser_preserves_nested_value_expressions() {
     let actions = parse_mouse_actions(
-        "show_dashboard(); toggle_dashboard(); show_context_menu()\n\
+        "show_dashboard(); toggle_dashboard(); open_url(\"https://example.com/usage\"); show_context_menu()\n\
              set(\"details\", height, max(40, parent.height / 2))\n\
              increase(self.width, 10)\ndecrease(\"details\", rotation, 5)\n\
              toggle(self.render)\nreset(\"details\", width)",
     )
     .unwrap();
-    assert_eq!(actions.len(), 8);
+    assert_eq!(actions.len(), 9);
     assert!(matches!(
-        &actions[3],
+        &actions[4],
         MouseAction::Set { value, .. } if value.0 == "max(40, parent.height / 2)"
     ));
-    assert!(matches!(actions[4], MouseAction::Increase { .. }));
-    assert!(matches!(actions[5], MouseAction::Decrease { .. }));
+    assert!(matches!(actions[5], MouseAction::Increase { .. }));
+    assert!(matches!(actions[6], MouseAction::Decrease { .. }));
     assert!(parse_mouse_actions("increase(self.render, 1)")
         .unwrap_err()
         .contains("numeric property"));
@@ -1467,6 +1467,15 @@ fn mouse_action_parser_preserves_nested_value_expressions() {
             .as_slice(),
         [MouseAction::ShowContextMenu { menu: Some(menu) }] if menu == "My Menu"
     ));
+    assert!(matches!(
+        parse_mouse_actions("open_url(\"https://example.com/usage\")")
+            .unwrap()
+            .as_slice(),
+        [MouseAction::OpenUrl { url }] if url == "https://example.com/usage"
+    ));
+    assert!(parse_mouse_actions("open_url(\"file:///temp\")")
+        .unwrap_err()
+        .contains("http:// or https://"));
 }
 
 #[test]
@@ -1608,7 +1617,7 @@ fn dashboard_and_context_menu_actions_emit_ordered_effects() {
         &theme,
         0,
         &self_id,
-        "show_dashboard(); toggle_dashboard(); show_context_menu()",
+        "show_dashboard(); toggle_dashboard(); open_url(\"https://example.com/usage\"); show_context_menu()",
         None,
         ThemeRuntime::default(),
         &mut HashMap::new(),
@@ -1619,6 +1628,7 @@ fn dashboard_and_context_menu_actions_emit_ordered_effects() {
         vec![
             MouseActionEffect::ShowDashboard,
             MouseActionEffect::ToggleDashboard,
+            MouseActionEffect::OpenUrl("https://example.com/usage".into()),
             MouseActionEffect::ShowContextMenu(None),
         ]
     );

@@ -352,6 +352,7 @@ struct ActionHelperState {
     target: String,
     property: MouseActionProperty,
     value: String,
+    url: String,
     context_menu_reference: String,
 }
 
@@ -364,6 +365,7 @@ impl ActionHelperState {
             target: "self".into(),
             property: MouseActionProperty::Render,
             value: "false".into(),
+            url: "https://".into(),
             context_menu_reference: context_menu::CLASSIC_CONTEXT_MENU_ID.into(),
         }
     }

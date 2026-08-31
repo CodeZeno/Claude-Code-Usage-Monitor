@@ -764,6 +764,7 @@ pub(super) fn action_reference_panels(
     target: &mut String,
     property: &mut MouseActionProperty,
     value: &mut String,
+    url: &mut String,
     context_menus: &[context_menu::ContextMenuDescriptor],
     context_menu_reference: &mut String,
     draft: &mut String,
@@ -782,6 +783,29 @@ pub(super) fn action_reference_panels(
                     }
                     if ui.button(language.text("Toggle dashboard")).clicked() {
                         append_action(draft, "toggle_dashboard()");
+                    }
+                    ui.label(
+                        egui::RichText::new(language.text("URL"))
+                            .small()
+                            .color(muted()),
+                    );
+                    ui.add(
+                        singleline_text_edit(url)
+                            .desired_width(ui.available_width())
+                            .hint_text("https://example.com/usage"),
+                    );
+                    if ui
+                        .add_enabled(
+                            context_menu::supported_url(url),
+                            egui::Button::new(language.text("Open URL")),
+                        )
+                        .on_disabled_hover_text(
+                            language.text("Only http and https links are allowed."),
+                        )
+                        .clicked()
+                    {
+                        let url = url.replace('\\', "\\\\").replace('"', "\\\"");
+                        append_action(draft, &format!("open_url(\"{url}\")"));
                     }
                     ui.label(
                         egui::RichText::new(language.text("Context menu"))
