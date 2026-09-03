@@ -2,8 +2,9 @@
 //!
 //! Builds a JSON-serializable snapshot of Claude Code / Codex quota by
 //! calling straight into [`crate::poller`] — the exact same polling code
-//! path the GUI monitor uses (`poller::poll_report`). No provider request is
-//! reimplemented here; this module only reshapes [`poller::PollReport`] into
+//! path the GUI monitor uses. The headless path prefers Codex's native
+//! app-server quota method and falls back to the established monitor poller;
+//! this module only reshapes [`poller::PollReport`] into
 //! a small, stable, secret-free schema.
 //!
 //! Deliberately excluded from the schema: OAuth/access tokens, account ids,
@@ -84,7 +85,7 @@ pub fn collect() -> QuotaSnapshot {
 }
 
 pub fn collect_selected(show_claude_code: bool, show_codex: bool) -> QuotaSnapshot {
-    let report = poller::poll_report(show_claude_code, show_codex, false);
+    let report = poller::poll_report_headless(show_claude_code, show_codex, false);
     build_snapshot(report, unix_now())
 }
 

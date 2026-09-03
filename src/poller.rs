@@ -226,7 +226,23 @@ struct CodexRateLimitWindow {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CodexRateLimitsReadResult {
+    rate_limits: Option<CodexNativeRateLimitSnapshot>,
     rate_limit_reset_credits: Option<CodexResetCreditsSummary>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexNativeRateLimitSnapshot {
+    primary: Option<CodexNativeRateLimitWindow>,
+    secondary: Option<CodexNativeRateLimitWindow>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CodexNativeRateLimitWindow {
+    used_percent: f64,
+    resets_at: Option<i64>,
+    window_duration_mins: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -395,6 +411,39 @@ pub(crate) fn poll_report(
             false,
             poll_claude_code,
             poll_codex,
+            || unreachable!("Antigravity is unavailable in this build"),
+        )
+    }
+}
+
+/// Headless polling prefers Codex's native app-server quota API while the GUI
+/// keeps using `poll_report` and its established HTTP path unchanged.
+pub(crate) fn poll_report_headless(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+) -> PollReport {
+    #[cfg(feature = "antigravity")]
+    {
+        return poll_report_with(
+            show_claude_code,
+            show_codex,
+            show_antigravity,
+            poll_claude_code,
+            poll_codex_headless,
+            poll_antigravity,
+        );
+    }
+
+    #[cfg(not(feature = "antigravity"))]
+    {
+        let _ = show_antigravity;
+        poll_report_with(
+            show_claude_code,
+            show_codex,
+            false,
+            poll_claude_code,
+            poll_codex_headless,
             || unreachable!("Antigravity is unavailable in this build"),
         )
     }
@@ -661,6 +710,18 @@ fn poll_codex() -> Result<UsageData, PollError> {
 
     #[cfg(not(feature = "legacy-auto-refresh"))]
     result
+}
+
+fn poll_codex_headless() -> Result<UsageData, PollError> {
+    match fetch_codex_app_server_usage() {
+        Ok(usage) => Ok(usage),
+        Err(error) => {
+            diagnose::log(format!(
+                "Codex native quota read unavailable ({error:?}); falling back to existing endpoint"
+            ));
+            poll_codex()
+        }
+    }
 }
 
 #[cfg(feature = "antigravity")]
@@ -1262,6 +1323,12 @@ impl Drop for CodexAppServer {
 }
 
 fn fetch_codex_banked_reset_count() -> Result<Option<u64>, CodexAppServerError> {
+    Ok(fetch_codex_rate_limits_result()?
+        .rate_limit_reset_credits
+        .map(|credits| credits.available_count))
+}
+
+fn fetch_codex_rate_limits_result() -> Result<CodexRateLimitsReadResult, CodexAppServerError> {
     let deadline = Instant::now() + CODEX_APP_SERVER_TIMEOUT;
     let mut server = CodexAppServer::start()?;
     server.send(&serde_json::json!({
@@ -1285,7 +1352,47 @@ fn fetch_codex_banked_reset_count() -> Result<Option<u64>, CodexAppServerError> 
         "method": "account/rateLimits/read"
     }))?;
     let response = server.wait_for_response(2, deadline)?;
-    banked_reset_count_from_response(response)
+    response.result.ok_or(CodexAppServerError::Protocol)
+}
+
+fn fetch_codex_app_server_usage() -> Result<UsageData, CodexAppServerError> {
+    codex_native_usage_from_result(fetch_codex_rate_limits_result()?)
+}
+
+fn codex_native_usage_from_result(
+    result: CodexRateLimitsReadResult,
+) -> Result<UsageData, CodexAppServerError> {
+    let limits = result
+        .rate_limits
+        .as_ref()
+        .ok_or(CodexAppServerError::Protocol)?;
+    let mut usage = UsageData::default();
+    for window in [&limits.primary, &limits.secondary]
+        .into_iter()
+        .flatten()
+    {
+        let Some(duration_mins) = window.window_duration_mins else {
+            continue;
+        };
+        let section = UsageSection {
+            percentage: window.used_percent,
+            resets_at: unix_to_system_time(window.resets_at),
+            ..UsageSection::default()
+        };
+        match duration_mins {
+            300 if !usage.session_available() => usage.set_session(section),
+            10_080 if !usage.weekly_available() => usage.set_weekly(section),
+            _ => {}
+        }
+    }
+    if !usage.session_available() && !usage.weekly_available() {
+        return Err(CodexAppServerError::Protocol);
+    }
+    usage.banked_reset_count = result
+        .rate_limit_reset_credits
+        .map(|credits| BankedResetCount::Available(credits.available_count))
+        .unwrap_or(BankedResetCount::Unavailable);
+    Ok(usage)
 }
 
 fn banked_reset_count_from_response(
@@ -2776,6 +2883,37 @@ mod tests {
         assert!(usage.session_available());
         assert_eq!(usage.session.percentage, 0.0);
         assert!(!usage.weekly_available());
+    }
+
+    #[test]
+    fn codex_native_rate_limits_map_to_session_and_weekly_windows() {
+        let response: CodexAppServerResponse = serde_json::from_value(serde_json::json!({
+            "id": 2,
+            "result": {
+                "rateLimits": {
+                    "primary": {
+                        "usedPercent": 12,
+                        "resetsAt": 1_234,
+                        "windowDurationMins": 300
+                    },
+                    "secondary": {
+                        "usedPercent": 34,
+                        "resetsAt": 5_678,
+                        "windowDurationMins": 10_080
+                    }
+                },
+                "rateLimitResetCredits": { "availableCount": 2 }
+            }
+        }))
+        .expect("valid app-server response");
+
+        let usage = codex_native_usage_from_result(response.result.expect("result"))
+            .expect("known native windows");
+        assert_eq!(usage.session.percentage, 12.0);
+        assert_eq!(usage.weekly.percentage, 34.0);
+        assert_eq!(usage.session.resets_at, unix_to_system_time(Some(1_234)));
+        assert_eq!(usage.weekly.resets_at, unix_to_system_time(Some(5_678)));
+        assert_eq!(usage.banked_reset_count, BankedResetCount::Available(2));
     }
 
     fn reset_count_from_json(json: &str) -> Result<Option<u64>, CodexAppServerError> {

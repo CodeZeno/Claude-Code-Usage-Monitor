@@ -11,15 +11,13 @@
 //!    the alternate executor can actually take the task.
 //! 3. Model tier follows task complexity through [`ModelMapping`] — never
 //!    hardcoded here, so tier->model-name changes stay a config edit.
-//! 4. When both executors are in trouble, the task's complexity (and so its
-//!    model tier) is shrunk one notch rather than refusing outright.
+//! 4. Quota pressure never changes task complexity. When both executors are
+//!    in trouble, keep the preferred provider and the required model tier.
 //!
 //! Model names are never invented here: Claude's defaults below are the
-//! documented aliases from `claude --help` (`--model`); Codex's tiers are
-//! left unset by default because no alias scheme or local config default
-//! was found on this machine — `None` means "omit `-m`, let `codex exec`
-//! use the account's own default" rather than guess an id that might not
-//! exist.
+//! documented aliases from `claude --help` (`--model`); Codex's model ids
+//! are advertised by the local app-server `model/list` method and kept here,
+//! separate from the routing policy.
 
 use std::os::windows::process::CommandExt;
 use std::process::{Command, ExitStatus};
@@ -71,17 +69,6 @@ pub enum Complexity {
     Hard,
 }
 
-impl Complexity {
-    /// One notch cheaper; `Light` is already the floor.
-    fn shrink(self) -> Complexity {
-        match self {
-            Complexity::Hard => Complexity::Standard,
-            Complexity::Standard => Complexity::Light,
-            Complexity::Light => Complexity::Light,
-        }
-    }
-}
-
 /// One task handed to the dispatcher. Hints are deliberately coarse — the
 /// caller (e.g. a chat agent) picks a shape, not a model name.
 #[derive(Debug, Clone)]
@@ -125,7 +112,11 @@ impl Default for ModelMapping {
                 standard: Some("sonnet".to_string()),
                 hard: Some("opus".to_string()),
             },
-            codex: TierModels::default(),
+            codex: TierModels {
+                light: Some("gpt-5.6-luna".to_string()),
+                standard: Some("gpt-5.6-terra".to_string()),
+                hard: Some("gpt-5.6-sol".to_string()),
+            },
         }
     }
 }
@@ -206,8 +197,7 @@ fn is_usable(category: HealthCategory) -> bool {
 }
 
 fn decide(task: &Task, claude: ProviderHealth, codex: ProviderHealth) -> (Provider, Complexity, String) {
-    let both_bad = !is_usable(claude.category) && !is_usable(codex.category);
-    let complexity = if both_bad { task.complexity.shrink() } else { task.complexity };
+    let complexity = task.complexity;
 
     if let Some(preferred) = match task.preferred_executor {
         PreferredExecutor::Claude => Some(Provider::Claude),
@@ -247,7 +237,7 @@ fn decide(task: &Task, claude: ProviderHealth, codex: ProviderHealth) -> (Provid
             preferred,
             complexity,
             format!(
-                "both executors are constrained/unavailable ({}: {:?}, {}: {:?}); keeping preferred {} and shrinking task to {:?} instead of switching",
+                "both executors are constrained/unavailable ({}: {:?}, {}: {:?}); keeping preferred {} and required complexity {:?}",
                 preferred.report_key(),
                 preferred_health.category,
                 alternate.report_key(),
@@ -432,15 +422,31 @@ mod tests {
     }
 
     #[test]
-    fn keeps_preferred_and_shrinks_complexity_when_both_are_critical() {
+    fn keeps_hard_complexity_when_both_are_critical() {
         let snap = snapshot(
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
         let decision = route_with_snapshot(&task(PreferredExecutor::Claude, Complexity::Hard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Claude);
-        assert_eq!(decision.complexity_used, Complexity::Standard);
-        assert_eq!(decision.model.as_deref(), Some("sonnet"));
+        assert_eq!(decision.complexity_used, Complexity::Hard);
+        assert_eq!(decision.model.as_deref(), Some("opus"));
+        assert!(decision.reason.contains("required complexity Hard"));
+    }
+
+    #[test]
+    fn auto_keeps_hard_complexity_when_both_are_critical() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, critical_windows()),
+            provider("codex", ProviderStatus::Ok, critical_windows()),
+        );
+        let decision = route_with_snapshot(
+            &task(PreferredExecutor::Auto, Complexity::Hard),
+            &ModelMapping::default(),
+            snap,
+        );
+        assert_eq!(decision.complexity_used, Complexity::Hard);
+        assert_eq!(decision.model.as_deref(), Some("opus"));
     }
 
     #[test]
@@ -492,20 +498,25 @@ mod tests {
     }
 
     #[test]
-    fn unset_codex_tier_omits_the_model_flag_instead_of_guessing() {
+    fn codex_model_mapping_covers_all_complexities() {
         let snap = snapshot(
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Codex, Complexity::Standard), &ModelMapping::default(), snap);
-        assert_eq!(decision.provider, Provider::Codex);
-        assert_eq!(decision.model, None);
-
-        let task = Task { prompt: "hi".to_string(), preferred_executor: PreferredExecutor::Codex, complexity: Complexity::Standard, model_lock: None };
-        let command = build_codex_command("codex.cmd", &decision, &task);
-        let args: Vec<String> = command.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-        assert_eq!(args, vec!["/d", "/c", "codex.cmd", "exec", "hi"]);
-        assert!(!args.iter().any(|a| a == "-m"));
+        for (complexity, expected) in [
+            (Complexity::Light, "gpt-5.6-luna"),
+            (Complexity::Standard, "gpt-5.6-terra"),
+            (Complexity::Hard, "gpt-5.6-sol"),
+        ] {
+            let decision = route_with_snapshot(
+                &task(PreferredExecutor::Codex, complexity),
+                &ModelMapping::default(),
+                snap.clone(),
+            );
+            assert_eq!(decision.provider, Provider::Codex);
+            assert_eq!(decision.complexity_used, complexity);
+            assert_eq!(decision.model.as_deref(), Some(expected));
+        }
     }
 
     #[test]
