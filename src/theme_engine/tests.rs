@@ -568,9 +568,9 @@ fn starter_theme_round_trips_and_validates() {
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring:
     // five providers over two windows in two modes, plus a credit overlay on
-    // the weekly row of the two providers that report credits, plus the
-    // stacked weekly-only column (Codex and Fable) in two modes.
-    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2 + 2 * 2]);
+    // the weekly row of the two providers that report credits, plus the Fable
+    // column's single bar in two modes.
+    assert_eq!(segments, [vec![10; 5 * 2 * 2 + 2 * 2], vec![8; 2]].concat());
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -775,8 +775,8 @@ fn claude_fable_window_is_available_to_templates_when_present() {
         0.0
     );
 
-    // Classic collapses a weekly-only Codex into the stacked column beside
-    // Fable: one two-row Claude column (120) plus the stacked column (148).
+    // Classic appends a 90px Fable column (plus the 3px row gap) whenever the
+    // meter is available, regardless of how many providers are enabled.
     let theme = ThemeDocument::starter();
     assert_eq!(
         resolve_surface_size(
@@ -785,14 +785,8 @@ fn claude_fable_window_is_available_to_templates_when_present() {
             Some(&usage),
             ThemeRuntime::new(true, true, false)
         ),
-        (42 + 120 + 3 + 148, 46)
+        (285 + 93, 46)
     );
-    // Without data the upstream geometry is unchanged.
-    assert_eq!(
-        resolve_surface_size(&theme, 0, None, ThemeRuntime::new(true, true, false)),
-        (285, 46)
-    );
-    // Claude alone with a Fable meter still gets the stacked column.
     let claude_only = crate::models::AppUsageData::from_iter([(
         ProviderId::Claude,
         usage.get(ProviderId::Claude).unwrap().clone(),
@@ -804,7 +798,25 @@ fn claude_fable_window_is_available_to_templates_when_present() {
             Some(&claude_only),
             ThemeRuntime::new(true, false, false)
         ),
-        (42 + 175 + 3 + 203, 46)
+        (217 + 93, 46)
+    );
+    // Without a Fable limit, or without data, the upstream geometry holds.
+    let no_fable = crate::models::AppUsageData::from_iter([(
+        ProviderId::Claude,
+        crate::models::UsageData::default(),
+    )]);
+    assert_eq!(
+        resolve_surface_size(
+            &theme,
+            0,
+            Some(&no_fable),
+            ThemeRuntime::new(true, true, false)
+        ),
+        (285, 46)
+    );
+    assert_eq!(
+        resolve_surface_size(&theme, 0, None, ThemeRuntime::new(true, true, false)),
+        (285, 46)
     );
 }
 

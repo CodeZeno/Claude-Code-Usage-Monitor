@@ -19,7 +19,7 @@
         "offset_x": 0,
         "offset_y": 0
       },
-      "width": "42 + (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + ((providers.codex.enabled && codex.available && !codex.five_hour.available) || claude.fable.available) * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 90) + max(0, (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) + ((providers.codex.enabled && codex.available && !codex.five_hour.available) || claude.fable.available) - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28",
+      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + claude.fable.available * (90 + 3)",
       "height": "46",
       "mouse_events": {
         "right_click": "show_context_menu(\"classic-v1\")"
@@ -86,7 +86,7 @@
         {
           "id": "session-label-dark",
           "name": "dark 5-hour label",
-          "render": "(system.dark) && (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) > 0",
+          "render": "system.dark",
           "x": "13",
           "y": "5",
           "width": "18",
@@ -108,7 +108,7 @@
         {
           "id": "weekly-label-dark",
           "name": "dark 7-day label",
-          "render": "(system.dark * (1 - providers.opencode.enabled)) && (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) > 0",
+          "render": "system.dark * (1 - providers.opencode.enabled)",
           "x": "13",
           "y": "28",
           "width": "18",
@@ -130,7 +130,7 @@
         {
           "id": "session-label-light",
           "name": "light 5-hour label",
-          "render": "(1 - system.dark) && (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) > 0",
+          "render": "1 - system.dark",
           "x": "13",
           "y": "5",
           "width": "18",
@@ -152,7 +152,7 @@
         {
           "id": "weekly-label-light",
           "name": "light 7-day label",
-          "render": "((1 - system.dark) * (1 - providers.opencode.enabled)) && (providers.count - (providers.codex.enabled && codex.available && !codex.five_hour.available)) > 0",
+          "render": "(1 - system.dark) * (1 - providers.opencode.enabled)",
           "x": "13",
           "y": "28",
           "width": "18",
@@ -619,7 +619,7 @@
         {
           "id": "codex-provider",
           "name": "Codex provider",
-          "render": "providers.codex.enabled && !(providers.codex.enabled && codex.available && !codex.five_hour.available)",
+          "render": "providers.codex.enabled",
           "parent": "provider-row",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62",
           "height": "46"
@@ -1405,114 +1405,20 @@
           }
         },
         {
-          "id": "weekly-only-provider",
-          "name": "Weekly-only meters (Codex + Fable)",
-          "render": "((providers.codex.enabled && codex.available && !codex.five_hour.available) || claude.fable.available)",
+          "id": "fable-provider",
+          "name": "Fable weekly meter",
+          "render": "claude.fable.available",
           "parent": "provider-row",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 90",
+          "width": "90",
           "height": "46"
-        },
-        {
-          "id": "codex-weekly-only-segments-dark",
-          "name": "dark Codex weekly-only segments",
-          "render": "system.dark && (providers.codex.enabled && codex.available && !codex.five_hour.available)",
-          "parent": "weekly-only-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "codex.weekly.percentage",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#F5F5F5FF"
-            },
-            "track": {
-              "color": "#444444FF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "codex-weekly-only-value-dark",
-          "name": "dark Codex weekly-only value",
-          "render": "system.dark && (providers.codex.enabled && codex.available && !codex.five_hour.available)",
-          "parent": "weekly-only-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "Codex {codex.weekly:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#F5F5F5FF"
-            }
-          }
-        },
-        {
-          "id": "codex-weekly-only-segments-light",
-          "name": "light Codex weekly-only segments",
-          "render": "(1 - system.dark) && (providers.codex.enabled && codex.available && !codex.five_hour.available)",
-          "parent": "weekly-only-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "codex.weekly.percentage",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#1F1F1FFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "codex-weekly-only-value-light",
-          "name": "light Codex weekly-only value",
-          "render": "(1 - system.dark) && (providers.codex.enabled && codex.available && !codex.five_hour.available)",
-          "parent": "weekly-only-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "Codex {codex.weekly:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1F1F1FFF"
-            }
-          }
         },
         {
           "id": "fable-weekly-segments-dark",
           "name": "dark Fable weekly segments",
           "render": "system.dark && claude.fable.available",
-          "parent": "weekly-only-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "parent": "fable-provider",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
           "height": "13",
           "content": {
             "type": "progress",
@@ -1525,8 +1431,8 @@
               "color": "#444444FF"
             },
             "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
             "segment_gap": "1"
           }
         },
@@ -1534,8 +1440,7 @@
           "id": "fable-weekly-value-dark",
           "name": "dark Fable weekly value",
           "render": "system.dark && claude.fable.available",
-          "parent": "weekly-only-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "parent": "fable-provider",
           "y": "28",
           "width": "90",
           "height": "13",
@@ -1557,9 +1462,9 @@
           "id": "fable-weekly-segments-light",
           "name": "light Fable weekly segments",
           "render": "(1 - system.dark) && claude.fable.available",
-          "parent": "weekly-only-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "parent": "fable-provider",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
           "height": "13",
           "content": {
             "type": "progress",
@@ -1572,8 +1477,8 @@
               "color": "#AAAAAAFF"
             },
             "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
             "segment_gap": "1"
           }
         },
@@ -1581,8 +1486,7 @@
           "id": "fable-weekly-value-light",
           "name": "light Fable weekly value",
           "render": "(1 - system.dark) && claude.fable.available",
-          "parent": "weekly-only-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "parent": "fable-provider",
           "y": "28",
           "width": "90",
           "height": "13",
