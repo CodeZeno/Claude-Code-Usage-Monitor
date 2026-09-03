@@ -11,7 +11,7 @@ use super::{
     PollError,
 };
 use crate::diagnose;
-use crate::models::{CreditsSection, UsageData};
+use crate::models::{CreditsSection, UsageData, UsageSection};
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
@@ -23,6 +23,26 @@ struct UsageResponse {
     five_hour: Option<UsageBucket>,
     seven_day: Option<UsageBucket>,
     spend: Option<SpendResponse>,
+    /// Per-limit breakdown. The Fable weekly meter arrives here as a
+    /// `weekly_scoped` entry whose scope model display name is "Fable".
+    limits: Option<Vec<UsageLimit>>,
+}
+
+#[derive(Deserialize)]
+struct UsageLimit {
+    percent: Option<f64>,
+    resets_at: Option<String>,
+    scope: Option<UsageLimitScope>,
+}
+
+#[derive(Deserialize)]
+struct UsageLimitScope {
+    model: Option<UsageLimitModel>,
+}
+
+#[derive(Deserialize)]
+struct UsageLimitModel {
+    display_name: Option<String>,
 }
 
 /// Paid credits that carry the account past its plan limits. Amounts are
@@ -163,8 +183,28 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         .spend
         .as_ref()
         .and_then(|spend| claude_credits(spend, &data));
+    data.fable = extract_fable_section(response.limits.as_deref());
 
     Ok(Some(data))
+}
+
+/// Locate the Fable weekly meter within the usage endpoint's `limits` array.
+/// It is exposed as a `weekly_scoped` limit whose scope model display name is
+/// "Fable". Returns None when the account has no Fable-scoped limit.
+fn extract_fable_section(limits: Option<&[UsageLimit]>) -> Option<UsageSection> {
+    let limit = limits?.iter().find(|limit| {
+        limit
+            .scope
+            .as_ref()
+            .and_then(|scope| scope.model.as_ref())
+            .and_then(|model| model.display_name.as_deref())
+            .is_some_and(|name| name.eq_ignore_ascii_case("fable"))
+    })?;
+
+    Some(UsageSection {
+        percentage: limit.percent.unwrap_or(0.0),
+        resets_at: parse_iso8601(limit.resets_at.as_deref()),
+    })
 }
 
 /// What a failed call to the usage endpoint actually tells us.
@@ -767,6 +807,58 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn extracts_fable_weekly_scoped_limit() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "five_hour": { "utilization": 9.0, "resets_at": "2026-07-02T02:09:59.4+00:00" },
+                "seven_day": { "utilization": 1.0, "resets_at": "2026-07-04T13:59:59.4+00:00" },
+                "limits": [
+                    {
+                        "kind": "session", "group": "session", "percent": 9,
+                        "resets_at": "2026-07-02T02:09:59.4+00:00", "scope": null, "is_active": true
+                    },
+                    {
+                        "kind": "weekly_all", "group": "weekly", "percent": 1,
+                        "resets_at": "2026-07-04T13:59:59.4+00:00", "scope": null, "is_active": false
+                    },
+                    {
+                        "kind": "weekly_scoped", "group": "weekly", "percent": 2,
+                        "resets_at": "2026-07-04T14:00:00.4+00:00",
+                        "scope": { "model": { "id": null, "display_name": "Fable" }, "surface": null },
+                        "is_active": false
+                    }
+                ]
+            }"#,
+        )
+        .expect("usage response should deserialize");
+
+        let fable =
+            extract_fable_section(response.limits.as_deref()).expect("Fable limit should be found");
+        assert_eq!(fable.percentage, 2.0);
+        assert!(fable.resets_at.is_some());
+    }
+
+    #[test]
+    fn no_fable_section_when_absent() {
+        let response: UsageResponse = serde_json::from_str(
+            r#"{
+                "five_hour": { "utilization": 9.0, "resets_at": null },
+                "seven_day": { "utilization": 1.0, "resets_at": null },
+                "limits": [
+                    { "kind": "session", "group": "session", "percent": 9, "resets_at": null, "scope": null }
+                ]
+            }"#,
+        )
+        .expect("usage response should deserialize");
+
+        assert!(extract_fable_section(response.limits.as_deref()).is_none());
+        assert!(extract_fable_section(None).is_none());
+        assert!(usage_from_json(r#"{"seven_day": {"utilization": 1.0}}"#)
+            .fable
+            .is_none());
+    }
 
     #[test]
     fn bundled_claude_versions_sort_numerically() {

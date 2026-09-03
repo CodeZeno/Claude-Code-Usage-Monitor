@@ -506,6 +506,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
             monthly: None,
+            fable: None,
             credits: None,
             stale: false,
         },
@@ -567,8 +568,9 @@ fn starter_theme_round_trips_and_validates() {
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring:
     // five providers over two windows in two modes, plus a credit overlay on
-    // the weekly row of the two providers that report credits.
-    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2]);
+    // the weekly row of the two providers that report credits, plus the
+    // stacked weekly-only column (Codex and Fable) in two modes.
+    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2 + 2 * 2]);
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -680,6 +682,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
             weekly: crate::models::UsageSection::default(),
             weekly_label: None,
             monthly: None,
+            fable: None,
             credits: None,
             stale: false,
         },
@@ -705,6 +708,104 @@ fn provider_specific_long_window_labels_are_available_to_templates() {
     let context = DataContext::from_usage(Some(&usage), &Canvas::default());
     assert_eq!(format_template("{opencode.weekly.label}", &context), "30d");
     assert_eq!(format_template("{claude.weekly.label}", &context), "7d");
+}
+
+#[test]
+fn claude_fable_window_is_available_to_templates_when_present() {
+    let reset = std::time::SystemTime::now() + std::time::Duration::from_secs(259_200);
+    let usage = crate::models::AppUsageData::from_iter([
+        (
+            ProviderId::Claude,
+            crate::models::UsageData {
+                session: crate::models::UsageSection {
+                    percentage: 9.0,
+                    resets_at: Some(reset),
+                },
+                weekly: crate::models::UsageSection {
+                    percentage: 1.0,
+                    resets_at: Some(reset),
+                },
+                fable: Some(crate::models::UsageSection {
+                    percentage: 2.0,
+                    resets_at: Some(reset),
+                }),
+                ..Default::default()
+            },
+        ),
+        (
+            ProviderId::Codex,
+            crate::models::UsageData {
+                weekly: crate::models::UsageSection {
+                    percentage: 23.0,
+                    resets_at: Some(reset),
+                },
+                ..Default::default()
+            },
+        ),
+    ]);
+    let context = DataContext::from_usage(Some(&usage), &Canvas::default());
+    assert_eq!(evaluate("claude.fable.percentage", &context).unwrap(), 2.0);
+    assert_eq!(evaluate("claude.fable.remaining", &context).unwrap(), 98.0);
+    assert_eq!(evaluate("claude.fable.available", &context).unwrap(), 1.0);
+    assert_eq!(format_template("{claude.fable.label}", &context), "Fable");
+    assert_eq!(
+        format_template("Fable {claude.fable:usage_line}", &context),
+        "Fable 2% · 3d"
+    );
+    assert!(evaluate("claude.fable.reset.seconds", &context).unwrap() > 259_000.0);
+    // The headline follows whichever allowance is closest to its limit.
+    assert_eq!(
+        evaluate("claude.headline.percentage", &context).unwrap(),
+        9.0
+    );
+    // Providers without a Fable window expose safe zeros and an availability flag.
+    assert_eq!(evaluate("codex.fable.available", &context).unwrap(), 0.0);
+    assert_eq!(evaluate("codex.fable.percentage", &context).unwrap(), 0.0);
+    // A weekly-only Codex account has no real five-hour window; Claude does.
+    assert_eq!(
+        evaluate("codex.five_hour.available", &context).unwrap(),
+        0.0
+    );
+    assert_eq!(
+        evaluate("claude.five_hour.available", &context).unwrap(),
+        1.0
+    );
+    assert_eq!(
+        evaluate("antigravity.five_hour.available", &context).unwrap(),
+        0.0
+    );
+
+    // Classic collapses a weekly-only Codex into the stacked column beside
+    // Fable: one two-row Claude column (120) plus the stacked column (148).
+    let theme = ThemeDocument::starter();
+    assert_eq!(
+        resolve_surface_size(
+            &theme,
+            0,
+            Some(&usage),
+            ThemeRuntime::new(true, true, false)
+        ),
+        (42 + 120 + 3 + 148, 46)
+    );
+    // Without data the upstream geometry is unchanged.
+    assert_eq!(
+        resolve_surface_size(&theme, 0, None, ThemeRuntime::new(true, true, false)),
+        (285, 46)
+    );
+    // Claude alone with a Fable meter still gets the stacked column.
+    let claude_only = crate::models::AppUsageData::from_iter([(
+        ProviderId::Claude,
+        usage.get(ProviderId::Claude).unwrap().clone(),
+    )]);
+    assert_eq!(
+        resolve_surface_size(
+            &theme,
+            0,
+            Some(&claude_only),
+            ThemeRuntime::new(true, false, false)
+        ),
+        (42 + 175 + 3 + 203, 46)
+    );
 }
 
 #[test]

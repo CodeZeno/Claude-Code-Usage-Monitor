@@ -154,6 +154,36 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         kind: TextTemplateValueKind::Duration,
     },
     TextTemplateValue {
+        group: "Claude Code",
+        label: "Fable weekly summary",
+        expression: "claude.fable",
+        kind: TextTemplateValueKind::UsageSummary,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
+        label: "Fable weekly used",
+        expression: "claude.fable.percentage",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
+        label: "Fable weekly remaining",
+        expression: "claude.fable.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
+        label: "Fable weekly reset",
+        expression: "claude.fable.reset.seconds",
+        kind: TextTemplateValueKind::Duration,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
+        label: "Fable weekly reset date and time",
+        expression: "claude.fable.reset.unix",
+        kind: TextTemplateValueKind::Timestamp,
+    },
+    TextTemplateValue {
         group: "Codex",
         label: "Session summary",
         expression: "codex.session",
@@ -1056,12 +1086,19 @@ pub(super) fn expression_variables_panel(
                         .iter()
                         .map(|descriptor| (descriptor.display_name, descriptor.key)),
                 ) {
-                    let mut names = vec![format!("{provider}.available")];
-                    let windows = if matches!(provider, "active" | "codex") {
-                        &["session", "five_hour", "weekly"][..]
-                    } else {
-                        &["session", "weekly"][..]
+                    let mut names = vec![
+                        format!("{provider}.available"),
+                        format!("{provider}.five_hour.available"),
+                    ];
+                    let windows = match provider {
+                        "active" => &["session", "five_hour", "weekly", "fable"][..],
+                        "codex" => &["session", "five_hour", "weekly"][..],
+                        "claude" => &["session", "weekly", "fable"][..],
+                        _ => &["session", "weekly"][..],
                     };
+                    if matches!(provider, "active" | "claude") {
+                        names.push(format!("{provider}.fable.available"));
+                    }
                     for window in windows {
                         for metric in ["percentage", "remaining"] {
                             names.push(format!("{provider}.{window}.{metric}"));
