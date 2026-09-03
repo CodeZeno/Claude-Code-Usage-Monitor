@@ -5,14 +5,13 @@
 //! can build (or run) the matching native `claude` / `codex` CLI invocation.
 //!
 //! Routing priority, per the project brief:
-//! 1. Executor affinity (the task's `preferred_executor`) wins first.
-//! 2. Quota health (see `quota_health`) only overrides that when the
-//!    preferred executor is in real trouble (`Critical`/`Unavailable`) *and*
-//!    the alternate executor can actually take the task.
-//! 3. Model tier follows task complexity through [`ModelMapping`] — never
+//! 1. Executor suitability limits routing to the highest available tier.
+//! 2. Model tier follows task complexity through [`ModelMapping`] — never
 //!    hardcoded here, so tier->model-name changes stay a config edit.
-//! 4. Quota pressure never changes task complexity. When both executors are
-//!    in trouble, keep the preferred provider and the required model tier.
+//! 3. Explicit constraints such as model lock remain intact.
+//! 4. Executor affinity and quota health choose only among equally suitable
+//!    providers. Critical quota is pressure, not an availability veto.
+//! 5. Quota pressure never changes task complexity.
 //!
 //! Model names are never invented here: Claude's defaults below are the
 //! documented aliases from `claude --help` (`--model`); Codex's model ids
@@ -61,6 +60,38 @@ pub enum PreferredExecutor {
     Codex,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Suitability {
+    Unsuitable,
+    Acceptable,
+    Best,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExecutorSuitability {
+    pub claude: Suitability,
+    pub codex: Suitability,
+}
+
+impl Default for ExecutorSuitability {
+    fn default() -> Self {
+        Self {
+            claude: Suitability::Best,
+            codex: Suitability::Best,
+        }
+    }
+}
+
+impl ExecutorSuitability {
+    fn for_provider(self, provider: Provider) -> Suitability {
+        match provider {
+            Provider::Claude => self.claude,
+            Provider::Codex => self.codex,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Complexity {
@@ -79,6 +110,12 @@ pub struct Task {
     /// Escape hatch: force this exact model name, bypassing `ModelMapping`.
     /// Does not bypass executor/quota routing.
     pub model_lock: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DispatchError {
+    NoEligibleExecutor,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -146,10 +183,37 @@ pub fn route(task: &Task, mapping: &ModelMapping) -> RoutingDecision {
     route_with_snapshot(task, mapping, crate::quota_report::collect_selected(true, true))
 }
 
+pub fn route_with_suitability(
+    task: &Task,
+    mapping: &ModelMapping,
+    suitability: ExecutorSuitability,
+) -> Result<RoutingDecision, DispatchError> {
+    route_with_snapshot_and_suitability(
+        task,
+        mapping,
+        crate::quota_report::collect_selected(true, true),
+        suitability,
+    )
+}
+
 /// Route against an already-collected snapshot (e.g. one you also want to
 /// print). Pure and deterministic given the snapshot, so this is what tests
 /// exercise instead of hitting real providers.
-pub fn route_with_snapshot(task: &Task, mapping: &ModelMapping, snapshot: QuotaSnapshot) -> RoutingDecision {
+pub fn route_with_snapshot(
+    task: &Task,
+    mapping: &ModelMapping,
+    snapshot: QuotaSnapshot,
+) -> RoutingDecision {
+    route_with_snapshot_and_suitability(task, mapping, snapshot, ExecutorSuitability::default())
+        .expect("default suitability always leaves an executor candidate")
+}
+
+pub fn route_with_snapshot_and_suitability(
+    task: &Task,
+    mapping: &ModelMapping,
+    snapshot: QuotaSnapshot,
+    suitability: ExecutorSuitability,
+) -> Result<RoutingDecision, DispatchError> {
     let generated_at = snapshot.generated_at;
     let claude_health = snapshot
         .provider(Provider::Claude.report_key())
@@ -160,20 +224,20 @@ pub fn route_with_snapshot(task: &Task, mapping: &ModelMapping, snapshot: QuotaS
         .map(|p| provider_health(p, generated_at))
         .unwrap_or_else(unavailable_health);
 
-    let (provider, complexity_used, reason) = decide(task, claude_health, codex_health);
+    let (provider, complexity_used, reason) = decide(task, suitability, claude_health, codex_health)?;
     let model = task
         .model_lock
         .clone()
         .or_else(|| mapping.tiers(provider).for_complexity(complexity_used).map(str::to_string));
 
-    RoutingDecision {
+    Ok(RoutingDecision {
         provider,
         model,
         complexity_used,
         claude_health,
         codex_health,
         reason,
-    }
+    })
 }
 
 fn unavailable_health() -> ProviderHealth {
@@ -192,96 +256,106 @@ fn health_of(provider: Provider, claude: ProviderHealth, codex: ProviderHealth) 
     }
 }
 
-fn is_usable(category: HealthCategory) -> bool {
-    matches!(category, HealthCategory::Healthy | HealthCategory::Constrained)
+fn is_available(category: HealthCategory) -> bool {
+    category != HealthCategory::Unavailable
 }
 
-fn decide(task: &Task, claude: ProviderHealth, codex: ProviderHealth) -> (Provider, Complexity, String) {
+fn decide(
+    task: &Task,
+    suitability: ExecutorSuitability,
+    claude: ProviderHealth,
+    codex: ProviderHealth,
+) -> Result<(Provider, Complexity, String), DispatchError> {
     let complexity = task.complexity;
+
+    let candidates: Vec<Provider> = [Provider::Claude, Provider::Codex]
+        .into_iter()
+        .filter(|provider| {
+            suitability.for_provider(*provider) != Suitability::Unsuitable
+                && is_available(health_of(*provider, claude, codex).category)
+        })
+        .collect();
+    let candidates = if candidates.is_empty() {
+        [Provider::Claude, Provider::Codex]
+            .into_iter()
+            .filter(|provider| suitability.for_provider(*provider) != Suitability::Unsuitable)
+            .collect()
+    } else {
+        candidates
+    };
+    let highest_tier = candidates
+        .iter()
+        .map(|provider| suitability.for_provider(*provider))
+        .max()
+        .ok_or(DispatchError::NoEligibleExecutor)?;
+    let candidates: Vec<Provider> = candidates
+        .into_iter()
+        .filter(|provider| suitability.for_provider(*provider) == highest_tier)
+        .collect();
+
+    if candidates.len() == 1 {
+        let provider = candidates[0];
+        return Ok((
+            provider,
+            complexity,
+            format!(
+                "{} is the only available executor in the highest suitability tier {:?}",
+                provider.report_key(), highest_tier
+            ),
+        ));
+    }
 
     if let Some(preferred) = match task.preferred_executor {
         PreferredExecutor::Claude => Some(Provider::Claude),
         PreferredExecutor::Codex => Some(Provider::Codex),
         PreferredExecutor::Auto => None,
     } {
-        let preferred_health = health_of(preferred, claude, codex);
-        if is_usable(preferred_health.category) {
-            return (
+        if candidates.contains(&preferred) {
+            let preferred_health = health_of(preferred, claude, codex);
+            let alternate = preferred.other();
+            let alternate_health = health_of(alternate, claude, codex);
+            if preferred_health.category == HealthCategory::Critical
+                && alternate_health.category != HealthCategory::Critical
+            {
+                return Ok((
+                    alternate,
+                    complexity,
+                    format!(
+                        "offloaded within suitability tier {:?} from preferred {} ({:?}) to {} ({:?})",
+                        highest_tier,
+                        preferred.report_key(),
+                        preferred_health.category,
+                        alternate.report_key(),
+                        alternate_health.category
+                    ),
+                ));
+            }
+            return Ok((
                 preferred,
                 complexity,
                 format!(
-                    "preferred executor {} kept: quota health is {:?}",
-                    preferred.report_key(),
+                    "preferred executor {} kept within suitability tier {:?}: quota health is {:?}",
+                    preferred.report_key(), highest_tier,
                     preferred_health.category
                 ),
-            );
+            ));
         }
-
-        let alternate = preferred.other();
-        let alternate_health = health_of(alternate, claude, codex);
-        if is_usable(alternate_health.category) {
-            return (
-                alternate,
-                complexity,
-                format!(
-                    "offloaded from preferred {} ({:?}) to {} ({:?})",
-                    preferred.report_key(),
-                    preferred_health.category,
-                    alternate.report_key(),
-                    alternate_health.category
-                ),
-            );
-        }
-
-        return (
-            preferred,
-            complexity,
-            format!(
-                "both executors are constrained/unavailable ({}: {:?}, {}: {:?}); keeping preferred {} and required complexity {:?}",
-                preferred.report_key(),
-                preferred_health.category,
-                alternate.report_key(),
-                alternate_health.category,
-                preferred.report_key(),
-                complexity
-            ),
-        );
     }
 
-    // Auto: no fixed affinity, so let availability then quota health choose.
-    match (claude.category, codex.category) {
-        (HealthCategory::Unavailable, HealthCategory::Unavailable) => (
-            Provider::Claude,
-            complexity,
-            "auto: both providers unavailable; defaulting to claude so the failure surfaces immediately".to_string(),
-        ),
-        (HealthCategory::Unavailable, _) => (
+    let claude_score = claude.score.unwrap_or(0.0);
+    let codex_score = codex.score.unwrap_or(0.0);
+    if codex_score > claude_score + quota_health::AUTO_SWITCH_MARGIN {
+        Ok((
             Provider::Codex,
             complexity,
-            "auto: claude unavailable, routing to codex".to_string(),
-        ),
-        (_, HealthCategory::Unavailable) => (
+            format!("auto: equally suitable codex health {codex_score:.2} clearly ahead of claude {claude_score:.2}"),
+        ))
+    } else {
+        Ok((
             Provider::Claude,
             complexity,
-            "auto: codex unavailable, routing to claude".to_string(),
-        ),
-        _ => {
-            let claude_score = claude.score.unwrap_or(0.0);
-            let codex_score = codex.score.unwrap_or(0.0);
-            if codex_score > claude_score + quota_health::AUTO_SWITCH_MARGIN {
-                (
-                    Provider::Codex,
-                    complexity,
-                    format!("auto: codex health {codex_score:.2} clearly ahead of claude {claude_score:.2}"),
-                )
-            } else {
-                (
-                    Provider::Claude,
-                    complexity,
-                    format!("auto: claude health {claude_score:.2} within margin of codex {codex_score:.2}; default to claude"),
-                )
-            }
-        }
+            format!("auto: equally suitable claude health {claude_score:.2} within margin of codex {codex_score:.2}; default to claude"),
+        ))
     }
 }
 
@@ -395,7 +469,140 @@ mod tests {
     }
 
     fn task(preferred: PreferredExecutor, complexity: Complexity) -> Task {
-        Task { prompt: "do the thing".to_string(), preferred_executor: preferred, complexity, model_lock: None }
+        Task {
+            prompt: "do the thing".to_string(),
+            preferred_executor: preferred,
+            complexity,
+            model_lock: None,
+        }
+    }
+
+    fn route_ok(task: &Task, mapping: &ModelMapping, snapshot: QuotaSnapshot) -> RoutingDecision {
+        route_with_snapshot(task, mapping, snapshot)
+    }
+
+    fn route_suitable(
+        task: &Task,
+        mapping: &ModelMapping,
+        snapshot: QuotaSnapshot,
+        claude: Suitability,
+        codex: Suitability,
+    ) -> Result<RoutingDecision, DispatchError> {
+        route_with_snapshot_and_suitability(
+            task,
+            mapping,
+            snapshot,
+            ExecutorSuitability { claude, codex },
+        )
+    }
+
+    #[test]
+    fn best_claude_is_not_offloaded_to_acceptable_codex_for_quota() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, critical_windows()),
+            provider("codex", ProviderStatus::Ok, healthy_windows()),
+        );
+        let task = task(PreferredExecutor::Auto, Complexity::Standard);
+        let decision = route_suitable(
+            &task,
+            &ModelMapping::default(),
+            snap,
+            Suitability::Best,
+            Suitability::Acceptable,
+        )
+        .unwrap();
+        assert_eq!(decision.provider, Provider::Claude);
+    }
+
+    #[test]
+    fn equally_best_codex_can_receive_offload_for_quota() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, critical_windows()),
+            provider("codex", ProviderStatus::Ok, healthy_windows()),
+        );
+        assert_eq!(
+            route_ok(
+                &task(PreferredExecutor::Auto, Complexity::Standard),
+                &ModelMapping::default(),
+                snap,
+            )
+            .provider,
+            Provider::Codex
+        );
+    }
+
+    #[test]
+    fn unsuitable_claude_routes_to_best_codex() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, healthy_windows()),
+            provider("codex", ProviderStatus::Ok, critical_windows()),
+        );
+        let task = task(PreferredExecutor::Claude, Complexity::Standard);
+        let decision = route_suitable(
+            &task,
+            &ModelMapping::default(),
+            snap,
+            Suitability::Unsuitable,
+            Suitability::Best,
+        )
+        .unwrap();
+        assert_eq!(decision.provider, Provider::Codex);
+    }
+
+    #[test]
+    fn unsuitable_codex_routes_to_best_claude() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, critical_windows()),
+            provider("codex", ProviderStatus::Ok, healthy_windows()),
+        );
+        let task = task(PreferredExecutor::Codex, Complexity::Standard);
+        let decision = route_suitable(
+            &task,
+            &ModelMapping::default(),
+            snap,
+            Suitability::Best,
+            Suitability::Unsuitable,
+        )
+        .unwrap();
+        assert_eq!(decision.provider, Provider::Claude);
+    }
+
+    #[test]
+    fn both_unsuitable_returns_no_eligible_executor() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Ok, healthy_windows()),
+            provider("codex", ProviderStatus::Ok, healthy_windows()),
+        );
+        let task = task(PreferredExecutor::Auto, Complexity::Standard);
+        assert!(matches!(
+            route_suitable(
+                &task,
+                &ModelMapping::default(),
+                snap,
+                Suitability::Unsuitable,
+                Suitability::Unsuitable,
+            ),
+            Err(DispatchError::NoEligibleExecutor)
+        ));
+    }
+
+    #[test]
+    fn unavailable_best_provider_falls_back_to_available_acceptable_tier() {
+        let snap = snapshot(
+            provider("claude_code", ProviderStatus::Unavailable, QuotaWindows::default()),
+            provider("codex", ProviderStatus::Ok, critical_windows()),
+        );
+        let task = task(PreferredExecutor::Claude, Complexity::Hard);
+        let decision = route_suitable(
+            &task,
+            &ModelMapping::default(),
+            snap,
+            Suitability::Best,
+            Suitability::Acceptable,
+        )
+        .unwrap();
+        assert_eq!(decision.provider, Provider::Codex);
+        assert_eq!(decision.complexity_used, Complexity::Hard);
     }
 
     #[test]
@@ -404,7 +611,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, healthy_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Claude);
         assert_eq!(decision.model.as_deref(), Some("sonnet"));
         assert_eq!(decision.complexity_used, Complexity::Standard);
@@ -416,7 +623,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Codex);
         assert!(decision.reason.contains("offloaded"));
     }
@@ -427,11 +634,10 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Claude, Complexity::Hard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Hard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Claude);
         assert_eq!(decision.complexity_used, Complexity::Hard);
         assert_eq!(decision.model.as_deref(), Some("opus"));
-        assert!(decision.reason.contains("required complexity Hard"));
     }
 
     #[test]
@@ -440,7 +646,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
-        let decision = route_with_snapshot(
+        let decision = route_ok(
             &task(PreferredExecutor::Auto, Complexity::Hard),
             &ModelMapping::default(),
             snap,
@@ -461,7 +667,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, healthy_windows()),
             provider("codex", ProviderStatus::Ok, codex_windows),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Claude);
     }
 
@@ -471,7 +677,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Codex);
     }
 
@@ -481,7 +687,7 @@ mod tests {
             provider("claude_code", ProviderStatus::Unavailable, QuotaWindows::default()),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
-        let decision = route_with_snapshot(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
         assert_eq!(decision.provider, Provider::Codex);
     }
 
@@ -493,7 +699,7 @@ mod tests {
         );
         let mut t = task(PreferredExecutor::Claude, Complexity::Light);
         t.model_lock = Some("claude-opus-4-6-custom".to_string());
-        let decision = route_with_snapshot(&t, &ModelMapping::default(), snap);
+        let decision = route_ok(&t, &ModelMapping::default(), snap);
         assert_eq!(decision.model.as_deref(), Some("claude-opus-4-6-custom"));
     }
 
@@ -508,7 +714,7 @@ mod tests {
             (Complexity::Standard, "gpt-5.6-terra"),
             (Complexity::Hard, "gpt-5.6-sol"),
         ] {
-            let decision = route_with_snapshot(
+            let decision = route_ok(
                 &task(PreferredExecutor::Codex, complexity),
                 &ModelMapping::default(),
                 snap.clone(),

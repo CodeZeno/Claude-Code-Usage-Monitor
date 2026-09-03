@@ -18,7 +18,9 @@
 
 use std::process::ExitCode;
 
-use claude_code_usage_monitor::dispatcher::{self, Complexity, ModelMapping, PreferredExecutor, Task};
+use claude_code_usage_monitor::dispatcher::{
+    self, Complexity, ExecutorSuitability, ModelMapping, PreferredExecutor, Suitability, Task,
+};
 use claude_code_usage_monitor::quota_health::provider_health;
 use claude_code_usage_monitor::quota_report;
 
@@ -74,6 +76,7 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
     let mut executor = PreferredExecutor::Auto;
     let mut complexity = Complexity::Standard;
     let mut model_lock: Option<String> = None;
+    let mut suitability = ExecutorSuitability::default();
     let mut execute = false;
 
     while let Some(arg) = args.next() {
@@ -98,6 +101,14 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
                 }
             },
             "--model-lock" => model_lock = args.next(),
+            "--claude-suitability" => match parse_suitability(args.next().as_deref()) {
+                Some(value) => suitability.claude = value,
+                None => return invalid_suitability("--claude-suitability"),
+            },
+            "--codex-suitability" => match parse_suitability(args.next().as_deref()) {
+                Some(value) => suitability.codex = value,
+                None => return invalid_suitability("--codex-suitability"),
+            },
             "--execute" => execute = true,
             other => {
                 eprintln!("unknown dispatch flag: {other}");
@@ -118,7 +129,17 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
         model_lock,
     };
 
-    let decision = dispatcher::route(&task, &ModelMapping::default());
+    let decision = match dispatcher::route_with_suitability(
+        &task,
+        &ModelMapping::default(),
+        suitability,
+    ) {
+        Ok(decision) => decision,
+        Err(error) => {
+            print_json(&serde_json::json!({ "error": error }), compact);
+            return ExitCode::FAILURE;
+        }
+    };
     print_json(&decision, compact);
 
     if execute {
@@ -145,6 +166,20 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
     ExitCode::SUCCESS
 }
 
+fn parse_suitability(value: Option<&str>) -> Option<Suitability> {
+    match value {
+        Some("best") => Some(Suitability::Best),
+        Some("acceptable") => Some(Suitability::Acceptable),
+        Some("unsuitable") => Some(Suitability::Unsuitable),
+        _ => None,
+    }
+}
+
+fn invalid_suitability(flag: &str) -> ExitCode {
+    eprintln!("invalid {flag} value (expected best|acceptable|unsuitable)");
+    ExitCode::FAILURE
+}
+
 fn strip_flag(args: &mut Vec<String>, flag: &str) -> bool {
     let before = args.len();
     args.retain(|item| item != flag);
@@ -166,7 +201,7 @@ fn print_usage() {
         "usage:\n  \
          aum-quota quota\n  \
          aum-quota health\n  \
-         aum-quota dispatch --prompt \"...\" [--executor auto|claude|codex] [--complexity light|standard|hard] [--model-lock NAME] [--execute]\n\n\
+         aum-quota dispatch --prompt \"...\" [--executor auto|claude|codex] [--complexity light|standard|hard] [--claude-suitability best|acceptable|unsuitable] [--codex-suitability best|acceptable|unsuitable] [--model-lock NAME] [--execute]\n\n\
          Add --compact to any command for non-pretty-printed JSON."
     );
 }
