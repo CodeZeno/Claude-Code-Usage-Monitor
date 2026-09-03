@@ -44,6 +44,34 @@ const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
 ];
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+fn resolve_user_home() -> Option<PathBuf> {
+    resolve_user_home_from(
+        dirs::home_dir(),
+        std::env::var_os("USERPROFILE"),
+        std::env::var_os("HOMEDRIVE"),
+        std::env::var_os("HOMEPATH"),
+    )
+}
+
+fn resolve_user_home_from(
+    dirs_home: Option<PathBuf>,
+    user_profile: Option<std::ffi::OsString>,
+    home_drive: Option<std::ffi::OsString>,
+    home_path: Option<std::ffi::OsString>,
+) -> Option<PathBuf> {
+    dirs_home
+        .or_else(|| {
+            user_profile
+                .filter(|value| !value.is_empty())
+                .map(PathBuf::from)
+        })
+        .or_else(|| {
+            let mut home = PathBuf::from(home_drive.filter(|value| !value.is_empty())?);
+            home.push(home_path.filter(|value| !value.is_empty())?);
+            Some(home)
+        })
+}
+
 #[cfg(feature = "claude-messages-fallback")]
 const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku-4-5-20251001"];
 
@@ -1204,6 +1232,12 @@ impl CodexAppServer {
     fn start() -> Result<Self, CodexAppServerError> {
         let codex_path = resolve_windows_codex_path().ok_or(CodexAppServerError::CliUnavailable)?;
         let mut command = windows_codex_command(&codex_path);
+        configure_codex_home(
+            &mut command,
+            std::env::var_os("CODEX_HOME"),
+            resolve_user_home(),
+            |path| path.is_dir(),
+        );
         command
             .arg("app-server")
             .arg("--stdio")
@@ -1328,6 +1362,23 @@ fn fetch_codex_banked_reset_count() -> Result<Option<u64>, CodexAppServerError> 
         .map(|credits| credits.available_count))
 }
 
+fn configure_codex_home(
+    command: &mut Command,
+    existing_codex_home: Option<std::ffi::OsString>,
+    user_home: Option<PathBuf>,
+    is_dir: impl FnOnce(&Path) -> bool,
+) {
+    if existing_codex_home.is_some() {
+        return;
+    }
+    let Some(codex_home) = user_home.map(|home| home.join(".codex")) else {
+        return;
+    };
+    if is_dir(&codex_home) {
+        command.env("CODEX_HOME", codex_home);
+    }
+}
+
 fn fetch_codex_rate_limits_result() -> Result<CodexRateLimitsReadResult, CodexAppServerError> {
     let deadline = Instant::now() + CODEX_APP_SERVER_TIMEOUT;
     let mut server = CodexAppServer::start()?;
@@ -1367,10 +1418,7 @@ fn codex_native_usage_from_result(
         .as_ref()
         .ok_or(CodexAppServerError::Protocol)?;
     let mut usage = UsageData::default();
-    for window in [&limits.primary, &limits.secondary]
-        .into_iter()
-        .flatten()
-    {
+    for window in [&limits.primary, &limits.secondary].into_iter().flatten() {
         let Some(duration_mins) = window.window_duration_mins else {
             continue;
         };
@@ -1487,9 +1535,12 @@ fn all_known_credential_sources() -> Vec<CredentialSource> {
 }
 
 fn windows_credential_source() -> Option<CredentialSource> {
-    let home = dirs::home_dir()?;
+    windows_credential_source_from_home(resolve_user_home())
+}
+
+fn windows_credential_source_from_home(home: Option<PathBuf>) -> Option<CredentialSource> {
     Some(CredentialSource::Windows(
-        home.join(".claude").join(".credentials.json"),
+        home?.join(".claude").join(".credentials.json"),
     ))
 }
 
@@ -2234,7 +2285,7 @@ fn codex_auth_path() -> Option<PathBuf> {
         return Some(codex_home.join("auth.json"));
     }
 
-    Some(dirs::home_dir()?.join(".codex").join("auth.json"))
+    Some(resolve_user_home()?.join(".codex").join("auth.json"))
 }
 
 fn read_codex_credentials() -> Option<CodexTokenData> {
@@ -2615,6 +2666,62 @@ pub fn app_is_past_reset(data: &AppUsageData) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn user_home_prefers_dirs_value() {
+        let resolved = resolve_user_home_from(
+            Some(PathBuf::from(r"C:\known-folder")),
+            Some(r"C:\profile-fallback".into()),
+            Some("D:".into()),
+            Some(r"\home-fallback".into()),
+        );
+        assert_eq!(resolved, Some(PathBuf::from(r"C:\known-folder")));
+    }
+
+    #[test]
+    fn user_home_falls_back_to_userprofile() {
+        let resolved = resolve_user_home_from(None, Some(r"C:\Users\sandbox".into()), None, None);
+        assert_eq!(resolved, Some(PathBuf::from(r"C:\Users\sandbox")));
+    }
+
+    #[test]
+    fn claude_credential_path_uses_fallback_home() {
+        let source = windows_credential_source_from_home(Some(PathBuf::from(r"C:\Users\sandbox")));
+        let Some(CredentialSource::Windows(path)) = source else {
+            panic!("Windows credential source should be available");
+        };
+        assert_eq!(
+            path,
+            PathBuf::from(r"C:\Users\sandbox\.claude\.credentials.json")
+        );
+    }
+
+    #[test]
+    fn codex_child_gets_resolved_codex_home_when_directory_exists() {
+        let mut command = Command::new("codex.exe");
+        configure_codex_home(
+            &mut command,
+            None,
+            Some(PathBuf::from(r"C:\Users\sandbox")),
+            |_| true,
+        );
+        let value = command
+            .get_envs()
+            .find_map(|(key, value)| (key == "CODEX_HOME").then_some(value).flatten());
+        assert_eq!(value, Some(OsStr::new(r"C:\Users\sandbox\.codex")));
+    }
+
+    #[test]
+    fn codex_child_does_not_override_external_codex_home() {
+        let mut command = Command::new("codex.exe");
+        configure_codex_home(
+            &mut command,
+            Some(r"D:\external-codex".into()),
+            Some(PathBuf::from(r"C:\Users\sandbox")),
+            |_| true,
+        );
+        assert!(!command.get_envs().any(|(key, _)| key == "CODEX_HOME"));
+    }
 
     fn usage_with_session_percent(percentage: f64) -> UsageData {
         let mut usage = UsageData::default();
