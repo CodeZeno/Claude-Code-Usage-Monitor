@@ -15,6 +15,10 @@ claude-messages-fallback = []
 antigravity = []
 diagnose = []
 
+[[bin]]
+name = "aum-quota"
+path = "src/bin/aum_quota.rs"
+
 [package.metadata.winres]
 CompanyName = "Code Zeno Pty Ltd"
 ProductName = "Claude Code Usage Monitor"
@@ -34,6 +38,8 @@ dirs = "6"
 [dependencies.windows]
 version = "0.58"
 features = [
+    "ApplicationModel",
+    "Foundation",
     "Win32_Foundation",
     "Win32_Globalization",
     "Win32_Graphics_Gdi",
@@ -47,6 +53,8 @@ features = [
     "Win32_Security",
     "Win32_Security_Cryptography",
     "Win32_Storage_FileSystem",
+    "Win32_Storage_Packaging_Appx",
+    "Win32_System_WinRT",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
 ]

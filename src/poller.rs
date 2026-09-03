@@ -1077,7 +1077,7 @@ fn resolve_windows_claude_path() -> String {
     "claude.cmd".to_string()
 }
 
-fn resolve_windows_codex_path() -> Option<String> {
+pub(crate) fn resolve_windows_codex_path() -> Option<String> {
     for name in &["codex.cmd", "codex.ps1", "codex.exe", "codex"] {
         if Command::new(name)
             .arg("--version")
@@ -1112,7 +1112,7 @@ fn resolve_windows_codex_path() -> Option<String> {
     None
 }
 
-fn windows_codex_command(codex_path: &str) -> Command {
+pub(crate) fn windows_codex_command(codex_path: &str) -> Command {
     let lower = codex_path.to_ascii_lowercase();
     if lower.ends_with(".cmd") || lower.ends_with(".bat") {
         let mut command = Command::new("cmd.exe");
