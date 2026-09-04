@@ -405,7 +405,7 @@ pub fn is_past_reset(data: &UsageData) -> bool {
     }
     let now = SystemTime::now();
     let past = |s: &UsageSection| matches!(s.resets_at, Some(t) if now.duration_since(t).is_ok());
-    past(&data.session) || past(&data.weekly)
+    past(&data.session) || past(&data.weekly) || data.fable.as_ref().is_some_and(past)
 }
 
 pub fn app_is_past_reset(data: &AppUsageData) -> bool {

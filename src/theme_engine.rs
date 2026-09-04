@@ -1420,6 +1420,27 @@ impl DataContext {
             &format!("{name}.monthly.available"),
             monthly.is_some() as u8 as f64,
         );
+        // Fable is a model-scoped slice of the Claude weekly allowance. Only
+        // accounts with Fable access report it, so `fable.available` is what a
+        // theme should gate its meter on.
+        let fable = usage.and_then(|usage| usage.fable.as_ref());
+        let fable_percentage = fable.map(|fable| fable.percentage).unwrap_or(0.0);
+        self.insert_string(&format!("{name}.fable.label"), "Fable");
+        self.insert(&format!("{name}.fable.percentage"), fable_percentage);
+        self.insert(&format!("{name}.fable.remaining"), 100.0 - fable_percentage);
+        self.insert(
+            &format!("{name}.fable.available"),
+            fable.is_some() as u8 as f64,
+        );
+        // Whether the provider reported a real five-hour window at all. Codex
+        // can switch that window off, leaving only a weekly allowance; a theme
+        // can use this to collapse the five-hour row instead of drawing 0%.
+        self.insert(
+            &format!("{name}.five_hour.available"),
+            usage.is_some_and(|usage| {
+                usage.session.resets_at.is_some() || usage.session.percentage != 0.0
+            }) as u8 as f64,
+        );
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
         // Carried over from an earlier poll: real figures, not current ones.
         self.insert(
@@ -1456,7 +1477,7 @@ impl DataContext {
             &format!("{name}.headline.percentage"),
             match credits {
                 Some(credits) => credits.percentage,
-                None => five_hour.max(weekly),
+                None => five_hour.max(weekly).max(fable_percentage),
             },
         );
         let reset_value = |reset: Option<std::time::SystemTime>| {
@@ -1481,11 +1502,13 @@ impl DataContext {
         };
         let (monthly_unix, monthly_seconds) =
             reset_value(monthly.and_then(|value| value.resets_at));
+        let (fable_unix, fable_seconds) = reset_value(fable.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
             ("session", session_unix, session_seconds),
             ("five_hour", five_hour_unix, five_hour_seconds),
             ("weekly", weekly_unix, weekly_seconds),
             ("monthly", monthly_unix, monthly_seconds),
+            ("fable", fable_unix, fable_seconds),
         ] {
             self.insert(&format!("{name}.{window}.reset.unix"), unix);
             self.insert(&format!("{name}.{window}.reset.seconds"), seconds);

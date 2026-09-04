@@ -19,7 +19,7 @@
         "offset_x": 0,
         "offset_y": 0
       },
-      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28",
+      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + claude.fable.available * (90 + 3)",
       "height": "46",
       "mouse_events": {
         "right_click": "show_context_menu(\"classic-v1\")"
@@ -1401,6 +1401,106 @@
             "color": {
               "color": "#C77700FF",
               "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "fable-provider",
+          "name": "Fable weekly meter",
+          "render": "claude.fable.available",
+          "parent": "provider-row",
+          "width": "90",
+          "height": "46"
+        },
+        {
+          "id": "fable-weekly-segments-dark",
+          "name": "dark Fable weekly segments",
+          "render": "system.dark && claude.fable.available",
+          "parent": "fable-provider",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "claude.fable.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "fable-weekly-value-dark",
+          "name": "dark Fable weekly value",
+          "render": "system.dark && claude.fable.available",
+          "parent": "fable-provider",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {claude.fable:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B5A8E0FF"
+            }
+          }
+        },
+        {
+          "id": "fable-weekly-segments-light",
+          "name": "light Fable weekly segments",
+          "render": "(1 - system.dark) && claude.fable.available",
+          "parent": "fable-provider",
+          "y": "5",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "claude.fable.percentage",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "fable-weekly-value-light",
+          "name": "light Fable weekly value",
+          "render": "(1 - system.dark) && claude.fable.available",
+          "parent": "fable-provider",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "Fable {claude.fable:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5B4B8AFF"
             }
           }
         }
