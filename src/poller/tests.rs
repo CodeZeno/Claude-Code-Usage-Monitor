@@ -362,3 +362,20 @@ fn a_disabled_provider_is_not_resurrected() {
 
     assert!(merged.get(ProviderId::Claude).is_none());
 }
+
+#[test]
+fn all_failed_providers_can_carry_their_previous_readings() {
+    let previous: AppUsageData = [(ProviderId::Claude, usage_with_session_percent(21.0))]
+        .into_iter()
+        .collect();
+
+    let merged = carry_forward_failures(
+        AppUsageData::default(),
+        &previous,
+        ProviderSet::from_enabled([ProviderId::Claude]),
+    );
+
+    let claude = merged.get(ProviderId::Claude).expect("claude is kept");
+    assert_eq!(claude.session.percentage, 21.0);
+    assert!(claude.stale, "the carried reading must be marked stale");
+}

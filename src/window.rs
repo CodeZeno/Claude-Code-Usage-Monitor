@@ -449,9 +449,32 @@ fn lock_state() -> MutexGuard<'static, Option<AppState>> {
 }
 
 fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
+    let (poll_ok, has_error) = poll_display_state(
+        state.last_poll_ok,
+        state.retry_count,
+        state.auth_error_paused_polling,
+        state.data.as_ref(),
+    );
     ThemeRuntime::from_providers(state.providers)
-        .with_poll_state(state.last_poll_ok, state.retry_count > 0)
+        .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
+}
+
+/// A transient outage can keep presenting the last real reading while its
+/// retry runs. Authentication failures and failures without cached data still
+/// need the explicit error state.
+fn poll_display_state(
+    last_poll_ok: bool,
+    retry_count: u32,
+    auth_error_paused_polling: bool,
+    data: Option<&AppUsageData>,
+) -> (bool, bool) {
+    let has_usable_stale_data = !auth_error_paused_polling
+        && data.is_some_and(|data| data.iter().any(|(_, usage)| usage.stale));
+    (
+        last_poll_ok || has_usable_stale_data,
+        retry_count > 0 && !has_usable_stale_data,
+    )
 }
 
 fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
@@ -2116,10 +2139,20 @@ fn do_poll_once(hwnd: HWND) {
                 poller::PollError::RequestFailed => None,
             };
             // Distinguish auth-required errors from transient errors.
-            let (notify_auth_error, cache_data) = {
+            let (notify_auth_error, cache_data, cache_poll_ok) = {
                 let mut state = lock_state();
                 let mut should_notify = false;
                 if let Some(s) = state.as_mut() {
+                    if matches!(failure.error, poller::PollError::RequestFailed) {
+                        if let Some(previous) = s.data.as_ref() {
+                            let carried = poller::carry_forward_failures(
+                                AppUsageData::default(),
+                                previous,
+                                enabled_providers,
+                            );
+                            s.data = Some(carried);
+                        }
+                    }
                     s.last_poll_ok = false;
                     match auth_watch {
                         Some((watch_mode, watch_snapshot)) => {
@@ -2163,12 +2196,21 @@ fn do_poll_once(hwnd: HWND) {
                     .as_ref()
                     .and_then(|state| state.data.clone())
                     .unwrap_or_default();
-                (should_notify, cache_data)
+                let cache_poll_ok = state.as_ref().is_some_and(|state| {
+                    poll_display_state(
+                        state.last_poll_ok,
+                        state.retry_count,
+                        state.auth_error_paused_polling,
+                        state.data.as_ref(),
+                    )
+                    .0
+                });
+                (should_notify, cache_data, cache_poll_ok)
             };
-            // Theme Studio is a separate process and follows this cache. Record
-            // failed polls as well as successful ones so its preview does not
-            // present stale values while the live widget is showing an error.
-            let _ = app_settings::save_usage_cache(&cache_data, false);
+            // Theme Studio is a separate process and follows this cache. A
+            // transient failure with usable stale data remains displayable;
+            // hard failures and failures without a reading stay errors.
+            let _ = app_settings::save_usage_cache(&cache_data, cache_poll_ok);
 
             if notify_auth_error {
                 let balloon = {
@@ -2414,6 +2456,45 @@ mod tray_usage_summary_tests {
                 LanguageId::English,
             ),
             ["OpenCode 5h: 30% | 30d: 40%"]
+        );
+    }
+}
+
+#[cfg(test)]
+mod poll_display_state_tests {
+    use super::*;
+    use crate::models::UsageData;
+
+    fn cached_usage(stale: bool) -> AppUsageData {
+        let usage = UsageData {
+            stale,
+            ..Default::default()
+        };
+        [(ProviderId::Claude, usage)].into_iter().collect()
+    }
+
+    #[test]
+    fn transient_failure_keeps_a_stale_reading_displayable() {
+        let data = cached_usage(true);
+        assert_eq!(
+            poll_display_state(false, 1, false, Some(&data)),
+            (true, false)
+        );
+    }
+
+    #[test]
+    fn failures_without_stale_data_remain_errors() {
+        let fresh = cached_usage(false);
+        let stale = cached_usage(true);
+
+        assert_eq!(poll_display_state(false, 1, false, None), (false, true));
+        assert_eq!(
+            poll_display_state(false, 1, false, Some(&fresh)),
+            (false, true)
+        );
+        assert_eq!(
+            poll_display_state(false, 1, true, Some(&stale)),
+            (false, true)
         );
     }
 }
