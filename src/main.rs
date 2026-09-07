@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
 
 mod diagnose;
+mod proof_capture;
 mod localization;
 mod models;
 mod native_interop;
@@ -24,7 +25,9 @@ fn main() {
         }
     }
 
-    if let Some(exit_code) = updater::handle_cli_mode(&args) {
+    if let Some(exit_code) = proof_capture::handle_cli(&args)
+        .or_else(|| updater::handle_cli_mode(&args))
+    {
         if diagnose_enabled {
             diagnose::log(format!("cli mode exited with code {exit_code}"));
         }

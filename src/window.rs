@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,12 +17,13 @@ use windows::Win32::UI::Shell::ExtractIconExW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::diagnose;
+use crate::proof_capture;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_FULLSCREEN_CHECK, TIMER_POLL,
     TIMER_RESET_POLL, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
-    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    WM_APP_REQUEST_PROOF, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::spend_pace;
@@ -148,7 +149,10 @@ const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_RESET_POSITION: u16 = 30;
 /// Persisted in settings.json; resolved to max_offset at layout time.
-const TRAY_OFFSET_LEFTMOST: i32 = -1;
+/// Sentinel: use default placement (near system tray).
+const TRAY_OFFSET_DEFAULT: i32 = -1;
+#[allow(dead_code)]
+const TRAY_OFFSET_LEFTMOST: i32 = TRAY_OFFSET_DEFAULT;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
@@ -169,6 +173,7 @@ const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
 const WM_APP_RECOVER_TASKBAR: u32 = WM_APP + 4;
 const WM_APP_ENSURE_VISIBLE: u32 = WM_APP + 5;
+const WM_APP_REPOSITION_TASKBAR: u32 = WM_APP + 6;
 const TRAY_ICON_UPDATE_REPOSITION_SUPPRESS_MS: u64 = 750;
 
 /// How often the watchdog thread polls for an explorer.exe restart (which
@@ -179,8 +184,71 @@ const TASKBAR_RECOVER_MAX_ATTEMPTS: u32 = 3;
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 static TASKBAR_RECOVER_FAILURES: AtomicU32 = AtomicU32::new(0);
 
+/// Ticks of TIMER_WIDGET_KEEPALIVE (15s each) since the last unconditional
+/// repaint. DWM has been observed to silently stop compositing this layered
+/// popup (UpdateLayeredWindow keeps returning success) without changing its
+/// Win32-visible state, so a cheap "unchanged, skip" check alone cannot
+/// recover from that; force a full reassert on a bound regardless of cache.
+static KEEPALIVE_TICKS_SINCE_FORCE: AtomicU32 = AtomicU32::new(0);
+const FORCE_REPAINT_EVERY_N_TICKS: u32 = 4; // ~60s at the 15s keepalive interval
+
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
+static STARTUP_LAYOUT_GRACE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn startup_layout_grace_active() -> bool {
+    let guard = STARTUP_LAYOUT_GRACE.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .map(|t| t.elapsed() < std::time::Duration::from_millis(1200))
+        .unwrap_or(false)
+}
+
+/// Cached UI font, keyed by its DPI-scaled point size. Calling CreateFontW on
+/// every repaint (previously done in paint_content) was found to reliably
+/// break this window's UpdateLayeredWindow compositing on this GDI/layered-
+/// popup pattern — a fresh HFONT that is never even selected into a DC is
+/// enough to trigger it. Reuse a single font across repaints and only
+/// recreate it when the DPI-scaled size actually changes.
+static CACHED_FONT_HANDLE: AtomicIsize = AtomicIsize::new(0);
+static CACHED_FONT_SIZE: AtomicI32 = AtomicI32::new(0);
+
+fn cached_ui_font(size: i32) -> HFONT {
+    if CACHED_FONT_SIZE.load(Ordering::Relaxed) == size {
+        let handle = CACHED_FONT_HANDLE.load(Ordering::Relaxed);
+        if handle != 0 {
+            return HFONT(handle as *mut _);
+        }
+    }
+
+    let font_name = native_interop::wide_str("Segoe UI");
+    let font = unsafe {
+        CreateFontW(
+            size,
+            0,
+            0,
+            0,
+            FW_MEDIUM.0 as i32,
+            0,
+            0,
+            0,
+            DEFAULT_CHARSET.0 as u32,
+            OUT_TT_PRECIS.0 as u32,
+            CLIP_DEFAULT_PRECIS.0 as u32,
+            CLEARTYPE_QUALITY.0 as u32,
+            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
+            PCWSTR::from_raw(font_name.as_ptr()),
+        )
+    };
+
+    let old_handle = CACHED_FONT_HANDLE.swap(font.0 as isize, Ordering::Relaxed);
+    CACHED_FONT_SIZE.store(size, Ordering::Relaxed);
+    if old_handle != 0 {
+        unsafe {
+            let _ = DeleteObject(HFONT(old_handle as *mut _));
+        }
+    }
+    font
+}
 
 /// Scale a base pixel value (designed at 96 DPI) to the current DPI.
 fn sc(px: i32) -> i32 {
@@ -442,6 +510,7 @@ fn default_tray_offset() -> i32 {
 
 fn resolve_tray_offset(stored: i32, max_offset: i32) -> i32 {
     if stored < 0 {
+        // TRAY_OFFSET_LEFTMOST: 0 = near tray, max_offset = left edge of draggable band.
         max_offset
     } else {
         stored.clamp(0, max_offset)
@@ -454,7 +523,7 @@ fn max_tray_offset_for_taskbar(
     widget_width: i32,
 ) -> i32 {
     let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+    let content_left = native_interop::taskbar_placement_band_left(taskbar_hwnd, taskbar_rect);
     (tray_left - taskbar_rect.left - widget_width - content_left).max(0)
 }
 
@@ -677,23 +746,24 @@ fn toggle_widget_visibility(hwnd: HWND) {
 /// Pick a taskbar that actually hosts the notification area. On multi-monitor
 /// setups Windows can expose a spanning primary bar (often at a virtual top
 /// edge) that has no TrayNotifyWnd; embedding there hides the widget.
+fn taskbar_has_tray(taskbar: &native_interop::TaskbarWindow) -> bool {
+    native_interop::find_descendant_window(taskbar.hwnd, "TrayNotifyWnd")
+        .or_else(|| native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd"))
+        .is_some()
+}
+
 fn resolve_taskbar_index(requested_index: usize, taskbars: &[native_interop::TaskbarWindow]) -> usize {
     if taskbars.is_empty() {
         return 0;
     }
-    let capped = requested_index.min(taskbars.len() - 1);
-    if native_interop::find_descendant_window(taskbars[capped].hwnd, "TrayNotifyWnd").is_some() {
-        return capped;
-    }
-    for (index, taskbar) in taskbars.iter().enumerate() {
-        if native_interop::find_descendant_window(taskbar.hwnd, "TrayNotifyWnd").is_some() {
-            diagnose::log(format!(
-                "taskbar index {requested_index} has no TrayNotifyWnd; using index {index}"
-            ));
+    if requested_index > 0 {
+        if let Some(index) = taskbars.iter().position(|t| !t.is_primary) {
             return index;
         }
+    } else if let Some(index) = taskbars.iter().position(|t| t.is_primary) {
+        return index;
     }
-    capped
+    requested_index.min(taskbars.len() - 1)
 }
 
 fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
@@ -723,6 +793,7 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
         native_interop::unhook_win_event(hook);
     }
 
+    suppress_tray_reposition_for(std::time::Duration::from_millis(800));
     native_interop::raise_above_taskbar(hwnd, Some(taskbar.hwnd));
 
     let tray_notify = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
@@ -769,13 +840,7 @@ fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)>
 }
 
 fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
-    tray_left
+    native_interop::tray_left_for_screen_band(taskbar_hwnd, taskbar_rect)
 }
 
 fn clamp_offset_for_taskbar(
@@ -790,7 +855,7 @@ fn clamp_offset_for_taskbar(
 
 /// Screen X for the layered popup widget.
 fn popup_screen_x(
-    stored_tray_offset: i32,
+    _stored_tray_offset: i32,
     resolved_tray_offset: i32,
     _taskbar_hwnd: HWND,
     taskbar_rect: RECT,
@@ -798,13 +863,9 @@ fn popup_screen_x(
     max_offset: i32,
     max_x: i32,
 ) -> i32 {
-    let min_x = taskbar_rect.left;
+    let min_x = taskbar_rect.left + content_left;
     let max_x_screen = taskbar_rect.left + max_x;
-    let x = if stored_tray_offset < 0 {
-        min_x
-    } else {
-        content_left + max_offset - resolved_tray_offset + taskbar_rect.left
-    };
+    let x = content_left + max_offset - resolved_tray_offset + taskbar_rect.left;
     x.clamp(min_x, max_x_screen)
 }
 
@@ -1565,7 +1626,6 @@ pub fn run() {
     // Enable Per-Monitor DPI Awareness V2 for crisp rendering at any scale factor
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        CURRENT_DPI.store(GetDpiForSystem(), Ordering::Relaxed);
     }
     diagnose::log("window::run started");
 
@@ -1634,6 +1694,13 @@ pub fn run() {
         let language = localization::resolve_language(language_override);
         let install_channel = updater::current_install_channel();
 
+        // Pre-warm the cached UI font before the layered window exists. Calling
+        // CreateFontW for the first time during/after this window's first-ever
+        // paint was found to permanently break its UpdateLayeredWindow
+        // compositing on this GDI/layered-popup pattern; calling it before the
+        // window is created avoids the issue entirely.
+        let _ = cached_ui_font(sc(-12));
+
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
         let initial_model_count = active_model_count(
@@ -1648,14 +1715,22 @@ pub fn run() {
             WS_POPUP,
             0,
             0,
-            total_widget_width_for(initial_model_count),
-            sc(WIDGET_HEIGHT),
+            1,
+            1,
             HWND::default(),
             HMENU::default(),
             hinstance,
             None,
         )
         .unwrap();
+
+        native_interop::exclude_from_peek(hwnd);
+
+        refresh_dpi();
+        {
+            let mut grace = STARTUP_LAYOUT_GRACE.lock().unwrap_or_else(|e| e.into_inner());
+            *grace = Some(std::time::Instant::now());
+        }
 
         if !large_icon.is_invalid() {
             let _ = SendMessageW(
@@ -2022,15 +2097,14 @@ fn render_layered() {
         }
 
         // Push to window via UpdateLayeredWindow — always use explicit screen coords.
-        // GetWindowRect on WS_CHILD layered windows embedded in Shell_TrayWnd returns bogus
-        // screen Y (often thousands of pixels off); use coords stored in position_at_taskbar.
+        // GetWindowRect on layered popups/embedded children often lies; prefer coords
+        // stored by position_at_taskbar.
         let (layered_x, layered_y) = {
             let state = lock_state();
             match state.as_ref() {
-                Some(s) if s.layered_position_valid => {
-                    (s.layered_screen_x, s.layered_screen_y)
-                }
+                Some(s) if s.layered_position_valid => (s.layered_screen_x, s.layered_screen_y),
                 _ => {
+                    drop(state);
                     let mut window_rect = RECT::default();
                     if GetWindowRect(hwnd, &mut window_rect).is_err() {
                         SelectObject(mem_dc, old_bmp);
@@ -2086,6 +2160,18 @@ fn render_layered() {
                 native_interop::position_topmost_popup(hwnd, layered_x, layered_y, width, height);
             }
         }
+
+        let buffer_copy: Vec<u32> = pixel_data.to_vec();
+        let taskbar_hwnd = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
+        proof_capture::maybe_capture(
+            hwnd,
+            taskbar_hwnd,
+            layered_x,
+            layered_y,
+            width,
+            height,
+            &buffer_copy,
+        );
 
         // Cleanup
         SelectObject(mem_dc, old_bmp);
@@ -2220,23 +2306,7 @@ fn paint_content(
         let _ = SetBkMode(hdc, TRANSPARENT);
         let _ = SetTextColor(hdc, COLORREF(text_color.to_colorref()));
 
-        let font_name = native_interop::wide_str("Segoe UI");
-        let font = CreateFontW(
-            sc(-12),
-            0,
-            0,
-            0,
-            FW_MEDIUM.0 as i32,
-            0,
-            0,
-            0,
-            DEFAULT_CHARSET.0 as u32,
-            OUT_TT_PRECIS.0 as u32,
-            CLIP_DEFAULT_PRECIS.0 as u32,
-            CLEARTYPE_QUALITY.0 as u32,
-            (DEFAULT_PITCH.0 | FF_DONTCARE.0) as u32,
-            PCWSTR::from_raw(font_name.as_ptr()),
-        );
+        let font = cached_ui_font(sc(-12));
         let old_font = SelectObject(hdc, font);
 
         if let Some(credit_y) = credit_y {
@@ -2330,7 +2400,6 @@ fn paint_content(
         }
 
         SelectObject(hdc, old_font);
-        let _ = DeleteObject(font);
     }
 }
 
@@ -2689,7 +2758,7 @@ fn update_drag_reposition_from_cursor() {
             if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
                 let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
                 let widget_width = total_widget_width_for_state(s);
-                let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+                let content_left = native_interop::taskbar_placement_band_left(taskbar_hwnd, taskbar_rect);
                 let max_x = (tray_left - taskbar_rect.left - widget_width).max(content_left);
                 let max_offset = (max_x - content_left).max(0);
                 if new_offset > max_offset {
@@ -2894,16 +2963,16 @@ fn invalidate_popup_layout() {
 }
 
 fn ensure_popup_visible() {
-    let (visible, dragging, embedded, hidden_for_fullscreen, already_visible, layout_valid) = {
+    let (visible, dragging, embedded, already_visible, layout_valid, hidden_for_fullscreen) = {
         let state = lock_state();
         match state.as_ref() {
             Some(s) => (
                 s.widget_visible,
                 s.dragging,
                 s.embedded,
-                s.hidden_for_fullscreen,
                 unsafe { IsWindowVisible(s.hwnd.to_hwnd()).as_bool() },
                 s.last_layout_valid,
+                s.hidden_for_fullscreen,
             ),
             None => return,
         }
@@ -2917,11 +2986,47 @@ fn ensure_popup_visible() {
     position_at_taskbar();
 }
 
+/// Bypass the "unchanged, skip" caches on a bound and force a full
+/// reassert + repaint. Guards against DWM dropping this window's composited
+/// surface while every Win32 call (IsWindowVisible, UpdateLayeredWindow)
+/// keeps reporting success — a state the cheap checks in
+/// `ensure_popup_visible` cannot detect, only recover from periodically.
+fn force_periodic_repaint() {
+    if KEEPALIVE_TICKS_SINCE_FORCE.fetch_add(1, Ordering::Relaxed) + 1 < FORCE_REPAINT_EVERY_N_TICKS
+    {
+        return;
+    }
+    KEEPALIVE_TICKS_SINCE_FORCE.store(0, Ordering::Relaxed);
+
+    let (visible, dragging, embedded, hidden_for_fullscreen) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (
+                s.widget_visible,
+                s.dragging,
+                s.embedded,
+                s.hidden_for_fullscreen,
+            ),
+            None => return,
+        }
+    };
+    if !visible || dragging || embedded || hidden_for_fullscreen {
+        return;
+    }
+    invalidate_popup_layout();
+    position_at_taskbar();
+    render_layered();
+}
+
 /// The floating popup is HWND_TOPMOST so it can track the real taskbar's tray
 /// icons, but that also puts it above fullscreen apps/videos, which the real
 /// taskbar never does. Hide it while a fullscreen app has focus, matching
 /// "only shown when the taskbar would be shown".
 fn sync_fullscreen_visibility(hwnd: HWND) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static PEEK_WAS_ACTIVE: AtomicBool = AtomicBool::new(false);
+
     let (visible, dragging, embedded) = {
         let state = lock_state();
         match state.as_ref() {
@@ -2932,31 +3037,79 @@ fn sync_fullscreen_visibility(hwnd: HWND) {
     if !visible || dragging || embedded {
         return;
     }
-    let is_fullscreen = unsafe { native_interop::foreground_window_is_fullscreen(hwnd) };
-    let was_hidden = lock_state()
+    let taskbar_hwnd = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
+    native_interop::refresh_taskbar_peek_latch(hwnd, taskbar_hwnd);
+
+    let peek_active = native_interop::taskbar_peek_latch_active();
+    let was_peek = PEEK_WAS_ACTIVE.swap(peek_active, Ordering::Relaxed);
+
+    if peek_active {
+        if !was_peek {
+            diagnose::log("taskbar peek: switching to taskbar-band z-order");
+        }
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.hidden_for_fullscreen = false;
+            }
+        }
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
+        native_interop::raise_on_taskbar_band(hwnd, taskbar_hwnd);
+        if !was_peek {
+            invalidate_popup_layout();
+            position_at_taskbar();
+            render_layered();
+        }
+        return;
+    }
+
+    if was_peek {
+        diagnose::log("taskbar peek ended: restoring topmost");
+        invalidate_popup_layout();
+        position_at_taskbar();
+        render_layered();
+    }
+
+    // Exclusive fullscreen: hide while a monitor-filling app has retracted the taskbar.
+    let should_suppress = native_interop::should_hide_widget_for_fullscreen(hwnd, taskbar_hwnd);
+    let was_suppressed = lock_state()
         .as_ref()
         .map(|s| s.hidden_for_fullscreen)
         .unwrap_or(false);
-    if is_fullscreen == was_hidden {
+
+    if should_suppress {
+        if !was_suppressed {
+            diagnose::log("fullscreen suppress: hide + lower z-order");
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.hidden_for_fullscreen = true;
+            }
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+            native_interop::lower_below_fullscreen(hwnd);
+        }
         return;
     }
-    {
+
+    if was_suppressed {
+        diagnose::log("fullscreen ended: restoring widget");
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
-            s.hidden_for_fullscreen = is_fullscreen;
+            s.hidden_for_fullscreen = false;
         }
-    }
-    unsafe {
-        if is_fullscreen {
-            let _ = ShowWindow(hwnd, SW_HIDE);
-        } else {
+        unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
+        invalidate_popup_layout();
+        position_at_taskbar();
+        render_layered();
     }
 }
 
 fn position_at_taskbar() {
-    refresh_dpi();
     // Drop the app-state lock before any Win32 call that may synchronously
     // re-enter our window procedure.
     let (hwnd, tray_offset, taskbar_index) = {
@@ -2975,52 +3128,88 @@ fn position_at_taskbar() {
     };
 
     let taskbar_hwnd = {
-        let current = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
-        let valid = current.is_some_and(|h| unsafe { IsWindow(h).as_bool() });
-        if valid {
-            current.unwrap()
-        } else {
-            let taskbars = native_interop::find_taskbars();
-            if taskbars.is_empty() {
-                diagnose::log("position_at_taskbar skipped: no taskbar found");
-                return;
-            }
-            let index = resolve_taskbar_index(taskbar_index, &taskbars);
-            let selected = taskbars[index].hwnd;
-            {
-                let mut state = lock_state();
-                if let Some(s) = state.as_mut() {
+        let selected = native_interop::taskbar_hwnd_for_settings_index(taskbar_index)
+            .or_else(|| {
+                let taskbars = native_interop::find_taskbars();
+                if taskbars.is_empty() {
+                    return None;
+                }
+                let index = resolve_taskbar_index(taskbar_index, &taskbars);
+                Some(taskbars[index].hwnd)
+            });
+        let Some(selected) = selected else {
+            diagnose::log("position_at_taskbar skipped: no taskbar found");
+            return;
+        };
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                if s.taskbar_hwnd != Some(selected) {
                     s.taskbar_hwnd = Some(selected);
-                    s.taskbar_index = index;
                     s.embedded = false;
+                    s.layered_position_valid = false;
+                    invalidate_popup_layout();
+                    diagnose::log(format!(
+                        "position_at_taskbar: bound taskbar hwnd={:?}",
+                        selected
+                    ));
                 }
             }
-            diagnose::log(format!(
-                "position_at_taskbar: re-bound taskbar index={index} hwnd={:?}",
-                selected
-            ));
-            selected
         }
+        selected
     };
 
+    if let Some(tray_hwnd) = native_interop::find_descendant_window(taskbar_hwnd, "TrayNotifyWnd")
+        .or_else(|| native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd"))
+    {
+        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
+            diagnose::log(format!(
+                "TrayNotifyWnd rect=({},{},{},{})",
+                tray_rect.left, tray_rect.top, tray_rect.right, tray_rect.bottom
+            ));
+        } else {
+            diagnose::log("TrayNotifyWnd rect query failed");
+        }
+    } else {
+        diagnose::log("TrayNotifyWnd not found during position");
+    }
+
     let taskbar_rect = match native_interop::get_taskbar_rect(taskbar_hwnd) {
-        Some(r) => r,
+        Some(raw) => {
+            let resolved = native_interop::screen_taskbar_rect(taskbar_hwnd, raw);
+            diagnose::log(format!(
+                "taskbar_rect raw=({},{},{},{}) screen=({},{},{},{})",
+                raw.left, raw.top, raw.right, raw.bottom,
+                resolved.left, resolved.top, resolved.right, resolved.bottom
+            ));
+            resolved
+        }
         None => {
             diagnose::log("position_at_taskbar skipped: unable to query taskbar rect");
             return;
         }
     };
 
+    // HWND starts at (0,0) on the primary monitor; read DPI from the taskbar monitor
+    // before sizing so the first layout is not 2x on multi-monitor setups.
+    unsafe {
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            taskbar_rect.left,
+            taskbar_rect.top,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE,
+        );
+    }
+    refresh_dpi();
+
     let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let mut tray_left = taskbar_rect.right;
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+    diagnose::log(format!("tray_left={tray_left} for band left={}", taskbar_rect.left));
     let anchor_top = taskbar_rect.top;
     let anchor_height = taskbar_height;
-
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
 
     let account_pace_mode = lock_state()
         .as_ref()
@@ -3028,7 +3217,8 @@ fn position_at_taskbar() {
         .unwrap_or((false, false));
     let (widget_width, widget_height) =
         resolved_widget_size(account_pace_mode.0, account_pace_mode.1);
-    let content_left = native_interop::taskbar_content_left(taskbar_hwnd, taskbar_rect);
+    let content_left = native_interop::taskbar_placement_band_left(taskbar_hwnd, taskbar_rect);
+    diagnose::log(format!("content_left={content_left}"));
     let max_x = (tray_left - taskbar_rect.left - widget_width).max(content_left);
     let max_offset = (max_x - content_left).max(0);
     let stored_tray_offset = tray_offset;
@@ -3064,12 +3254,8 @@ fn position_at_taskbar() {
     let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
 
     if embedded {
-        let mut x = if stored_tray_offset < 0 {
-            0
-        } else {
-            content_left + max_offset - tray_offset
-        };
-        x = x.clamp(0, max_x);
+        let mut x = content_left + max_offset - tray_offset;
+        x = x.clamp(content_left, max_x);
         let y_child = compute_anchor_y(anchor_top, anchor_height, widget_height) - anchor_top;
         let screen_x = taskbar_rect.left + x;
         let screen_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
@@ -3109,29 +3295,45 @@ fn position_at_taskbar() {
                 s.layered_position_valid = true;
             }
         }
-        native_interop::position_above_taskbar(
-            hwnd,
-            taskbar_hwnd,
-            x,
-            y,
-            widget_width,
-            widget_height,
-        );
+        let suppressed = lock_state()
+            .as_ref()
+            .map(|s| s.hidden_for_fullscreen)
+            .unwrap_or(false);
+        diagnose::log(format!(
+            "popup layout x={x} y={y} w={widget_width} h={widget_height} content_left={content_left} max_x={max_x} suppressed={suppressed}"
+        ));
+        if suppressed {
+            native_interop::position_notopmost_popup(hwnd, x, y, widget_width, widget_height);
+        } else {
+            native_interop::position_above_taskbar(
+                hwnd,
+                taskbar_hwnd,
+                x,
+                y,
+                widget_width,
+                widget_height,
+            );
+        }
         store_popup_layout(x, y, widget_width, widget_height);
         diagnose::log(format!(
-            "positioned popup widget at x={x} y={y} w={widget_width} h={widget_height} pin_right={} content_left={content_left}",
-            native_interop::pin_band_right(taskbar_hwnd, taskbar_rect)
+            "positioned popup widget at x={x} y={y} w={widget_width} h={widget_height} content_left={content_left} suppressed={suppressed}"
         ));
     }
-    let hidden_for_fullscreen = lock_state()
-        .as_ref()
-        .map(|s| s.hidden_for_fullscreen)
-        .unwrap_or(false);
-    if widget_visible && !hidden_for_fullscreen {
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+    if widget_visible {
+        let suppressed = lock_state()
+            .as_ref()
+            .map(|s| s.hidden_for_fullscreen)
+            .unwrap_or(false);
+        if suppressed {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_HIDE);
+            }
+        } else {
+            unsafe {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            render_layered();
         }
-        render_layered();
     }
 }
 
@@ -3180,13 +3382,14 @@ unsafe extern "system" fn on_tray_location_changed(
             }
         };
         if should_reposition {
-            position_at_taskbar();
-            let hidden_for_fullscreen = lock_state()
+            let widget_hwnd = lock_state()
                 .as_ref()
-                .map(|s| s.hidden_for_fullscreen)
-                .unwrap_or(false);
-            if !hidden_for_fullscreen {
-                render_layered();
+                .map(|s| s.hwnd.to_hwnd())
+                .unwrap_or(HWND::default());
+            if !widget_hwnd.0.is_null() {
+                // Never reposition synchronously from WinEvent — EnumChildWindows in
+                // position_at_taskbar can deadlock with SetWindowPos on the shell thread.
+                let _ = PostMessageW(widget_hwnd, WM_APP_REPOSITION_TASKBAR, WPARAM(0), LPARAM(0));
             }
         }
     }
@@ -3229,13 +3432,18 @@ unsafe extern "system" fn wnd_proc(
             }
             if msg == WM_DPICHANGED_MSG {
                 let new_dpi = (wparam.0 & 0xFFFF) as u32;
-                CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
+                if new_dpi > 0 {
+                    CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
+                }
             }
             if msg == WM_SETTINGCHANGE {
                 check_theme_change();
                 check_language_change();
             }
             refresh_dpi();
+            if startup_layout_grace_active() {
+                return LRESULT(0);
+            }
             position_at_taskbar();
             render_layered();
             LRESULT(0)
@@ -3304,6 +3512,10 @@ unsafe extern "system" fn wnd_proc(
                 }
                 TIMER_WIDGET_KEEPALIVE => {
                     ensure_popup_visible();
+                    if proof_capture::flag_pending() {
+                        render_layered();
+                    }
+                    force_periodic_repaint();
                 }
                 TIMER_FULLSCREEN_CHECK => {
                     sync_fullscreen_visibility(hwnd);
@@ -3360,6 +3572,19 @@ unsafe extern "system" fn wnd_proc(
         }
         msg if msg == WM_APP_ENSURE_VISIBLE => {
             ensure_popup_visible();
+            LRESULT(0)
+        }
+        msg if msg == WM_APP_REPOSITION_TASKBAR => {
+            position_at_taskbar();
+            LRESULT(0)
+        }
+        msg if msg == WM_APP_REQUEST_PROOF => {
+            invalidate_popup_layout();
+            if let Some(s) = lock_state().as_mut() {
+                s.layered_position_valid = false;
+            }
+            position_at_taskbar();
+            render_layered();
             LRESULT(0)
         }
         WM_SETCURSOR => {
