@@ -3096,9 +3096,11 @@ fn sync_fullscreen_visibility(hwnd: HWND) {
 
     if was_suppressed {
         diagnose::log("fullscreen ended: restoring widget");
-        let mut state = lock_state();
-        if let Some(s) = state.as_mut() {
-            s.hidden_for_fullscreen = false;
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.hidden_for_fullscreen = false;
+            }
         }
         unsafe {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -3141,20 +3143,27 @@ fn position_at_taskbar() {
             diagnose::log("position_at_taskbar skipped: no taskbar found");
             return;
         };
-        {
+        let rebound = {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 if s.taskbar_hwnd != Some(selected) {
                     s.taskbar_hwnd = Some(selected);
                     s.embedded = false;
                     s.layered_position_valid = false;
-                    invalidate_popup_layout();
-                    diagnose::log(format!(
-                        "position_at_taskbar: bound taskbar hwnd={:?}",
-                        selected
-                    ));
+                    true
+                } else {
+                    false
                 }
+            } else {
+                false
             }
+        };
+        if rebound {
+            invalidate_popup_layout();
+            diagnose::log(format!(
+                "position_at_taskbar: bound taskbar hwnd={:?}",
+                selected
+            ));
         }
         selected
     };
