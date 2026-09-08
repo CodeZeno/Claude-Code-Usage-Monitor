@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap uap10 desktop rescap">
+
+  <Identity
+    Name="Ysawase.AIUsageMonitor.LocalTrial"
+    Publisher="CN=AIUsageMonitorLocalTrial"
+    Version="1.4.9.0"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>AI Usage Monitor (Local MSIX Trial)</DisplayName>
+    <PublisherDisplayName>Local sideload trial</PublisherDisplayName>
+    <Description>Local-only full-trust MSIX compatibility trial for AI Usage Monitor.</Description>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily
+      Name="Windows.Desktop"
+      MinVersion="10.0.19041.0"
+      MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Applications>
+    <Application
+      Id="AIUsageMonitor"
+      Executable="claude-code-usage-monitor.exe"
+      uap10:RuntimeBehavior="win32App"
+      uap10:TrustLevel="mediumIL">
+      <uap:VisualElements
+        DisplayName="AI Usage Monitor (Local MSIX Trial)"
+        Description="Local-only full-trust MSIX compatibility trial for AI Usage Monitor."
+        BackgroundColor="transparent"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Square150x150Logo="Assets\Square150x150Logo.png" />
+      <Extensions>
+        <desktop:Extension
+          Category="windows.startupTask"
+          Executable="claude-code-usage-monitor.exe"
+          uap10:RuntimeBehavior="win32App"
+          uap10:TrustLevel="mediumIL">
+          <desktop:StartupTask
+            TaskId="AIUsageMonitorStartup"
+            Enabled="false"
+            DisplayName="AI Usage Monitor" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

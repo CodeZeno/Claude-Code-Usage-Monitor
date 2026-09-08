@@ -4,13 +4,16 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use windows::core::PCWSTR;
+use windows::core::{HSTRING, PCWSTR};
+use windows::ApplicationModel::{StartupTask, StartupTaskState};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_SINGLETHREADED};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -3052,9 +3055,52 @@ fn begin_winget_update(hwnd: HWND) {
 
 const STARTUP_REGISTRY_PATH: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
 const STARTUP_REGISTRY_KEY: &str = "ClaudeCodeUsageMonitor";
+const STARTUP_TASK_ID: &str = "AIUsageMonitorStartup";
+
+fn is_packaged() -> bool {
+    let mut package_name_length = 0;
+    unsafe {
+        GetCurrentPackageFullName(&mut package_name_length, windows::core::PWSTR::null())
+            == ERROR_INSUFFICIENT_BUFFER
+    }
+}
+
+fn packaged_startup_task() -> windows::core::Result<StartupTask> {
+    StartupTask::GetAsync(&HSTRING::from(STARTUP_TASK_ID))?.get()
+}
+
+fn is_packaged_startup_enabled() -> bool {
+    let result = packaged_startup_task().and_then(|task| task.State());
+    match result {
+        Ok(state) => {
+            state == StartupTaskState::Enabled || state == StartupTaskState::EnabledByPolicy
+        }
+        Err(error) => {
+            diagnose::log_error("unable to read packaged startup task state", error);
+            false
+        }
+    }
+}
+
+fn set_packaged_startup_enabled(enable: bool) {
+    let result = packaged_startup_task().and_then(|task| {
+        if enable {
+            task.RequestEnableAsync()?.get().map(|_| ())
+        } else {
+            task.Disable()
+        }
+    });
+    if let Err(error) = result {
+        diagnose::log_error("unable to update packaged startup task state", error);
+    }
+}
 
 /// Returns true only if the startup registry value points to this executable.
 fn is_startup_enabled() -> bool {
+    if is_packaged() {
+        return is_packaged_startup_enabled();
+    }
+
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
         let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
@@ -3122,6 +3168,11 @@ fn is_startup_enabled() -> bool {
 }
 
 fn set_startup_enabled(enable: bool) {
+    if is_packaged() {
+        set_packaged_startup_enabled(enable);
+        return;
+    }
+
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
 
@@ -4180,6 +4231,9 @@ fn antigravity_usage_text_color(is_dark: bool) -> Color {
 }
 
 pub fn run() {
+    let winrt_initialized =
+        is_packaged() && unsafe { RoInitialize(RO_INIT_SINGLETHREADED).is_ok() };
+
     // Enable Per-Monitor DPI Awareness V2 for crisp rendering at any scale factor
     unsafe {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
@@ -4458,6 +4512,10 @@ pub fn run() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+
+    if winrt_initialized {
+        unsafe { RoUninitialize() };
     }
 }
 
