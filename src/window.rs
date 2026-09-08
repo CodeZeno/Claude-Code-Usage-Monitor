@@ -13,7 +13,9 @@ use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::HiDpi::*;
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetCapture, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+};
 use windows::Win32::UI::Shell::{ExtractIconExW, ShellExecuteW};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -70,7 +72,131 @@ enum PointerInteractionTarget {
     HorizontalResize(HorizontalResizeEdge),
     HelpButton,
     HeaderDrag,
+    AuthCta(AuthAction),
     None,
+}
+
+/// A provider's own official CLI login entry point, reached from this app's
+/// auth-error status text — see AUTH-RECOVERY-CTA-IMPLEMENT-01. The app
+/// never reads, stores, or refreshes any provider credential itself; it only
+/// launches the provider's own command in a visible console and lets that
+/// command's own (usually browser-based) OAuth flow run to completion.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AuthAction {
+    ClaudeLogin,
+    CodexLogin,
+}
+
+impl AuthAction {
+    /// Fixed program + args for this action. Never built from runtime text,
+    /// status wording, or any other non-constant input — see
+    /// `launch_visible_auth_command`'s own doc comment for why that matters.
+    const fn command(self) -> (&'static str, &'static [&'static str]) {
+        match self {
+            Self::ClaudeLogin => ("claude", &["auth", "login"]),
+            Self::CodexLogin => ("codex", &["login"]),
+        }
+    }
+
+    fn launch(self, hwnd: HWND) {
+        let (program, args) = self.command();
+        if !launch_visible_auth_command(hwnd, program, args) {
+            diagnose::log(format!("unable to launch auth command for {program}"));
+        }
+    }
+}
+
+/// Only a high-confidence auth-specific `CellState`, for a provider whose
+/// official CLI has a documented, no-argument login entry point, becomes
+/// clickable. `FetchFailed`/`NotAvailable`/`Disabled`/`Loading` — and every
+/// state for GitHub Copilot/Antigravity — are never CTA-eligible:
+/// GitHub Copilot's current failure signal can't distinguish "not logged
+/// in" from "wrong token scope" from an unrelated API error (see
+/// `run_gh_api`), and Antigravity's CLI has no login/auth subcommand at all
+/// (confirmed against `agy --help` during AUTH-RECOVERY-CTA-DESIGN-01).
+/// Generic failures are never guessed to be auth-related.
+fn provider_auth_action(family: QuotaFamilyId, state: CellState) -> Option<AuthAction> {
+    let is_auth_state = matches!(
+        state,
+        CellState::AuthenticationExpired
+            | CellState::AuthenticationProblem
+            | CellState::CredentialsUnavailable
+    );
+    if !is_auth_state {
+        return None;
+    }
+    match family {
+        QuotaFamilyId::Claude => Some(AuthAction::ClaudeLogin),
+        QuotaFamilyId::Codex => Some(AuthAction::CodexLogin),
+        QuotaFamilyId::Antigravity | QuotaFamilyId::GithubCopilot => None,
+    }
+}
+
+/// One CTA-eligible status-text cell's screen (client-coordinate) rect from
+/// the most recent paint, used only for pointer hit-testing/hover — rebuilt
+/// from scratch every paint (see `paint_content`) so a stale rect never
+/// outlives the layout it was measured from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AuthCtaHitTarget {
+    rect: RECT,
+    action: AuthAction,
+}
+
+/// Launches `program args...` in a new, visible `cmd.exe` console via
+/// `ShellExecuteW` (the same pattern `open_readme` already uses for
+/// browser links), and returns immediately without waiting for it —
+/// `cmd.exe /k` leaves the console open so the user can see the provider
+/// CLI's own login flow (typically opening a browser) and any error output,
+/// and closes it manually when done. `program`/`args` must always be the
+/// fixed, compile-time values from `AuthAction::command` — never built from
+/// status text, provider display names, or any other runtime/user string —
+/// so there is no shell-injection surface here.
+///
+/// A `true` return only means `cmd.exe` itself launched; it is NOT proof
+/// that `program` exists. If `program` isn't on PATH, `cmd.exe` still opens
+/// normally and simply prints its own "not recognized" error inside that
+/// visible console — this app does not attempt to detect that case, and
+/// does not fall back to reading any credential file if it happens.
+fn launch_visible_auth_command(hwnd: HWND, program: &str, args: &[&str]) -> bool {
+    let mut command_line = String::from("/k ");
+    command_line.push_str(program);
+    for arg in args {
+        command_line.push(' ');
+        command_line.push_str(arg);
+    }
+    unsafe {
+        let operation = native_interop::wide_str("open");
+        let target = native_interop::wide_str("cmd.exe");
+        let parameters = native_interop::wide_str(&command_line);
+        let result = ShellExecuteW(
+            hwnd,
+            PCWSTR::from_raw(operation.as_ptr()),
+            PCWSTR::from_raw(target.as_ptr()),
+            PCWSTR::from_raw(parameters.as_ptr()),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        );
+        result.0 as isize > 32
+    }
+}
+
+/// The `windows` crate only exposes this constant behind the
+/// `Win32_UI_Controls` feature, which this crate doesn't otherwise need —
+/// so it's inlined here as the documented, stable Win32 message value
+/// (`WM_MOUSELEAVE` has been `0x02A3` since Windows 2000 and is part of the
+/// public Win32 ABI) rather than adding a new crate feature for one constant.
+const WM_MOUSELEAVE: u32 = 0x02A3;
+
+fn track_mouse_leave(hwnd: HWND) {
+    let mut tme = TRACKMOUSEEVENT {
+        cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+        dwFlags: TME_LEAVE,
+        hwndTrack: hwnd,
+        dwHoverTime: 0,
+    };
+    unsafe {
+        let _ = TrackMouseEvent(&mut tme);
+    }
 }
 
 /// Shared application state
@@ -151,6 +277,13 @@ struct AppState {
     drag_start_window_x: i32,
     drag_start_window_y: i32,
     resize_session: Option<HorizontalResizeSession>,
+    /// This paint's CTA-eligible status-text rects, rebuilt from scratch
+    /// every `paint_content` call — see `AuthCtaHitTarget`'s own doc.
+    auth_cta_hit_targets: Vec<AuthCtaHitTarget>,
+    /// The exact rect (from `auth_cta_hit_targets`) currently under the
+    /// cursor, if any — drives the hover-underline affordance. `None` means
+    /// no CTA cell is hovered.
+    hovered_auth_cta_rect: Option<RECT>,
     /// Saved free placement. `None` uses the selected monitor's bottom-right
     /// work-area corner; `Some((x, y))` is restored inside the nearest current
     /// work area. Cleared by position reset and by a taskbar drop.
@@ -3575,11 +3708,17 @@ fn pointer_interaction_target(
     resize_edge_width: i32,
     header_bottom: i32,
     help_button_rect: RECT,
+    auth_cta_hit_targets: &[AuthCtaHitTarget],
 ) -> PointerInteractionTarget {
     if let Some(edge) = horizontal_resize_edge_at(client_x, client_width, resize_edge_width) {
         PointerInteractionTarget::HorizontalResize(edge)
     } else if point_is_in_rect(client_x, client_y, help_button_rect) {
         PointerInteractionTarget::HelpButton
+    } else if let Some(hit) = auth_cta_hit_targets
+        .iter()
+        .find(|hit| point_is_in_rect(client_x, client_y, hit.rect))
+    {
+        PointerInteractionTarget::AuthCta(hit.action)
     } else if is_drag_region_point(client_x, client_y, client_width, header_bottom) {
         PointerInteractionTarget::HeaderDrag
     } else {
@@ -3620,6 +3759,7 @@ fn pointer_interaction_under_cursor(hwnd: HWND) -> PointerInteractionTarget {
         horizontal_resize_edge_width_for_dpi(dpi),
         header_band_bottom(s),
         help_button_rect_for_client_width(client_rect.right - client_rect.left, dpi),
+        &s.auth_cta_hit_targets,
     )
 }
 
@@ -4236,6 +4376,8 @@ pub fn run() {
                 drag_start_window_x: 0,
                 drag_start_window_y: 0,
                 resize_session: None,
+                auth_cta_hit_targets: Vec::new(),
+                hovered_auth_cta_rect: None,
                 manual_position: settings.manual_x.zip(settings.manual_y),
                 widget_width_logical: settings.widget_width_logical,
                 widget_visible: settings.widget_visible,
@@ -4335,6 +4477,7 @@ fn render_layered() {
         session_pct,
         session_text,
         session_pace,
+        weekly_state,
         weekly_pct,
         weekly_text,
         weekly_pace,
@@ -4343,6 +4486,7 @@ fn render_layered() {
         codex_session_pct,
         codex_session_text,
         codex_session_pace,
+        codex_weekly_state,
         codex_weekly_pct,
         codex_weekly_text,
         codex_weekly_pace,
@@ -4363,6 +4507,7 @@ fn render_layered() {
         show_antigravity,
         show_github_copilot,
         height,
+        hovered_auth_cta_rect,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -4377,6 +4522,7 @@ fn render_layered() {
                 s.session_percent,
                 s.session_text.clone(),
                 s.session_pace.clone(),
+                s.weekly_state,
                 s.weekly_percent,
                 s.weekly_text.clone(),
                 s.weekly_pace.clone(),
@@ -4385,6 +4531,7 @@ fn render_layered() {
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_session_pace.clone(),
+                s.codex_weekly_state,
                 s.codex_weekly_percent,
                 s.codex_weekly_text.clone(),
                 s.codex_weekly_pace.clone(),
@@ -4405,6 +4552,7 @@ fn render_layered() {
                 s.show_antigravity,
                 s.show_github_copilot,
                 widget_height_for_state(s),
+                s.hovered_auth_cta_rect,
             ),
             None => return,
         }
@@ -4438,6 +4586,7 @@ fn render_layered() {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color();
     let antigravity_accent = antigravity_accent_color();
+    let mut auth_cta_hits: Vec<AuthCtaHitTarget> = Vec::new();
 
     unsafe {
         let screen_dc = GetDC(hwnd);
@@ -4491,6 +4640,7 @@ fn render_layered() {
             session_pct,
             &session_text,
             session_pace.as_ref(),
+            weekly_state,
             weekly_pct,
             &weekly_text,
             weekly_pace.as_ref(),
@@ -4499,6 +4649,7 @@ fn render_layered() {
             codex_session_pct,
             &codex_session_text,
             codex_session_pace.as_ref(),
+            codex_weekly_state,
             codex_weekly_pct,
             &codex_weekly_text,
             codex_weekly_pace.as_ref(),
@@ -4523,6 +4674,8 @@ fn render_layered() {
             popup_layout,
             show_column_dividers,
             outline_usage_track,
+            hovered_auth_cta_rect,
+            &mut auth_cta_hits,
         );
 
         // Background pixels → alpha 1 (nearly invisible but still hittable for right-click).
@@ -4569,6 +4722,11 @@ fn render_layered() {
         let _ = DeleteDC(mem_dc);
         ReleaseDC(hwnd, screen_dc);
     }
+
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.auth_cta_hit_targets = auth_cta_hits;
+    }
 }
 
 /// Paint all widget content onto a DC with a given background color.
@@ -4591,6 +4749,7 @@ fn paint_content(
     session_pct: Option<f64>,
     session_text: &str,
     session_pace: Option<&PaceGuidanceLines>,
+    weekly_state: CellState,
     weekly_pct: Option<f64>,
     weekly_text: &str,
     weekly_pace: Option<&PaceGuidanceLines>,
@@ -4599,6 +4758,7 @@ fn paint_content(
     codex_session_pct: Option<f64>,
     codex_session_text: &str,
     codex_session_pace: Option<&PaceGuidanceLines>,
+    codex_weekly_state: CellState,
     codex_weekly_pct: Option<f64>,
     codex_weekly_text: &str,
     codex_weekly_pace: Option<&PaceGuidanceLines>,
@@ -4623,6 +4783,8 @@ fn paint_content(
     popup_layout: PopupLayout,
     show_column_dividers: bool,
     outline_usage_track: bool,
+    hovered_auth_cta_rect: Option<RECT>,
+    auth_cta_hits: &mut Vec<AuthCtaHitTarget>,
 ) {
     unsafe {
         let client_rect = RECT {
@@ -4703,6 +4865,12 @@ fn paint_content(
             codex_session_pace,
             short_window_visibility,
         );
+        let claude_session_auth_action = provider_auth_action(QuotaFamilyId::Claude, session_state);
+        let codex_session_auth_action =
+            provider_auth_action(QuotaFamilyId::Codex, codex_session_state);
+        let claude_weekly_auth_action = provider_auth_action(QuotaFamilyId::Claude, weekly_state);
+        let codex_weekly_auth_action =
+            provider_auth_action(QuotaFamilyId::Codex, codex_weekly_state);
         let antigravity_session_decision = session_cell_decision(
             antigravity_session_state,
             antigravity_session_pct,
@@ -4838,6 +5006,7 @@ fn paint_content(
                 accent,
                 provider_text_color: claude_usage_text_color(provider_tint_dark),
                 is_warning: false,
+                auth_action: claude_weekly_auth_action,
             });
         }
         if show_codex {
@@ -4847,6 +5016,7 @@ fn paint_content(
                 accent: codex_accent,
                 provider_text_color: codex_usage_text_color(provider_tint_dark),
                 is_warning: false,
+                auth_action: codex_weekly_auth_action,
             });
         }
         if show_antigravity {
@@ -4856,6 +5026,7 @@ fn paint_content(
                 accent: antigravity_accent,
                 provider_text_color: antigravity_usage_text_color(provider_tint_dark),
                 is_warning: false,
+                auth_action: None,
             });
         }
         if show_github_copilot {
@@ -4865,6 +5036,7 @@ fn paint_content(
                 accent: &github_copilot_accent,
                 provider_text_color: github_copilot_accent,
                 is_warning: false,
+                auth_action: None,
             });
         }
 
@@ -4883,6 +5055,8 @@ fn paint_content(
                 // `weekly_pace_guidance_lines`, which always sets
                 // `PaceGuidanceLines::is_warning` to `false`.
                 track_outline,
+                hovered_auth_cta_rect,
+                auth_cta_hits,
             );
         }
 
@@ -4962,6 +5136,7 @@ fn paint_content(
                     accent,
                     provider_text_color: claude_usage_text_color(provider_tint_dark),
                     is_warning: claude_session_decision.3,
+                    auth_action: claude_session_auth_action,
                 });
             }
             if show_codex {
@@ -4971,6 +5146,7 @@ fn paint_content(
                     accent: codex_accent,
                     provider_text_color: codex_usage_text_color(provider_tint_dark),
                     is_warning: codex_session_decision.3,
+                    auth_action: codex_session_auth_action,
                 });
             }
             if show_antigravity {
@@ -4980,6 +5156,7 @@ fn paint_content(
                     accent: antigravity_accent,
                     provider_text_color: antigravity_usage_text_color(provider_tint_dark),
                     is_warning: antigravity_session_decision.3,
+                    auth_action: None,
                 });
             }
             if show_github_copilot {
@@ -4989,6 +5166,7 @@ fn paint_content(
                     accent: &github_copilot_accent,
                     provider_text_color: github_copilot_accent,
                     is_warning: false,
+                    auth_action: None,
                 });
             }
             draw_row(
@@ -5002,6 +5180,8 @@ fn paint_content(
                 track,
                 warning,
                 track_outline,
+                hovered_auth_cta_rect,
+                auth_cta_hits,
             );
         }
 
@@ -5014,6 +5194,7 @@ fn paint_content(
                     accent,
                     provider_text_color: claude_usage_text_color(provider_tint_dark),
                     is_warning: false,
+                    auth_action: None,
                 });
             }
             if show_codex {
@@ -5023,6 +5204,7 @@ fn paint_content(
                     accent: codex_accent,
                     provider_text_color: codex_usage_text_color(provider_tint_dark),
                     is_warning: false,
+                    auth_action: None,
                 });
             }
             if show_antigravity {
@@ -5032,6 +5214,7 @@ fn paint_content(
                     accent: antigravity_accent,
                     provider_text_color: antigravity_usage_text_color(provider_tint_dark),
                     is_warning: false,
+                    auth_action: None,
                 });
             }
             monthly_cells.push(RowCell {
@@ -5040,6 +5223,7 @@ fn paint_content(
                 accent: &github_copilot_accent,
                 provider_text_color: github_copilot_accent,
                 is_warning: false,
+                auth_action: None,
             });
             draw_row(
                 hdc,
@@ -5052,6 +5236,8 @@ fn paint_content(
                 track,
                 warning,
                 track_outline,
+                hovered_auth_cta_rect,
+                auth_cta_hits,
             );
         }
 
@@ -5944,7 +6130,7 @@ unsafe extern "system" fn wnd_proc(
                 return LRESULT(1);
             }
             match pointer_target {
-                PointerInteractionTarget::HelpButton => {
+                PointerInteractionTarget::HelpButton | PointerInteractionTarget::AuthCta(_) => {
                     let cursor = LoadCursorW(HINSTANCE::default(), IDC_HAND).unwrap_or_default();
                     SetCursor(cursor);
                     return LRESULT(1);
@@ -5975,6 +6161,7 @@ unsafe extern "system" fn wnd_proc(
                         resize_edge_width,
                         header_band_bottom(s),
                         help_button_rect_for_client_width(client_width, window_dpi(hwnd)),
+                        &s.auth_cta_hit_targets,
                     ),
                     None => PointerInteractionTarget::None,
                 }
@@ -5982,6 +6169,11 @@ unsafe extern "system" fn wnd_proc(
 
             if interaction == PointerInteractionTarget::HelpButton {
                 show_display_guide(hwnd);
+                return LRESULT(0);
+            }
+
+            if let PointerInteractionTarget::AuthCta(action) = interaction {
+                action.launch(hwnd);
                 return LRESULT(0);
             }
 
@@ -6095,6 +6287,45 @@ unsafe extern "system" fn wnd_proc(
                 };
                 let (hwnd_val, x, y, width, height) = move_target;
                 native_interop::move_window(hwnd_val, x, y, width, height);
+                return LRESULT(0);
+            }
+
+            // AUTH-RECOVERY-CTA-IMPLEMENT-01: only redraw on an actual
+            // hover-target change (entering/leaving/switching an auth CTA
+            // cell), never unconditionally on every mousemove — this fires
+            // very frequently and a full-window repaint per move would be
+            // wasteful for a change that usually isn't happening.
+            let mut point = POINT::default();
+            if GetCursorPos(&mut point).is_ok() && ScreenToClient(hwnd, &mut point).as_bool() {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    let new_hover = s
+                        .auth_cta_hit_targets
+                        .iter()
+                        .find(|hit| point_is_in_rect(point.x, point.y, hit.rect))
+                        .map(|hit| hit.rect);
+                    if new_hover != s.hovered_auth_cta_rect {
+                        s.hovered_auth_cta_rect = new_hover;
+                        let hwnd_val = s.hwnd.to_hwnd();
+                        let should_track = new_hover.is_some();
+                        drop(state);
+                        if should_track {
+                            track_mouse_leave(hwnd_val);
+                        }
+                        let _ = InvalidateRect(hwnd_val, None, false);
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_MOUSELEAVE => {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                if s.hovered_auth_cta_rect.take().is_some() {
+                    let hwnd_val = s.hwnd.to_hwnd();
+                    drop(state);
+                    let _ = InvalidateRect(hwnd_val, None, false);
+                }
             }
             LRESULT(0)
         }
@@ -7447,6 +7678,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         session_pct,
         session_text,
         session_pace,
+        weekly_state,
         weekly_pct,
         weekly_text,
         weekly_pace,
@@ -7455,6 +7687,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         codex_session_pct,
         codex_session_text,
         codex_session_pace,
+        codex_weekly_state,
         codex_weekly_pct,
         codex_weekly_text,
         codex_weekly_pace,
@@ -7474,6 +7707,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         show_codex,
         show_antigravity,
         show_github_copilot,
+        hovered_auth_cta_rect,
     ) = {
         let state = lock_state();
         match state.as_ref() {
@@ -7486,6 +7720,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.session_percent,
                 s.session_text.clone(),
                 s.session_pace.clone(),
+                s.weekly_state,
                 s.weekly_percent,
                 s.weekly_text.clone(),
                 s.weekly_pace.clone(),
@@ -7494,6 +7729,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.codex_session_percent,
                 s.codex_session_text.clone(),
                 s.codex_session_pace.clone(),
+                s.codex_weekly_state,
                 s.codex_weekly_percent,
                 s.codex_weekly_text.clone(),
                 s.codex_weekly_pace.clone(),
@@ -7513,6 +7749,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.show_codex,
                 s.show_antigravity,
                 s.show_github_copilot,
+                s.hovered_auth_cta_rect,
             ),
             None => return,
         }
@@ -7525,6 +7762,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
     let accent = claude_accent_color();
     let codex_accent = codex_accent_color();
     let antigravity_accent = antigravity_accent_color();
+    let mut auth_cta_hits: Vec<AuthCtaHitTarget> = Vec::new();
 
     unsafe {
         let mut client_rect = RECT::default();
@@ -7559,6 +7797,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             session_pct,
             &session_text,
             session_pace.as_ref(),
+            weekly_state,
             weekly_pct,
             &weekly_text,
             weekly_pace.as_ref(),
@@ -7567,6 +7806,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             codex_session_pct,
             &codex_session_text,
             codex_session_pace.as_ref(),
+            codex_weekly_state,
             codex_weekly_pct,
             &codex_weekly_text,
             codex_weekly_pace.as_ref(),
@@ -7591,6 +7831,8 @@ fn paint(hdc: HDC, hwnd: HWND) {
             popup_layout,
             show_column_dividers,
             outline_usage_track,
+            hovered_auth_cta_rect,
+            &mut auth_cta_hits,
         );
 
         let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
@@ -7598,6 +7840,11 @@ fn paint(hdc: HDC, hwnd: HWND) {
         SelectObject(mem_dc, old_bmp);
         let _ = DeleteObject(mem_bmp);
         let _ = DeleteDC(mem_dc);
+    }
+
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.auth_cta_hit_targets = auth_cta_hits;
     }
 }
 
@@ -7922,6 +8169,12 @@ struct RowCell<'a> {
     accent: &'a Color,
     provider_text_color: Color,
     is_warning: bool,
+    /// `Some` only for a Claude/Codex cell currently showing a high-confidence
+    /// auth-required status (see `provider_auth_action`) — makes this cell's
+    /// status text a click target for that action. `None` for every other
+    /// cell, including every GitHub Copilot/Antigravity cell regardless of
+    /// state.
+    auth_action: Option<AuthAction>,
 }
 
 fn draw_row(
@@ -7935,6 +8188,8 @@ fn draw_row(
     track: &Color,
     warning: &Color,
     track_outline: Option<&Color>,
+    hovered_auth_cta_rect: Option<RECT>,
+    auth_cta_hits: &mut Vec<AuthCtaHitTarget>,
 ) {
     let seg_h = sc(SEGMENT_H);
     let active_models = (cells.len() as i32).max(1);
@@ -7973,7 +8228,7 @@ fn draw_row(
             } else {
                 *text_color
             };
-            draw_usage_bar(
+            let drawn_text_rect = draw_usage_bar(
                 hdc,
                 model_x,
                 y,
@@ -7985,7 +8240,12 @@ fn draw_row(
                 track,
                 &value_color,
                 track_outline,
+                cell.auth_action.is_some(),
+                hovered_auth_cta_rect,
             );
+            if let (Some(action), Some(rect)) = (cell.auth_action, drawn_text_rect) {
+                auth_cta_hits.push(AuthCtaHitTarget { rect, action });
+            }
             if index + 1 < cells.len() {
                 model_x += column_width + sc(MODEL_RIGHT_MARGIN);
             }
@@ -8029,9 +8289,11 @@ fn draw_usage_bar(
     track: &Color,
     text_color: &Color,
     track_outline: Option<&Color>,
-) {
+    is_auth_cta: bool,
+    hovered_auth_cta_rect: Option<RECT>,
+) -> Option<RECT> {
     if !usage_bar_has_content(percent, text) {
-        return;
+        return None;
     }
     let seg_w = sc(SEGMENT_W);
     let seg_h = sc(SEGMENT_H);
@@ -8151,21 +8413,46 @@ fn draw_usage_bar(
         // hand it to `DrawTextW`. Independent from the whole-cell skip
         // above: also covers a future `Some(percent)` with empty `text`
         // (bar segments still draw; only this text-draw step is skipped).
-        if !text_wide.is_empty() {
-            // DT_END_ELLIPSIS (AUM-WINDOW-UI-01C-1): a value+reset string
-            // that overflows `TEXT_WIDTH` (e.g. a long localized reset-in
-            // phrase in a 2-3 provider Standard layout — see `TEXT_WIDTH`'s
-            // own doc on its worst-case sizing not being live-measured) now
-            // truncates with a visible "…" instead of a silent hard clip.
-            // Matches `draw_pace_text_line`'s existing ellipsis handling for
-            // the weekly pace-guidance lines below this row.
-            let _ = DrawTextW(
-                hdc,
-                &mut text_wide,
-                &mut text_rect,
-                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
-            );
+        if text_wide.is_empty() {
+            return None;
         }
+        // DT_END_ELLIPSIS (AUM-WINDOW-UI-01C-1): a value+reset string
+        // that overflows `TEXT_WIDTH` (e.g. a long localized reset-in
+        // phrase in a 2-3 provider Standard layout — see `TEXT_WIDTH`'s
+        // own doc on its worst-case sizing not being live-measured) now
+        // truncates with a visible "…" instead of a silent hard clip.
+        // Matches `draw_pace_text_line`'s existing ellipsis handling for
+        // the weekly pace-guidance lines below this row.
+        let _ = DrawTextW(
+            hdc,
+            &mut text_wide,
+            &mut text_rect,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+        );
+
+        if !is_auth_cta {
+            return None;
+        }
+        // AUTH-RECOVERY-CTA-IMPLEMENT-01: `text_rect` is the cell's fixed
+        // layout rect (known before `DrawTextW`, not derived from it), so it
+        // can be compared directly against `hovered_auth_cta_rect` — no
+        // separate "am I hovered" plumbing is needed. The underline itself
+        // is measured to the actual rendered text width (`GetTextExtentPoint32W`),
+        // not the full column width, so it never underlines trailing blank
+        // space past a short status word.
+        if hovered_auth_cta_rect == Some(text_rect) {
+            let mut extent = SIZE::default();
+            let _ = GetTextExtentPoint32W(hdc, &text_wide, &mut extent);
+            let underline_width = extent.cx.min(text_width);
+            let underline_y = text_rect.top + (seg_h + extent.cy) / 2 + 1;
+            let pen = CreatePen(PS_SOLID, 1, COLORREF(text_color.to_colorref()));
+            let old_pen = SelectObject(hdc, pen);
+            let _ = MoveToEx(hdc, text_rect.left, underline_y, None);
+            let _ = LineTo(hdc, text_rect.left + underline_width, underline_y);
+            SelectObject(hdc, old_pen);
+            let _ = DeleteObject(pen);
+        }
+        Some(text_rect)
     }
 }
 
@@ -8410,6 +8697,81 @@ mod tests {
         assert_eq!(strings.credentials_unavailable, "認証情報を確認できません");
         assert_eq!(strings.authentication_problem, "認証を確認してください");
         assert_eq!(strings.fetch_failed, "取得失敗");
+    }
+
+    // ── AUTH-RECOVERY-CTA-IMPLEMENT-01: only a high-confidence auth state,
+    // for a provider with a safe official CLI login entry point, is ever
+    // CTA-eligible. ──────────────────────────────────────────────────────
+
+    #[test]
+    fn claude_and_codex_auth_states_are_cta_eligible() {
+        for state in [
+            CellState::AuthenticationExpired,
+            CellState::AuthenticationProblem,
+            CellState::CredentialsUnavailable,
+        ] {
+            assert_eq!(
+                provider_auth_action(QuotaFamilyId::Claude, state),
+                Some(AuthAction::ClaudeLogin)
+            );
+            assert_eq!(
+                provider_auth_action(QuotaFamilyId::Codex, state),
+                Some(AuthAction::CodexLogin)
+            );
+        }
+    }
+
+    #[test]
+    fn non_auth_states_are_never_cta_eligible_for_claude_or_codex() {
+        for state in [
+            CellState::Loading,
+            CellState::Ok,
+            CellState::FetchFailed,
+            CellState::Disabled,
+            CellState::NotAvailable,
+        ] {
+            assert_eq!(provider_auth_action(QuotaFamilyId::Claude, state), None);
+            assert_eq!(provider_auth_action(QuotaFamilyId::Codex, state), None);
+        }
+    }
+
+    #[test]
+    fn github_copilot_and_antigravity_are_never_cta_eligible() {
+        for state in [
+            CellState::Loading,
+            CellState::Ok,
+            CellState::AuthenticationExpired,
+            CellState::AuthenticationProblem,
+            CellState::CredentialsUnavailable,
+            CellState::FetchFailed,
+            CellState::Disabled,
+            CellState::NotAvailable,
+        ] {
+            assert_eq!(
+                provider_auth_action(QuotaFamilyId::GithubCopilot, state),
+                None,
+                "GitHub Copilot must never be CTA-eligible (state={state:?}): its failure \
+                 signal can't distinguish not-logged-in from wrong-scope"
+            );
+            assert_eq!(
+                provider_auth_action(QuotaFamilyId::Antigravity, state),
+                None,
+                "Antigravity must never be CTA-eligible (state={state:?}): its CLI has no \
+                 login/auth subcommand"
+            );
+        }
+    }
+
+    #[test]
+    fn auth_action_commands_are_fixed_official_provider_logins() {
+        assert_eq!(
+            AuthAction::ClaudeLogin.command(),
+            ("claude", ["auth", "login"].as_slice())
+        );
+        assert_eq!(
+            AuthAction::CodexLogin.command(),
+            ("codex", ["login"].as_slice())
+        );
     }
 
     #[test]
@@ -8802,19 +9164,42 @@ mod tests {
     fn resize_edge_takes_priority_over_header_drag() {
         let help_rect = help_button_rect_for_client_width(600, 96);
         assert_eq!(
-            pointer_interaction_target(2, 10, 600, 6, 30, help_rect),
+            pointer_interaction_target(2, 10, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::HorizontalResize(HorizontalResizeEdge::Left)
         );
         assert_eq!(
-            pointer_interaction_target(598, 10, 600, 6, 30, help_rect),
+            pointer_interaction_target(598, 10, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::HorizontalResize(HorizontalResizeEdge::Right)
         );
         assert_eq!(
-            pointer_interaction_target(300, 10, 600, 6, 30, help_rect),
+            pointer_interaction_target(300, 10, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::HeaderDrag
         );
         assert_eq!(
-            pointer_interaction_target(300, 40, 600, 6, 30, help_rect),
+            pointer_interaction_target(300, 40, 600, 6, 30, help_rect, &[]),
+            PointerInteractionTarget::None
+        );
+    }
+
+    #[test]
+    fn auth_cta_hit_target_is_found_inside_its_rect_and_not_outside() {
+        let help_rect = help_button_rect_for_client_width(600, 96);
+        let cta_rect = RECT {
+            left: 100,
+            top: 200,
+            right: 160,
+            bottom: 220,
+        };
+        let hits = [AuthCtaHitTarget {
+            rect: cta_rect,
+            action: AuthAction::CodexLogin,
+        }];
+        assert_eq!(
+            pointer_interaction_target(120, 210, 600, 6, 30, help_rect, &hits),
+            PointerInteractionTarget::AuthCta(AuthAction::CodexLogin)
+        );
+        assert_eq!(
+            pointer_interaction_target(300, 210, 600, 6, 30, help_rect, &hits),
             PointerInteractionTarget::None
         );
     }
@@ -8881,15 +9266,15 @@ mod tests {
         let help_y = (help_rect.top + help_rect.bottom) / 2;
 
         assert_eq!(
-            pointer_interaction_target(help_x, help_y, 600, 6, 30, help_rect),
+            pointer_interaction_target(help_x, help_y, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::HelpButton
         );
         assert_eq!(
-            pointer_interaction_target(2, help_y, 600, 30, 30, help_rect),
+            pointer_interaction_target(2, help_y, 600, 30, 30, help_rect, &[]),
             PointerInteractionTarget::HorizontalResize(HorizontalResizeEdge::Left)
         );
         assert_eq!(
-            pointer_interaction_target(300, help_y, 600, 6, 30, help_rect),
+            pointer_interaction_target(300, help_y, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::HeaderDrag
         );
     }
