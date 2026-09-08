@@ -29,9 +29,13 @@ use crate::models::{
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 #[cfg(feature = "claude-messages-fallback")]
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
-const CODEX_USAGE_URL: &str = "https://chatgpt.com/backend-api/wham/usage";
 const CODEX_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(10);
-const CODEX_BANKED_RESET_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
+/// Codex quota (5h/7d usage and banked reset) comes from a single
+/// `codex app-server` `account/rateLimits/read` call per
+/// `CODEX-OFFICIAL-PATH-IMPLEMENT-01`. This TTL bounds how often that
+/// subprocess is spawned across the app's ~5s poll cycle without standing up
+/// a resident daemon.
+const CODEX_RATE_LIMITS_CACHE_TTL: Duration = Duration::from_secs(45);
 const GITHUB_API_VERSION: &str = "2026-03-10";
 const GITHUB_COPILOT_USAGE_ENDPOINT_SUFFIX: &str = "/settings/billing/ai_credit/usage";
 #[cfg(feature = "antigravity")]
@@ -202,22 +206,6 @@ struct UsageBucket {
 }
 
 #[derive(Deserialize)]
-struct CodexAuthFile {
-    tokens: Option<CodexTokenData>,
-}
-
-#[derive(Clone, Deserialize)]
-struct CodexTokenData {
-    access_token: String,
-    account_id: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct CodexUsageResponse {
-    rate_limit: Option<Option<Box<CodexRateLimitDetails>>>,
-}
-
-#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GithubAiCreditUsageResponse {
     #[serde(default)]
@@ -231,24 +219,6 @@ struct GithubAiCreditUsageItem {
     sku: String,
     unit_type: String,
     gross_quantity: f64,
-}
-
-#[derive(Deserialize)]
-struct CodexRateLimitDetails {
-    primary_window: Option<Option<Box<CodexRateLimitWindow>>>,
-    secondary_window: Option<Option<Box<CodexRateLimitWindow>>>,
-}
-
-#[derive(Deserialize)]
-struct CodexRateLimitWindow {
-    used_percent: f64,
-    reset_at: i64,
-    /// This window's actual length in seconds — the sole basis for
-    /// classifying it as the 5h/session window or the 7d/weekly window (see
-    /// `apply_codex_window`). `Option<T>` fields already deserialize to
-    /// `None` when the JSON key is absent, so an older/different response
-    /// shape missing this key doesn't fail the whole response.
-    limit_window_seconds: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -301,9 +271,9 @@ enum CodexAppServerMessage {
 }
 
 #[derive(Default)]
-struct CodexBankedResetCache {
+struct CodexUsageCache {
     fetched_at: Option<Instant>,
-    available_count: Option<u64>,
+    usage: Option<Result<UsageData, CodexAppServerError>>,
 }
 
 #[cfg(feature = "antigravity")]
@@ -444,8 +414,8 @@ pub(crate) fn poll_report(
     }
 }
 
-/// Headless polling prefers Codex's native app-server quota API while the GUI
-/// keeps using `poll_report` and its established HTTP path unchanged.
+/// Headless polling shares the same `poll_codex` (app-server-only) path as
+/// the GUI's `poll_report` — Codex quota is fetched identically either way.
 pub(crate) fn poll_report_headless(
     show_claude_code: bool,
     show_codex: bool,
@@ -458,7 +428,7 @@ pub(crate) fn poll_report_headless(
             show_codex,
             show_antigravity,
             poll_claude_code,
-            poll_codex_headless,
+            poll_codex,
             poll_antigravity,
         );
     }
@@ -471,7 +441,7 @@ pub(crate) fn poll_report_headless(
             show_codex,
             false,
             poll_claude_code,
-            poll_codex_headless,
+            poll_codex,
             || unreachable!("Antigravity is unavailable in this build"),
         )
     }
@@ -710,46 +680,15 @@ fn poll_claude_code() -> Result<UsageData, PollError> {
     fetch_usage_with_fallback(&creds.access_token)
 }
 
+/// Codex quota is fetched exclusively through OpenAI's own `codex app-server`
+/// (`account/rateLimits/read`) per `CODEX-OFFICIAL-PATH-IMPLEMENT-01`. The app
+/// never reads `~/.codex/auth.json`, extracts or refreshes a Codex OAuth
+/// token, or calls a ChatGPT/Codex backend endpoint directly — authentication
+/// is entirely the app-server's (and thus the Codex CLI login's)
+/// responsibility. There is deliberately no fallback to a legacy credential
+/// or HTTP path on any app-server failure.
 fn poll_codex() -> Result<UsageData, PollError> {
-    let creds = match read_codex_credentials() {
-        Some(creds) => creds,
-        None => {
-            diagnose::log("Codex usage poll failed: no Codex credentials found");
-            return Err(PollError::NoCredentials);
-        }
-    };
-
-    let result =
-        fetch_codex_usage_with_banked_reset(&creds.access_token, creds.account_id.as_deref());
-
-    #[cfg(feature = "legacy-auto-refresh")]
-    match result {
-        Ok(data) => Ok(data),
-        Err(PollError::AuthRequired) => {
-            cli_refresh_codex_token();
-            let refreshed = read_codex_credentials().ok_or(PollError::TokenExpired)?;
-            fetch_codex_usage_with_banked_reset(
-                &refreshed.access_token,
-                refreshed.account_id.as_deref(),
-            )
-        }
-        Err(error) => Err(error),
-    }
-
-    #[cfg(not(feature = "legacy-auto-refresh"))]
-    result
-}
-
-fn poll_codex_headless() -> Result<UsageData, PollError> {
-    match fetch_codex_app_server_usage() {
-        Ok(usage) => Ok(usage),
-        Err(error) => {
-            diagnose::log(format!(
-                "Codex native quota read unavailable ({error:?}); falling back to existing endpoint"
-            ));
-            poll_codex()
-        }
-    }
+    cached_codex_usage().map_err(codex_app_server_error_to_poll_error)
 }
 
 #[cfg(feature = "antigravity")]
@@ -1044,51 +983,6 @@ fn cli_refresh_wsl_token(distro: &str) {
     wait_for_refresh(&mut child);
 }
 
-#[cfg(feature = "legacy-auto-refresh")]
-fn cli_refresh_codex_token() {
-    let codex_path = resolve_windows_codex_path().unwrap_or_else(|| "codex.cmd".to_string());
-    let is_cmd = codex_path.to_lowercase().ends_with(".cmd");
-    let is_ps1 = codex_path.to_lowercase().ends_with(".ps1");
-    diagnose::log(format!(
-        "attempting Windows Codex token refresh via {codex_path}"
-    ));
-
-    let args: &[&str] = &["exec", "."];
-
-    let mut cmd = if is_cmd {
-        let mut c = Command::new("cmd.exe");
-        c.arg("/c").arg(&codex_path).args(args);
-        c
-    } else if is_ps1 {
-        let mut c = Command::new("powershell.exe");
-        c.arg("-NoProfile")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(&codex_path)
-            .args(args);
-        c
-    } else {
-        let mut c = Command::new(&codex_path);
-        c.args(args);
-        c
-    };
-    cmd.creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(error) => {
-            diagnose::log_error("unable to spawn Windows Codex token refresh", error);
-            return;
-        }
-    };
-
-    wait_for_refresh(&mut child);
-}
-
 /// Spawn a command and wait up to `timeout` for it to finish.
 /// Returns None if the process fails to start or exceeds the deadline.
 fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
@@ -1356,12 +1250,6 @@ impl Drop for CodexAppServer {
     }
 }
 
-fn fetch_codex_banked_reset_count() -> Result<Option<u64>, CodexAppServerError> {
-    Ok(fetch_codex_rate_limits_result()?
-        .rate_limit_reset_credits
-        .map(|credits| credits.available_count))
-}
-
 fn configure_codex_home(
     command: &mut Command,
     existing_codex_home: Option<std::ffi::OsString>,
@@ -1443,16 +1331,7 @@ fn codex_native_usage_from_result(
     Ok(usage)
 }
 
-fn banked_reset_count_from_response(
-    response: CodexAppServerResponse,
-) -> Result<Option<u64>, CodexAppServerError> {
-    let result = response.result.ok_or(CodexAppServerError::Protocol)?;
-    Ok(result
-        .rate_limit_reset_credits
-        .map(|credits| credits.available_count))
-}
-
-fn log_codex_banked_reset_error(error: CodexAppServerError) {
+fn log_codex_app_server_error(error: CodexAppServerError) {
     let category = match error {
         CodexAppServerError::CliUnavailable => "Codex CLI unavailable",
         CodexAppServerError::StartFailed => "app-server start failed",
@@ -1460,33 +1339,56 @@ fn log_codex_banked_reset_error(error: CodexAppServerError) {
         CodexAppServerError::Timeout => "app-server timeout",
         CodexAppServerError::Protocol => "app-server protocol error",
     };
-    diagnose::log(format!("Codex banked reset unavailable: {category}"));
+    diagnose::log(format!("Codex quota unavailable: {category}"));
 }
 
-fn cached_codex_banked_reset_count() -> Option<u64> {
-    static CACHE: OnceLock<Mutex<CodexBankedResetCache>> = OnceLock::new();
+/// Maps an app-server failure onto an existing `PollError` variant rather
+/// than growing a new one (`CODEX-OFFICIAL-PATH-IMPLEMENT-01` calls for no
+/// new variants when an existing one already fits): `CliUnavailable` reads
+/// the same as "no way to obtain Codex credentials/quota" to the UI
+/// (`CellState::CredentialsUnavailable`), while every other app-server
+/// failure (start/initialize/timeout/protocol) degrades to the generic
+/// `RequestFailed` fetch-failure state. There is no `AuthRequired` mapping
+/// here: this app never inspects Codex auth state itself, so it cannot claim
+/// to know that re-authentication specifically is what's needed.
+fn codex_app_server_error_to_poll_error(error: CodexAppServerError) -> PollError {
+    log_codex_app_server_error(error);
+    match error {
+        CodexAppServerError::CliUnavailable => PollError::NoCredentials,
+        CodexAppServerError::StartFailed
+        | CodexAppServerError::InitializeFailed
+        | CodexAppServerError::Timeout
+        | CodexAppServerError::Protocol => PollError::RequestFailed,
+    }
+}
+
+/// Short-TTL cache around one `account/rateLimits/read` app-server round
+/// trip. Both 5h/7d usage and the banked reset count come from this single
+/// cached result (`codex_native_usage_from_result`), so a poll cycle never
+/// spawns `codex app-server` more than once per `CODEX_RATE_LIMITS_CACHE_TTL`
+/// regardless of how many quota rows are on screen.
+fn cached_codex_usage() -> Result<UsageData, CodexAppServerError> {
+    static CACHE: OnceLock<Mutex<CodexUsageCache>> = OnceLock::new();
 
     let now = Instant::now();
     let mut cache = CACHE
-        .get_or_init(|| Mutex::new(CodexBankedResetCache::default()))
+        .get_or_init(|| Mutex::new(CodexUsageCache::default()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if cache
-        .fetched_at
-        .is_some_and(|fetched_at| now.duration_since(fetched_at) < CODEX_BANKED_RESET_CACHE_TTL)
-    {
-        return cache.available_count;
+
+    if let Some(usage) = &cache.usage {
+        if cache
+            .fetched_at
+            .is_some_and(|fetched_at| now.duration_since(fetched_at) < CODEX_RATE_LIMITS_CACHE_TTL)
+        {
+            return usage.clone();
+        }
     }
 
-    cache.available_count = match fetch_codex_banked_reset_count() {
-        Ok(count) => count,
-        Err(error) => {
-            log_codex_banked_reset_error(error);
-            None
-        }
-    };
+    let usage = fetch_codex_app_server_usage();
+    cache.usage = Some(usage.clone());
     cache.fetched_at = Some(Instant::now());
-    cache.available_count
+    usage
 }
 
 fn build_agent() -> Result<ureq::Agent, PollError> {
@@ -1785,120 +1687,6 @@ fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
     }
 
     data
-}
-
-fn fetch_codex_usage(token: &str, account_id: Option<&str>) -> Result<UsageData, PollError> {
-    let agent = build_agent()?;
-    let mut request = agent
-        .get(CODEX_USAGE_URL)
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("User-Agent", "codex-cli");
-
-    if let Some(account_id) = account_id.filter(|value| !value.is_empty()) {
-        request = request.set("ChatGPT-Account-Id", account_id);
-    }
-
-    let resp = match request.call() {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!(
-                "Codex usage endpoint returned auth error status {code}; refresh required"
-            ));
-            return Err(PollError::AuthRequired);
-        }
-        Err(error) => {
-            diagnose::log_error("Codex usage endpoint request failed", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    let response: CodexUsageResponse = match resp.into_json() {
-        Ok(response) => response,
-        Err(error) => {
-            diagnose::log_error("unable to parse Codex usage response", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    codex_usage_from_response(response).ok_or(PollError::RequestFailed)
-}
-
-fn fetch_codex_usage_with_banked_reset(
-    token: &str,
-    account_id: Option<&str>,
-) -> Result<UsageData, PollError> {
-    let usage = fetch_codex_usage(token, account_id)?;
-    Ok(with_banked_reset_count(
-        usage,
-        cached_codex_banked_reset_count(),
-    ))
-}
-
-fn with_banked_reset_count(mut usage: UsageData, available_count: Option<u64>) -> UsageData {
-    usage.banked_reset_count = available_count
-        .map(BankedResetCount::Available)
-        .unwrap_or(BankedResetCount::Unavailable);
-    usage
-}
-
-/// AUM-CODEX-WINDOW-CLASSIFICATION-HF2: the 5h/session window's real length,
-/// in seconds. Codex's `primary_window`/`secondary_window` are positional
-/// slots, not a session/weekly guarantee — Codex has been observed to put
-/// the weekly window in `primary_window` (with `secondary_window` absent)
-/// when no 5-hour window is currently returned — so classification here
-/// uses each window's own `limit_window_seconds` instead of its position.
-const CODEX_SESSION_WINDOW_SECONDS: u64 = 18_000;
-/// The 7d/weekly window's real length, in seconds. See
-/// `CODEX_SESSION_WINDOW_SECONDS`.
-const CODEX_WEEKLY_WINDOW_SECONDS: u64 = 604_800;
-
-fn codex_usage_from_response(response: CodexUsageResponse) -> Option<UsageData> {
-    let details = *response.rate_limit.flatten()?;
-    let mut data = UsageData::default();
-
-    if let Some(window) = details.primary_window.flatten() {
-        apply_codex_window(&mut data, &window);
-    }
-
-    if let Some(window) = details.secondary_window.flatten() {
-        apply_codex_window(&mut data, &window);
-    }
-
-    Some(data)
-}
-
-/// Merges one Codex rate-limit window into `data`, classified solely by its
-/// `limit_window_seconds` (`CODEX_SESSION_WINDOW_SECONDS`/
-/// `CODEX_WEEKLY_WINDOW_SECONDS`) — never by whether it came from
-/// `primary_window` or `secondary_window`, and never by how soon
-/// `reset_at` is (a weekly window's remaining time also drops under 5 hours
-/// right before it resets, which would misclassify it as the session window
-/// under a time-based guess). A window whose duration is missing or doesn't
-/// match either known length is dropped entirely: a wrong "5h"/"7d" label is
-/// worse than that row showing "not available".
-///
-/// `codex_usage_from_response` always calls this for `primary_window` before
-/// `secondary_window`. If both windows this poll classify into the same
-/// slot, the `session_available`/`weekly_available` guards below mean only
-/// the first one processed is kept — the second is dropped rather than
-/// silently overwriting it.
-fn apply_codex_window(data: &mut UsageData, window: &CodexRateLimitWindow) {
-    match window.limit_window_seconds {
-        Some(CODEX_SESSION_WINDOW_SECONDS) if !data.session_available() => {
-            data.set_session(codex_section_from_window(window));
-        }
-        Some(CODEX_WEEKLY_WINDOW_SECONDS) if !data.weekly_available() => {
-            data.set_weekly(codex_section_from_window(window));
-        }
-        _ => {}
-    }
-}
-
-fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
-    UsageSection {
-        percentage: window.used_percent,
-        resets_at: unix_to_system_time(Some(window.reset_at)),
-    }
 }
 
 #[cfg(feature = "antigravity")]
@@ -2278,34 +2066,6 @@ fn read_credentials_from_source(source: &CredentialSource) -> Option<Credentials
         }
         CredentialSource::Wsl { distro } => read_wsl_credentials(distro),
     }
-}
-
-fn codex_auth_path() -> Option<PathBuf> {
-    if let Some(codex_home) = std::env::var_os("CODEX_HOME").map(PathBuf::from) {
-        return Some(codex_home.join("auth.json"));
-    }
-
-    Some(resolve_user_home()?.join(".codex").join("auth.json"))
-}
-
-fn read_codex_credentials() -> Option<CodexTokenData> {
-    let auth_path = codex_auth_path()?;
-    let content = match std::fs::read_to_string(&auth_path) {
-        Ok(content) => content,
-        Err(error) => {
-            diagnose::log_error(
-                &format!(
-                    "unable to read Codex credentials at {}",
-                    auth_path.display()
-                ),
-                error,
-            );
-            return None;
-        }
-    };
-
-    let auth: CodexAuthFile = serde_json::from_str(&content).ok()?;
-    auth.tokens.filter(|tokens| !tokens.access_token.is_empty())
 }
 
 #[cfg(feature = "antigravity")]
@@ -2732,30 +2492,6 @@ mod tests {
         usage
     }
 
-    fn codex_response(
-        primary_window: Option<CodexRateLimitWindow>,
-        secondary_window: Option<CodexRateLimitWindow>,
-    ) -> CodexUsageResponse {
-        CodexUsageResponse {
-            rate_limit: Some(Some(Box::new(CodexRateLimitDetails {
-                primary_window: primary_window.map(|window| Some(Box::new(window))),
-                secondary_window: secondary_window.map(|window| Some(Box::new(window))),
-            }))),
-        }
-    }
-
-    fn codex_window(
-        used_percent: f64,
-        reset_at: i64,
-        limit_window_seconds: Option<u64>,
-    ) -> CodexRateLimitWindow {
-        CodexRateLimitWindow {
-            used_percent,
-            reset_at,
-            limit_window_seconds,
-        }
-    }
-
     #[test]
     fn claude_missing_windows_remain_unavailable() {
         let usage = claude_usage_from_response(UsageResponse {
@@ -2800,222 +2536,35 @@ mod tests {
         assert_eq!(usage.weekly.percentage, 42.0);
     }
 
-    // ── AUM-CODEX-WINDOW-CLASSIFICATION-HF2: Codex windows are classified by
-    // `limit_window_seconds`, never by primary/secondary position — Codex has
-    // been observed to report the weekly window as `primary_window` (with
-    // `secondary_window` absent) when no 5-hour window is currently
-    // returned. ─────────────────────────────────────────────────────────
+    // ── CODEX-OFFICIAL-PATH-IMPLEMENT-01: Codex quota comes exclusively from
+    // `codex app-server`'s `account/rateLimits/read`, classified by
+    // `windowDurationMins` (never by `primary`/`secondary` position). ──────
 
-    /// Case 1: both windows present with their real durations classify into
-    /// their matching slot, and `used_percent`/`reset_at` survive
-    /// unchanged (also covers case 9).
-    #[test]
-    fn codex_classifies_session_and_weekly_by_duration() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(12.0, 100, Some(CODEX_SESSION_WINDOW_SECONDS))),
-            Some(codex_window(34.0, 200, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.session_available());
-        assert!(usage.weekly_available());
-        assert_eq!(usage.session.percentage, 12.0);
-        assert_eq!(usage.weekly.percentage, 34.0);
-        assert_eq!(usage.session.resets_at, unix_to_system_time(Some(100)));
-        assert_eq!(usage.weekly.resets_at, unix_to_system_time(Some(200)));
+    fn codex_rate_limits_result(json: &str) -> CodexRateLimitsReadResult {
+        serde_json::from_str::<CodexAppServerResponse>(json)
+            .expect("valid app-server response envelope should parse")
+            .result
+            .expect("response should carry a result")
     }
 
-    /// Case 2: the exact live HF2 bug shape — Codex puts the weekly window
-    /// in `primary_window` (5h window not currently returned,
-    /// `secondary_window` absent). Must land in `weekly`, not `session`.
-    #[test]
-    fn codex_weekly_reported_as_primary_with_secondary_absent_stays_weekly() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(82.0, 300, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-            None,
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(
-            !usage.session_available(),
-            "a weekly-duration window in the primary slot must not appear as the 5h row"
-        );
-        assert!(usage.weekly_available());
-        assert_eq!(usage.weekly.percentage, 82.0);
-    }
-
-    /// Case 3: mirror of case 2 — a session-duration window reported as
-    /// `secondary_window` with `primary_window` absent must still land in
-    /// `session`.
-    #[test]
-    fn codex_session_reported_as_secondary_with_primary_absent_stays_session() {
-        let usage = codex_usage_from_response(codex_response(
-            None,
-            Some(codex_window(50.0, 400, Some(CODEX_SESSION_WINDOW_SECONDS))),
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.session_available());
-        assert!(!usage.weekly_available());
-        assert_eq!(usage.session.percentage, 50.0);
-    }
-
-    /// Case 4: both windows present with their positions swapped relative to
-    /// case 1 (weekly duration in `primary_window`, session duration in
-    /// `secondary_window`) — classification must still follow duration, not
-    /// position.
-    #[test]
-    fn codex_classifies_correctly_regardless_of_primary_secondary_order() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(60.0, 500, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-            Some(codex_window(15.0, 600, Some(CODEX_SESSION_WINDOW_SECONDS))),
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.session_available());
-        assert!(usage.weekly_available());
-        assert_eq!(usage.session.percentage, 15.0);
-        assert_eq!(usage.weekly.percentage, 60.0);
-    }
-
-    /// Case 5: `limit_window_seconds` missing entirely — dropped rather than
-    /// guessed into either slot.
-    #[test]
-    fn codex_window_with_missing_duration_is_not_classified() {
-        let usage =
-            codex_usage_from_response(codex_response(Some(codex_window(70.0, 700, None)), None))
-                .expect("rate limit details should produce usage");
-
-        assert!(!usage.session_available());
-        assert!(!usage.weekly_available());
-    }
-
-    /// Case 6: a duration that matches neither known window length — also
-    /// dropped rather than guessed.
-    #[test]
-    fn codex_window_with_unknown_duration_is_not_classified() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(70.0, 700, Some(3_600))),
-            None,
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(!usage.session_available());
-        assert!(!usage.weekly_available());
-    }
-
-    /// Case 7: a weekly-duration window whose `reset_at` is imminent (well
-    /// under 5 hours away) must still classify as weekly — classification
-    /// uses only `limit_window_seconds`, never a `reset_at`-based guess that
-    /// would otherwise misread an about-to-reset weekly window as the
-    /// session window.
-    #[test]
-    fn codex_weekly_classification_is_not_affected_by_near_reset_time() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(95.0, 1, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-            None,
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(!usage.session_available());
-        assert!(usage.weekly_available());
-        assert_eq!(usage.weekly.percentage, 95.0);
-    }
-
-    /// Case 8 (session slot): both windows report the same (session)
-    /// duration — the first one processed (`primary_window`) is kept, the
-    /// second is dropped rather than silently overwriting it.
-    #[test]
-    fn codex_duplicate_session_windows_keep_the_first_value() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(12.0, 100, Some(CODEX_SESSION_WINDOW_SECONDS))),
-            Some(codex_window(99.0, 200, Some(CODEX_SESSION_WINDOW_SECONDS))),
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.session_available());
-        assert_eq!(usage.session.percentage, 12.0);
-        assert_eq!(usage.session.resets_at, unix_to_system_time(Some(100)));
-    }
-
-    /// Case 8 (weekly slot): mirror of the session case above.
-    #[test]
-    fn codex_duplicate_weekly_windows_keep_the_first_value() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(20.0, 100, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-            Some(codex_window(88.0, 200, Some(CODEX_WEEKLY_WINDOW_SECONDS))),
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.weekly_available());
-        assert_eq!(usage.weekly.percentage, 20.0);
-        assert_eq!(usage.weekly.resets_at, unix_to_system_time(Some(100)));
-    }
-
-    /// Case 10: the real wire shape — `rate_limit.primary_window`/
-    /// `secondary_window`, each carrying `limit_window_seconds` in
-    /// snake_case, deserializes correctly via `serde_json`.
-    #[test]
-    fn codex_rate_limit_window_deserializes_limit_window_seconds_from_snake_case_json() {
-        let response: CodexUsageResponse = serde_json::from_str(
-            r#"{
-                "rate_limit": {
-                    "primary_window": {
-                        "used_percent": 82.0,
-                        "reset_at": 1754611200,
-                        "limit_window_seconds": 604800
-                    },
-                    "secondary_window": null
-                }
-            }"#,
-        )
-        .expect("valid Codex usage JSON should deserialize");
-
-        let usage =
-            codex_usage_from_response(response).expect("rate limit details should produce usage");
-
-        assert!(!usage.session_available());
-        assert!(usage.weekly_available());
-        assert_eq!(usage.weekly.percentage, 82.0);
-    }
-
-    #[test]
-    fn codex_actual_zero_is_available() {
-        let usage = codex_usage_from_response(codex_response(
-            Some(codex_window(0.0, 10, Some(CODEX_SESSION_WINDOW_SECONDS))),
-            None,
-        ))
-        .expect("rate limit details should produce usage");
-
-        assert!(usage.session_available());
-        assert_eq!(usage.session.percentage, 0.0);
-        assert!(!usage.weekly_available());
-    }
-
+    /// A: normal round trip — both windows present, `usedPercent`/`resetsAt`
+    /// survive unchanged, and the banked reset count comes from the same
+    /// response's `rateLimitResetCredits.availableCount`.
     #[test]
     fn codex_native_rate_limits_map_to_session_and_weekly_windows() {
-        let response: CodexAppServerResponse = serde_json::from_value(serde_json::json!({
-            "id": 2,
-            "result": {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
                 "rateLimits": {
-                    "primary": {
-                        "usedPercent": 12,
-                        "resetsAt": 1_234,
-                        "windowDurationMins": 300
-                    },
-                    "secondary": {
-                        "usedPercent": 34,
-                        "resetsAt": 5_678,
-                        "windowDurationMins": 10_080
-                    }
+                    "primary": {"usedPercent": 12, "resetsAt": 1234, "windowDurationMins": 300},
+                    "secondary": {"usedPercent": 34, "resetsAt": 5678, "windowDurationMins": 10080}
                 },
-                "rateLimitResetCredits": { "availableCount": 2 }
-            }
-        }))
-        .expect("valid app-server response");
+                "rateLimitResetCredits": {"availableCount": 2}
+            }}"#,
+        );
 
-        let usage = codex_native_usage_from_result(response.result.expect("result"))
-            .expect("known native windows");
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
+        assert!(usage.session_available());
+        assert!(usage.weekly_available());
         assert_eq!(usage.session.percentage, 12.0);
         assert_eq!(usage.weekly.percentage, 34.0);
         assert_eq!(usage.session.resets_at, unix_to_system_time(Some(1_234)));
@@ -3023,96 +2572,209 @@ mod tests {
         assert_eq!(usage.banked_reset_count, BankedResetCount::Available(2));
     }
 
-    fn reset_count_from_json(json: &str) -> Result<Option<u64>, CodexAppServerError> {
-        let response = serde_json::from_str::<CodexAppServerResponse>(json)
-            .map_err(|_| CodexAppServerError::Protocol)?;
-        banked_reset_count_from_response(response)
-    }
-
+    /// B: `primary`/`secondary` reversed relative to case A — classification
+    /// must still follow `windowDurationMins`, not slot position.
     #[test]
-    fn codex_banked_reset_available_count_one_is_preserved() {
-        let count = reset_count_from_json(
-            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":{"availableCount":1,"credits":null}}}"#,
-        )
-        .expect("valid app-server response should parse");
-
-        assert_eq!(count, Some(1));
-    }
-
-    #[test]
-    fn codex_banked_reset_available_count_zero_is_preserved() {
-        let count = reset_count_from_json(
-            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":{"availableCount":0}}}"#,
-        )
-        .expect("valid app-server response should parse");
-
-        assert_eq!(count, Some(0));
-    }
-
-    #[test]
-    fn codex_banked_reset_missing_or_null_is_unavailable() {
-        let missing = reset_count_from_json(r#"{"id":2,"result":{"rateLimits":{}}}"#)
-            .expect("missing optional field should parse");
-        let null = reset_count_from_json(
-            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":null}}"#,
-        )
-        .expect("null optional field should parse");
-
-        assert_eq!(missing, None);
-        assert_eq!(null, None);
-    }
-
-    #[test]
-    fn codex_banked_reset_uses_summary_count_not_detail_rows() {
-        let count = reset_count_from_json(
-            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":{"availableCount":3,"credits":[{}]}}}"#,
-        )
-        .expect("detail rows should be ignored");
-
-        assert_eq!(count, Some(3));
-    }
-
-    #[test]
-    fn codex_banked_reset_malformed_summary_is_a_protocol_error() {
-        let result = reset_count_from_json(
-            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":{}}}"#,
+    fn codex_native_classifies_correctly_regardless_of_primary_secondary_order() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": {"usedPercent": 60, "resetsAt": 500, "windowDurationMins": 10080},
+                    "secondary": {"usedPercent": 15, "resetsAt": 600, "windowDurationMins": 300}
+                }
+            }}"#,
         );
 
-        assert_eq!(result, Err(CodexAppServerError::Protocol));
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
+        assert!(usage.session_available());
+        assert!(usage.weekly_available());
+        assert_eq!(usage.session.percentage, 15.0);
+        assert_eq!(usage.weekly.percentage, 60.0);
     }
 
+    /// C: only the 5h window is present — 5h is available, 7d stays
+    /// unavailable rather than showing a fabricated 0%.
     #[test]
-    fn codex_banked_reset_protocol_failure_does_not_remove_existing_usage() {
-        let usage = usage_with_session_percent(42.0);
-        let response = serde_json::from_str::<CodexAppServerResponse>(
-            r#"{"id":2,"error":{"code":-32603,"message":"request failed"}}"#,
-        )
-        .expect("error envelope should parse without retaining its contents");
-        let count = banked_reset_count_from_response(response).ok().flatten();
-        let usage = with_banked_reset_count(usage, count);
+    fn codex_native_five_hour_only_leaves_weekly_unavailable() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": {"usedPercent": 25, "resetsAt": 100, "windowDurationMins": 300},
+                    "secondary": null
+                }
+            }}"#,
+        );
 
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
         assert!(usage.session_available());
-        assert_eq!(usage.session.percentage, 42.0);
+        assert!(!usage.weekly_available());
+        assert_eq!(usage.session.percentage, 25.0);
+        assert_eq!(usage.weekly.percentage, 0.0);
+    }
+
+    /// D: only the 7d/weekly window is present — mirror of case C.
+    #[test]
+    fn codex_native_weekly_only_leaves_session_unavailable() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": null,
+                    "secondary": {"usedPercent": 70, "resetsAt": 200, "windowDurationMins": 10080}
+                }
+            }}"#,
+        );
+
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
+        assert!(!usage.session_available());
+        assert!(usage.weekly_available());
+        assert_eq!(usage.weekly.percentage, 70.0);
+        assert_eq!(usage.session.percentage, 0.0);
+    }
+
+    /// E: a null window must not be treated as a fabricated 0% row.
+    #[test]
+    fn codex_native_null_window_is_not_fabricated_as_zero() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{"rateLimits": {"primary": null, "secondary": null}}}"#,
+        );
+
+        let error = codex_native_usage_from_result(result)
+            .expect_err("no usable window should be a protocol error, not a fabricated 0%");
+        assert_eq!(error, CodexAppServerError::Protocol);
+    }
+
+    /// F: `windowDurationMins` missing entirely on an otherwise valid window
+    /// — dropped rather than guessed into either slot.
+    #[test]
+    fn codex_native_window_with_missing_duration_is_not_classified() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": {"usedPercent": 70, "resetsAt": 700},
+                    "secondary": null
+                }
+            }}"#,
+        );
+
+        let error = codex_native_usage_from_result(result)
+            .expect_err("a window with no duration should not be classified");
+        assert_eq!(error, CodexAppServerError::Protocol);
+    }
+
+    /// F: `resetsAt` missing on an otherwise valid window — the window is
+    /// still available, just with no reset time.
+    #[test]
+    fn codex_native_window_with_missing_resets_at_still_available() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": {"usedPercent": 40, "windowDurationMins": 300},
+                    "secondary": null
+                }
+            }}"#,
+        );
+
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
+        assert!(usage.session_available());
+        assert_eq!(usage.session.percentage, 40.0);
+        assert_eq!(usage.session.resets_at, None);
+    }
+
+    /// F: `usedPercent` missing is a required field on the wire shape —
+    /// the whole response fails to parse rather than defaulting to 0 or
+    /// panicking.
+    #[test]
+    fn codex_native_window_with_missing_used_percent_fails_to_parse() {
+        let response = serde_json::from_str::<CodexAppServerResponse>(
+            r#"{"id":2,"result":{
+                "rateLimits": {"primary": {"resetsAt": 100, "windowDurationMins": 300}}
+            }}"#,
+        );
+
+        assert!(
+            response.is_err(),
+            "a window missing the required usedPercent field must not silently parse"
+        );
+    }
+
+    /// F: `rateLimitResetCredits`/`availableCount` missing — banked reset is
+    /// unavailable, not fabricated as zero, while usage windows remain valid.
+    #[test]
+    fn codex_native_missing_banked_reset_is_unavailable_not_zero() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {"primary": {"usedPercent": 5, "windowDurationMins": 300}}
+            }}"#,
+        );
+
+        let usage = codex_native_usage_from_result(result).expect("known native windows");
         assert_eq!(usage.banked_reset_count, BankedResetCount::Unavailable);
     }
 
+    /// F: `rateLimitResetCredits` present but malformed (missing the
+    /// required `availableCount`) — the whole response fails to parse.
     #[test]
-    fn codex_banked_reset_count_is_independent_of_credit_details() {
-        let usage = with_banked_reset_count(usage_with_session_percent(42.0), Some(2));
+    fn codex_native_malformed_banked_reset_summary_fails_to_parse() {
+        let response = serde_json::from_str::<CodexAppServerResponse>(
+            r#"{"id":2,"result":{"rateLimits":{},"rateLimitResetCredits":{}}}"#,
+        );
 
-        assert_eq!(usage.banked_reset_count, BankedResetCount::Available(2));
-        assert!(usage.session_available());
+        assert!(
+            response.is_err(),
+            "a malformed rateLimitResetCredits summary must not silently parse"
+        );
     }
 
+    /// G: a duration matching neither 300 nor 10080 minutes must not be
+    /// guessed into either slot.
     #[test]
-    fn codex_missing_rate_limit_remains_request_failed() {
-        let result = codex_usage_from_response(CodexUsageResponse { rate_limit: None })
-            .ok_or(PollError::RequestFailed);
-
-        assert_eq!(
-            result.expect_err("missing rate limit should remain an error"),
-            PollError::RequestFailed
+    fn codex_native_window_with_unknown_duration_is_not_classified() {
+        let result = codex_rate_limits_result(
+            r#"{"id":2,"result":{
+                "rateLimits": {
+                    "primary": {"usedPercent": 70, "resetsAt": 700, "windowDurationMins": 60},
+                    "secondary": null
+                }
+            }}"#,
         );
+
+        let error = codex_native_usage_from_result(result)
+            .expect_err("an unknown window duration should not be classified");
+        assert_eq!(error, CodexAppServerError::Protocol);
+    }
+
+    /// H: a malformed top-level response (a JSON-RPC error envelope with no
+    /// `result`) degrades to a `Protocol` error rather than panicking.
+    #[test]
+    fn codex_error_envelope_response_has_no_result() {
+        let response: CodexAppServerResponse =
+            serde_json::from_str(r#"{"id":2,"error":{"code":-32603,"message":"request failed"}}"#)
+                .expect("a JSON-RPC error envelope should still parse as a response");
+
+        assert!(response.result.is_none());
+    }
+
+    /// `codex_app_server_error_to_poll_error` must resolve every
+    /// `CodexAppServerError` to an existing `PollError` variant (no new
+    /// variant is added for the app-server path), and must never claim
+    /// `AuthRequired` — this app does not inspect Codex auth state itself.
+    #[test]
+    fn codex_app_server_error_maps_to_existing_poll_error_variants_only() {
+        assert_eq!(
+            codex_app_server_error_to_poll_error(CodexAppServerError::CliUnavailable),
+            PollError::NoCredentials
+        );
+        for error in [
+            CodexAppServerError::StartFailed,
+            CodexAppServerError::InitializeFailed,
+            CodexAppServerError::Timeout,
+            CodexAppServerError::Protocol,
+        ] {
+            assert_eq!(
+                codex_app_server_error_to_poll_error(error),
+                PollError::RequestFailed
+            );
+        }
     }
 
     #[test]

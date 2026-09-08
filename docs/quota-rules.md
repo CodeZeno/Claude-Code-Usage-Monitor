@@ -1,7 +1,7 @@
 # Quota Rules
 
-`Quota rules revision: 2026-08-10-01`
-`Last verified: 2026-08-10`
+`Quota rules revision: 2026-09-08-01`
+`Last verified: 2026-09-08`
 
 This is the specification of record for how this app interprets and labels
 provider usage data. It is not user-facing copy — README stays short and
@@ -67,37 +67,44 @@ in — do not invent a different shape per provider.
 |---|---|
 | Display name | Codex |
 | Stable family ID | `codex` |
-| Internal adapter | `poll_codex`, `codex_usage_from_response`, `apply_codex_window` |
-| Source | 5h/7d usage: `https://chatgpt.com/backend-api/wham/usage`, authenticated with the Codex CLI's OAuth token and a `ChatGPT-Account-Id` header. Banked Full reset count: the stable Codex app-server method `account/rateLimits/read` |
-| Quota scope | Shared — the fetch target is literally the ChatGPT backend, reached via the Codex CLI's credentials |
-| Quota items | `session`: percentage + reset for `limit_window_seconds == 18_000`; `weekly`: percentage + reset for `limit_window_seconds == 604_800`. Classification is independent of response position |
-| Fallback behavior | None for 5h/7d usage. Banked reset retrieval is isolated: if the CLI, app-server lifecycle, timeout, protocol, or response shape fails, only the Full reset count becomes unavailable and the existing usage windows remain valid |
-| Unavailable conditions | No Codex CLI credentials found for usage. The Full reset count is independently unavailable when `rateLimitResetCredits` or `availableCount` cannot be obtained; unavailable is not converted to zero |
-| Minimum fetchable unit | A single aggregate percentage + reset time per usage window, plus `rateLimitResetCredits.availableCount` for banked resets |
-| Display caveats | The family is labeled `Codex` so it is not mistaken for a separately implemented ChatGPT provider. The underlying usage endpoint remains ChatGPT's backend and uses the Codex CLI login |
-| Last verified | 2026-08-10 |
-| Rule revision | 2026-08-10-01 |
+| Internal adapter | `poll_codex`, `cached_codex_usage`, `fetch_codex_app_server_usage`, `fetch_codex_rate_limits_result`, `codex_native_usage_from_result` |
+| Source | OpenAI's official `codex app-server` (spawned as `codex app-server --stdio`), method `account/rateLimits/read`. The app never reads `~/.codex/auth.json` or any other Codex credential file, never extracts, stores, or refreshes a Codex OAuth token, and never calls a ChatGPT/Codex backend endpoint (e.g. `https://chatgpt.com/backend-api/wham/usage`) directly. Authentication is entirely the app-server's (and thus the Codex CLI login's) responsibility |
+| Quota scope | Independent — this is Codex's own native rate-limit read, not a generic ChatGPT backend scrape |
+| Quota items | `session` (5h): percentage + reset for a window with `windowDurationMins == 300`; `weekly` (7d): percentage + reset for a window with `windowDurationMins == 10_080`. Classification always uses `windowDurationMins` and is independent of whether the window arrived as `rateLimits.primary` or `rateLimits.secondary` |
+| Fallback behavior | None. On any app-server failure (CLI not found, spawn failure, `initialize` failure, timeout, malformed/protocol-breaking response), the family is reported unavailable — there is no fallback to a credential file, a direct HTTP endpoint, or any other legacy path |
+| Unavailable conditions | `codex` executable not resolvable; the app-server process fails to start, times out, or exits abnormally; the JSON-RPC handshake or `account/rateLimits/read` call fails or returns no `result`; a window is missing, null, or has a `windowDurationMins` other than `300`/`10_080`. Each condition degrades that window (or the whole family, when neither window is usable) to unavailable — never to a fabricated `0%` |
+| Minimum fetchable unit | A single aggregate percentage + reset time per usage window, plus `rateLimitResetCredits.availableCount` for the banked Full reset count — all three read from the one `account/rateLimits/read` response |
+| Display caveats | None known — Codex's label matches its own native rate-limit data with no ChatGPT-backend indirection |
+| Last verified | 2026-09-08 |
+| Rule revision | 2026-09-08-01 |
 
-Banked reset rules:
+Codex app-server protocol and lifecycle rules:
 
-- The count authority is `rateLimitResetCredits.availableCount`; the number of
-  optional credit detail rows is never used as the count.
-- The monitor checks banked resets only from the existing provider refresh and
-  caches the result for five minutes. When that cache expires, it starts
-  `codex app-server`, sends `initialize`, `initialized`, and
-  `account/rateLimits/read`, then closes the subprocess. It does not add a
-  separate high-frequency timer.
-- Private backend endpoints are not called, and reset consume/redeem operations
-  are never invoked.
+- Per poll (subject to the cache below), the monitor spawns `codex app-server
+  --stdio` over stdio, sends `initialize`, then `initialized`, then
+  `account/rateLimits/read`, reads the one matching JSON-RPC response, and
+  closes the subprocess. It does not run as a resident daemon.
+- 5h usage, 7d/weekly usage, and the banked Full reset count are all read from
+  that single `account/rateLimits/read` response — there is no separate
+  request for banked resets.
+- The count authority for banked resets is
+  `rateLimitResetCredits.availableCount`; the number of optional credit detail
+  rows is never used as the count. When `rateLimitResetCredits` or
+  `availableCount` is absent, the Full reset count is unavailable, not zero.
+- Reset-credit consume/redeem operations are never invoked, and private
+  ChatGPT/Codex backend endpoints are never called directly.
+- The child process is always cleaned up — on a clean response, on JSON-RPC
+  protocol errors, on malformed/unparseable output, on `initialize` failure,
+  and on timeout (`CODEX_APP_SERVER_TIMEOUT`, 10s). `CodexAppServer`'s `Drop`
+  implementation waits briefly for the child to exit on its own and force-kills
+  it otherwise, so no zombie process is left behind in any of these cases.
+- The result of `account/rateLimits/read` (both usage windows and the banked
+  reset count together) is cached for `CODEX_RATE_LIMITS_CACHE_TTL` (45
+  seconds) so the app's poll cycle does not spawn `codex app-server` on every
+  poll tick; the cache is shared by the GUI and headless polling paths.
 - Raw app-server responses, credit IDs, auth tokens, cookies, and credentials
   are not logged or displayed. Credit detail rows and expiry metadata are not
   retained by the UI data model.
-- If app-server retrieval fails or the reset-credit field is absent or
-  malformed, Full reset is unavailable while the already-fetched 5h/7d usage
-  remains unchanged.
-- Final live-protocol verification on 2026-08-09 confirmed the stable method
-  and `availableCount` shape; the implementation relies only on that minimum
-  shape.
 
 ### Antigravity
 
@@ -150,8 +157,9 @@ A new provider may be added only when all of the following hold:
 1. **Independently fetchable.** Its usage data can be retrieved on its own,
    without depending on another provider's fallback chain.
 2. **Label/source gap is explainable.** If the display name and the actual
-   data source diverge (as with Codex and the ChatGPT backend today), that gap must be
-   written down in this document using the schema in
+   data source diverge (as with Antigravity's label not always meaning Gemini
+   specifically — see the Antigravity entry), that gap must be written down in
+   this document using the schema in
    [Section 2](#2-per-provider-record-schema) before the label ships.
 3. **No double display.** The new provider must not show a number that
    already appears (in full or in part) under an existing provider's column.
@@ -174,6 +182,7 @@ column that misrepresents what is actually being measured.
 
 | Revision | Date | Change |
 |---|---|---|
+| 2026-09-08-01 | 2026-09-08 | `CODEX-OFFICIAL-PATH-IMPLEMENT-01`: unifies Codex quota onto the official `codex app-server` `account/rateLimits/read` method only. Removes the `~/.codex/auth.json` credential read, the Codex OAuth token extraction/refresh, and the direct `https://chatgpt.com/backend-api/wham/usage` HTTP fetch entirely — 5h/7d usage and the banked Full reset count now come from one cached app-server response, with no fallback to any legacy path. |
 | 2026-08-10-01 | 2026-08-10 | Generalizes the runtime record to stable quota families with ordered quota items, restores the Codex display name, and adds GitHub Copilot Paid Individual monthly AI Credits with GitHub CLI authentication, gross-usage, manual-plan, reset, failure, and non-retention rules. |
 | 2026-08-09-01 | 2026-08-09 | Adds the ChatGPT/Codex banked Full reset count from the stable app-server method, including zero-vs-unavailable semantics, lifecycle, failure isolation, refresh, and non-retention rules. |
 | 2026-08-08-01 | 2026-08-08 | Initial version. Documents Claude, ChatGPT, and Antigravity as of the `Claude Code`→`Claude` and `Codex`→`ChatGPT` display-label changes, and the Antigravity release-build feature-flag fix. |
