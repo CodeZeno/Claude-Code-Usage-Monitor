@@ -6,6 +6,41 @@ fn run_test_ui(context: &egui::Context, input: egui::RawInput, run_ui: impl FnMu
 }
 
 #[test]
+fn dashboard_keeps_dark_visuals_when_system_theme_changes() {
+    for initial_theme in [None, Some(egui::Theme::Light), Some(egui::Theme::Dark)] {
+        let context = egui::Context::default();
+        run_test_ui(
+            &context,
+            egui::RawInput {
+                system_theme: initial_theme,
+                ..Default::default()
+            },
+            |_| {},
+        );
+        configure_style(&context, LanguageId::English);
+
+        for system_theme in [egui::Theme::Light, egui::Theme::Dark, egui::Theme::Light] {
+            run_test_ui(
+                &context,
+                egui::RawInput {
+                    system_theme: Some(system_theme),
+                    ..Default::default()
+                },
+                |ui| {
+                    assert!(ui.visuals().dark_mode);
+                    assert_eq!(ui.visuals().panel_fill, menu_surface());
+                    assert_eq!(
+                        ui.visuals().text_color(),
+                        egui::Visuals::dark().text_color()
+                    );
+                    assert_eq!(ui.spacing().item_spacing, egui::vec2(9.0, 8.0));
+                },
+            );
+        }
+    }
+}
+
+#[test]
 fn configured_fonts_render_fallback_text_and_lucide_icons() {
     let context = egui::Context::default();
     configure_style(&context, LanguageId::English);

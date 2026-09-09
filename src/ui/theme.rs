@@ -63,6 +63,10 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
     );
     context.set_fonts(fonts);
 
+    // The dashboard uses dark surfaces regardless of the Windows app theme.
+    // Keep egui's text colors and widget style on the same dark palette.
+    context.set_theme(egui::Theme::Dark);
+
     let mut visuals = egui::Visuals::dark();
     visuals.panel_fill = menu_surface();
     visuals.window_fill = egui::Color32::from_rgb(38, 38, 38);
