@@ -1198,6 +1198,10 @@ pub struct ThemeRuntime {
     pub poll_ok: bool,
     pub has_error: bool,
     pub language: LanguageId,
+    /// Present each allowance as what is left rather than what is spent. Only
+    /// the `.display` values and the usage summaries follow this; `.percentage`
+    /// always means consumption so severity thresholds keep their meaning.
+    pub countdown: bool,
     host_width: u32,
     host_height: u32,
 }
@@ -1209,6 +1213,7 @@ impl Default for ThemeRuntime {
             poll_ok: true,
             has_error: false,
             language: LanguageId::English,
+            countdown: false,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1236,6 +1241,7 @@ impl ThemeRuntime {
             poll_ok: true,
             has_error: false,
             language: LanguageId::English,
+            countdown: false,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1249,6 +1255,12 @@ impl ThemeRuntime {
 
     pub fn with_language(mut self, language: LanguageId) -> Self {
         self.language = language;
+        self
+    }
+
+    /// Count each allowance down towards its limit instead of up from zero.
+    pub fn with_countdown(mut self, countdown: bool) -> Self {
+        self.countdown = countdown;
         self
     }
 
@@ -1343,12 +1355,14 @@ impl DataContext {
                 runtime.provider_enabled(descriptor.id) as u8 as f64,
             );
         }
+        context.insert("display.countdown", runtime.countdown as u8 as f64);
         if let Some(data) = data {
             for descriptor in PROVIDER_DESCRIPTORS {
                 context.insert_provider(
                     descriptor.key,
                     data.get(descriptor.id),
                     descriptor.id == ProviderId::Codex,
+                    runtime.countdown,
                 );
             }
             let active = ProviderId::ALL
@@ -1358,12 +1372,18 @@ impl DataContext {
                 "active",
                 active.map(|(_, usage)| usage),
                 active.is_some_and(|(provider, _)| provider == ProviderId::Codex),
+                runtime.countdown,
             );
         } else {
             for descriptor in PROVIDER_DESCRIPTORS {
-                context.insert_provider(descriptor.key, None, descriptor.id == ProviderId::Codex);
+                context.insert_provider(
+                    descriptor.key,
+                    None,
+                    descriptor.id == ProviderId::Codex,
+                    runtime.countdown,
+                );
             }
-            context.insert_provider("active", None, false);
+            context.insert_provider("active", None, false, runtime.countdown);
         }
         context
     }
@@ -1373,7 +1393,18 @@ impl DataContext {
         name: &str,
         usage: Option<&crate::models::UsageData>,
         codex_compatibility: bool,
+        countdown: bool,
     ) {
+        // What a gauge or a badge should show. `percentage` stays the share
+        // that has been spent so warning thresholds keep working, while
+        // `display` follows the countdown setting.
+        let display = |percentage: f64| {
+            if countdown {
+                100.0 - percentage
+            } else {
+                percentage
+            }
+        };
         let weekly_label = usage
             .and_then(|usage| usage.weekly_label.as_deref())
             .or_else(|| self.get_string("i18n.weekly_window"))
@@ -1400,10 +1431,13 @@ impl DataContext {
         };
         self.insert(&format!("{name}.session.percentage"), session);
         self.insert(&format!("{name}.session.remaining"), 100.0 - session);
+        self.insert(&format!("{name}.session.display"), display(session));
         self.insert(&format!("{name}.five_hour.percentage"), five_hour);
         self.insert(&format!("{name}.five_hour.remaining"), 100.0 - five_hour);
+        self.insert(&format!("{name}.five_hour.display"), display(five_hour));
         self.insert(&format!("{name}.weekly.percentage"), weekly);
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
+        self.insert(&format!("{name}.weekly.display"), display(weekly));
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
         if let Some(monthly) = monthly {
             self.insert_string(&format!("{name}.monthly.label"), "30d");
@@ -1412,9 +1446,14 @@ impl DataContext {
                 &format!("{name}.monthly.remaining"),
                 100.0 - monthly.percentage,
             );
+            self.insert(
+                &format!("{name}.monthly.display"),
+                display(monthly.percentage),
+            );
         } else {
             self.insert(&format!("{name}.monthly.percentage"), 0.0);
             self.insert(&format!("{name}.monthly.remaining"), 100.0);
+            self.insert(&format!("{name}.monthly.display"), display(0.0));
         }
         self.insert(
             &format!("{name}.monthly.available"),
@@ -1435,6 +1474,10 @@ impl DataContext {
             &format!("{name}.credits.remaining"),
             100.0 - credits_percentage,
         );
+        self.insert(
+            &format!("{name}.credits.display"),
+            display(credits_percentage),
+        );
         // Currency, unlike the percentages either side of it.
         self.insert(
             &format!("{name}.credits.balance"),
@@ -1452,13 +1495,13 @@ impl DataContext {
         // limit. A provider can switch a window off entirely -- Codex has its
         // five-hour window disabled -- so binding a badge to one window alone
         // leaves it reporting 0% while another allowance is spent.
-        self.insert(
-            &format!("{name}.headline.percentage"),
-            match credits {
-                Some(credits) => credits.percentage,
-                None => five_hour.max(weekly),
-            },
-        );
+        let headline = match credits {
+            Some(credits) => credits.percentage,
+            None => five_hour.max(weekly),
+        };
+        self.insert(&format!("{name}.headline.percentage"), headline);
+        self.insert(&format!("{name}.headline.remaining"), 100.0 - headline);
+        self.insert(&format!("{name}.headline.display"), display(headline));
         let reset_value = |reset: Option<std::time::SystemTime>| {
             let unix = reset
                 .and_then(|value| value.duration_since(std::time::UNIX_EPOCH).ok())

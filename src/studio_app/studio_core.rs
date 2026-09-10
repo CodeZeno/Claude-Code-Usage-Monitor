@@ -28,6 +28,7 @@ impl StudioApp {
         ThemeRuntime::from_providers(self.settings.enabled_providers())
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
+            .with_countdown(self.settings.usage_countdown)
     }
 
     pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {

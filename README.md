@@ -10,6 +10,7 @@ A lightweight, open-source Windows taskbar widget for monitoring Claude Code usa
 ## Features
 
 - Displays current usage and time remaining until each limit resets
+- Counts usage up from zero or down from the full allowance, whichever you prefer
 - Supports Claude Code, Codex, Google Antigravity, OpenCode Go, and Cursor
 - Lives in the Windows taskbar with quick controls in the system tray
 - Supports multiple monitors and Windows startup
@@ -48,7 +49,7 @@ Open the settings dashboard directly:
 claude-code-usage-monitor --dashboard
 ```
 
-Use the dashboard to select providers, change the refresh interval, choose a display, enable startup, or customize the widget. In the default theme, left-click a provider tray icon to show or hide the widget and right-click it to open the menu.
+Use the dashboard to select providers, change the refresh interval, choose a display, enable startup, or customize the widget. **Settings > Display > Usage direction** switches the widget and tray icons between showing what has been used and what is left, so a fresh limit reads 100% and drains as you work. In the default theme, left-click a provider tray icon to show or hide the widget and right-click it to open the menu.
 
 ## Provider setup
 

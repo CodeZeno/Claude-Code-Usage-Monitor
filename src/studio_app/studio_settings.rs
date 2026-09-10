@@ -97,6 +97,18 @@ impl StudioApp {
             section(ui, language.text("Display"), |ui| {
                 setting_row(
                     ui,
+                    language.text("Usage direction"),
+                    language.text("Count down what is left instead of up from zero"),
+                    |ui| {
+                        changed |= Toggle::new(&mut self.settings.usage_countdown)
+                            .labels(language.text("Remaining"), language.text("Used"))
+                            .show(ui)
+                            .changed();
+                    },
+                );
+                setting_separator(ui);
+                setting_row(
+                    ui,
                     language.text("Language"),
                     language.text("Language used by the app and widget"),
                     |ui| {

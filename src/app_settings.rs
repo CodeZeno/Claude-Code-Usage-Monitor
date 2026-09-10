@@ -56,6 +56,10 @@ pub struct SettingsFile {
     show_cursor: bool,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
+    /// Show what is left of each allowance instead of what has been spent, so
+    /// the widget counts down towards a limit rather than up from zero.
+    #[serde(default)]
+    pub usage_countdown: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_theme_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -81,6 +85,7 @@ impl Default for SettingsFile {
             show_opencode: false,
             show_cursor: false,
             custom_theme_enabled: true,
+            usage_countdown: false,
             active_theme_path: None,
             dashboard_width: None,
             dashboard_height: None,
@@ -375,6 +380,20 @@ mod tests {
         let mut settings = SettingsFile::default();
         assert!(!settings.toggle_provider(ProviderId::Claude));
         assert_eq!(settings.enabled_providers(), ProviderSet::default());
+    }
+
+    #[test]
+    fn usage_direction_defaults_to_counting_up_and_round_trips() {
+        let settings = SettingsFile::default();
+        assert!(!settings.usage_countdown);
+        assert_eq!(settings_json(&settings)["usage_countdown"], false);
+
+        let counting_up = decode_settings(r#"{"poll_interval_ms":900000}"#).unwrap();
+        assert!(!counting_up.usage_countdown);
+
+        let counting_down = decode_settings(r#"{"usage_countdown":true}"#).unwrap();
+        assert!(counting_down.usage_countdown);
+        assert_eq!(settings_json(&counting_down)["usage_countdown"], true);
     }
 
     #[test]

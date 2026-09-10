@@ -512,8 +512,11 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     {
         return Some("!".into());
     }
+    // `display` follows the countdown setting; older contexts that predate it
+    // fall back to the spent share.
     let percentage = context
-        .get(&format!("{provider}.{window}.percentage"))
+        .get(&format!("{provider}.{window}.display"))
+        .or_else(|| context.get(&format!("{provider}.{window}.percentage")))
         .unwrap_or(0.0);
     let percentage = format_value(percentage, "0", context);
     if context

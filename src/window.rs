@@ -114,6 +114,7 @@ struct AppState {
     drag_start_offset: i32,
 
     custom_theme_enabled: bool,
+    usage_countdown: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -458,6 +459,7 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
     ThemeRuntime::from_providers(state.providers)
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
+        .with_countdown(state.usage_countdown)
 }
 
 /// A transient outage can keep presenting the last real reading while its
@@ -556,8 +558,16 @@ fn tray_usage_summary_lines(
     data: &AppUsageData,
     providers: ProviderSet,
     language: LanguageId,
+    countdown: bool,
 ) -> Vec<String> {
     let strings = language.strings();
+    let shown = |percentage: f64| {
+        if countdown {
+            100.0 - percentage
+        } else {
+            percentage
+        }
+    };
     providers
         .iter()
         .filter_map(|provider| {
@@ -571,9 +581,9 @@ fn tray_usage_summary_lines(
                 "{} {}: {:.0}% | {}: {:.0}%",
                 language.text(descriptor.display_name),
                 strings.session_window,
-                usage.session.percentage,
+                shown(usage.session.percentage),
                 weekly_label,
-                usage.weekly.percentage,
+                shown(usage.weekly.percentage),
             ))
         })
         .collect()
@@ -585,7 +595,12 @@ fn tray_usage_summary_from_state() -> Option<String> {
     if !state.last_poll_ok {
         return None;
     }
-    let lines = tray_usage_summary_lines(state.data.as_ref()?, state.providers, state.language);
+    let lines = tray_usage_summary_lines(
+        state.data.as_ref()?,
+        state.providers,
+        state.language,
+        state.usage_countdown,
+    );
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
 
@@ -1724,7 +1739,8 @@ pub fn run() {
         let title = native_interop::wide_str(language.strings().window_title);
         let initial_runtime = ThemeRuntime::from_providers(settings.enabled_providers())
             .with_poll_state(false, false)
-            .with_language(language);
+            .with_language(language)
+            .with_countdown(settings.usage_countdown);
         let (initial_width, initial_height) = active_theme
             .as_ref()
             .map(|theme| {
@@ -1806,6 +1822,7 @@ pub fn run() {
                 drag_start_client_x: 0,
                 drag_start_offset: 0,
                 custom_theme_enabled,
+                usage_countdown: settings.usage_countdown,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -2338,6 +2355,7 @@ fn reload_external_settings(hwnd: HWND) {
         providers_changed = state.providers != settings.enabled_providers();
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
+        state.usage_countdown = settings.usage_countdown;
         state.taskbar_index = settings.taskbar_index;
         apply_language_to_state(state, language_override);
     }
@@ -2435,8 +2453,26 @@ mod tray_usage_summary_tests {
                 &data,
                 ProviderSet::from_enabled([ProviderId::Claude]),
                 LanguageId::English,
+                false,
             ),
             ["Claude Code 5h: 5% | 7d: 42%"]
+        );
+    }
+
+    #[test]
+    fn tray_summary_counts_down_when_the_widget_shows_what_is_left() {
+        let data = [(ProviderId::Claude, usage(4.6, 42.4, None))]
+            .into_iter()
+            .collect();
+
+        assert_eq!(
+            tray_usage_summary_lines(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Claude]),
+                LanguageId::English,
+                true,
+            ),
+            ["Claude Code 5h: 95% | 7d: 58%"]
         );
     }
 
@@ -2454,6 +2490,7 @@ mod tray_usage_summary_tests {
                 &data,
                 ProviderSet::from_enabled([ProviderId::OpenCode]),
                 LanguageId::English,
+                false,
             ),
             ["OpenCode 5h: 30% | 30d: 40%"]
         );

@@ -1805,3 +1805,122 @@ fn credit_badges_abbreviate_a_balance_too_wide_for_the_tray() {
         "1.2k"
     );
 }
+
+#[test]
+fn countdown_display_values_invert_usage_without_moving_the_thresholds() {
+    use crate::models::{CreditsSection, UsageData, UsageSection};
+
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Claude,
+        UsageData {
+            session: UsageSection {
+                percentage: 25.0,
+                resets_at: None,
+            },
+            weekly: UsageSection {
+                percentage: 60.0,
+                resets_at: None,
+            },
+            credits: Some(CreditsSection {
+                percentage: 40.0,
+                remaining: 24.1,
+                total: 40.83,
+            }),
+            ..Default::default()
+        },
+    )]);
+    let canvas = Canvas::default();
+    let context = |countdown: bool| {
+        DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &canvas,
+            ThemeRuntime::default().with_countdown(countdown),
+        )
+    };
+
+    let counting_up = context(false);
+    assert_eq!(counting_up.get("display.countdown"), Some(0.0));
+    assert_eq!(counting_up.get("claude.session.display"), Some(25.0));
+    assert_eq!(counting_up.get("claude.weekly.display"), Some(60.0));
+    assert_eq!(counting_up.get("claude.credits.display"), Some(40.0));
+    assert_eq!(counting_up.get("claude.headline.display"), Some(40.0));
+    assert_eq!(
+        format_template("{claude.session:usage_line}", &counting_up),
+        "25%"
+    );
+
+    let counting_down = context(true);
+    assert_eq!(counting_down.get("display.countdown"), Some(1.0));
+    assert_eq!(counting_down.get("claude.session.display"), Some(75.0));
+    assert_eq!(counting_down.get("claude.weekly.display"), Some(40.0));
+    assert_eq!(counting_down.get("claude.credits.display"), Some(60.0));
+    assert_eq!(counting_down.get("claude.headline.display"), Some(60.0));
+    assert_eq!(
+        format_template("{claude.session:usage_line}", &counting_down),
+        "75%"
+    );
+
+    // Severity is what a theme colours by, so the spent share never flips.
+    for context in [counting_up, counting_down] {
+        assert_eq!(context.get("claude.session.percentage"), Some(25.0));
+        assert_eq!(context.get("claude.session.remaining"), Some(75.0));
+        assert_eq!(context.get("claude.weekly.percentage"), Some(60.0));
+        assert_eq!(context.get("claude.headline.percentage"), Some(40.0));
+        assert_eq!(context.get("claude.headline.remaining"), Some(60.0));
+    }
+}
+
+#[test]
+fn the_classic_theme_shows_one_badge_digit_group_in_both_usage_directions() {
+    use crate::models::{UsageData, UsageSection};
+
+    let theme = ThemeDocument::starter();
+    let percent = |value: f64| UsageSection {
+        percentage: value,
+        resets_at: None,
+    };
+
+    for provider in ProviderId::ALL {
+        let surface_id = format!("{}-tray-icon", provider.descriptor().key);
+        let Some(surface) = theme
+            .surfaces
+            .iter()
+            .find(|surface| surface.id == surface_id)
+        else {
+            continue;
+        };
+        for spent in [0.0, 5.0, 42.0, 90.0, 95.0, 100.0] {
+            for countdown in [false, true] {
+                let usage = AppUsageData::from_iter([(
+                    provider,
+                    UsageData {
+                        session: percent(spent),
+                        weekly: percent(spent),
+                        ..Default::default()
+                    },
+                )]);
+                let context = DataContext::from_usage_with_runtime(
+                    Some(&usage),
+                    &Canvas::default(),
+                    ThemeRuntime::from_providers(ProviderSet::from_enabled([provider]))
+                        .with_countdown(countdown),
+                );
+                let badges: Vec<&str> = surface
+                    .children
+                    .iter()
+                    .filter(|object| {
+                        object.id.contains("digit")
+                            && !object.id.contains("credit")
+                            && evaluate(&object.render.0, &context).unwrap_or(0.0) != 0.0
+                    })
+                    .map(|object| object.id.as_str())
+                    .collect();
+                assert_eq!(
+                    badges.len(),
+                    1,
+                    "{surface_id} at {spent}% spent with countdown {countdown}: {badges:?}"
+                );
+            }
+        }
+    }
+}

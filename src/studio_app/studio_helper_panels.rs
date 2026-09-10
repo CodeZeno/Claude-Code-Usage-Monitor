@@ -46,6 +46,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         kind: TextTemplateValueKind::Number,
     },
     TextTemplateValue {
+        group: "General",
+        label: "Counting down",
+        expression: "display.countdown",
+        kind: TextTemplateValueKind::Number,
+    },
+    TextTemplateValue {
         group: "Active provider",
         label: "Session summary",
         expression: "active.session",
@@ -61,6 +67,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Active provider",
         label: "Session remaining",
         expression: "active.session.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Active provider",
+        label: "Session shown",
+        expression: "active.session.display",
         kind: TextTemplateValueKind::Percentage,
     },
     TextTemplateValue {
@@ -95,6 +107,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Active provider",
+        label: "Weekly shown",
+        expression: "active.weekly.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Active provider",
         label: "Weekly reset",
         expression: "active.weekly.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -125,6 +143,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Claude Code",
+        label: "Session shown",
+        expression: "claude.session.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
         label: "Session reset",
         expression: "claude.session.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -145,6 +169,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Claude Code",
         label: "Weekly remaining",
         expression: "claude.weekly.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Claude Code",
+        label: "Weekly shown",
+        expression: "claude.weekly.display",
         kind: TextTemplateValueKind::Percentage,
     },
     TextTemplateValue {
@@ -173,6 +203,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Codex",
+        label: "Session shown",
+        expression: "codex.session.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Codex",
         label: "Session reset",
         expression: "codex.session.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -193,6 +229,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Codex",
         label: "Five-hour remaining (exact)",
         expression: "codex.five_hour.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Codex",
+        label: "Five-hour shown (exact)",
+        expression: "codex.five_hour.display",
         kind: TextTemplateValueKind::Percentage,
     },
     TextTemplateValue {
@@ -227,6 +269,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Codex",
+        label: "Weekly shown",
+        expression: "codex.weekly.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Codex",
         label: "Weekly reset",
         expression: "codex.weekly.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -257,6 +305,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Antigravity",
+        label: "Session shown",
+        expression: "antigravity.session.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Antigravity",
         label: "Session reset",
         expression: "antigravity.session.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -281,6 +335,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Antigravity",
+        label: "Weekly shown",
+        expression: "antigravity.weekly.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Antigravity",
         label: "Weekly reset",
         expression: "antigravity.weekly.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -301,6 +361,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "OpenCode",
         label: "Session remaining",
         expression: "opencode.session.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "OpenCode",
+        label: "Session shown",
+        expression: "opencode.session.display",
         kind: TextTemplateValueKind::Percentage,
     },
     TextTemplateValue {
@@ -335,6 +401,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "OpenCode",
+        label: "Long-window shown",
+        expression: "opencode.weekly.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "OpenCode",
         label: "Long-window reset",
         expression: "opencode.weekly.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -359,6 +431,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
     },
     TextTemplateValue {
         group: "Cursor",
+        label: "Auto shown",
+        expression: "cursor.session.display",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Cursor",
         label: "Auto reset",
         expression: "cursor.session.reset.seconds",
         kind: TextTemplateValueKind::Duration,
@@ -379,6 +457,12 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Cursor",
         label: "API remaining",
         expression: "cursor.weekly.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Cursor",
+        label: "API shown",
+        expression: "cursor.weekly.display",
         kind: TextTemplateValueKind::Percentage,
     },
     TextTemplateValue {
@@ -1061,6 +1145,15 @@ pub(super) fn expression_variables_panel(
                     draft,
                     language,
                 );
+                expression_variable_group(
+                    ui,
+                    language.text("Display"),
+                    &["display.countdown"],
+                    &needle,
+                    context,
+                    draft,
+                    language,
+                );
                 let application = [
                     "app.version.major",
                     "app.version.minor",
@@ -1087,7 +1180,7 @@ pub(super) fn expression_variables_panel(
                         &["session", "weekly"][..]
                     };
                     for window in windows {
-                        for metric in ["percentage", "remaining"] {
+                        for metric in ["percentage", "remaining", "display"] {
                             names.push(format!("{provider}.{window}.{metric}"));
                         }
                         for unit in ["unix", "seconds", "minutes", "hours", "days"] {
