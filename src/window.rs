@@ -23,7 +23,7 @@ use crate::models::AppUsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_FULLSCREEN_CHECK, TIMER_POLL,
     TIMER_RESET_POLL, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
-    WM_APP_REQUEST_PROOF, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    WM_APP_FOREGROUND_CHANGED, WM_APP_REQUEST_PROOF, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::spend_pace;
@@ -52,6 +52,7 @@ struct AppState {
     taskbar_hwnd: Option<HWND>,
     tray_notify_hwnd: Option<HWND>,
     win_event_hook: Option<HWINEVENTHOOK>,
+    foreground_hook: Option<HWINEVENTHOOK>,
     is_dark: bool,
     embedded: bool,
     language_override: Option<LanguageId>,
@@ -1761,6 +1762,7 @@ pub fn run() {
                 taskbar_hwnd: None,
                 tray_notify_hwnd: None,
                 win_event_hook: None,
+                foreground_hook: None,
                 is_dark,
                 embedded: false,
                 language_override,
@@ -1821,6 +1823,19 @@ pub fn run() {
                 widget_visible: settings.widget_visible,
                 hidden_for_fullscreen: false,
             });
+        }
+
+        let foreground_hook = native_interop::set_foreground_event_hook(on_foreground_changed);
+        if foreground_hook.is_some() {
+            diagnose::log("foreground event hook installed");
+        } else {
+            diagnose::log("foreground event hook could not be installed");
+        }
+        {
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.foreground_hook = foreground_hook;
+            }
         }
 
         // Try to embed in taskbar
@@ -3404,6 +3419,52 @@ unsafe extern "system" fn on_tray_location_changed(
     }
 }
 
+/// WinEvent callback for system-wide foreground window changes. Forces a
+/// repaint shortly after focus moves, to counteract DWM dropping this
+/// window's composited layered content during a shell/XAML surface
+/// transition (Start menu, Search, task switches) — see
+/// set_foreground_event_hook for why this needs to be event-driven rather
+/// than left to the 500ms TIMER_FULLSCREEN_CHECK poll.
+unsafe extern "system" fn on_foreground_changed(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _hwnd: HWND,
+    _id_object: i32,
+    _id_child: i32,
+    _thread: u32,
+    _time: u32,
+) {
+    static LAST_FOREGROUND_REPAINT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+    let should_repaint = {
+        let mut last = LAST_FOREGROUND_REPAINT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        if last
+            .map(|t| now.duration_since(t).as_millis() > 100)
+            .unwrap_or(true)
+        {
+            *last = Some(now);
+            true
+        } else {
+            false
+        }
+    };
+    if !should_repaint {
+        return;
+    }
+
+    let widget_hwnd = lock_state()
+        .as_ref()
+        .map(|s| s.hwnd.to_hwnd())
+        .unwrap_or(HWND::default());
+    if !widget_hwnd.0.is_null() {
+        // Never repaint synchronously from WinEvent — see on_tray_location_changed.
+        let _ = PostMessageW(widget_hwnd, WM_APP_FOREGROUND_CHANGED, WPARAM(0), LPARAM(0));
+    }
+}
+
 /// Main window procedure
 unsafe extern "system" fn wnd_proc(
     hwnd: HWND,
@@ -3587,6 +3648,10 @@ unsafe extern "system" fn wnd_proc(
             position_at_taskbar();
             LRESULT(0)
         }
+        msg if msg == WM_APP_FOREGROUND_CHANGED => {
+            render_layered();
+            LRESULT(0)
+        }
         msg if msg == WM_APP_REQUEST_PROOF => {
             invalidate_popup_layout();
             if let Some(s) = lock_state().as_mut() {
@@ -3729,11 +3794,17 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
                 2 => {
-                    let hook = {
+                    let (hook, fg_hook) = {
                         let state = lock_state();
-                        state.as_ref().and_then(|s| s.win_event_hook)
+                        state
+                            .as_ref()
+                            .map(|s| (s.win_event_hook, s.foreground_hook))
+                            .unwrap_or((None, None))
                     };
                     if let Some(h) = hook {
+                        native_interop::unhook_win_event(h);
+                    }
+                    if let Some(h) = fg_hook {
                         native_interop::unhook_win_event(h);
                     }
                     PostQuitMessage(0);
@@ -3866,11 +3937,17 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_DESTROY => {
-            let hook = {
+            let (hook, fg_hook) = {
                 let state = lock_state();
-                state.as_ref().and_then(|s| s.win_event_hook)
+                state
+                    .as_ref()
+                    .map(|s| (s.win_event_hook, s.foreground_hook))
+                    .unwrap_or((None, None))
             };
             if let Some(h) = hook {
+                native_interop::unhook_win_event(h);
+            }
+            if let Some(h) = fg_hook {
                 native_interop::unhook_win_event(h);
             }
             tray_icon::remove_all(hwnd);

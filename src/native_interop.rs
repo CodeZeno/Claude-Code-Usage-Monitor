@@ -46,6 +46,7 @@ pub const WS_CLIPSIBLINGS_STYLE: u32 = 0x04000000;
 
 // Win event constants
 pub const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
+pub const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
 pub const WINEVENT_OUTOFCONTEXT: u32 = 0x0000;
 
 // Timer IDs
@@ -62,6 +63,7 @@ pub const WM_APP: u32 = 0x8000;
 pub const WM_APP_USAGE_UPDATED: u32 = WM_APP + 1;
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
 pub const WM_APP_REQUEST_PROOF: u32 = WM_APP + 7;
+pub const WM_APP_FOREGROUND_CHANGED: u32 = WM_APP + 8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TaskbarWindow {
@@ -110,12 +112,25 @@ pub fn taskbar_hwnd_for_settings_index(taskbar_index: usize) -> Option<HWND> {
             return Some(hwnd);
         }
     }
-    find_taskbar_by_class("Shell_TrayWnd").or_else(|| {
-        find_taskbars()
+    let direct = find_taskbar_by_class("Shell_TrayWnd");
+    if direct.is_none() {
+        let taskbars = find_taskbars();
+        crate::diagnose::log(format!(
+            "taskbar_hwnd_for_settings_index: direct Shell_TrayWnd lookup FAILED, falling back. find_taskbars() -> {:?}",
+            taskbars
+                .iter()
+                .map(|t| format!(
+                    "hwnd={:?} is_primary={} rect=({},{},{},{})",
+                    t.hwnd, t.is_primary, t.rect.left, t.rect.top, t.rect.right, t.rect.bottom
+                ))
+                .collect::<Vec<_>>()
+        ));
+        return taskbars
             .into_iter()
             .find(|taskbar| taskbar_index == 0 || !taskbar.is_primary)
-            .map(|taskbar| taskbar.hwnd)
-    })
+            .map(|taskbar| taskbar.hwnd);
+    }
+    direct
 }
 
 pub fn find_taskbars() -> Vec<TaskbarWindow> {
@@ -133,6 +148,11 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
                         (get_window_rect_safe(hwnd), primary_monitor_rect())
                     {
                         if !rects_overlap(rect, mon) {
+                            crate::diagnose::log(format!(
+                                "find_taskbars: excluding primary hwnd={hwnd:?} rect=({},{},{},{}) - no tray, doesn't overlap primary monitor ({},{},{},{})",
+                                rect.left, rect.top, rect.right, rect.bottom,
+                                mon.left, mon.top, mon.right, mon.bottom
+                            ));
                             return BOOL(1);
                         }
                     }
@@ -1382,6 +1402,32 @@ pub fn set_tray_event_hook(
             Some(callback),
             0,
             thread_id,
+            WINEVENT_OUTOFCONTEXT,
+        );
+        if hook.is_invalid() {
+            None
+        } else {
+            Some(hook)
+        }
+    }
+}
+
+/// Set up a system-wide WinEvent hook for foreground window changes. Used to
+/// force an immediate repaint the instant focus moves to/from a shell/XAML
+/// surface (Start menu, Search, task switches), instead of waiting up to
+/// TIMER_FULLSCREEN_CHECK's 500ms poll interval to notice DWM dropped this
+/// window's composited content during the transition.
+pub fn set_foreground_event_hook(
+    callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+) -> Option<HWINEVENTHOOK> {
+    unsafe {
+        let hook = SetWinEventHook(
+            EVENT_SYSTEM_FOREGROUND,
+            EVENT_SYSTEM_FOREGROUND,
+            None,
+            Some(callback),
+            0,
+            0,
             WINEVENT_OUTOFCONTEXT,
         );
         if hook.is_invalid() {
