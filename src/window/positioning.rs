@@ -551,6 +551,7 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
             }
         };
         if should_reposition {
+            refresh_theme_host_geometry();
             position_at_taskbar();
             render_layered();
         }
