@@ -31,7 +31,11 @@ impl StudioApp {
     }
 
     pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {
-        crate::window::theme_runtime_for_surface(&self.theme, surface_index, self.theme_runtime())
+        crate::window::query_theme_runtime_for_surface(
+            &self.theme,
+            surface_index,
+            self.theme_runtime(),
+        )
     }
 
     pub(super) fn selected_theme_runtime(&self) -> ThemeRuntime {

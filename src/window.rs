@@ -295,7 +295,8 @@ fn logical_host_dimension(physical: i32, scale: f64) -> u32 {
         .clamp(1.0, u32::MAX as f64) as u32
 }
 
-pub(crate) fn theme_runtime_for_surface(
+// The studio runs in a separate process without the monitor's layout cache.
+pub(crate) fn query_theme_runtime_for_surface(
     theme: &ThemeDocument,
     surface_index: usize,
     runtime: ThemeRuntime,
@@ -1720,6 +1721,8 @@ pub fn run() {
         let language = localization::resolve_language(language_override);
         let install_channel = updater::current_install_channel();
 
+        refresh_theme_host_geometry();
+
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
         let initial_runtime = ThemeRuntime::from_providers(settings.enabled_providers())
@@ -2376,7 +2379,9 @@ fn tray_reposition_is_suppressed() -> bool {
     }
 }
 
+mod host_geometry;
 mod message_loop;
+use host_geometry::*;
 use message_loop::wnd_proc;
 mod positioning;
 use positioning::*;

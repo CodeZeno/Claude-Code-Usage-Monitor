@@ -17,6 +17,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_DISPLAYCHANGE | WM_DPICHANGED_MSG | WM_SETTINGCHANGE => {
+            refresh_theme_host_geometry();
             if msg == WM_DPICHANGED_MSG {
                 let new_dpi = (wparam.0 & 0xFFFF) as u32;
                 CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
@@ -162,12 +163,22 @@ pub(super) unsafe extern "system" fn wnd_proc(
             if is_dragging {
                 let mut pt = POINT::default();
                 let _ = GetCursorPos(&mut pt);
+                let taskbar = {
+                    let state = lock_state();
+                    state.as_ref().and_then(|s| s.taskbar_hwnd)
+                };
+                // Query Explorer before taking STATE: the query can re-enter wnd_proc.
+                let taskbar_rect =
+                    taskbar.and_then(|taskbar| native_interop::get_taskbar_rect(taskbar.to_hwnd()));
                 let move_target = {
                     let mut state = lock_state();
                     let s = match state.as_mut() {
                         Some(s) => s,
                         None => return LRESULT(0),
                     };
+                    if !s.dragging || s.taskbar_hwnd != taskbar {
+                        return LRESULT(0);
+                    }
 
                     // Moving mouse left = positive delta = larger offset (further left)
                     let delta = s.drag_start_mouse_x - pt.x;
@@ -184,7 +195,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
 
                     // Clamp: don't go past left edge of taskbar
                     if let Some(taskbar_hwnd) = taskbar_hwnd {
-                        if let Some(taskbar_rect) = native_interop::get_taskbar_rect(taskbar_hwnd) {
+                        if let Some(taskbar_rect) = taskbar_rect {
                             let mut tray_left = taskbar_rect.right;
                             if let Some(tray_hwnd) =
                                 native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
@@ -515,6 +526,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ if msg == taskbar_created_message() => {
+            refresh_theme_host_geometry();
             // Explorer discards notification icons when it restarts. Floating
             // and tray-icon-only themes keep their owner HWND, so restore the
             // registrations when the shell broadcasts its return.
