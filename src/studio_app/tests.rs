@@ -602,6 +602,13 @@ fn text_helper_catalog_only_builds_valid_template_tokens() {
         text_template_token("claude.session.percentage", TextTemplateFormat::Percentage),
         "{claude.session.percentage:percent}"
     );
+    let display = text_template_value("claude.session.display").unwrap();
+    for format in [
+        TextTemplateFormat::UsageLine,
+        TextTemplateFormat::UsageBadge,
+    ] {
+        assert!(text_template_formats(display.kind).contains(&format));
+    }
 }
 
 #[test]

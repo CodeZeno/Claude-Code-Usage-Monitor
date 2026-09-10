@@ -1199,7 +1199,7 @@ pub struct ThemeRuntime {
     pub has_error: bool,
     pub language: LanguageId,
     /// Present each allowance as what is left rather than what is spent. Only
-    /// the `.display` values and the usage summaries follow this; `.percentage`
+    /// the `.display` values and summaries using them follow this; `.percentage`
     /// always means consumption so severity thresholds keep their meaning.
     pub countdown: bool,
     host_width: u32,

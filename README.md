@@ -49,7 +49,11 @@ Open the settings dashboard directly:
 claude-code-usage-monitor --dashboard
 ```
 
-Use the dashboard to select providers, change the refresh interval, choose a display, enable startup, or customize the widget. **Settings > Display > Usage direction** switches the widget and tray icons between showing what has been used and what is left, so a fresh limit reads 100% and drains as you work. In the default theme, left-click a provider tray icon to show or hide the widget and right-click it to open the menu.
+Use the dashboard to select providers, change the refresh interval, choose a display, enable startup, or customize the widget. **Settings > Display > Usage direction** switches the default theme and other themes that support this setting between showing what has been used and what is left, with Used as the default. Selecting Remaining makes a fresh limit read 100% and drain as you work.
+
+Theme authors can opt in with `.display` bindings, including `{claude.session.display:usage_line}` and `{claude.session.display:usage_badge}`. Existing `.percentage`, `.remaining`, and unsuffixed usage summaries keep their meaning; warning thresholds should continue to use `.percentage`.
+
+In the default theme, left-click a provider tray icon to show or hide the widget and right-click it to open the menu.
 
 ## Provider setup
 

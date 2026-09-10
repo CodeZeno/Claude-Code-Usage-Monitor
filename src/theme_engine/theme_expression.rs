@@ -491,6 +491,13 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     let mut parts = base.split('.');
     let provider = parts.next()?;
     let window = parts.next()?;
+    // Existing summaries always show consumption. A `.display` suffix opts
+    // this individual token into the user's usage direction preference.
+    let metric = match parts.next() {
+        None => "percentage",
+        Some("display") => "display",
+        Some(_) => return None,
+    };
     if parts.next().is_some()
         || !matches!(
             provider,
@@ -512,11 +519,8 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     {
         return Some("!".into());
     }
-    // `display` follows the countdown setting; older contexts that predate it
-    // fall back to the spent share.
     let percentage = context
-        .get(&format!("{provider}.{window}.display"))
-        .or_else(|| context.get(&format!("{provider}.{window}.percentage")))
+        .get(&format!("{provider}.{window}.{metric}"))
         .unwrap_or(0.0);
     let percentage = format_value(percentage, "0", context);
     if context

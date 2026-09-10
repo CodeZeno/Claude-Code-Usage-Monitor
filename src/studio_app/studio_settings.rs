@@ -98,7 +98,7 @@ impl StudioApp {
                 setting_row(
                     ui,
                     language.text("Usage direction"),
-                    language.text("Count down what is left instead of up from zero"),
+                    language.text("Count down what is left in supported themes"),
                     |ui| {
                         changed |= Toggle::new(&mut self.settings.usage_countdown)
                             .labels(language.text("Remaining"), language.text("Used"))

@@ -73,7 +73,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Active provider",
         label: "Session shown",
         expression: "active.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Active provider",
@@ -109,7 +109,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Active provider",
         label: "Weekly shown",
         expression: "active.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Active provider",
@@ -145,7 +145,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Claude Code",
         label: "Session shown",
         expression: "claude.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Claude Code",
@@ -175,7 +175,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Claude Code",
         label: "Weekly shown",
         expression: "claude.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Claude Code",
@@ -205,7 +205,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Codex",
         label: "Session shown",
         expression: "codex.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Codex",
@@ -235,7 +235,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Codex",
         label: "Five-hour shown (exact)",
         expression: "codex.five_hour.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Codex",
@@ -271,7 +271,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Codex",
         label: "Weekly shown",
         expression: "codex.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Codex",
@@ -307,7 +307,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Antigravity",
         label: "Session shown",
         expression: "antigravity.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Antigravity",
@@ -337,7 +337,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Antigravity",
         label: "Weekly shown",
         expression: "antigravity.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Antigravity",
@@ -367,7 +367,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "OpenCode",
         label: "Session shown",
         expression: "opencode.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "OpenCode",
@@ -403,7 +403,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "OpenCode",
         label: "Long-window shown",
         expression: "opencode.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "OpenCode",
@@ -433,7 +433,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Cursor",
         label: "Auto shown",
         expression: "cursor.session.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Cursor",
@@ -463,7 +463,7 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         group: "Cursor",
         label: "API shown",
         expression: "cursor.weekly.display",
-        kind: TextTemplateValueKind::Percentage,
+        kind: TextTemplateValueKind::DisplayPercentage,
     },
     TextTemplateValue {
         group: "Cursor",
@@ -513,6 +513,15 @@ pub(super) fn text_template_formats(kind: TextTemplateValueKind) -> &'static [Te
             Format::OneDecimal,
             Format::TwoDecimals,
             Format::Automatic,
+        ],
+        TextTemplateValueKind::DisplayPercentage => &[
+            Format::Percentage,
+            Format::WholeNumber,
+            Format::OneDecimal,
+            Format::TwoDecimals,
+            Format::Automatic,
+            Format::UsageLine,
+            Format::UsageBadge,
         ],
         TextTemplateValueKind::Duration => &[
             Format::ShortDuration,

@@ -1856,17 +1856,121 @@ fn countdown_display_values_invert_usage_without_moving_the_thresholds() {
     assert_eq!(counting_down.get("claude.credits.display"), Some(60.0));
     assert_eq!(counting_down.get("claude.headline.display"), Some(60.0));
     assert_eq!(
-        format_template("{claude.session:usage_line}", &counting_down),
+        format_template("{claude.session.display:usage_line}", &counting_down),
         "75%"
     );
 
     // Severity is what a theme colours by, so the spent share never flips.
     for context in [counting_up, counting_down] {
+        assert_eq!(
+            format_template("{claude.session:usage_line}", &context),
+            "25%"
+        );
+        assert_eq!(
+            format_template("{claude.session:usage_badge}", &context),
+            "25%"
+        );
         assert_eq!(context.get("claude.session.percentage"), Some(25.0));
         assert_eq!(context.get("claude.session.remaining"), Some(75.0));
         assert_eq!(context.get("claude.weekly.percentage"), Some(60.0));
         assert_eq!(context.get("claude.headline.percentage"), Some(40.0));
         assert_eq!(context.get("claude.headline.remaining"), Some(60.0));
+    }
+}
+
+#[test]
+fn classic_usage_direction_defaults_to_used_until_enabled() {
+    use crate::app_settings::SettingsFile;
+    use crate::models::{UsageData, UsageSection};
+
+    let theme = ThemeDocument::starter();
+    let gauge = theme.surfaces[0]
+        .children
+        .iter()
+        .find(|object| object.id == "claude-session-segments-dark")
+        .unwrap();
+    let label = theme.surfaces[0]
+        .children
+        .iter()
+        .find(|object| object.id == "claude-session-value-dark")
+        .unwrap();
+    let SceneContent::Progress { value, .. } = &gauge.content else {
+        panic!("expected gauge")
+    };
+    let SceneContent::Text { template, .. } = &label.content else {
+        panic!("expected label")
+    };
+    let settings = SettingsFile::default();
+    assert!(!settings.usage_countdown);
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Claude,
+        UsageData {
+            session: UsageSection {
+                percentage: 25.0,
+                resets_at: None,
+            },
+            ..Default::default()
+        },
+    )]);
+    for (countdown, expected, text) in
+        [(settings.usage_countdown, 25.0, "25%"), (true, 75.0, "75%")]
+    {
+        let context = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            ThemeRuntime::default().with_countdown(countdown),
+        );
+        assert_eq!(evaluate(&value.0, &context).unwrap(), expected);
+        assert_eq!(format_template(template, &context), text);
+    }
+}
+
+#[test]
+fn display_summaries_preserve_status_reset_formatting_and_legacy_tokens() {
+    let mut context = DataContext::from_usage(None, &Canvas::default());
+    context.insert("data.loading", 0.0);
+    context.insert("data.poll_ok", 1.0);
+    context.insert("claude.available", 1.0);
+    context.insert("claude.session.percentage", 25.0);
+    context.insert("claude.session.display", 75.0);
+    context.insert("claude.session.reset.unix", 1.0);
+    context.insert("claude.session.reset.seconds", 3_600.0);
+
+    // Explicit and legacy summaries can coexist in the same theme.
+    let template = "{claude.session:usage_line} / {claude.session.display:usage_line}";
+    assert!(validate_template(template, &context).is_empty());
+    assert_eq!(format_template(template, &context), "25% · 1h / 75% · 1h");
+    assert_eq!(
+        format_template("{claude.session.display:usage_badge}", &context),
+        "75%"
+    );
+
+    for format in ["usage_line", "usage_badge"] {
+        let token = format!("{{claude.session.display:{format}}}");
+        context.insert("data.loading", 1.0);
+        assert_eq!(format_template(&token, &context), "--");
+        context.insert("data.loading", 0.0);
+        context.insert("data.has_error", 1.0);
+        assert_eq!(format_template(&token, &context), "!");
+        context.insert("data.has_error", 0.0);
+        context.insert("claude.available", 0.0);
+        assert_eq!(format_template(&token, &context), "!");
+        context.insert("claude.available", 1.0);
+        assert_eq!(
+            format_template(&token, &context),
+            if format == "usage_line" {
+                "75% · 1h"
+            } else {
+                "75%"
+            }
+        );
+    }
+    for invalid in [
+        "claude.session.display.extra",
+        "claude.session.unknown",
+        "claude.headline.display",
+    ] {
+        assert!(format_usage_line(invalid, &context).is_none());
     }
 }
 

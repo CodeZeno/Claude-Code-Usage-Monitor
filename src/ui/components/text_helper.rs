@@ -48,6 +48,7 @@ pub(crate) enum TextTemplateFormat {
 pub(crate) enum TextTemplateValueKind {
     Number,
     Percentage,
+    DisplayPercentage,
     Duration,
     Timestamp,
     UsageSummary,
