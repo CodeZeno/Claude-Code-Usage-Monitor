@@ -11,8 +11,8 @@ use windows::Win32::System::Threading::{
     INFINITE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, MessageBoxW, PostMessageW, SetForegroundWindow, ShowWindow, MB_ICONERROR, MB_OK,
-    SW_RESTORE, WM_CLOSE,
+    FindWindowW, MessageBoxW, PostMessageW, SetForegroundWindow, ShowWindowAsync, MB_ICONERROR,
+    MB_OK, SW_RESTORE, WM_CLOSE,
 };
 
 const DASHBOARD_TITLE: &str = "Usage Monitor";
@@ -166,7 +166,9 @@ pub fn focus_existing() -> bool {
         let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title.as_ptr())) else {
             return false;
         };
-        let _ = ShowWindow(hwnd, SW_RESTORE);
+        // The dashboard runs on another UI thread/process. Do not block the
+        // monitor (and its taskbar host) if that thread is busy or unresponsive.
+        let _ = ShowWindowAsync(hwnd, SW_RESTORE);
         let _ = SetForegroundWindow(hwnd);
         true
     }

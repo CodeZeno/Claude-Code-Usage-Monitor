@@ -449,6 +449,20 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ if msg == WM_APP_TRAY => {
+            // Explorer can deliver this synchronously, including while a shell
+            // call has re-entered our window procedure. Return before taking
+            // STATE, opening windows, or calling back into Explorer.
+            if let Err(error) = PostMessageW(
+                Some(hwnd),
+                native_interop::WM_APP_TRAY_DISPATCH,
+                wparam,
+                lparam,
+            ) {
+                diagnose::log_error("unable to queue tray callback", error);
+            }
+            LRESULT(0)
+        }
+        _ if msg == native_interop::WM_APP_TRAY_DISPATCH => {
             let tray_message = lparam.0 as u32;
             if let Some(surface_index) = tray_icon::themed_surface_index(wparam.0 as u32) {
                 let root_id = lock_state().as_ref().and_then(|state| {
@@ -557,5 +571,79 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tray_callbacks_return_while_state_is_locked_and_preserve_events() {
+        // Model a shell call re-entering wnd_proc while the monitor owns STATE.
+        // Keep the lock on this thread so a regression fails with a timeout
+        // instead of permanently deadlocking the test process.
+        let state = lock_state();
+        let (completed, completion) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || unsafe {
+            let class = native_interop::wide_str("STATIC");
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                PCWSTR::from_raw(class.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+            .expect("create isolated message-only test window");
+
+            // Start with a themed hover: the old handler tries to acquire STATE
+            // here. No dashboard or menu should ever be opened by this test.
+            let events = [
+                (1_000, WM_MOUSEMOVE),
+                (1_042, WM_LBUTTONUP),
+                (1_042, WM_LBUTTONDBLCLK),
+                (1_042, WM_RBUTTONUP),
+                (1, WM_LBUTTONUP),
+                (1, WM_LBUTTONDBLCLK),
+                (1, WM_RBUTTONUP),
+                (1, WM_CONTEXTMENU),
+            ];
+            for (id, event) in events {
+                assert_eq!(
+                    wnd_proc(hwnd, WM_APP_TRAY, WPARAM(id), LPARAM(event as isize)).0,
+                    0
+                );
+                let mut queued = MSG::default();
+                let found = PeekMessageW(
+                    &mut queued,
+                    Some(hwnd),
+                    native_interop::WM_APP_TRAY_DISPATCH,
+                    native_interop::WM_APP_TRAY_DISPATCH,
+                    PM_REMOVE,
+                )
+                .as_bool();
+                if !found {
+                    let _ = DestroyWindow(hwnd);
+                    panic!("tray callback was processed inline instead of queued");
+                }
+                assert_eq!(queued.hwnd, hwnd);
+                assert_eq!(queued.wParam.0, id);
+                assert_eq!(queued.lParam.0, event as isize);
+            }
+            let _ = DestroyWindow(hwnd);
+            completed.send(()).unwrap();
+        });
+
+        let result = completion.recv_timeout(Duration::from_secs(5));
+        drop(state);
+        worker.join().expect("tray callback test thread");
+        result.expect("tray callbacks must return without waiting for STATE");
     }
 }

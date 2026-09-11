@@ -37,6 +37,7 @@ pub const WM_APP_SETTINGS_UPDATED: u32 = WM_APP + 5;
 pub const WM_APP_REFRESH_NOW: u32 = WM_APP + 6;
 pub const WM_APP_QUIT: u32 = WM_APP + 7;
 pub const WM_APP_OPEN_DASHBOARD: u32 = WM_APP + 8;
+pub const WM_APP_TRAY_DISPATCH: u32 = WM_APP + 9;
 
 static DESKTOP_HOST: Mutex<Option<(isize, isize)>> = Mutex::new(None);
 
