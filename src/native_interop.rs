@@ -6,6 +6,9 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR,
     MONITORINFO, MONITOR_DEFAULTTONEAREST,
 };
+use windows::Win32::System::RemoteDesktop::{
+    WTSRegisterSessionNotification, WTSUnRegisterSessionNotification, NOTIFY_FOR_THIS_SESSION,
+};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
@@ -64,6 +67,11 @@ pub const WM_APP_USAGE_UPDATED: u32 = WM_APP + 1;
 pub const WM_APP_TRAY: u32 = WM_APP + 3;
 pub const WM_APP_REQUEST_PROOF: u32 = WM_APP + 7;
 pub const WM_APP_FOREGROUND_CHANGED: u32 = WM_APP + 8;
+
+// Session lock/unlock notifications (WTSRegisterSessionNotification)
+pub const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
+pub const WTS_SESSION_LOCK: usize = 0x7;
+pub const WTS_SESSION_UNLOCK: usize = 0x8;
 
 #[derive(Clone, Copy, Debug)]
 pub struct TaskbarWindow {
@@ -842,13 +850,24 @@ fn foreground_covers_monitor_borderless(self_hwnd: HWND, taskbar_hwnd: Option<HW
 
         // Exclusive fullscreen: shell retracted the work area.
         if !taskbar_chrome {
+            crate::diagnose::log(format!(
+                "foreground_covers_monitor_borderless: TRUE (work-area retracted) fg_class={:?} fg_rect=({},{},{},{})",
+                window_class_name(fg), win_rect.left, win_rect.top, win_rect.right, win_rect.bottom
+            ));
             return true;
         }
 
         // Browser/player fullscreen can still leave rcWork inset while the HWND
         // rect covers the monitor (including over the taskbar band).
         const BAND_SLACK: i32 = 4;
-        win_rect.bottom >= info.rcMonitor.bottom - BAND_SLACK
+        let covers_band = win_rect.bottom >= info.rcMonitor.bottom - BAND_SLACK;
+        if covers_band {
+            crate::diagnose::log(format!(
+                "foreground_covers_monitor_borderless: TRUE (covers taskbar band) fg_class={:?} fg_rect=({},{},{},{})",
+                window_class_name(fg), win_rect.left, win_rect.top, win_rect.right, win_rect.bottom
+            ));
+        }
+        covers_band
     }
 }
 
@@ -1435,6 +1454,23 @@ pub fn set_foreground_event_hook(
         } else {
             Some(hook)
         }
+    }
+}
+
+/// Subscribe this window to WM_WTSSESSION_CHANGE (session lock/unlock).
+/// Locking switches to a separate secure desktop; nothing on the original
+/// desktop is composited while it's active, including this window's layered
+/// content. DWM is not guaranteed to spontaneously recomposite it on unlock -
+/// this notification is the purpose-built signal to force it, rather than
+/// waiting on a generic foreground-change event that may not fire the same
+/// way across a secure-desktop transition.
+pub fn register_session_notification(hwnd: HWND) -> bool {
+    unsafe { WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION).is_ok() }
+}
+
+pub fn unregister_session_notification(hwnd: HWND) {
+    unsafe {
+        let _ = WTSUnRegisterSessionNotification(hwnd);
     }
 }
 

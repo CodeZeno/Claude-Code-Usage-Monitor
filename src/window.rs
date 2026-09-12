@@ -24,6 +24,7 @@ use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_FULLSCREEN_CHECK, TIMER_POLL,
     TIMER_RESET_POLL, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
     WM_APP_FOREGROUND_CHANGED, WM_APP_REQUEST_PROOF, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK,
 };
 use crate::poller;
 use crate::spend_pace;
@@ -201,6 +202,31 @@ fn startup_layout_grace_active() -> bool {
     let guard = STARTUP_LAYOUT_GRACE.lock().unwrap_or_else(|e| e.into_inner());
     guard
         .map(|t| t.elapsed() < std::time::Duration::from_millis(1200))
+        .unwrap_or(false)
+}
+
+/// Set on session unlock. The sign-in/unlock sequence on this machine (Cisco
+/// IT-managed: Defender/Secure-Endpoint/VPN/Teams agents all re-settle after
+/// unlock) was confirmed in the diagnose log to spawn transient borderless
+/// windows that momentarily cover the whole monitor, which is indistinguishable
+/// from a real exclusive-fullscreen app to `should_hide_widget_for_fullscreen`.
+/// A confirmed real occurrence: WTS_SESSION_UNLOCK at T, then a false
+/// "fullscreen suppress" fired at T+22s lasting ~5s. Suppress fullscreen-hide
+/// checks entirely for a generous window after unlock instead of trying to
+/// enumerate every transient class name these agents create; see the
+/// `foreground_covers_monitor_borderless` logging (native_interop.rs) for the
+/// actual culprit class/rect the next time this fires outside the grace window.
+static UNLOCK_FULLSCREEN_GRACE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+fn arm_unlock_fullscreen_grace() {
+    let mut guard = UNLOCK_FULLSCREEN_GRACE.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = Some(std::time::Instant::now());
+}
+
+fn unlock_fullscreen_grace_active() -> bool {
+    let guard = UNLOCK_FULLSCREEN_GRACE.lock().unwrap_or_else(|e| e.into_inner());
+    guard
+        .map(|t| t.elapsed() < std::time::Duration::from_millis(30_000))
         .unwrap_or(false)
 }
 
@@ -1838,6 +1864,12 @@ pub fn run() {
             }
         }
 
+        if native_interop::register_session_notification(hwnd) {
+            diagnose::log("session lock/unlock notification registered");
+        } else {
+            diagnose::log("session lock/unlock notification could not be registered");
+        }
+
         // Try to embed in taskbar
         let attached = attach_to_taskbar(hwnd, settings.taskbar_index);
 
@@ -3088,7 +3120,17 @@ fn sync_fullscreen_visibility(hwnd: HWND) {
     }
 
     // Exclusive fullscreen: hide while a monitor-filling app has retracted the taskbar.
-    let should_suppress = native_interop::should_hide_widget_for_fullscreen(hwnd, taskbar_hwnd);
+    let raw_should_suppress = native_interop::should_hide_widget_for_fullscreen(hwnd, taskbar_hwnd);
+    let should_suppress = if unlock_fullscreen_grace_active() {
+        if raw_should_suppress {
+            diagnose::log(
+                "fullscreen suppress skipped: unlock grace period active (would have hidden)",
+            );
+        }
+        false
+    } else {
+        raw_should_suppress
+    };
     let was_suppressed = lock_state()
         .as_ref()
         .map(|s| s.hidden_for_fullscreen)
@@ -3436,6 +3478,10 @@ unsafe extern "system" fn on_foreground_changed(
 ) {
     static LAST_FOREGROUND_REPAINT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
+    diagnose::log(format!(
+        "on_foreground_changed: raw event fired, new foreground hwnd={_hwnd:?}"
+    ));
+
     let should_repaint = {
         let mut last = LAST_FOREGROUND_REPAINT
             .lock()
@@ -3649,7 +3695,18 @@ unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         msg if msg == WM_APP_FOREGROUND_CHANGED => {
+            diagnose::log("WM_APP_FOREGROUND_CHANGED: forcing repaint");
             render_layered();
+            LRESULT(0)
+        }
+        WM_WTSSESSION_CHANGE => {
+            if wparam.0 == WTS_SESSION_UNLOCK {
+                diagnose::log("WM_WTSSESSION_CHANGE: session unlocked, forcing repaint");
+                arm_unlock_fullscreen_grace();
+                invalidate_popup_layout();
+                position_at_taskbar();
+                render_layered();
+            }
             LRESULT(0)
         }
         msg if msg == WM_APP_REQUEST_PROOF => {
@@ -3807,6 +3864,7 @@ unsafe extern "system" fn wnd_proc(
                     if let Some(h) = fg_hook {
                         native_interop::unhook_win_event(h);
                     }
+                    native_interop::unregister_session_notification(hwnd);
                     PostQuitMessage(0);
                 }
                 IDM_RESET_POSITION => {
@@ -3950,6 +4008,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = fg_hook {
                 native_interop::unhook_win_event(h);
             }
+            native_interop::unregister_session_notification(hwnd);
             tray_icon::remove_all(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
