@@ -441,11 +441,10 @@ fn spawn_taskbar_watchdog() {
             if shell_hosted {
                 // When hosted inside a shell window (like Shell_TrayWnd or Progman),
                 // Windows does not always destroy cross-process child windows when Explorer restarts.
-                // Verify that the parent window is still alive and valid.
-                let parent = GetParent(hwnd).ok();
-                match parent {
+                // If this window has a parent that is now destroyed, flag it as invalid.
+                match GetParent(hwnd).ok() {
                     Some(p) if !p.is_invalid() => !IsWindow(Some(p)).as_bool(),
-                    _ => true,
+                    _ => false,
                 }
             } else {
                 false
