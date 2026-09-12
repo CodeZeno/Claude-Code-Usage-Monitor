@@ -433,9 +433,24 @@ fn spawn_taskbar_watchdog() {
         if !shell_hosted {
             continue;
         }
-        let invalid = windows
-            .iter()
-            .any(|window| unsafe { !IsWindow(Some(window.to_hwnd())).as_bool() });
+        let invalid = windows.iter().any(|window| unsafe {
+            let hwnd = window.to_hwnd();
+            if !IsWindow(Some(hwnd)).as_bool() {
+                return true;
+            }
+            if shell_hosted {
+                // When hosted inside a shell window (like Shell_TrayWnd or Progman),
+                // Windows does not always destroy cross-process child windows when Explorer restarts.
+                // Verify that the parent window is still alive and valid.
+                let parent = GetParent(hwnd).ok();
+                match parent {
+                    Some(p) if !p.is_invalid() => !IsWindow(Some(p)).as_bool(),
+                    _ => true,
+                }
+            } else {
+                false
+            }
+        });
         if invalid && !native_interop::find_taskbars().is_empty() {
             diagnose::log("watchdog: shell-hosted surface was destroyed -> relaunching");
             relaunch_self();

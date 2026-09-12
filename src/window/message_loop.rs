@@ -545,6 +545,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
             // and tray-icon-only themes keep their owner HWND, so restore the
             // registrations when the shell broadcasts its return.
             sync_tray_icon(hwnd);
+            position_at_taskbar();
+            render_layered();
             LRESULT(0)
         }
         WM_DESTROY => {
