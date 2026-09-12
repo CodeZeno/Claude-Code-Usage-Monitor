@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, "fix/**", "feat/**" ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build, Test & Package
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check code
+        run: cargo check --all-targets
+
+      - name: Run unit tests
+        run: cargo test --all
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-usage-monitor-release
+          path: target/release/claude-code-usage-monitor.exe
+          if-no-files-found: error

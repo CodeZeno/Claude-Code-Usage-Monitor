@@ -7,7 +7,6 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-use windows::Win32::UI::Shell::{SHAppBarMessage, ABM_GETTASKBARPOS, APPBARDATA};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window style constants
@@ -104,7 +103,7 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
         if len > 0 {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
-                if let Some(rect) = get_taskbar_rect(hwnd).or_else(|| get_window_rect_safe(hwnd)) {
+                if let Some(rect) = get_taskbar_rect(hwnd) {
                     taskbars.push(TaskbarWindow { hwnd, rect });
                 }
             }
@@ -143,29 +142,13 @@ pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
     }
 }
 
-/// Get taskbar position via SHAppBarMessage
+/// Get taskbar position safely.
+/// We use get_window_rect_safe directly because GetWindowRect is a non-blocking
+/// kernel-mode query that returns immediately even if explorer.exe is hung or unresponsive.
+/// SHAppBarMessage sends a synchronous LPC message to explorer.exe's UI message loop,
+/// which deadlocks the monitor thread if Explorer hangs (Event 1002).
 pub fn get_taskbar_rect(taskbar_hwnd: HWND) -> Option<RECT> {
-    unsafe {
-        let mut class_name = [0u16; 64];
-        let len = GetClassNameW(taskbar_hwnd, &mut class_name);
-        if len > 0 {
-            let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
-            if class_name == "Shell_SecondaryTrayWnd" {
-                return get_window_rect_safe(taskbar_hwnd);
-            }
-        }
-
-        let mut abd = APPBARDATA {
-            cbSize: std::mem::size_of::<APPBARDATA>() as u32,
-            hWnd: taskbar_hwnd,
-            ..Default::default()
-        };
-        let result = SHAppBarMessage(ABM_GETTASKBARPOS, &mut abd);
-        if result == 0 {
-            return None;
-        }
-        Some(abd.rc)
-    }
+    get_window_rect_safe(taskbar_hwnd)
 }
 
 /// Get the bounding rectangle of a window
