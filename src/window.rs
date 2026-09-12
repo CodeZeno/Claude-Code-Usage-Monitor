@@ -3256,6 +3256,14 @@ fn position_at_taskbar() {
         }
     };
 
+    if !native_interop::taskbar_rect_is_plausible(taskbar_rect) {
+        diagnose::log(format!(
+            "position_at_taskbar skipped: implausible taskbar rect ({},{},{},{})",
+            taskbar_rect.left, taskbar_rect.top, taskbar_rect.right, taskbar_rect.bottom
+        ));
+        return;
+    }
+
     // HWND starts at (0,0) on the primary monitor; read DPI from the taskbar monitor
     // before sizing so the first layout is not 2x on multi-monitor setups.
     unsafe {
@@ -3696,6 +3704,13 @@ unsafe extern "system" fn wnd_proc(
         }
         msg if msg == WM_APP_FOREGROUND_CHANGED => {
             diagnose::log("WM_APP_FOREGROUND_CHANGED: forcing repaint");
+            // Also re-resolve the taskbar binding (not just repaint pixels): a
+            // foreground change can coincide with a transient explorer.exe
+            // taskbar recreation, and re-running position_at_taskbar here lets
+            // a bad binding self-correct on the very next foreground event
+            // instead of waiting up to 60s for the periodic keepalive.
+            invalidate_popup_layout();
+            position_at_taskbar();
             render_layered();
             LRESULT(0)
         }

@@ -87,6 +87,25 @@ fn taskbar_has_notification_area(taskbar_hwnd: HWND) -> bool {
 }
 
 pub fn find_taskbar_by_class(class_name: &str) -> Option<HWND> {
+    // Prefer a direct FindWindow lookup over EnumWindows. Confirmed reproducibly
+    // on a real machine: EnumWindows's top-level walk can silently omit the live,
+    // fully-functional Shell_TrayWnd (independently verified via GetWindowRect
+    // and its TrayNotifyWnd child, both healthy) while a plain FindWindow call
+    // for the exact same class name finds it every time. When that happened here,
+    // the EnumWindows-only search below returned None, which sent
+    // taskbar_hwnd_for_settings_index down its enumeration fallback path and
+    // bound the widget to a stale/bogus taskbar-shaped window instead — moving
+    // it off-screen. FindWindow is also a single call instead of a full
+    // top-level enumeration, so trying it first is strictly cheaper too.
+    unsafe {
+        let wide = wide_str(class_name);
+        if let Ok(hwnd) = FindWindowW(PCWSTR::from_raw(wide.as_ptr()), PCWSTR::null()) {
+            if hwnd != HWND::default() {
+                return Some(hwnd);
+            }
+        }
+    }
+
     struct Search {
         target: String,
         found: Option<HWND>,
@@ -181,6 +200,29 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
     unsafe {
         let _ = EnumWindows(Some(enum_proc), LPARAM(&mut taskbars as *mut _ as isize));
     }
+
+    // EnumWindows's top-level walk has been confirmed (reproducibly, on a real
+    // machine) to silently omit a live, fully-functional Shell_TrayWnd that a
+    // plain FindWindow call for the same class finds every time. If that
+    // happens here, this scan would otherwise report zero primary candidates
+    // and callers fall back to whatever secondary/stale window it did find —
+    // which can have garbage geometry. Backfill the primary via the same
+    // FindWindow-first lookup `find_taskbar_by_class` already uses.
+    if !taskbars.iter().any(|t| t.is_primary) {
+        if let Some(direct) = find_taskbar_by_class("Shell_TrayWnd") {
+            if let Some(rect) = get_taskbar_rect(direct).or_else(|| get_window_rect_safe(direct)) {
+                crate::diagnose::log(format!(
+                    "find_taskbars: EnumWindows missed live primary, backfilled via FindWindow hwnd={direct:?}"
+                ));
+                taskbars.push(TaskbarWindow {
+                    hwnd: direct,
+                    rect,
+                    is_primary: true,
+                });
+            }
+        }
+    }
+
     taskbars.sort_by_key(|taskbar| {
         (
             !taskbar.is_primary,
@@ -366,6 +408,36 @@ fn taskbar_band_height(rect: RECT) -> i32 {
 
 fn is_plausible_taskbar_height(height: i32) -> bool {
     (16..=160).contains(&height)
+}
+
+/// Reject a resolved taskbar rect that is geometrically nonsensical before it
+/// is used to reposition the widget. Confirmed real occurrence: during a
+/// transient explorer.exe taskbar recreation (e.g. right after unlock), the
+/// direct Shell_TrayWnd lookup can momentarily fail and the enumeration
+/// fallback in `find_taskbars()` can pick up a mid-teardown/mid-creation
+/// window with a garbage rect (negative coordinates, near-zero or inverted
+/// height). Positioning the widget there sent it off-screen entirely, which
+/// read to the user as the widget "disappearing" until the next successful
+/// reposition. Bail out instead of moving the widget to an implausible rect.
+pub fn taskbar_rect_is_plausible(rect: RECT) -> bool {
+    let width = rect.right - rect.left;
+    let height = rect.bottom - rect.top;
+    if width <= 0 || !is_plausible_taskbar_height(height) {
+        return false;
+    }
+    unsafe {
+        let vx = GetSystemMetrics(SM_XVIRTUALSCREEN);
+        let vy = GetSystemMetrics(SM_YVIRTUALSCREEN);
+        let vw = GetSystemMetrics(SM_CXVIRTUALSCREEN);
+        let vh = GetSystemMetrics(SM_CYVIRTUALSCREEN);
+        let virtual_screen = RECT {
+            left: vx,
+            top: vy,
+            right: vx + vw,
+            bottom: vy + vh,
+        };
+        rects_overlap(rect, virtual_screen)
+    }
 }
 
 fn primary_monitor_rect() -> Option<RECT> {
