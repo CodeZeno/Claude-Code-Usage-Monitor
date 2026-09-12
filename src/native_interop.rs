@@ -1354,7 +1354,17 @@ pub fn lower_below_fullscreen(hwnd: HWND) {
 
 /// Place the layered popup above the taskbar (TOPMOST — peek band handled in sync).
 pub fn position_above_taskbar(hwnd: HWND, taskbar_hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
-    position_popup_zorder(hwnd, Some(taskbar_hwnd), false, x, y, w, h);
+    // Insert directly after taskbar_hwnd in z-order (single SetWindowPos call,
+    // same as raise_on_taskbar_band) rather than the demote-then-reassert
+    // dance below. Measured live: GW_HWNDPREV is essentially always non-null
+    // for this window (other topmost windows elsewhere on screen coexist
+    // normally), so the "skip if already frontmost" gate on that dance almost
+    // never engages in practice, meaning this call site would still hit the
+    // flicker-prone two-step SetWindowPos on nearly every render. This runs on
+    // every render_layered() call (every foreground change, unlock, and
+    // periodic keepalive), so a single stable insert-after-taskbar call here
+    // is worth more than chasing "absolute front of all topmost windows".
+    position_popup_zorder(hwnd, Some(taskbar_hwnd), true, x, y, w, h);
 }
 
 /// Place/move the popup without HWND_TOPMOST (exclusive fullscreen suppression).
