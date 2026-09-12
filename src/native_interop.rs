@@ -1394,6 +1394,35 @@ fn position_popup_zorder(
                 }
             }
         }
+        // The classic "reassert topmost" trick — SetWindowPos to HWND_NOTOPMOST
+        // then immediately back to HWND_TOPMOST — genuinely places the window
+        // at a lower z-order position for the instant between the two calls.
+        // This function runs on every render_layered() call (every foreground
+        // change, unlock, and periodic keepalive), so on a machine where that
+        // fires often, any compositor frame landing in that gap shows the
+        // widget briefly occluded by whatever is now in front of it — a
+        // plausible, previously-unexplained source of "disappears briefly"
+        // that predates today's other fixes. Only pay that cost when the
+        // widget isn't already the frontmost window; skip it entirely when it
+        // already is, which is true for the overwhelming majority of calls.
+        let prev_in_zorder = GetWindow(hwnd, GW_HWNDPREV).unwrap_or_default();
+        let already_frontmost = prev_in_zorder.0.is_null();
+        if already_frontmost {
+            if w > 0 && h > 0 {
+                let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
+            } else {
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
+            return;
+        }
         if w > 0 && h > 0 {
             let _ = SetWindowPos(hwnd, HWND_NOTOPMOST, x, y, w, h, SWP_NOACTIVATE);
             let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
