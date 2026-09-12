@@ -303,6 +303,7 @@ fn studio_preview_uses_cached_poll_failure_state_instead_of_stale_values() {
         crate::providers::ProviderId::Codex,
         crate::models::UsageData {
             session: crate::models::UsageSection {
+                available: true,
                 percentage: 7.0,
                 resets_at: None,
             },

@@ -500,6 +500,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
         ProviderId::Claude,
         crate::models::UsageData {
             session: crate::models::UsageSection {
+                available: true,
                 percentage: 25.0,
                 resets_at: None,
             },
@@ -674,6 +675,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
         ProviderId::Claude,
         crate::models::UsageData {
             session: crate::models::UsageSection {
+                available: true,
                 percentage: 25.0,
                 resets_at: Some(reset),
             },
@@ -715,6 +717,7 @@ fn opencode_monthly_window_is_available_to_templates_when_present() {
         crate::models::UsageData {
             weekly_label: Some("30d".into()),
             monthly: Some(crate::models::UsageSection {
+                available: true,
                 percentage: 43.0,
                 resets_at: Some(reset),
             }),
@@ -1664,6 +1667,7 @@ fn headline_follows_the_window_closest_to_its_limit() {
     use crate::models::{CreditsSection, UsageData, UsageSection};
 
     let percent = |value: f64| UsageSection {
+        available: true,
         percentage: value,
         resets_at: None,
     };
@@ -1713,6 +1717,7 @@ fn codex_session_bindings_fall_back_without_hiding_the_exact_five_hour_window() 
     let usage = UsageData {
         session: UsageSection::default(),
         weekly: UsageSection {
+            available: true,
             percentage: 83.0,
             resets_at: Some(reset),
         },
@@ -1732,6 +1737,11 @@ fn codex_session_bindings_fall_back_without_hiding_the_exact_five_hour_window() 
         context.get("codex.weekly.reset.unix")
     );
     assert_eq!(context.get("active.session.percentage"), Some(83.0));
+    assert_eq!(context.get("codex.session.available"), Some(1.0));
+    assert_eq!(context.get("active.session.available"), Some(1.0));
+    assert_eq!(context.get("codex.five_hour.available"), Some(0.0));
+    assert_eq!(context.get("active.five_hour.available"), Some(0.0));
+    assert_eq!(context.get("codex.weekly.available"), Some(1.0));
 
     // New and bundled themes can still address the actual five-hour window.
     assert_eq!(context.get("codex.five_hour.percentage"), Some(0.0));
@@ -1747,10 +1757,12 @@ fn codex_session_bindings_use_the_real_five_hour_window_when_present() {
 
     let usage = UsageData {
         session: UsageSection {
+            available: true,
             percentage: 12.0,
             resets_at: Some(UNIX_EPOCH + Duration::from_secs(1_787_100_000)),
         },
         weekly: UsageSection {
+            available: true,
             percentage: 83.0,
             resets_at: Some(UNIX_EPOCH + Duration::from_secs(1_787_198_224)),
         },
@@ -1763,10 +1775,141 @@ fn codex_session_bindings_use_the_real_five_hour_window_when_present() {
 
     assert_eq!(context.get("codex.session.percentage"), Some(12.0));
     assert_eq!(context.get("codex.five_hour.percentage"), Some(12.0));
+    assert_eq!(context.get("codex.session.available"), Some(1.0));
+    assert_eq!(context.get("codex.five_hour.available"), Some(1.0));
     assert_ne!(
         context.get("codex.session.reset.unix"),
         context.get("codex.weekly.reset.unix")
     );
+}
+
+#[test]
+fn reported_windows_are_available_even_when_idle_without_reset_times() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    let empty = DataContext::from_usage(None, &Canvas::default());
+    for name in PROVIDER_DESCRIPTORS
+        .iter()
+        .map(|provider| provider.key)
+        .chain(["active"])
+    {
+        for window in ["session", "five_hour", "weekly", "monthly"] {
+            assert_eq!(empty.get(&format!("{name}.{window}.available")), Some(0.0));
+        }
+    }
+    for reset in [
+        None,
+        Some(UNIX_EPOCH),
+        Some(SystemTime::now() + Duration::from_secs(3600)),
+    ] {
+        let usage = UsageData {
+            session: UsageSection {
+                available: true,
+                percentage: 0.0,
+                resets_at: reset,
+            },
+            weekly: UsageSection {
+                available: true,
+                percentage: 0.0,
+                resets_at: reset,
+            },
+            monthly: Some(UsageSection::default()),
+            ..Default::default()
+        };
+        let data = AppUsageData::from_iter(
+            PROVIDER_DESCRIPTORS
+                .iter()
+                .map(|provider| (provider.id, usage.clone())),
+        );
+        let context = DataContext::from_usage(Some(&data), &Canvas::default());
+        for name in PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|provider| provider.key)
+            .chain(["active"])
+        {
+            for window in ["session", "five_hour", "weekly"] {
+                assert_eq!(
+                    context.get(&format!("{name}.{window}.available")),
+                    Some(1.0)
+                );
+            }
+            // Monthly is explicitly optional, so no reset timestamp is needed.
+            assert_eq!(context.get(&format!("{name}.monthly.available")), Some(1.0));
+        }
+    }
+}
+
+#[test]
+fn absent_windows_and_monthly_labels_are_defined_for_every_provider() {
+    let data = AppUsageData::from_iter(
+        PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|provider| (provider.id, crate::models::UsageData::default())),
+    );
+    for data in [None, Some(&data)] {
+        let context = DataContext::from_usage(data, &Canvas::default());
+        for name in PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|provider| provider.key)
+            .chain(["active"])
+        {
+            for window in ["session", "five_hour", "weekly", "monthly"] {
+                assert_eq!(
+                    context.get(&format!("{name}.{window}.available")),
+                    Some(0.0)
+                );
+            }
+            let label = format!("{{{name}.monthly.label}}");
+            assert!(validate_template(&label, &context).is_empty());
+            assert_eq!(format_template(&label, &context), "30d");
+            assert_eq!(
+                context.get(&format!("{name}.monthly.percentage")),
+                Some(0.0)
+            );
+            assert_eq!(
+                context.get(&format!("{name}.monthly.remaining")),
+                Some(100.0)
+            );
+            assert_eq!(
+                context.get(&format!("{name}.monthly.reset.seconds")),
+                Some(0.0)
+            );
+        }
+    }
+}
+
+#[test]
+fn idle_codex_session_does_not_fall_back_to_a_used_weekly_window() {
+    use crate::models::{UsageData, UsageSection};
+    let data = AppUsageData::from_iter([(
+        ProviderId::Codex,
+        UsageData {
+            session: UsageSection {
+                available: true,
+                ..Default::default()
+            },
+            weekly: UsageSection {
+                available: true,
+                percentage: 83.0,
+                resets_at: None,
+            },
+            ..Default::default()
+        },
+    )]);
+    let context = DataContext::from_usage(Some(&data), &Canvas::default());
+    for name in ["codex", "active"] {
+        assert_eq!(context.get(&format!("{name}.session.available")), Some(1.0));
+        assert_eq!(
+            context.get(&format!("{name}.session.percentage")),
+            Some(0.0)
+        );
+        assert_eq!(context.get(&format!("{name}.weekly.available")), Some(1.0));
+        assert_eq!(
+            context.get(&format!("{name}.weekly.percentage")),
+            Some(83.0)
+        );
+    }
 }
 
 #[test]
@@ -1814,10 +1957,12 @@ fn countdown_display_values_invert_usage_without_moving_the_thresholds() {
         ProviderId::Claude,
         UsageData {
             session: UsageSection {
+                available: true,
                 percentage: 25.0,
                 resets_at: None,
             },
             weekly: UsageSection {
+                available: true,
                 percentage: 60.0,
                 resets_at: None,
             },
@@ -1906,6 +2051,7 @@ fn classic_usage_direction_defaults_to_used_until_enabled() {
         ProviderId::Claude,
         UsageData {
             session: UsageSection {
+                available: true,
                 percentage: 25.0,
                 resets_at: None,
             },
@@ -1980,6 +2126,7 @@ fn the_classic_theme_shows_one_badge_digit_group_in_both_usage_directions() {
 
     let theme = ThemeDocument::starter();
     let percent = |value: f64| UsageSection {
+        available: true,
         percentage: value,
         resets_at: None,
     };

@@ -6,10 +6,36 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::providers::ProviderId;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct UsageSection {
+    /// The provider reported this window, even if unused and without a reset time.
+    pub available: bool,
     pub percentage: f64,
     pub resets_at: Option<SystemTime>,
+}
+
+impl<'de> Deserialize<'de> for UsageSection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct StoredSection {
+            available: Option<bool>,
+            percentage: f64,
+            resets_at: Option<SystemTime>,
+        }
+        let stored = StoredSection::deserialize(deserializer)?;
+        Ok(Self {
+            // Older caches lost the distinction between an idle window and an
+            // absent one. Preserve evidence of presence until a fresh poll.
+            available: stored
+                .available
+                .unwrap_or(stored.resets_at.is_some() || stored.percentage != 0.0),
+            percentage: stored.percentage,
+            resets_at: stored.resets_at,
+        })
+    }
 }
 
 /// Paid credits that carry a provider past its included allowance.
@@ -133,6 +159,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn usage_cache_preserves_idle_window_presence_and_reads_legacy_sections() {
+        for available in [false, true] {
+            let section = UsageSection {
+                available,
+                ..Default::default()
+            };
+            let json = serde_json::to_value(&section).unwrap();
+            assert_eq!(json["available"], available);
+            assert_eq!(
+                serde_json::from_value::<UsageSection>(json).unwrap(),
+                section
+            );
+        }
+        for (json, expected) in [
+            (r#"{"percentage":0,"resets_at":null}"#, false),
+            (r#"{"percentage":42,"resets_at":null}"#, true),
+            (
+                r#"{"percentage":0,"resets_at":{"secs_since_epoch":0,"nanos_since_epoch":0}}"#,
+                true,
+            ),
+            (
+                r#"{"available":false,"percentage":42,"resets_at":null}"#,
+                false,
+            ),
+        ] {
+            let section: UsageSection = serde_json::from_str(json).unwrap();
+            assert_eq!(section.available, expected);
+        }
+    }
+
+    #[test]
     fn usage_cache_keeps_legacy_provider_keys() {
         let data: AppUsageData = [
             (ProviderId::Claude, UsageData::default()),
@@ -142,6 +199,7 @@ mod tests {
                 UsageData {
                     weekly_label: Some("30d".into()),
                     monthly: Some(UsageSection {
+                        available: true,
                         percentage: 43.0,
                         resets_at: None,
                     }),

@@ -217,21 +217,18 @@ fn fetch_cursor_usage(cookie: &str) -> Result<UsageData, PollError> {
 fn cursor_usage_from_summary(response: CursorUsageSummaryResponse) -> Option<UsageData> {
     let plan = response.individual_usage?.plan?;
     let reset = parse_iso8601(response.billing_cycle_end.as_deref());
-    let auto = plan
-        .auto_percent_used
-        .or(plan.total_percent_used)
-        .unwrap_or(0.0)
-        .clamp(0.0, 100.0);
-    let api = plan.api_percent_used.unwrap_or(0.0).clamp(0.0, 100.0);
+    let section = |percentage: Option<f64>| {
+        percentage
+            .map(|percentage| UsageSection {
+                available: true,
+                percentage: percentage.clamp(0.0, 100.0),
+                resets_at: reset,
+            })
+            .unwrap_or_default()
+    };
     Some(UsageData {
-        session: UsageSection {
-            percentage: auto,
-            resets_at: reset,
-        },
-        weekly: UsageSection {
-            percentage: api,
-            resets_at: reset,
-        },
+        session: section(plan.auto_percent_used.or(plan.total_percent_used)),
+        weekly: section(plan.api_percent_used),
         weekly_label: Some("API".into()),
         monthly: None,
         credits: None,
@@ -313,5 +310,26 @@ mod tests {
         assert_eq!(data.weekly_label.as_deref(), Some("API"));
         assert!(data.session.resets_at.is_some());
         assert_eq!(data.session.resets_at, data.weekly.resets_at);
+    }
+
+    #[test]
+    fn idle_cursor_windows_are_distinct_from_missing_metrics() {
+        for (plan, session, weekly) in [
+            (r#"{"autoPercentUsed":0,"apiPercentUsed":0}"#, true, true),
+            (r#"{"totalPercentUsed":0}"#, true, false),
+            (r#"{"apiPercentUsed":42}"#, false, true),
+            ("{}", false, false),
+        ] {
+            for end in ["null", r#""2026-08-25T19:27:24Z""#] {
+                let response = serde_json::from_str(&format!(
+                    r#"{{"billingCycleEnd":{end},"individualUsage":{{"plan":{plan}}}}}"#,
+                ))
+                .unwrap();
+                let data = cursor_usage_from_summary(response).unwrap();
+                assert_eq!(data.session.available, session);
+                assert_eq!(data.weekly.available, weekly);
+                assert!(data.monthly.is_none());
+            }
+        }
     }
 }

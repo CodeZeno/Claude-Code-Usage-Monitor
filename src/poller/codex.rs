@@ -240,6 +240,7 @@ fn window_is_weekly(window: &CodexRateLimitWindow) -> Option<bool> {
 
 pub(super) fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageSection {
     UsageSection {
+        available: true,
         percentage: window.used_percent,
         resets_at: unix_to_system_time(Some(window.reset_at)),
     }
@@ -542,6 +543,24 @@ mod tests {
         assert_eq!(data.session.percentage, 0.0);
         assert!(data.weekly.resets_at.is_some());
         assert!(data.session.resets_at.is_none());
+        assert!(data.weekly.available);
+        assert!(!data.session.available);
+    }
+
+    #[test]
+    fn a_reported_zero_usage_window_is_available_without_a_usable_reset() {
+        let data = usage_from_json(
+            r#"{
+            "rate_limit": {
+                "primary_window": {"used_percent":0,"limit_window_seconds":18000,"reset_at":-1},
+                "secondary_window": null
+            }
+        }"#,
+        );
+        assert!(data.session.available);
+        assert_eq!(data.session.percentage, 0.0);
+        assert!(data.session.resets_at.is_none());
+        assert!(!data.weekly.available);
     }
 
     #[test]

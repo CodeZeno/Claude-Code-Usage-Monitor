@@ -85,6 +85,9 @@ unsafe fn append_context_menu_items(
     actions: &mut Vec<ContextMenuAction>,
 ) {
     for item in items {
+        if !item.should_render(context) {
+            continue;
+        }
         match &item.kind {
             ContextMenuItemKind::Separator => {
                 let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -314,5 +317,83 @@ pub(super) fn execute_context_menu_action(
             open_web_url(hwnd, &url, "context menu URL could not be opened")
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{GetMenuItemCount, GetMenuItemID, GetSubMenu};
+
+    #[test]
+    fn conditional_native_rows_and_subtrees_preserve_action_ids_on_each_open() {
+        let mut conditional = vec![
+            ContextMenuItem::text("usage", "Weekly usage"),
+            ContextMenuItem::separator("divider"),
+            ContextMenuItem::action("refresh", "Refresh", ContextMenuAction::Refresh),
+            ContextMenuItem::submenu(
+                "provider",
+                "Provider",
+                vec![ContextMenuItem::action(
+                    "nested",
+                    "Exit",
+                    ContextMenuAction::Exit,
+                )],
+            ),
+        ];
+        for item in &mut conditional {
+            item.render = theme_engine::Expression("providers.codex.enabled".into());
+        }
+        // This row stays hidden even when its parent becomes visible.
+        if let ContextMenuItemKind::Submenu { items } = &mut conditional[3].kind {
+            let mut hidden = ContextMenuItem::text("hidden", "Hidden child");
+            hidden.render = theme_engine::Expression("0".into());
+            items.insert(0, hidden);
+        }
+        conditional.push(ContextMenuItem::action(
+            "exit",
+            "Exit",
+            ContextMenuAction::Exit,
+        ));
+        let mut context = DataContext::from_usage(None, &Canvas::default());
+        for enabled in [false, true, false] {
+            context.insert("providers.codex.enabled", enabled as u8 as f64);
+            let mut actions = Vec::new();
+            unsafe {
+                let menu = CreatePopupMenu().unwrap();
+                append_context_menu_items(
+                    menu,
+                    &conditional,
+                    localization::detect_system_language(),
+                    &context,
+                    None,
+                    &mut actions,
+                );
+                let count = GetMenuItemCount(Some(menu));
+                let last_id = GetMenuItemID(menu, count - 1);
+                let child_count = if enabled {
+                    let submenu = GetSubMenu(menu, 3);
+                    Some((GetMenuItemCount(Some(submenu)), GetMenuItemID(submenu, 0)))
+                } else {
+                    None
+                };
+                DestroyMenu(menu).unwrap();
+                assert_eq!(count, if enabled { 5 } else { 1 });
+                assert_eq!(last_id, if enabled { 1002 } else { 1000 });
+                if enabled {
+                    assert_eq!(child_count, Some((1, 1001)));
+                    assert_eq!(
+                        actions,
+                        vec![
+                            ContextMenuAction::Refresh,
+                            ContextMenuAction::Exit,
+                            ContextMenuAction::Exit
+                        ]
+                    );
+                } else {
+                    assert_eq!(actions, vec![ContextMenuAction::Exit]);
+                }
+            }
+        }
     }
 }

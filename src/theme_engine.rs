@@ -1419,11 +1419,7 @@ impl DataContext {
         // `codex.session`. Keep that established binding working for existing
         // custom themes, while `codex.five_hour` always means the real window.
         let use_codex_session_fallback = codex_compatibility
-            && usage.is_some_and(|usage| {
-                usage.session.resets_at.is_none()
-                    && usage.session.percentage == 0.0
-                    && (usage.weekly.resets_at.is_some() || usage.weekly.percentage != 0.0)
-            });
+            && usage.is_some_and(|usage| !usage.session.available && usage.weekly.available);
         let session = if use_codex_session_fallback {
             weekly
         } else {
@@ -1439,8 +1435,8 @@ impl DataContext {
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
         self.insert(&format!("{name}.weekly.display"), display(weekly));
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
+        self.insert_string(&format!("{name}.monthly.label"), "30d");
         if let Some(monthly) = monthly {
-            self.insert_string(&format!("{name}.monthly.label"), "30d");
             self.insert(&format!("{name}.monthly.percentage"), monthly.percentage);
             self.insert(
                 &format!("{name}.monthly.remaining"),
@@ -1522,6 +1518,25 @@ impl DataContext {
         } else {
             (five_hour_unix, five_hour_seconds)
         };
+        let five_hour_available = usage.is_some_and(|value| value.session.available);
+        let weekly_available = usage.is_some_and(|value| value.weekly.available);
+        let session_available = if use_codex_session_fallback {
+            weekly_available
+        } else {
+            five_hour_available
+        };
+        // Presence is independent of percentage and reset times. Monthly
+        // availability remains based on its explicitly optional section.
+        for (window, available) in [
+            ("session", session_available),
+            ("five_hour", five_hour_available),
+            ("weekly", weekly_available),
+        ] {
+            self.insert(
+                &format!("{name}.{window}.available"),
+                available as u8 as f64,
+            );
+        }
         let (monthly_unix, monthly_seconds) =
             reset_value(monthly.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
@@ -2528,7 +2543,7 @@ use theme_datetime::*;
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }
-fn default_render() -> Expression {
+pub(crate) fn default_render() -> Expression {
     1.0.into()
 }
 fn default_visibility() -> Expression {

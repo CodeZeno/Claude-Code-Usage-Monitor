@@ -221,6 +221,7 @@ pub(super) fn native_context_menu_width(
 ) -> f32 {
     let label_width = items
         .iter()
+        .filter(|item| item.should_render(context))
         .filter(|item| !matches!(&item.kind, ContextMenuItemKind::Separator))
         .map(|item| context_menu::rendered_label(language, &item.label, context))
         .map(|label| {
@@ -265,6 +266,9 @@ pub(super) fn preview_context_menu_items(
         state.appearance,
     ));
     for item in items {
+        if !item.should_render(state.context) {
+            continue;
+        }
         match &item.kind {
             ContextMenuItemKind::Separator => {
                 let (rect, _) = ui.allocate_exact_size(

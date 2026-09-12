@@ -93,6 +93,8 @@ pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollEr
         if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
             if let Ok(fallback) = fetch_usage_via_messages(token) {
                 let mut merged = data;
+                merged.session.available |= fallback.session.available;
+                merged.weekly.available |= fallback.weekly.available;
                 if merged.session.resets_at.is_none() {
                     merged.session.resets_at = fallback.session.resets_at;
                 }
@@ -147,14 +149,20 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         Ok(response) => response,
         Err(_) => return Ok(None),
     };
+    Ok(Some(usage_from_response(response)))
+}
+
+fn usage_from_response(response: UsageResponse) -> UsageData {
     let mut data = UsageData::default();
 
     if let Some(bucket) = &response.five_hour {
+        data.session.available = true;
         data.session.percentage = bucket.utilization;
         data.session.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
 
     if let Some(bucket) = &response.seven_day {
+        data.weekly.available = true;
         data.weekly.percentage = bucket.utilization;
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
     }
@@ -164,7 +172,7 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         .as_ref()
         .and_then(|spend| claude_credits(spend, &data));
 
-    Ok(Some(data))
+    data
 }
 
 /// What a failed call to the usage endpoint actually tells us.
@@ -282,8 +290,22 @@ pub(super) fn parse_rate_limit_headers(response: &HttpResponse) -> UsageData {
         response,
         "anthropic-ratelimit-unified-7d-reset",
     ));
+    data.session.available = data.session.resets_at.is_some()
+        || response
+            .headers()
+            .contains_key("anthropic-ratelimit-unified-5h-utilization");
+    data.weekly.available = data.weekly.resets_at.is_some()
+        || response
+            .headers()
+            .contains_key("anthropic-ratelimit-unified-7d-utilization");
 
     let overall_reset = get_header_i64(response, "anthropic-ratelimit-unified-reset");
+    let claim = response
+        .headers()
+        .get("anthropic-ratelimit-unified-representative-claim")
+        .and_then(|value| value.to_str().ok());
+    data.session.available |= claim == Some("five_hour");
+    data.weekly.available |= claim == Some("seven_day");
 
     if data.session.percentage == 0.0 && data.weekly.percentage == 0.0 {
         let status = response
@@ -291,10 +313,6 @@ pub(super) fn parse_rate_limit_headers(response: &HttpResponse) -> UsageData {
             .get("anthropic-ratelimit-unified-status")
             .and_then(|value| value.to_str().ok());
         if status == Some("rejected") {
-            let claim = response
-                .headers()
-                .get("anthropic-ratelimit-unified-representative-claim")
-                .and_then(|value| value.to_str().ok());
             match claim {
                 Some("five_hour") => data.session.percentage = 100.0,
                 Some("seven_day") => data.weekly.percentage = 100.0,
@@ -304,6 +322,8 @@ pub(super) fn parse_rate_limit_headers(response: &HttpResponse) -> UsageData {
 
         if data.session.resets_at.is_none() && overall_reset.is_some() {
             data.session.resets_at = unix_to_system_time(overall_reset);
+            // Retain the legacy reset binding, but a shared reset alone does
+            // not establish that the five-hour window exists.
         }
     }
 
@@ -786,18 +806,58 @@ mod tests {
     fn usage_from_json(json: &str) -> UsageData {
         let response: UsageResponse =
             serde_json::from_str(json).expect("the fixture should deserialize");
-        let mut data = UsageData::default();
-        if let Some(bucket) = &response.seven_day {
-            data.weekly.percentage = bucket.utilization;
+        usage_from_response(response)
+    }
+
+    #[test]
+    fn reported_windows_without_resets_remain_available_at_zero_usage() {
+        for percentage in [0.0, 42.0] {
+            let data = usage_from_json(&format!(
+                r#"{{"five_hour":{{"utilization":{percentage},"resets_at":null}},"seven_day":null}}"#,
+            ));
+            assert!(data.session.available);
+            assert_eq!(data.session.percentage, percentage);
+            assert!(data.session.resets_at.is_none());
+            assert!(!data.weekly.available);
         }
-        if let Some(bucket) = &response.five_hour {
-            data.session.percentage = bucket.utilization;
+    }
+
+    #[test]
+    fn utilization_headers_report_windows_without_reset_headers() {
+        for (header, session, weekly) in [
+            ("anthropic-ratelimit-unified-5h-utilization", true, false),
+            ("anthropic-ratelimit-unified-7d-utilization", false, true),
+            ("anthropic-ratelimit-unified-status", false, false),
+        ] {
+            let response = ureq::http::Response::builder()
+                .header(header, "0")
+                .body(ureq::Body::builder().data(Vec::new()))
+                .unwrap();
+            let data = parse_rate_limit_headers(&response);
+            assert_eq!(data.session.available, session);
+            assert_eq!(data.weekly.available, weekly);
         }
-        data.credits = response
-            .spend
-            .as_ref()
-            .and_then(|spend| claude_credits(spend, &data));
-        data
+    }
+
+    #[test]
+    fn shared_reset_headers_do_not_invent_a_session_window() {
+        for status in ["allowed", "rejected"] {
+            for (claim, session, weekly) in [
+                ("five_hour", true, false),
+                ("seven_day", false, true),
+                ("unknown", false, false),
+            ] {
+                let response = ureq::http::Response::builder()
+                    .header("anthropic-ratelimit-unified-status", status)
+                    .header("anthropic-ratelimit-unified-reset", "1787198224")
+                    .header("anthropic-ratelimit-unified-representative-claim", claim)
+                    .body(ureq::Body::builder().data(Vec::new()))
+                    .unwrap();
+                let data = parse_rate_limit_headers(&response);
+                assert_eq!(data.session.available, session);
+                assert_eq!(data.weekly.available, weekly);
+            }
+        }
     }
 
     fn status_error(code: u16) -> ureq::Error {

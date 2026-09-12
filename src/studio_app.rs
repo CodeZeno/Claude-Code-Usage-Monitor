@@ -330,16 +330,29 @@ impl MouseEventField {
 }
 
 struct ExpressionHelperState {
-    selection: Selection,
+    target: ExpressionHelperTarget,
     field: ExpressionField,
     editor: ExpressionHelperEditorState,
+}
+
+enum ExpressionHelperTarget {
+    Theme(Selection),
+    ContextMenu(Vec<usize>),
 }
 
 impl ExpressionHelperState {
     fn new(selection: Selection, field: ExpressionField, draft: String) -> Self {
         Self {
-            selection,
+            target: ExpressionHelperTarget::Theme(selection),
             field,
+            editor: ExpressionHelperEditorState::new(draft),
+        }
+    }
+
+    fn for_context_menu(path: Vec<usize>, draft: String) -> Self {
+        Self {
+            target: ExpressionHelperTarget::ContextMenu(path),
+            field: ExpressionField::Render,
             editor: ExpressionHelperEditorState::new(draft),
         }
     }

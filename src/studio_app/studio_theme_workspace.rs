@@ -584,7 +584,14 @@ impl StudioApp {
             return;
         };
         let language = self.language();
-        let context = self.expression_context(helper.selection);
+        let context = match &helper.target {
+            ExpressionHelperTarget::ContextMenu(_) => DataContext::from_usage_with_runtime(
+                self.usage.as_ref(),
+                &Canvas::default(),
+                self.selected_theme_runtime(),
+            ),
+            ExpressionHelperTarget::Theme(selection) => self.expression_context(*selection),
+        };
         let action = show_expression_helper(
             ui,
             &mut helper.editor,
@@ -633,7 +640,22 @@ impl StudioApp {
             ExpressionHelperAction::Close => {}
             ExpressionHelperAction::Apply => {
                 let expression = Expression(helper.editor.draft);
-                let applied = match helper.selection {
+                if let ExpressionHelperTarget::ContextMenu(path) = helper.target {
+                    if !self.context_menu.is_builtin() {
+                        if let Some(item) =
+                            context_menu_item_mut(&mut self.context_menu.items, &path)
+                        {
+                            item.render = expression;
+                            self.context_menu_selection = Some(path);
+                            self.context_menu_dirty = true;
+                        }
+                    }
+                    return;
+                }
+                let ExpressionHelperTarget::Theme(selection) = helper.target else {
+                    return;
+                };
+                let applied = match selection {
                     Selection::Surface(surface_index) => self
                         .theme
                         .surfaces
@@ -676,7 +698,7 @@ impl StudioApp {
                         }),
                 };
                 if applied {
-                    self.selection = helper.selection;
+                    self.selection = selection;
                     self.changed();
                 }
             }

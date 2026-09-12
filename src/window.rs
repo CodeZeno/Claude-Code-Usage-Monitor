@@ -2435,10 +2435,12 @@ mod tray_usage_summary_tests {
     fn usage(session: f64, weekly: f64, weekly_label: Option<&str>) -> UsageData {
         UsageData {
             session: UsageSection {
+                available: true,
                 percentage: session,
                 resets_at: None,
             },
             weekly: UsageSection {
+                available: true,
                 percentage: weekly,
                 resets_at: None,
             },

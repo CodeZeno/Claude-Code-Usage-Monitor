@@ -3,6 +3,7 @@ use super::*;
 fn usage_with_session_percent(percentage: f64) -> UsageData {
     UsageData {
         session: UsageSection {
+            available: true,
             percentage,
             resets_at: None,
         },
@@ -12,6 +13,44 @@ fn usage_with_session_percent(percentage: f64) -> UsageData {
         credits: None,
         stale: false,
     }
+}
+
+#[test]
+fn antigravity_keeps_reported_idle_windows_without_resets() {
+    let quota = serde_json::from_str(r#"{"remainingFraction":1}"#).unwrap();
+    let section = super::antigravity::antigravity_section_from_quota(quota).unwrap();
+    assert!(section.available);
+    assert_eq!(section.percentage, 0.0);
+    assert!(section.resets_at.is_none());
+    let summary = serde_json::from_str(
+        r#"{
+        "groups":[{"displayName":"Gemini","buckets":[{"window":"5h","remainingFraction":1}]}]
+    }"#,
+    )
+    .unwrap();
+    let data = super::antigravity::antigravity_usage_from_summary(summary).unwrap();
+    assert!(data.session.available);
+    assert_eq!(data.session.percentage, 0.0);
+    assert!(data.session.resets_at.is_none());
+    assert!(!data.weekly.available);
+}
+
+#[test]
+fn idle_window_presence_survives_cached_poll_failures() {
+    let previous = AppUsageData::from_iter([(ProviderId::Claude, usage_with_session_percent(0.0))]);
+    let cached: AppUsageData =
+        serde_json::from_str(&serde_json::to_string(&previous).unwrap()).unwrap();
+    let carried = carry_forward_failures(
+        AppUsageData::default(),
+        &cached,
+        ProviderSet::from_enabled([ProviderId::Claude]),
+    );
+    let usage = carried.get(ProviderId::Claude).unwrap();
+    assert!(usage.stale);
+    assert!(usage.session.available);
+    assert_eq!(usage.session.percentage, 0.0);
+    assert!(usage.session.resets_at.is_none());
+    assert!(!usage.weekly.available);
 }
 
 #[test]

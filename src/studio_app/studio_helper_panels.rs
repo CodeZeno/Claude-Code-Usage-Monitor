@@ -1184,12 +1184,12 @@ pub(super) fn expression_variables_panel(
                 ) {
                     let mut names = vec![format!("{provider}.available")];
                     let windows = if matches!(provider, "active" | "codex") {
-                        &["session", "five_hour", "weekly"][..]
+                        &["session", "five_hour", "weekly", "monthly"][..]
                     } else {
-                        &["session", "weekly"][..]
+                        &["session", "weekly", "monthly"][..]
                     };
                     for window in windows {
-                        for metric in ["percentage", "remaining", "display"] {
+                        for metric in ["available", "percentage", "remaining", "display"] {
                             names.push(format!("{provider}.{window}.{metric}"));
                         }
                         for unit in ["unix", "seconds", "minutes", "hours", "days"] {

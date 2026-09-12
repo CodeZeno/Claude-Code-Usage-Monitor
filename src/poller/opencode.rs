@@ -109,6 +109,7 @@ fn select_long_window(usage: &DashboardUsage, now: SystemTime) -> (UsageSection,
 
 fn section_from_window(window: &UsageWindow, now: SystemTime) -> UsageSection {
     UsageSection {
+        available: true,
         percentage: window.usage_percent.clamp(0.0, 100.0),
         resets_at: now.checked_add(Duration::from_secs(window.reset_in_sec.max(0) as u64)),
     }
@@ -402,6 +403,29 @@ mod tests {
         let (section, label) = select_long_window(&usage, UNIX_EPOCH);
         assert_eq!(section.percentage, 70.0);
         assert_eq!(label.as_deref(), Some("30d"));
+    }
+
+    #[test]
+    fn idle_opencode_windows_are_available_and_missing_windows_are_not() {
+        let window = UsageWindow {
+            usage_percent: 0.0,
+            reset_in_sec: 0,
+        };
+        let section = section_from_window(&window, UNIX_EPOCH);
+        assert!(section.available);
+        assert_eq!(section.percentage, 0.0);
+        let usage = DashboardUsage {
+            monthly: Some(window),
+            ..Default::default()
+        };
+        let (section, label) = select_long_window(&usage, UNIX_EPOCH);
+        assert!(section.available);
+        assert_eq!(label.as_deref(), Some("30d"));
+        assert!(
+            !select_long_window(&DashboardUsage::default(), UNIX_EPOCH)
+                .0
+                .available
+        );
     }
 
     #[test]
