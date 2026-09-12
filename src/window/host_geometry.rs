@@ -34,7 +34,7 @@ pub(super) fn refresh_theme_host_geometry() {
 }
 
 fn refresh_with(query: impl FnOnce() -> Vec<ThemeHostGeometry>) {
-    // SHAppBarMessage can dispatch another layout notification before returning.
+    // Layout queries can dispatch another layout notification before returning.
     // Reentrant readers keep using the last complete snapshot; never wait here.
     if REFRESHING.swap(true, Ordering::Acquire) {
         return;

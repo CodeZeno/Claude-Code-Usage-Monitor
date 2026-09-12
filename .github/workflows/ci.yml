@@ -1,10 +1,10 @@
-﻿name: CI
+name: CI
 
 on:
   push:
-    branches: [ "**" ]
+    branches: [ main, "fix/**", "feat/**" ]
   pull_request:
-    branches: [ "**" ]
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -35,6 +35,6 @@ jobs:
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: claude-code-usage-monitor-fixed
+          name: claude-code-usage-monitor-release
           path: target/release/claude-code-usage-monitor.exe
           if-no-files-found: error

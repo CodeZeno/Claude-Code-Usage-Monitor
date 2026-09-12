@@ -406,7 +406,7 @@ fn relaunch_self() {
 fn spawn_taskbar_watchdog() {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
-        let (shell_hosted, windows) = {
+        let invalid = {
             let state = lock_state();
             let Some(state) = state.as_ref() else {
                 continue;
@@ -422,34 +422,26 @@ fn spawn_taskbar_watchdog() {
                     )
                 })
             });
-            (
-                shell_hosted,
-                std::iter::once(state.hwnd)
-                    .chain(state.mirror_hwnds.iter().copied())
-                    .chain(state.desktop_hwnds.iter().flatten().copied())
-                    .collect::<Vec<_>>(),
-            )
+            if !shell_hosted {
+                continue;
+            }
+            std::iter::once(state.hwnd)
+                .chain(state.mirror_hwnds.iter().copied())
+                .chain(state.desktop_hwnds.iter().flatten().copied())
+                .any(|window| unsafe {
+                    let hwnd = window.to_hwnd();
+                    if !IsWindow(Some(hwnd)).as_bool() {
+                        return true;
+                    }
+                    // When hosted inside a shell window (like Shell_TrayWnd or Progman),
+                    // Windows does not always destroy cross-process child windows when Explorer restarts.
+                    // If this window has a parent that is now destroyed, flag it as invalid.
+                    match GetParent(hwnd).ok() {
+                        Some(p) if !p.is_invalid() => !IsWindow(Some(p)).as_bool(),
+                        _ => false,
+                    }
+                })
         };
-        if !shell_hosted {
-            continue;
-        }
-        let invalid = windows.iter().any(|window| unsafe {
-            let hwnd = window.to_hwnd();
-            if !IsWindow(Some(hwnd)).as_bool() {
-                return true;
-            }
-            if shell_hosted {
-                // When hosted inside a shell window (like Shell_TrayWnd or Progman),
-                // Windows does not always destroy cross-process child windows when Explorer restarts.
-                // If this window has a parent that is now destroyed, flag it as invalid.
-                match GetParent(hwnd).ok() {
-                    Some(p) if !p.is_invalid() => !IsWindow(Some(p)).as_bool(),
-                    _ => false,
-                }
-            } else {
-                false
-            }
-        });
         if invalid && !native_interop::find_taskbars().is_empty() {
             diagnose::log("watchdog: shell-hosted surface was destroyed -> relaunching");
             relaunch_self();

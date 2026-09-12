@@ -103,7 +103,7 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
         if len > 0 {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
-                if let Some(rect) = get_taskbar_rect(hwnd).or_else(|| get_window_rect_safe(hwnd)) {
+                if let Some(rect) = get_taskbar_rect(hwnd) {
                     taskbars.push(TaskbarWindow { hwnd, rect });
                 }
             }
