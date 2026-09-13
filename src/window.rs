@@ -3529,6 +3529,36 @@ unsafe extern "system" fn on_foreground_changed(
         "on_foreground_changed: raw event fired, new foreground hwnd={_hwnd:?} class={class}"
     ));
 
+    let widget_hwnd = lock_state()
+        .as_ref()
+        .map(|s| s.hwnd.to_hwnd())
+        .unwrap_or(HWND::default());
+
+    // Confirmed, repeatedly reported by the user (and captured on video) as
+    // the actual trigger: clicking the Start button makes the widget
+    // disappear. Class "Windows.UI.Core.CoreWindow" is the Start menu/
+    // Search/Action Center XAML host. This arm-the-follow-up-timer check
+    // MUST run unconditionally, before the repaint debounce below - a real
+    // Start-button click reliably produces a burst of foreground-change
+    // events within milliseconds of each other (e.g. a Shell_TrayWnd
+    // refocus immediately followed by the CoreWindow taking foreground).
+    // The debounce below exists to limit repaint frequency, but if it were
+    // allowed to gate this check too, the CoreWindow event landing inside
+    // another event's 100ms debounce window would return early and this
+    // would silently never arm - confirmed happening via the diagnose log
+    // (on_foreground_changed logged the CoreWindow class, but no
+    // TIMER_STARTMENU_FOLLOWUP ever followed).
+    if !widget_hwnd.0.is_null() && class == "Windows.UI.Core.CoreWindow" {
+        unsafe {
+            let _ = SetTimer(
+                widget_hwnd,
+                native_interop::TIMER_STARTMENU_FOLLOWUP,
+                400,
+                None,
+            );
+        }
+    }
+
     let should_repaint = {
         let mut last = LAST_FOREGROUND_REPAINT
             .lock()
@@ -3548,32 +3578,9 @@ unsafe extern "system" fn on_foreground_changed(
         return;
     }
 
-    let widget_hwnd = lock_state()
-        .as_ref()
-        .map(|s| s.hwnd.to_hwnd())
-        .unwrap_or(HWND::default());
     if !widget_hwnd.0.is_null() {
         // Never repaint synchronously from WinEvent — see on_tray_location_changed.
         let _ = PostMessageW(widget_hwnd, WM_APP_FOREGROUND_CHANGED, WPARAM(0), LPARAM(0));
-
-        // Confirmed, repeatedly reported by the user as the actual trigger:
-        // clicking the Start button makes the widget disappear. Class
-        // "Windows.UI.Core.CoreWindow" is the Start menu/Search/Action Center
-        // XAML host. The immediate repaint above fires the instant the
-        // WinEvent lands, which can race the Start menu's own opening
-        // animation/compositor churn and lose. Arm a second, delayed repaint
-        // so there's a follow-up assertion after that transition has settled,
-        // independent of whatever the immediate one did.
-        if class == "Windows.UI.Core.CoreWindow" {
-            unsafe {
-                let _ = SetTimer(
-                    widget_hwnd,
-                    native_interop::TIMER_STARTMENU_FOLLOWUP,
-                    400,
-                    None,
-                );
-            }
-        }
     }
 }
 

@@ -527,22 +527,22 @@ fn monitors_primary_first() -> Vec<RECT> {
 }
 
 fn monitor_rect_for_taskbar(taskbar_hwnd: HWND) -> Option<RECT> {
-    let monitors = monitors_all();
-    if monitors.is_empty() {
-        return primary_monitor_rect();
-    }
-    let class = taskbar_window_class(taskbar_hwnd).unwrap_or_default();
-    if class.contains("Secondary") {
-        return monitors
-            .iter()
-            .copied()
-            .max_by_key(|mon| mon.right - mon.left);
-    }
-    monitors
-        .iter()
-        .copied()
-        .min_by_key(|mon| mon.right - mon.left)
-        .or_else(primary_monitor_rect)
+    // REPLACED a fragile width-comparison heuristic here (secondary taskbar
+    // -> monitor with the MAXIMUM width; primary -> monitor with the MINIMUM
+    // width). Confirmed real on this machine: an EnumWindows-visible "ghost"
+    // secondary display (Shell_SecondaryTrayWnd on a bogus ~6880px-wide
+    // monitor, left over from some display/dock reconfiguration) is wider
+    // than the real primary, so `max_by_key(width)` would always resolve a
+    // real secondary taskbar to that ghost monitor instead of whichever
+    // monitor it's actually on - and the "primary" branch resolving by
+    // MINIMUM width is just as fragile in principle (multi-monitor setups
+    // don't guarantee the primary is the narrowest). This is a very plausible
+    // source of "widget ends up on the wrong monitor" independent of the
+    // EnumWindows-blind-spot bug fixed earlier.
+    //
+    // Ask Windows directly which monitor this specific taskbar_hwnd is
+    // actually on instead of guessing from monitor dimensions.
+    monitor_rect_for_hwnd(taskbar_hwnd).or_else(primary_monitor_rect)
 }
 
 fn clip_taskbar_band_to_monitor(mut band: RECT, mon: RECT) -> RECT {
