@@ -1210,26 +1210,40 @@ fn version_action_label(
 
 fn begin_update_check(hwnd: HWND, interactive: bool) {
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
+    // MessageBoxW (inside show_info_message) pumps this thread's message
+    // queue while it's up; calling it with the state MutexGuard still held
+    // would deadlock the moment any WM_TIMER/WM_APP_* handler that also
+    // locks state gets dispatched during that pump - the same non-reentrant-
+    // Mutex class of bug as two other deadlocks already fixed this session.
+    // Drop the guard before calling it.
+    let already_in_progress = {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        matches!(
+            app_state.update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        )
+    };
+    if already_in_progress {
+        if interactive {
+            let (title, message) = {
+                let state = lock_state();
+                match state.as_ref() {
+                    Some(s) => (s.language.strings().updates, s.language.strings().update_in_progress),
+                    None => return,
+                }
+            };
+            show_info_message(hwnd, title, message);
+        }
+        return;
+    }
     let (strings, install_channel) = {
         let mut state = lock_state();
         let Some(app_state) = state.as_mut() else {
             return;
         };
-
-        if matches!(
-            app_state.update_status,
-            UpdateStatus::Checking | UpdateStatus::Applying
-        ) {
-            if interactive {
-                show_info_message(
-                    hwnd,
-                    app_state.language.strings().updates,
-                    app_state.language.strings().update_in_progress,
-                );
-            }
-            return;
-        }
-
         app_state.update_status = UpdateStatus::Checking;
         (app_state.language.strings(), app_state.install_channel)
     };
@@ -1296,24 +1310,34 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
 
 fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
+    // Same deadlock risk as begin_update_check: MessageBoxW pumps messages,
+    // so it must never run while the state MutexGuard is held.
+    let already_in_progress = {
+        let mut state = lock_state();
+        let Some(app_state) = state.as_mut() else {
+            return;
+        };
+        matches!(
+            app_state.update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        )
+    };
+    if already_in_progress {
+        let (title, message) = {
+            let state = lock_state();
+            match state.as_ref() {
+                Some(s) => (s.language.strings().updates, s.language.strings().update_in_progress),
+                None => return,
+            }
+        };
+        show_info_message(hwnd, title, message);
+        return;
+    }
     let strings = {
         let mut state = lock_state();
         let Some(app_state) = state.as_mut() else {
             return;
         };
-
-        if matches!(
-            app_state.update_status,
-            UpdateStatus::Checking | UpdateStatus::Applying
-        ) {
-            show_info_message(
-                hwnd,
-                app_state.language.strings().updates,
-                app_state.language.strings().update_in_progress,
-            );
-            return;
-        }
-
         app_state.update_status = UpdateStatus::Applying;
         app_state.language.strings()
     };
@@ -3030,6 +3054,14 @@ fn ensure_popup_visible() {
     if already_visible && layout_valid {
         return;
     }
+    // Confirmed real bug: when IsWindowVisible is false but the taskbar
+    // geometry hasn't changed (the overwhelmingly common case - the taskbar
+    // didn't move, the widget just isn't showing), position_at_taskbar()'s
+    // own `popup_layout_unchanged` cache short-circuits before it ever
+    // reaches the `ShowWindow(SW_SHOWNOACTIVATE)` call that would actually
+    // fix this - it's a silent no-op. Force that cache to miss so the
+    // recovery attempt this function exists for can't be defeated by it.
+    invalidate_popup_layout();
     position_at_taskbar();
 }
 
@@ -3334,6 +3366,7 @@ fn position_at_taskbar() {
         let screen_x = taskbar_rect.left + x;
         let screen_y = compute_anchor_y(anchor_top, anchor_height, widget_height);
         if popup_layout_unchanged(screen_x, screen_y, widget_width, widget_height) {
+            diagnose::log("position_at_taskbar: skipped (embedded layout unchanged)");
             return;
         }
         {
@@ -3359,6 +3392,7 @@ fn position_at_taskbar() {
             max_x,
         );
         if popup_layout_unchanged(x, y, widget_width, widget_height) {
+            diagnose::log("position_at_taskbar: skipped (popup layout unchanged)");
             return;
         }
         {
@@ -3573,6 +3607,7 @@ unsafe extern "system" fn wnd_proc(
             if startup_layout_grace_active() {
                 return LRESULT(0);
             }
+            invalidate_popup_layout();
             position_at_taskbar();
             render_layered();
             LRESULT(0)
