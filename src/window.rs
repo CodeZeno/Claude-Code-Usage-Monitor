@@ -3486,8 +3486,13 @@ unsafe extern "system" fn on_foreground_changed(
 ) {
     static LAST_FOREGROUND_REPAINT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
 
+    // Class name is the only way to retroactively tell what actually took the
+    // foreground (Start menu, Task View, Alt-Tab, a real app, ...) - a raw
+    // HWND alone is useless for after-the-fact diagnosis since the window is
+    // usually long gone by the time anyone looks at the log.
+    let class = native_interop::window_class_name(_hwnd).unwrap_or_else(|| "?".to_string());
     diagnose::log(format!(
-        "on_foreground_changed: raw event fired, new foreground hwnd={_hwnd:?}"
+        "on_foreground_changed: raw event fired, new foreground hwnd={_hwnd:?} class={class}"
     ));
 
     let should_repaint = {

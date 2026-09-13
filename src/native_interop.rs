@@ -943,7 +943,7 @@ fn foreground_covers_monitor_borderless(self_hwnd: HWND, taskbar_hwnd: Option<HW
     }
 }
 
-fn window_class_name(hwnd: HWND) -> Option<String> {
+pub fn window_class_name(hwnd: HWND) -> Option<String> {
     unsafe {
         let mut class_name = [0u16; 64];
         let len = GetClassNameW(hwnd, &mut class_name);
