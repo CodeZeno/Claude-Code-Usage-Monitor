@@ -969,6 +969,13 @@ fn is_shell_foreground_class(class_name: &str) -> bool {
             | "XamlExplorerHostIslandWindow"
             | "TopLevelWindowForOverflowXamlIsland"
             | "Windows.UI.Composition.DesktopWindowContentBridge"
+            // Confirmed live false positive: a transient "XamlWindow" (Windows
+            // 11 Widgets board / notification flyout / similar shell XAML
+            // surface) briefly reported its rect as (0,0,<monitor>,<monitor>) -
+            // covering the entire monitor including the taskbar band - which
+            // triggered fullscreen-suppress and hid the widget for ~2s even
+            // though nothing resembling a real fullscreen app was open.
+            | "XamlWindow"
     ) || class_name.starts_with("WindowsInternal")
 }
 
