@@ -976,6 +976,13 @@ fn is_shell_foreground_class(class_name: &str) -> bool {
             // triggered fullscreen-suppress and hid the widget for ~2s even
             // though nothing resembling a real fullscreen app was open.
             | "XamlWindow"
+            // Observed live taking foreground right around a session
+            // unlock (WM_WTSSESSION_CHANGE fired immediately after). Same
+            // risk profile as XamlWindow above: a transient lock/sign-in
+            // related shell surface, not a real app - exclude defensively
+            // even though this specific occurrence didn't happen to trigger
+            // fullscreen-suppress.
+            | "LockScreenControllerProxyWindow"
     ) || class_name.starts_with("WindowsInternal")
 }
 
