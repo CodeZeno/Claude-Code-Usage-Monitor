@@ -22,7 +22,7 @@ use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
     self, Color, TIMER_COUNTDOWN, TIMER_DRAG, TIMER_FULLSCREEN_CHECK, TIMER_POLL,
-    TIMER_RESET_POLL, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
+    TIMER_RESET_POLL, TIMER_STARTMENU_FOLLOWUP, TIMER_UPDATE_CHECK, TIMER_WIDGET_KEEPALIVE,
     WM_APP_FOREGROUND_CHANGED, WM_APP_REQUEST_PROOF, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
     WM_WTSSESSION_CHANGE, WTS_SESSION_UNLOCK,
 };
@@ -3555,6 +3555,25 @@ unsafe extern "system" fn on_foreground_changed(
     if !widget_hwnd.0.is_null() {
         // Never repaint synchronously from WinEvent — see on_tray_location_changed.
         let _ = PostMessageW(widget_hwnd, WM_APP_FOREGROUND_CHANGED, WPARAM(0), LPARAM(0));
+
+        // Confirmed, repeatedly reported by the user as the actual trigger:
+        // clicking the Start button makes the widget disappear. Class
+        // "Windows.UI.Core.CoreWindow" is the Start menu/Search/Action Center
+        // XAML host. The immediate repaint above fires the instant the
+        // WinEvent lands, which can race the Start menu's own opening
+        // animation/compositor churn and lose. Arm a second, delayed repaint
+        // so there's a follow-up assertion after that transition has settled,
+        // independent of whatever the immediate one did.
+        if class == "Windows.UI.Core.CoreWindow" {
+            unsafe {
+                let _ = SetTimer(
+                    widget_hwnd,
+                    native_interop::TIMER_STARTMENU_FOLLOWUP,
+                    400,
+                    None,
+                );
+            }
+        }
     }
 }
 
@@ -3683,6 +3702,15 @@ unsafe extern "system" fn wnd_proc(
                 }
                 TIMER_FULLSCREEN_CHECK => {
                     sync_fullscreen_visibility(hwnd);
+                }
+                TIMER_STARTMENU_FOLLOWUP => {
+                    unsafe {
+                        let _ = KillTimer(hwnd, TIMER_STARTMENU_FOLLOWUP);
+                    }
+                    diagnose::log("TIMER_STARTMENU_FOLLOWUP: forcing settle repaint");
+                    invalidate_popup_layout();
+                    position_at_taskbar();
+                    render_layered();
                 }
                 TIMER_DRAG => {
                     let (dragging, embedded, tray_offset) = {

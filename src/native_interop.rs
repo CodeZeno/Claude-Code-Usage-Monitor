@@ -60,6 +60,7 @@ pub const TIMER_UPDATE_CHECK: usize = 4;
 pub const TIMER_DRAG: usize = 5;
 pub const TIMER_WIDGET_KEEPALIVE: usize = 6;
 pub const TIMER_FULLSCREEN_CHECK: usize = 7;
+pub const TIMER_STARTMENU_FOLLOWUP: usize = 8;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
