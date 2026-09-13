@@ -1354,17 +1354,20 @@ pub fn lower_below_fullscreen(hwnd: HWND) {
 
 /// Place the layered popup above the taskbar (TOPMOST — peek band handled in sync).
 pub fn position_above_taskbar(hwnd: HWND, taskbar_hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
-    // Insert directly after taskbar_hwnd in z-order (single SetWindowPos call,
-    // same as raise_on_taskbar_band) rather than the demote-then-reassert
-    // dance below. Measured live: GW_HWNDPREV is essentially always non-null
-    // for this window (other topmost windows elsewhere on screen coexist
-    // normally), so the "skip if already frontmost" gate on that dance almost
-    // never engages in practice, meaning this call site would still hit the
-    // flicker-prone two-step SetWindowPos on nearly every render. This runs on
-    // every render_layered() call (every foreground change, unlock, and
-    // periodic keepalive), so a single stable insert-after-taskbar call here
-    // is worth more than chasing "absolute front of all topmost windows".
-    position_popup_zorder(hwnd, Some(taskbar_hwnd), true, x, y, w, h);
+    // REVERTED (confirmed live regression): `SetWindowPos(hwnd, hWndInsertAfter,
+    // ...)` places `hwnd` immediately BEHIND hWndInsertAfter in z-order — the
+    // window passed as hWndInsertAfter ends up in FRONT. Passing taskbar_hwnd
+    // here (use_taskbar_band=true) therefore placed the widget behind the real
+    // taskbar, which then painted over it — total invisibility, confirmed via
+    // GetWindow(GW_HWNDPREV/NEXT) showing the widget sitting behind Shell_TrayWnd
+    // in the live z-order chain, and via screenshots showing no widget content
+    // at all even across a full process restart. Do not reintroduce
+    // use_taskbar_band=true here; that call shape is only correct when the
+    // caller genuinely wants to sit behind/at the taskbar's own level (see
+    // raise_on_taskbar_band's peek-mode use). This path needs the widget above
+    // everything ordinary, which the HWND_TOPMOST special z-band (below)
+    // provides regardless of the taskbar's own position.
+    position_popup_zorder(hwnd, Some(taskbar_hwnd), false, x, y, w, h);
 }
 
 /// Place/move the popup without HWND_TOPMOST (exclusive fullscreen suppression).
