@@ -1244,8 +1244,9 @@ fn starter_tray_icons_follow_enabled_providers() {
 
 #[test]
 fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
-    assert_eq!(BUILTIN_THEME_SOURCES.len(), 1);
+    assert_eq!(BUILTIN_THEME_SOURCES.len(), 2);
     assert_eq!(BUILTIN_THEME_SOURCES[0].0, CLASSIC_THEME_ID);
+    assert_eq!(BUILTIN_THEME_SOURCES[1].0, COMPACT_FLUENT_QUAD_THEME_ID);
     assert!(REMOVED_BUILTIN_THEME_IDS
         .iter()
         .all(|id| !is_builtin_theme_id(id)));

@@ -20,12 +20,19 @@ use crate::providers::{ProviderId, ProviderSet, PROVIDER_DESCRIPTORS};
 
 pub const THEME_SCHEMA_VERSION: u32 = 1;
 pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
+pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 
-const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[(
-    CLASSIC_THEME_ID,
-    include_str!("themes/classic-usage-widget.json"),
-)];
+const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
+    (
+        CLASSIC_THEME_ID,
+        include_str!("themes/classic-usage-widget.json"),
+    ),
+    (
+        COMPACT_FLUENT_QUAD_THEME_ID,
+        include_str!("themes/compact-fluent-quad.json"),
+    ),
+];
 
 /// Bundled starting points are copied into the managed library only when they
 /// are missing. Their ids are deliberately excluded from `is_builtin_theme_id`
