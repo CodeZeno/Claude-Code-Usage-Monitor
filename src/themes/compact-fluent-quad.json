@@ -77,7 +77,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "cursor.session.percentage",
+            "value": "cursor.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#FFFFFFFF",
@@ -113,7 +113,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "int {cursor.session:usage_line}",
+            "template": "int {cursor.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -145,7 +145,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "cursor.session.percentage",
+            "value": "cursor.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#1A1A1AFF",
@@ -181,7 +181,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "int {cursor.session:usage_line}",
+            "template": "int {cursor.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -213,7 +213,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "cursor.weekly.percentage",
+            "value": "cursor.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#FFFFFFFF",
@@ -249,7 +249,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "ext {cursor.weekly:usage_line}",
+            "template": "ext {cursor.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -281,7 +281,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "cursor.weekly.percentage",
+            "value": "cursor.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#1A1A1AFF",
@@ -317,7 +317,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "ext {cursor.weekly:usage_line}",
+            "template": "ext {cursor.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -389,7 +389,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.session.percentage",
+            "value": "claude.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#D97757FF",
@@ -425,7 +425,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{claude.session:usage_line}",
+            "template": "{claude.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -457,7 +457,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.session.percentage",
+            "value": "claude.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#D97757FF",
@@ -493,7 +493,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{claude.session:usage_line}",
+            "template": "{claude.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -525,7 +525,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.weekly.percentage",
+            "value": "claude.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#D97757FF",
@@ -561,7 +561,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{claude.weekly:usage_line}",
+            "template": "{claude.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -593,7 +593,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.weekly.percentage",
+            "value": "claude.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#D97757FF",
@@ -629,7 +629,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{claude.weekly:usage_line}",
+            "template": "{claude.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -681,7 +681,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.five_hour.percentage",
+            "value": "codex.five_hour.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#3B82F6FF",
@@ -717,7 +717,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{codex.five_hour:usage_line}",
+            "template": "{codex.five_hour.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -749,7 +749,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.five_hour.percentage",
+            "value": "codex.five_hour.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#2563EBFF",
@@ -785,7 +785,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{codex.five_hour:usage_line}",
+            "template": "{codex.five_hour.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -817,7 +817,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.weekly.percentage",
+            "value": "codex.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#3B82F6FF",
@@ -853,7 +853,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{codex.weekly:usage_line}",
+            "template": "{codex.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -885,7 +885,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.weekly.percentage",
+            "value": "codex.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#2563EBFF",
@@ -921,7 +921,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{codex.weekly:usage_line}",
+            "template": "{codex.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -973,7 +973,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.session.percentage",
+            "value": "antigravity.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00D2B4FF",
@@ -1009,7 +1009,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{antigravity.session:usage_line}",
+            "template": "{antigravity.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1041,7 +1041,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.session.percentage",
+            "value": "antigravity.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00A896FF",
@@ -1077,7 +1077,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{antigravity.session:usage_line}",
+            "template": "{antigravity.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1109,7 +1109,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.weekly.percentage",
+            "value": "antigravity.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00D2B4FF",
@@ -1145,7 +1145,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{antigravity.weekly:usage_line}",
+            "template": "{antigravity.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1177,7 +1177,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.weekly.percentage",
+            "value": "antigravity.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00A896FF",
@@ -1213,7 +1213,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{antigravity.weekly:usage_line}",
+            "template": "{antigravity.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1265,7 +1265,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "opencode.session.percentage",
+            "value": "opencode.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#4CAF50FF",
@@ -1301,7 +1301,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{opencode.session:usage_line}",
+            "template": "{opencode.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1333,7 +1333,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "opencode.session.percentage",
+            "value": "opencode.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#2E7D32FF",
@@ -1369,7 +1369,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{opencode.session:usage_line}",
+            "template": "{opencode.session.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1401,7 +1401,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "opencode.weekly.percentage",
+            "value": "opencode.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#4CAF50FF",
@@ -1437,7 +1437,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly:usage_line}",
+            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1469,7 +1469,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "opencode.weekly.percentage",
+            "value": "opencode.weekly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#2E7D32FF",
@@ -1505,7 +1505,7 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly:usage_line}",
+            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1537,7 +1537,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.credits.percentage",
+            "value": "claude.credits.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#F5A623FF",
@@ -1605,7 +1605,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "claude.credits.percentage",
+            "value": "claude.credits.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#C77700FF",
@@ -1673,7 +1673,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.credits.percentage",
+            "value": "codex.credits.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#F5A623FF",
@@ -1741,7 +1741,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "codex.credits.percentage",
+            "value": "codex.credits.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#C77700FF",

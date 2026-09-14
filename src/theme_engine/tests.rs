@@ -1287,6 +1287,70 @@ fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
 }
 
 #[test]
+fn compact_fluent_quad_widget_respects_usage_direction() {
+    use crate::models::{CreditsSection, UsageData, UsageSection};
+
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    let section = UsageSection {
+        available: true,
+        percentage: 25.0,
+        resets_at: None,
+    };
+    let usage = AppUsageData::from_iter(ProviderId::ALL.into_iter().map(|provider| {
+        (
+            provider,
+            UsageData {
+                session: section.clone(),
+                weekly: section.clone(),
+                credits: Some(CreditsSection {
+                    percentage: 25.0,
+                    remaining: 24.1,
+                    total: 40.83,
+                }),
+                ..Default::default()
+            },
+        )
+    }));
+    for (countdown, expected, text) in [(false, 25.0, "25%"), (true, 75.0, "75%")] {
+        let context = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL))
+                .with_countdown(countdown),
+        );
+        for object in &theme.surfaces[0].children {
+            match &object.content {
+                SceneContent::Progress { value, .. } => {
+                    assert_eq!(
+                        evaluate(&value.0, &context).unwrap(),
+                        expected,
+                        "{}",
+                        object.id
+                    );
+                }
+                SceneContent::Text { template, .. } if template.contains(":usage_line}") => {
+                    assert!(
+                        format_template(template, &context).contains(text),
+                        "{}",
+                        object.id
+                    );
+                }
+                SceneContent::Text { template, .. } if template.contains(".credits.balance") => {
+                    assert_eq!(
+                        format_template(template, &context),
+                        "$24.10",
+                        "{}",
+                        object.id
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[test]
 fn bundled_minecraft_theme_is_valid_editable_and_uses_dashboard_v2() {
     assert_eq!(BUNDLED_EDITABLE_THEME_SOURCES.len(), 1);
     let (expected_id, source) = BUNDLED_EDITABLE_THEME_SOURCES[0];
