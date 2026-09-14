@@ -194,6 +194,15 @@ static TASKBAR_RECOVER_FAILURES: AtomicU32 = AtomicU32::new(0);
 static KEEPALIVE_TICKS_SINCE_FORCE: AtomicU32 = AtomicU32::new(0);
 const FORCE_REPAINT_EVERY_N_TICKS: u32 = 4; // ~60s at the 15s keepalive interval
 
+/// Confirmed via reproduction that neither this interval nor a much tighter
+/// one (60ms, ~113 attempts over 7s - tested and reverted) fixes the actual
+/// bug this timer targets (see the TIMER_STARTMENU_FOLLOWUP handler for the
+/// full writeup) - resubmission frequency isn't the limiting factor. Kept at
+/// a moderate, low-overhead cadence since it's unproven either way and this
+/// is cheap insurance, not a confirmed fix.
+const STARTMENU_FOLLOWUP_INTERVAL_MS: u32 = 400;
+const STARTMENU_FOLLOWUP_MAX_TICKS: u32 = 30; // ~12s at 400ms
+
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
 static STARTUP_LAYOUT_GRACE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
@@ -2204,7 +2213,7 @@ fn render_layered() {
             AlphaFormat: 1, // AC_SRC_ALPHA
         };
 
-        let _ = UpdateLayeredWindow(
+        let ulw_result = UpdateLayeredWindow(
             hwnd,
             screen_dc,
             Some(&pt_dest),
@@ -2215,6 +2224,17 @@ fn render_layered() {
             Some(&blend),
             ULW_ALPHA,
         );
+        if let Err(e) = ulw_result {
+            diagnose::log(format!("render_layered: UpdateLayeredWindow FAILED: {e:?}"));
+        }
+        // NOTE: tried DwmFlush() + RedrawWindow() here as forced-composite
+        // mitigations for the Start-menu-mouse-movement bug below. Neither
+        // helped (still blank in 3/3 and 2/3 repro trials respectively) and
+        // both add unconditional cost to every single render_layered() call
+        // (this app's hot path), so removed rather than kept "just in case".
+        // UpdateLayeredWindow itself reports success every time during the
+        // failure - see the TIMER_STARTMENU_FOLLOWUP comment for what's
+        // actually going on and what's still unresolved.
 
         if !_embedded {
             let taskbar_hwnd = lock_state().as_ref().and_then(|s| s.taskbar_hwnd);
@@ -3553,7 +3573,7 @@ unsafe extern "system" fn on_foreground_changed(
             let _ = SetTimer(
                 widget_hwnd,
                 native_interop::TIMER_STARTMENU_FOLLOWUP,
-                400,
+                STARTMENU_FOLLOWUP_INTERVAL_MS,
                 None,
             );
         }
@@ -3711,13 +3731,71 @@ unsafe extern "system" fn wnd_proc(
                     sync_fullscreen_visibility(hwnd);
                 }
                 TIMER_STARTMENU_FOLLOWUP => {
-                    unsafe {
-                        let _ = KillTimer(hwnd, TIMER_STARTMENU_FOLLOWUP);
-                    }
                     diagnose::log("TIMER_STARTMENU_FOLLOWUP: forcing settle repaint");
                     invalidate_popup_layout();
                     position_at_taskbar();
                     render_layered();
+
+                    // UNRESOLVED, confirmed via a 100%-reliable repro (see
+                    // below): this recurring-repaint approach does NOT
+                    // actually fix the bug it was written for. Keeping it
+                    // anyway because it's cheap, harmless, and may still help
+                    // shorter/different DWM hiccups than the one described
+                    // here - just don't mistake its presence for a fix.
+                    //
+                    // Confirmed root cause: sustained mouse movement inside an
+                    // open Start menu (hovering tiles/recommended items, not
+                    // just click-open-close) reliably makes this widget's
+                    // composited surface go blank and STAY blank for 7+
+                    // seconds, independent of how many times or how
+                    // frequently we resubmit. UpdateLayeredWindow reports
+                    // success every single call during the failure (verified
+                    // via logging its Result). Tried and confirmed NOT
+                    // sufficient, each independently: a single one-shot
+                    // follow-up (this timer, one-shot); this timer made
+                    // recurring at 400ms; tightened to 60ms (~113 attempts
+                    // over 7s); DwmFlush() after every UpdateLayeredWindow;
+                    // RedrawWindow(RDW_INVALIDATE|RDW_UPDATENOW|RDW_FRAME);
+                    // stripping and re-adding WS_EX_LAYERED every tick to
+                    // force a fresh surface registration. All of the above
+                    // still left the widget blank through the whole repro.
+                    // Reliable repro (100% in 6+ trials): click Start, then
+                    // move the mouse to at least 2-3 different points inside
+                    // the open menu over ~1-2s before closing it - a plain
+                    // click-wait-click with no movement inside the menu does
+                    // NOT reproduce it (confirmed clean 5/5). This points at
+                    // a DWM compositor-scheduling decision (likely
+                    // deprioritizing a NOACTIVATE topmost overlay's frames
+                    // against the focused app's own high-frequency hover-
+                    // animation frames) rather than a missed-frame race our
+                    // own retries can win. Untested next direction: genuine
+                    // taskbar embedding (SetParent + WM_PAINT instead of a
+                    // separate layered surface) via the already-present but
+                    // currently-dead embed_in_taskbar()/paint() - not
+                    // attempted here because it requires also wiring WM_PAINT
+                    // to actually call paint() (currently a no-op stub) and
+                    // was judged too large/risky to land safely under time
+                    // pressure rather than because it's known not to help.
+                    static TICKS: AtomicU32 = AtomicU32::new(0);
+                    let still_active = unsafe {
+                        let fg = GetForegroundWindow();
+                        matches!(
+                            native_interop::window_class_name(fg).as_deref(),
+                            Some("Windows.UI.Core.CoreWindow") | Some("XamlExplorerHostIslandWindow")
+                        )
+                    };
+                    let ticks = if still_active {
+                        TICKS.fetch_add(1, Ordering::Relaxed) + 1
+                    } else {
+                        TICKS.store(0, Ordering::Relaxed);
+                        0
+                    };
+                    if !still_active || ticks >= STARTMENU_FOLLOWUP_MAX_TICKS {
+                        TICKS.store(0, Ordering::Relaxed);
+                        unsafe {
+                            let _ = KillTimer(hwnd, TIMER_STARTMENU_FOLLOWUP);
+                        }
+                    }
                 }
                 TIMER_DRAG => {
                     let (dragging, embedded, tray_offset) = {
