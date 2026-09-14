@@ -3568,7 +3568,21 @@ unsafe extern "system" fn on_foreground_changed(
     // would silently never arm - confirmed happening via the diagnose log
     // (on_foreground_changed logged the CoreWindow class, but no
     // TIMER_STARTMENU_FOLLOWUP ever followed).
-    if !widget_hwnd.0.is_null() && class == "Windows.UI.Core.CoreWindow" {
+    //
+    // Also arm on "XamlExplorerHostIslandWindow": confirmed via repeated
+    // repro captures that Start sometimes takes foreground directly as this
+    // class instead of routing through CoreWindow first. The TIMER_STARTMENU_FOLLOWUP
+    // handler's own "still_active" check already treated both classes as
+    // "menu still open" - but this arm site only matched CoreWindow, so on
+    // an XamlExplorerHostIslandWindow-first open the timer never started at
+    // all and the widget was left on the unmitigated layered/DWM path,
+    // reproducing the original disappearing-widget bug with no fix applied.
+    if !widget_hwnd.0.is_null()
+        && matches!(
+            class.as_str(),
+            "Windows.UI.Core.CoreWindow" | "XamlExplorerHostIslandWindow"
+        )
+    {
         unsafe {
             let _ = SetTimer(
                 widget_hwnd,
@@ -3736,12 +3750,12 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
 
-                    // UNRESOLVED, confirmed via a 100%-reliable repro (see
-                    // below): this recurring-repaint approach does NOT
-                    // actually fix the bug it was written for. Keeping it
-                    // anyway because it's cheap, harmless, and may still help
-                    // shorter/different DWM hiccups than the one described
-                    // here - just don't mistake its presence for a fix.
+                    // UNRESOLVED, confirmed via a 100%-reliable repro: this
+                    // recurring-repaint approach does NOT actually fix the
+                    // bug it was written for. Keeping it anyway because it's
+                    // cheap, harmless, and may still help shorter/different
+                    // DWM hiccups than the one described here - just don't
+                    // mistake its presence for a fix.
                     //
                     // Confirmed root cause: sustained mouse movement inside an
                     // open Start menu (hovering tiles/recommended items, not
@@ -3759,6 +3773,34 @@ unsafe extern "system" fn wnd_proc(
                     // stripping and re-adding WS_EX_LAYERED every tick to
                     // force a fresh surface registration. All of the above
                     // still left the widget blank through the whole repro.
+                    //
+                    // Also tried and REVERTED: genuine WS_CHILD taskbar
+                    // embedding (SetParent + real WM_PAINT/BitBlt instead of
+                    // UpdateLayeredWindow) for the duration Start has focus.
+                    // Got the embedded painting itself working (several
+                    // layered/cache bugs fixed along the way), but it
+                    // introduced a worse regression than the bug it targeted:
+                    // SetParent(hwnd, None) on detach re-interprets the
+                    // child's parent-relative (0,0) origin as screen-absolute
+                    // (0,0), and if the detach-time position_at_taskbar()
+                    // call is skipped or races (multiple embed/detach cycles
+                    // in quick succession, e.g. from foreground churn caused
+                    // by something else entirely - another app, a
+                    // notification, even an unrelated process on the
+                    // machine), the widget is left permanently floating at
+                    // the top-left corner of the screen with all the normal
+                    // self-healing timers (force_periodic_repaint,
+                    // ensure_popup_visible) disabled because they all bail
+                    // out early on `embedded == true`. Confirmed live on this
+                    // machine: the widget got stuck at (0,0) and stayed there
+                    // until the process was restarted. A cosmetic, self-
+                    // healing-once-Start-closes flicker is a much smaller
+                    // problem than a widget that can end up permanently
+                    // mispositioned, so this reverts to the simpler
+                    // non-embedding mitigation below rather than keep
+                    // patching the embedding path's failure modes one at a
+                    // time.
+                    //
                     // Reliable repro (100% in 6+ trials): click Start, then
                     // move the mouse to at least 2-3 different points inside
                     // the open menu over ~1-2s before closing it - a plain
@@ -3768,22 +3810,18 @@ unsafe extern "system" fn wnd_proc(
                     // deprioritizing a NOACTIVATE topmost overlay's frames
                     // against the focused app's own high-frequency hover-
                     // animation frames) rather than a missed-frame race our
-                    // own retries can win. Untested next direction: genuine
-                    // taskbar embedding (SetParent + WM_PAINT instead of a
-                    // separate layered surface) via the already-present but
-                    // currently-dead embed_in_taskbar()/paint() - not
-                    // attempted here because it requires also wiring WM_PAINT
-                    // to actually call paint() (currently a no-op stub) and
-                    // was judged too large/risky to land safely under time
-                    // pressure rather than because it's known not to help.
+                    // own retries can win.
                     static TICKS: AtomicU32 = AtomicU32::new(0);
-                    let still_active = unsafe {
-                        let fg = GetForegroundWindow();
-                        matches!(
-                            native_interop::window_class_name(fg).as_deref(),
-                            Some("Windows.UI.Core.CoreWindow") | Some("XamlExplorerHostIslandWindow")
-                        )
-                    };
+                    // startmenu_surface_visible() checks for a visible
+                    // CoreWindow/Xaml surface anywhere in z-order rather than
+                    // GetForegroundWindow() (focus-only): confirmed via repro
+                    // captures that focus alone blips away to unrelated
+                    // windows constantly while Start stays visually open,
+                    // which with a focus-only check made this timer give up
+                    // (and stop retrying) far too early. This has no
+                    // embedding-style risk since it only controls how long we
+                    // keep retrying the harmless repaint above.
+                    let still_active = native_interop::startmenu_surface_visible();
                     let ticks = if still_active {
                         TICKS.fetch_add(1, Ordering::Relaxed) + 1
                     } else {

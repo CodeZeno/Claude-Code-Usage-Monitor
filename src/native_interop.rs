@@ -1034,6 +1034,51 @@ fn is_preview_ui_class(class_name: &str) -> bool {
     )
 }
 
+/// True if a visible Start menu / Search / Action Center XAML host window
+/// currently exists anywhere in z-order, regardless of which window
+/// currently has focus.
+///
+/// GetForegroundWindow() alone is too strict for TIMER_STARTMENU_FOLLOWUP's
+/// "is Start still open" check: confirmed via repeated repro captures that
+/// foreground can blip away to a completely unrelated window for a single
+/// event (another app briefly steals it, a notification toast pops up, a
+/// spawned child process's console momentarily regains it) while the Start
+/// menu stays visually open and unchanged the whole time. A focus-only check
+/// made that timer give up retrying far too early. EnumWindows (not
+/// FindWindowW) is used because more than one CoreWindow-classed top-level
+/// window can be alive at once (background UWP apps keep one around even
+/// when hidden).
+pub fn startmenu_surface_visible() -> bool {
+    struct Scan {
+        found: bool,
+    }
+
+    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let scan = &mut *(lparam.0 as *mut Scan);
+        if scan.found {
+            return BOOL(1);
+        }
+        if !IsWindowVisible(hwnd).as_bool() {
+            return BOOL(1);
+        }
+        if let Some(class_name) = window_class_name(hwnd) {
+            if matches!(
+                class_name.as_str(),
+                "Windows.UI.Core.CoreWindow" | "XamlExplorerHostIslandWindow"
+            ) {
+                scan.found = true;
+            }
+        }
+        BOOL(1)
+    }
+
+    unsafe {
+        let mut scan = Scan { found: false };
+        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut scan as *mut _ as isize));
+        scan.found
+    }
+}
+
 /// Any visible shell preview flyout (taskbar hover / Win11 variants).
 pub fn shell_preview_ui_active() -> bool {
     struct Scan {
