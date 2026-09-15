@@ -19,6 +19,7 @@ pub mod diagnose;
 #[path = "diagnose_disabled.rs"]
 pub mod diagnose;
 
+pub mod antigravity_statusline;
 pub mod localization;
 pub mod models;
 pub mod poller;

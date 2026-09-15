@@ -12,12 +12,22 @@
 //!   aum-quota dispatch --prompt "..."      routing decision for one task (JSON, dry-run by default)
 //!       [--executor auto|claude|codex] [--complexity light|standard|hard]
 //!       [--model-lock NAME] [--execute]
+//!   aum-quota antigravity-statusline-bridge
+//!       Reads one Antigravity CLI `/statusline <command>` JSON payload from
+//!       stdin, sanitizes it, and atomically writes it to this app's
+//!       Antigravity statusLine cache. Intended as the `command` target of
+//!       an opt-in `/statusline` configuration in Antigravity — see
+//!       `antigravity_statusline` module docs. Never talks to Google or
+//!       Antigravity itself, never touches credentials, and always exits
+//!       successfully so a bad tick never breaks the user's status line.
 //!
 //! `dispatch` never launches a provider unless `--execute` is passed
 //! explicitly; by default it only reports what it *would* run.
 
+use std::io::Read;
 use std::process::ExitCode;
 
+use claude_code_usage_monitor::antigravity_statusline::{self, BridgeOutcome};
 use claude_code_usage_monitor::dispatcher::{
     self, Complexity, ExecutorSuitability, ModelMapping, PreferredExecutor, Suitability, Task,
 };
@@ -59,6 +69,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         "dispatch" => run_dispatch(args, compact),
+        "antigravity-statusline-bridge" => run_antigravity_statusline_bridge(),
         "--help" | "-h" | "help" => {
             print_usage();
             ExitCode::SUCCESS
@@ -69,6 +80,29 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Reads exactly one Antigravity `/statusline <command>` JSON payload from
+/// stdin and bridges it into this app's sanitized cache (see
+/// `antigravity_statusline` module docs). Always exits successfully and
+/// always prints *something* to stdout — Antigravity renders whatever this
+/// prints as the status line text, so silence or a nonzero exit would show
+/// up as a broken/blank status line in the user's own terminal. Never
+/// prints the raw payload or any field from it; the short strings below are
+/// the only possible outputs.
+fn run_antigravity_statusline_bridge() -> ExitCode {
+    let mut raw = String::new();
+    if std::io::stdin().read_to_string(&mut raw).is_err() {
+        println!("AUM");
+        return ExitCode::SUCCESS;
+    }
+
+    let cache_path = antigravity_statusline::default_cache_path();
+    match antigravity_statusline::run_bridge(&raw, &cache_path, std::time::SystemTime::now()) {
+        BridgeOutcome::Written => println!("AUM"),
+        BridgeOutcome::Rejected(_) | BridgeOutcome::WriteFailed(_) => println!("AUM"),
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode {
@@ -96,7 +130,9 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
                 Some("standard") => complexity = Complexity::Standard,
                 Some("hard") => complexity = Complexity::Hard,
                 other => {
-                    eprintln!("invalid --complexity value: {other:?} (expected light|standard|hard)");
+                    eprintln!(
+                        "invalid --complexity value: {other:?} (expected light|standard|hard)"
+                    );
                     return ExitCode::FAILURE;
                 }
             },
@@ -129,17 +165,14 @@ fn run_dispatch(mut args: std::vec::IntoIter<String>, compact: bool) -> ExitCode
         model_lock,
     };
 
-    let decision = match dispatcher::route_with_suitability(
-        &task,
-        &ModelMapping::default(),
-        suitability,
-    ) {
-        Ok(decision) => decision,
-        Err(error) => {
-            print_json(&serde_json::json!({ "error": error }), compact);
-            return ExitCode::FAILURE;
-        }
-    };
+    let decision =
+        match dispatcher::route_with_suitability(&task, &ModelMapping::default(), suitability) {
+            Ok(decision) => decision,
+            Err(error) => {
+                print_json(&serde_json::json!({ "error": error }), compact);
+                return ExitCode::FAILURE;
+            }
+        };
     print_json(&decision, compact);
 
     if execute {
@@ -201,7 +234,8 @@ fn print_usage() {
         "usage:\n  \
          aum-quota quota\n  \
          aum-quota health\n  \
-         aum-quota dispatch --prompt \"...\" [--executor auto|claude|codex] [--complexity light|standard|hard] [--claude-suitability best|acceptable|unsuitable] [--codex-suitability best|acceptable|unsuitable] [--model-lock NAME] [--execute]\n\n\
+         aum-quota dispatch --prompt \"...\" [--executor auto|claude|codex] [--complexity light|standard|hard] [--claude-suitability best|acceptable|unsuitable] [--codex-suitability best|acceptable|unsuitable] [--model-lock NAME] [--execute]\n  \
+         aum-quota antigravity-statusline-bridge   (reads one statusLine JSON payload from stdin)\n\n\
          Add --compact to any command for non-pretty-printed JSON."
     );
 }

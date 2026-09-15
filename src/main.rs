@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
 
+mod antigravity_statusline;
 #[cfg(feature = "diagnose")]
 mod diagnose;
 #[cfg(not(feature = "diagnose"))]
