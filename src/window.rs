@@ -32,7 +32,8 @@ use crate::models::{AppUsageData, BankedResetCount, QuotaFamilyId, QuotaMetric, 
 #[cfg(feature = "self-update")]
 use crate::native_interop::TIMER_UPDATE_CHECK;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_VIRTUAL_DESKTOP_SYNC,
+    WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::snapshot_schema;
@@ -301,14 +302,29 @@ struct AppState {
     always_on_top: bool,
 
     /// Which virtual desktops the widget should be displayed on. See
-    /// `virtual_desktop` for the public-API mechanism behind
-    /// `CurrentOnly`.
+    /// `virtual_desktop` for the public-API sensing mechanism behind
+    /// `CurrentOnly` — app-level visibility synchronization, not native
+    /// per-desktop `Show`/`Hide` enforcement (see that module's docs).
     virtual_desktop_scope: VirtualDesktopScope,
-    /// The virtual desktop `CurrentOnly` is currently pinned to, if any has
-    /// been resolved yet (via a successful `MoveWindowToDesktop`). `None`
-    /// while `virtual_desktop_scope` is `All`, or if pinning has not
-    /// succeeded (Virtual Desktop API unavailable).
+    /// The desktop `CurrentOnly` should show the widget on. `None` while
+    /// `virtual_desktop_scope` is `All`.
     virtual_desktop_target: Option<GUID>,
+    /// The last desktop id `TIMER_VIRTUAL_DESKTOP_SYNC` has *committed* as
+    /// the current desktop (after debouncing — see
+    /// `virtual_desktop_pending`). `None` means unknown (sensor has not
+    /// succeeded yet, or scope is `All` and this is simply unused).
+    virtual_desktop_current: Option<GUID>,
+    /// A newly-sensed desktop id that differs from `virtual_desktop_current`
+    /// but has not yet been observed on two consecutive poll ticks. Debounce
+    /// staging so a single transient reading during a desktop-switch
+    /// animation cannot flip visibility — see
+    /// `window::poll_virtual_desktop_sync`.
+    virtual_desktop_pending: Option<GUID>,
+    /// The widget's actual, last-applied OS-level show/hide state driven by
+    /// `effective_widget_visible` — kept separate from the `widget_visible`
+    /// user preference so `sync_effective_widget_visibility` only calls
+    /// `ShowWindow` when the effective state actually changes.
+    virtual_desktop_applied_visible: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -2414,93 +2430,222 @@ fn save_state_settings() {
     }
 }
 
-/// Applied once at startup (`run`), after the main window and `AppState`
-/// exist. Resolves `settings.virtual_desktop_scope`/`virtual_desktop_target`
-/// against the live Virtual Desktop API and updates `AppState` (and, if the
-/// saved target turned out to be stale, the persisted settings) to match
-/// what was actually achieved — so a deleted/invalid saved desktop id can
-/// never leave the widget silently hidden forever; it always falls open to
-/// the currently active desktop, or to `All` if the API is unavailable.
-fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
-    let (scope, target) = {
+/// How often `TIMER_VIRTUAL_DESKTOP_SYNC` re-senses the current desktop
+/// while `virtual_desktop_scope` is `CurrentOnly`. 500ms was chosen as the
+/// slowest interval that still keeps the widget's appear/disappear latency
+/// within roughly a second of the user's own desktop switch (see
+/// `virtual_desktop` module docs for why this polls instead of relying on
+/// native Shell enforcement).
+const VIRTUAL_DESKTOP_SYNC_POLL_MS: u32 = 500;
+
+/// Pure visibility rule combining the user's "Show Widget" preference with
+/// the virtual-desktop scope — the single place both are reconciled, so
+/// every caller (startup, the menu, the poll timer) applies the identical
+/// rule. `current_desktop` being `None` (sensor has not yet succeeded, or
+/// hasn't run) fails open to visible: a transient sensing gap must never
+/// hide the widget on its own.
+fn effective_widget_visible(
+    widget_visible: bool,
+    scope: VirtualDesktopScope,
+    current_desktop: Option<GUID>,
+    target_desktop: Option<GUID>,
+) -> bool {
+    if !widget_visible {
+        return false;
+    }
+    match scope {
+        VirtualDesktopScope::All => true,
+        VirtualDesktopScope::CurrentOnly => match (current_desktop, target_desktop) {
+            (Some(current), Some(target)) => current == target,
+            _ => true,
+        },
+    }
+}
+
+/// Applies `effective_widget_visible`'s result to the real window, reusing
+/// the same safe show/hide path as the user's own "Show Widget" toggle
+/// (`toggle_widget_visibility`) — but never touches the `widget_visible`
+/// preference itself. Only calls into Win32 when the effective state
+/// actually changed since the last call (`virtual_desktop_applied_visible`
+/// cache), so the poll timer does not re-issue `ShowWindow` every tick.
+fn sync_effective_widget_visibility(hwnd: HWND) {
+    let (should_show, already_applied, always_on_top) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (s.virtual_desktop_scope, s.virtual_desktop_target),
+            Some(s) => {
+                let should_show = effective_widget_visible(
+                    s.widget_visible,
+                    s.virtual_desktop_scope,
+                    s.virtual_desktop_current,
+                    s.virtual_desktop_target,
+                );
+                (
+                    should_show,
+                    s.virtual_desktop_applied_visible,
+                    s.always_on_top,
+                )
+            }
+            None => return,
+        }
+    };
+    if should_show == already_applied {
+        return;
+    }
+    unsafe {
+        if should_show {
+            position_at_taskbar();
+            show_widget_without_activation(hwnd, always_on_top);
+            render_layered();
+            finalize_widget_show_z_order(hwnd, always_on_top);
+        } else {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+    }
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.virtual_desktop_applied_visible = should_show;
+    }
+}
+
+/// Start (or restart) the virtual-desktop sync poll timer. Only meaningful
+/// while `virtual_desktop_scope` is `CurrentOnly` — callers are responsible
+/// for calling `stop_virtual_desktop_sync` when leaving that scope.
+fn start_virtual_desktop_sync(hwnd: HWND) {
+    unsafe {
+        SetTimer(
+            hwnd,
+            TIMER_VIRTUAL_DESKTOP_SYNC,
+            VIRTUAL_DESKTOP_SYNC_POLL_MS,
+            None,
+        );
+    }
+}
+
+fn stop_virtual_desktop_sync(hwnd: HWND) {
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_VIRTUAL_DESKTOP_SYNC);
+    }
+}
+
+/// Pure debounce step for one sensor reading. `committed` is the currently
+/// confirmed current-desktop id, `pending` is a not-yet-confirmed reading
+/// from the previous tick, and `sensed` is this tick's fresh reading.
+/// Returns the new `(committed, pending)` pair: a changed reading is only
+/// committed once it has been observed on two consecutive ticks (roughly
+/// one poll interval), so a single transient value during a desktop-switch
+/// animation cannot flip visibility by itself.
+fn debounce_virtual_desktop_reading(
+    committed: Option<GUID>,
+    pending: Option<GUID>,
+    sensed: GUID,
+) -> (Option<GUID>, Option<GUID>) {
+    if committed == Some(sensed) {
+        // Already the committed value; drop any stale pending reading that
+        // never got confirmed.
+        (committed, None)
+    } else if pending == Some(sensed) {
+        // Same new value observed on two consecutive ticks: commit it.
+        (Some(sensed), None)
+    } else {
+        // First time seeing this value: stage it, wait for confirmation.
+        (committed, Some(sensed))
+    }
+}
+
+/// `WM_TIMER` handler for `TIMER_VIRTUAL_DESKTOP_SYNC`. Senses the current
+/// desktop (see `virtual_desktop::sense_current_desktop_id`), debounces it
+/// (see `debounce_virtual_desktop_reading`), and only re-evaluates/applies
+/// effective visibility when the commit actually changes. A sensor failure
+/// (`None`) leaves `virtual_desktop_current`/`virtual_desktop_pending`
+/// untouched entirely — never treated as "hide", per
+/// `effective_widget_visible`'s fail-open rule.
+fn poll_virtual_desktop_sync(hwnd: HWND) {
+    let Some(sensed) = virtual_desktop::sense_current_desktop_id(hwnd) else {
+        return;
+    };
+    let changed = {
+        let mut state = lock_state();
+        let Some(s) = state.as_mut() else {
+            return;
+        };
+        let (new_committed, new_pending) = debounce_virtual_desktop_reading(
+            s.virtual_desktop_current,
+            s.virtual_desktop_pending,
+            sensed,
+        );
+        let changed = new_committed != s.virtual_desktop_current;
+        s.virtual_desktop_current = new_committed;
+        s.virtual_desktop_pending = new_pending;
+        changed
+    };
+    if changed {
+        sync_effective_widget_visibility(hwnd);
+    }
+}
+
+/// Applied once at startup (`run`), after the main window and `AppState`
+/// exist. If the saved scope is `CurrentOnly`, senses the current desktop
+/// once (so the widget doesn't wait a full poll interval for its first
+/// visibility decision), starts the sync timer, and applies effective
+/// visibility immediately. Never touches the widget's window style or
+/// calls `MoveWindowToDesktop` — see the `virtual_desktop` module docs for
+/// why.
+fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
+    let scope = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => s.virtual_desktop_scope,
             None => return,
         }
     };
     if scope != VirtualDesktopScope::CurrentOnly {
         return;
     }
-    let resolved = target
-        .filter(|guid| virtual_desktop::move_window_to_desktop(hwnd, *guid))
-        .or_else(|| {
-            let active = virtual_desktop::get_active_desktop_id()?;
-            virtual_desktop::move_window_to_desktop(hwnd, active).then_some(active)
-        });
-    match resolved {
-        Some(guid) => {
-            {
-                let mut state = lock_state();
-                if let Some(s) = state.as_mut() {
-                    s.virtual_desktop_target = Some(guid);
-                }
-            }
-            if target != Some(guid) {
-                save_state_settings();
-            }
-        }
-        None => {
-            diagnose::log(
-                "virtual_desktop: startup could not resolve a target desktop; \
-                 failing open to all desktops",
-            );
-            {
-                let mut state = lock_state();
-                if let Some(s) = state.as_mut() {
-                    s.virtual_desktop_scope = VirtualDesktopScope::All;
-                    s.virtual_desktop_target = None;
-                }
-            }
-            save_state_settings();
+    let sensed = virtual_desktop::sense_current_desktop_id(hwnd);
+    {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.virtual_desktop_current = sensed;
         }
     }
+    start_virtual_desktop_sync(hwnd);
+    sync_effective_widget_visibility(hwnd);
 }
 
-/// Handle a "Virtual desktop" submenu selection. `CurrentOnly` is applied
-/// in place — assigning `hwnd` to the active desktop via the public
-/// `MoveWindowToDesktop`, after which Windows shows/hides the widget
-/// natively per desktop with no polling involved — and this also covers
-/// re-targeting an already-`CurrentOnly` widget from whichever desktop the
-/// menu was opened on. Switching back to `All` instead relaunches the
-/// process (see `relaunch_self`): the public API has no "unassign" call, so
-/// recreating the window from scratch (which the explorer-restart watchdog
-/// already does, safely, for a similar reason) is the only public-API-only
-/// way to reliably restore the widget's original show-on-every-desktop
-/// behavior.
+/// Handle a "Virtual desktop" submenu selection.
+///
+/// `CurrentOnly` senses the current desktop (via
+/// `virtual_desktop::sense_current_desktop_id`, the same public-API-only
+/// sensor the poll timer uses — never `MoveWindowToDesktop`) and saves it
+/// as the target. This also covers re-targeting: selecting `CurrentOnly`
+/// again while already in that scope, from a different desktop than the
+/// current target, simply re-senses and overwrites the target with
+/// wherever the menu was actually opened from.
+///
+/// `All` stops the sync timer and clears the target; the widget's window
+/// itself was never moved or restyled for `CurrentOnly`, so there is
+/// nothing to undo and no process relaunch is needed.
 fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopScope) {
     match new_scope {
         VirtualDesktopScope::CurrentOnly => {
-            let Some(active) = virtual_desktop::get_active_desktop_id() else {
+            let Some(current) = virtual_desktop::sense_current_desktop_id(hwnd) else {
                 diagnose::log(
-                    "virtual_desktop: could not resolve the active desktop; leaving scope unchanged",
+                    "virtual_desktop: could not sense the current desktop; leaving scope unchanged",
                 );
                 return;
             };
-            if !virtual_desktop::move_window_to_desktop(hwnd, active) {
-                diagnose::log(
-                    "virtual_desktop: MoveWindowToDesktop failed; leaving scope unchanged",
-                );
-                return;
-            }
             {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     s.virtual_desktop_scope = VirtualDesktopScope::CurrentOnly;
-                    s.virtual_desktop_target = Some(active);
+                    s.virtual_desktop_target = Some(current);
+                    s.virtual_desktop_current = Some(current);
+                    s.virtual_desktop_pending = None;
                 }
             }
             save_state_settings();
+            start_virtual_desktop_sync(hwnd);
+            sync_effective_widget_visibility(hwnd);
         }
         VirtualDesktopScope::All => {
             let already_all = {
@@ -2513,21 +2658,18 @@ fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopSc
             if already_all {
                 return;
             }
+            stop_virtual_desktop_sync(hwnd);
             {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     s.virtual_desktop_scope = VirtualDesktopScope::All;
                     s.virtual_desktop_target = None;
+                    s.virtual_desktop_current = None;
+                    s.virtual_desktop_pending = None;
                 }
             }
-            // Settings are saved before relaunching so the fresh process
-            // reads `All` back on startup. `relaunch_self` exits this
-            // process on success and never returns; if spawning the
-            // replacement failed (already logged there) execution falls
-            // through and this window keeps its current desktop
-            // assignment until the next successful restart.
             save_state_settings();
-            relaunch_self();
+            sync_effective_widget_visibility(hwnd);
         }
     }
 }
@@ -2609,31 +2751,40 @@ fn show_widget_without_activation(hwnd: HWND, always_on_top: bool) {
     }
 }
 
+/// Flips the "Show Widget" preference and applies its effect through
+/// `effective_widget_visible`/`sync_effective_widget_visibility`, so a
+/// `CurrentOnly` scope still keeps the widget hidden on a non-target
+/// desktop even when the user turns this preference back on. Also starts
+/// or stops the virtual-desktop sync timer per the "no unnecessary polling
+/// while the widget is off" rule — see the `virtual_desktop` module docs —
+/// and, when turning back on, senses the current desktop immediately
+/// rather than waiting for the next poll tick.
 fn toggle_widget_visibility(hwnd: HWND) {
-    let (new_visible, always_on_top) = {
+    let (new_visible, scope) = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
             s.widget_visible = !s.widget_visible;
-            (s.widget_visible, s.always_on_top)
+            (s.widget_visible, s.virtual_desktop_scope)
         } else {
             return;
         }
     };
     save_state_settings();
-    unsafe {
+    if scope == VirtualDesktopScope::CurrentOnly {
         if new_visible {
-            position_at_taskbar();
-            // `SetWindowPos(SWP_SHOWWINDOW)` is not subject to the special
-            // first-call behavior of `ShowWindow`. This matters when the app
-            // starts with the widget hidden and the tray click is its first
-            // request to show the window.
-            show_widget_without_activation(hwnd, always_on_top);
-            render_layered();
-            finalize_widget_show_z_order(hwnd, always_on_top);
+            if let Some(sensed) = virtual_desktop::sense_current_desktop_id(hwnd) {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.virtual_desktop_current = Some(sensed);
+                    s.virtual_desktop_pending = None;
+                }
+            }
+            start_virtual_desktop_sync(hwnd);
         } else {
-            let _ = ShowWindow(hwnd, SW_HIDE);
+            stop_virtual_desktop_sync(hwnd);
         }
     }
+    sync_effective_widget_visibility(hwnd);
 }
 
 /// Locate the taskbar to anchor the top-level popup against (tray-relative
@@ -4613,6 +4764,14 @@ pub fn run() {
                 always_on_top: settings.always_on_top,
                 virtual_desktop_scope: settings.virtual_desktop_scope,
                 virtual_desktop_target: settings.virtual_desktop_target.map(GUID::from_u128),
+                virtual_desktop_current: None,
+                virtual_desktop_pending: None,
+                // The window has not been shown yet at all at this point,
+                // regardless of the `widget_visible` preference — matches
+                // reality so the first real show/hide decision below (or
+                // inside `apply_virtual_desktop_scope_at_startup` for
+                // `CurrentOnly`) is not skipped as a false no-op.
+                virtual_desktop_applied_visible: false,
             });
             if let Some(s) = state.as_mut() {
                 refresh_usage_texts(s);
@@ -4629,14 +4788,27 @@ pub fn run() {
         sync_tray_icons(hwnd);
 
         // Resolve the saved virtual-desktop scope before the window is
-        // shown, so a `CurrentOnly` widget never flashes visible on the
-        // wrong desktop first.
+        // shown, so a `CurrentOnly` widget never flashes visible first and
+        // only then gets hidden. For `CurrentOnly` this is also the
+        // window's actual first show/hide (via
+        // `sync_effective_widget_visibility`'s `SetWindowPos`-based path,
+        // not `ShowWindow`, which has first-call `nCmdShow` quirks this
+        // avoids); for `All` it is a no-op and the plain `ShowWindow` below
+        // remains the first show, unchanged from before this feature
+        // existed.
         apply_virtual_desktop_scope_at_startup(hwnd);
 
-        // Position and show (only if widget_visible preference is true)
+        // Position and show (only if widget_visible preference is true).
+        // Scope `CurrentOnly` was already fully handled above.
         position_at_taskbar();
-        if settings.widget_visible {
-            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if settings.virtual_desktop_scope == VirtualDesktopScope::All {
+            if settings.widget_visible {
+                let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+            }
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.virtual_desktop_applied_visible = settings.widget_visible;
+            }
         }
         diagnose::log("window shown");
 
@@ -6323,6 +6495,9 @@ unsafe extern "system" fn wnd_proc(
                 #[cfg(feature = "self-update")]
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
+                }
+                TIMER_VIRTUAL_DESKTOP_SYNC => {
+                    poll_virtual_desktop_sync(hwnd);
                 }
                 _ => {}
             }
@@ -10757,6 +10932,136 @@ mod tests {
             assert!(!strings.virtual_desktop_scope_all.is_empty());
             assert!(!strings.virtual_desktop_scope_current_only.is_empty());
         }
+    }
+
+    fn guid(value: u128) -> GUID {
+        GUID::from_u128(value)
+    }
+
+    #[test]
+    fn effective_widget_visible_all_scope_follows_widget_visible_only() {
+        assert!(effective_widget_visible(
+            true,
+            VirtualDesktopScope::All,
+            None,
+            None
+        ));
+        assert!(!effective_widget_visible(
+            false,
+            VirtualDesktopScope::All,
+            None,
+            None
+        ));
+        // Scope `All` ignores current/target desktop entirely, even if set.
+        assert!(effective_widget_visible(
+            true,
+            VirtualDesktopScope::All,
+            Some(guid(1)),
+            Some(guid(2))
+        ));
+    }
+
+    #[test]
+    fn effective_widget_visible_widget_visible_false_always_hides_regardless_of_scope() {
+        assert!(!effective_widget_visible(
+            false,
+            VirtualDesktopScope::CurrentOnly,
+            Some(guid(1)),
+            Some(guid(1))
+        ));
+    }
+
+    #[test]
+    fn effective_widget_visible_current_only_shows_on_matching_desktop() {
+        assert!(effective_widget_visible(
+            true,
+            VirtualDesktopScope::CurrentOnly,
+            Some(guid(1)),
+            Some(guid(1))
+        ));
+    }
+
+    #[test]
+    fn effective_widget_visible_current_only_hides_on_non_matching_desktop() {
+        assert!(!effective_widget_visible(
+            true,
+            VirtualDesktopScope::CurrentOnly,
+            Some(guid(1)),
+            Some(guid(2))
+        ));
+    }
+
+    #[test]
+    fn effective_widget_visible_current_only_fails_open_when_current_is_unknown() {
+        // A transient sensor failure (current desktop not yet known) must
+        // never hide the widget on its own.
+        assert!(effective_widget_visible(
+            true,
+            VirtualDesktopScope::CurrentOnly,
+            None,
+            Some(guid(1))
+        ));
+    }
+
+    #[test]
+    fn effective_widget_visible_current_only_fails_open_when_target_is_unset() {
+        assert!(effective_widget_visible(
+            true,
+            VirtualDesktopScope::CurrentOnly,
+            Some(guid(1)),
+            None
+        ));
+    }
+
+    #[test]
+    fn debounce_keeps_committed_value_when_sensed_matches_it() {
+        let (committed, pending) =
+            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(1));
+        assert_eq!(committed, Some(guid(1)));
+        assert_eq!(
+            pending, None,
+            "a confirmed committed reading clears pending"
+        );
+    }
+
+    #[test]
+    fn debounce_stages_a_new_value_without_committing_on_first_observation() {
+        let (committed, pending) = debounce_virtual_desktop_reading(Some(guid(1)), None, guid(2));
+        assert_eq!(
+            committed,
+            Some(guid(1)),
+            "must not commit on a single observation"
+        );
+        assert_eq!(pending, Some(guid(2)));
+    }
+
+    #[test]
+    fn debounce_commits_a_new_value_after_two_consecutive_matching_observations() {
+        let (committed, pending) =
+            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(2));
+        assert_eq!(committed, Some(guid(2)));
+        assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn debounce_restarts_staging_when_a_different_new_value_appears() {
+        // Pending was guid(2); a different guid(3) shows up next tick —
+        // must not commit guid(3) immediately either.
+        let (committed, pending) =
+            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(3));
+        assert_eq!(committed, Some(guid(1)));
+        assert_eq!(pending, Some(guid(3)));
+    }
+
+    #[test]
+    fn debounce_from_unknown_committed_state_commits_after_two_ticks() {
+        let (committed, pending) = debounce_virtual_desktop_reading(None, None, guid(1));
+        assert_eq!(committed, None);
+        assert_eq!(pending, Some(guid(1)));
+
+        let (committed, pending) = debounce_virtual_desktop_reading(committed, pending, guid(1));
+        assert_eq!(committed, Some(guid(1)));
+        assert_eq!(pending, None);
     }
 
     fn assert_color_hex(color: Color, hex: &str, label: &str) {
