@@ -21,6 +21,7 @@ $manifestSource = Join-Path $PSScriptRoot 'AppxManifest.xml'
 $assetsSource = Join-Path $PSScriptRoot 'Assets'
 $cargoToml = Join-Path $repoRoot 'Cargo.toml'
 $binaryPath = Join-Path $cargoTargetRoot 'release\claude-code-usage-monitor.exe'
+$bridgeBinaryPath = Join-Path $cargoTargetRoot 'release\aum-quota.exe'
 $publisher = 'CN=AIUsageMonitorLocalTrial'
 $packageName = 'Ysawase.AIUsageMonitor.LocalTrial'
 
@@ -139,6 +140,9 @@ if (-not $SkipBuild) {
 if (-not (Test-Path -LiteralPath $binaryPath)) {
     throw "Release executable not found: $binaryPath"
 }
+if (-not (Test-Path -LiteralPath $bridgeBinaryPath)) {
+    throw "Release executable not found: $bridgeBinaryPath"
+}
 if (-not (Test-Path -LiteralPath $manifestSource)) {
     throw "MSIX manifest not found: $manifestSource"
 }
@@ -152,6 +156,7 @@ if (Test-Path -LiteralPath $stagingRoot) {
 }
 New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
 Copy-Item -LiteralPath $binaryPath -Destination $stagingRoot
+Copy-Item -LiteralPath $bridgeBinaryPath -Destination $stagingRoot
 Copy-Item -LiteralPath $assetsSource -Destination $stagingRoot -Recurse
 Copy-Item -LiteralPath $manifestSource -Destination (Join-Path $stagingRoot 'AppxManifest.xml')
 

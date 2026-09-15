@@ -5,7 +5,8 @@
   xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
   xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap uap10 desktop rescap">
+  xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+  IgnorableNamespaces="uap uap10 desktop rescap uap3">
 
   <Identity
     Name="Ysawase.AIUsageMonitor.LocalTrial"
@@ -50,6 +51,26 @@
             Enabled="false"
             DisplayName="AI Usage Monitor" />
         </desktop:Extension>
+      </Extensions>
+    </Application>
+    <Application
+      Id="AumQuotaBridge"
+      Executable="aum-quota.exe"
+      uap10:RuntimeBehavior="win32App"
+      uap10:TrustLevel="mediumIL">
+      <uap:VisualElements
+        AppListEntry="none"
+        DisplayName="AI Usage Monitor (Local MSIX Trial)"
+        Description="Local-only full-trust MSIX compatibility trial for AI Usage Monitor."
+        BackgroundColor="transparent"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Square150x150Logo="Assets\Square150x150Logo.png" />
+      <Extensions>
+        <uap3:Extension Category="windows.appExecutionAlias">
+          <uap3:AppExecutionAlias>
+            <desktop:ExecutionAlias Alias="aum-quota.exe" />
+          </uap3:AppExecutionAlias>
+        </uap3:Extension>
       </Extensions>
     </Application>
   </Applications>
