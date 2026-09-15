@@ -4,6 +4,7 @@ use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
+use windows::core::GUID;
 use windows::core::{HSTRING, PCWSTR};
 use windows::ApplicationModel::{StartupTask, StartupTaskState};
 use windows::Win32::Foundation::*;
@@ -41,6 +42,7 @@ use crate::tray_icon;
 #[cfg(feature = "self-update")]
 use crate::updater::UpdateCheckResult;
 use crate::updater::{self, InstallChannel, ReleaseDescriptor};
+use crate::virtual_desktop::{self, VirtualDesktopScope};
 
 /// Wrapper to make HWND sendable across threads (safe for PostMessage usage)
 #[derive(Clone, Copy)]
@@ -297,6 +299,16 @@ struct AppState {
 
     widget_visible: bool,
     always_on_top: bool,
+
+    /// Which virtual desktops the widget should be displayed on. See
+    /// `virtual_desktop` for the public-API mechanism behind
+    /// `CurrentOnly`.
+    virtual_desktop_scope: VirtualDesktopScope,
+    /// The virtual desktop `CurrentOnly` is currently pinned to, if any has
+    /// been resolved yet (via a successful `MoveWindowToDesktop`). `None`
+    /// while `virtual_desktop_scope` is `All`, or if pinning has not
+    /// succeeded (Virtual Desktop API unavailable).
+    virtual_desktop_target: Option<GUID>,
 }
 
 #[derive(Clone, Debug)]
@@ -1855,6 +1867,9 @@ const IDM_GITHUB_COPILOT_PLAN_PRO_PLUS: u16 = 96;
 const IDM_GITHUB_COPILOT_PLAN_MAX: u16 = 97;
 const IDM_RESET_DISPLAY_RELATIVE: u16 = 98;
 const IDM_RESET_DISPLAY_ABSOLUTE: u16 = 99;
+// 104-109 intentionally left free (100-103 are the Help submenu above).
+const IDM_VIRTUAL_DESKTOP_SCOPE_ALL: u16 = 110;
+const IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY: u16 = 111;
 
 /// Pure `menu ID -> enum value` lookups, shared by `show_context_menu`
 /// (which sets which item starts checked) and the `WM_COMMAND` handler
@@ -1912,6 +1927,16 @@ fn app_theme_for_menu_id(id: u16) -> Option<AppTheme> {
         IDM_APP_THEME_RECOMMENDED_DARK => Some(AppTheme::RecommendedDark),
         IDM_APP_THEME_LIGHT => Some(AppTheme::Light),
         IDM_APP_THEME_HIGH_VISIBILITY => Some(AppTheme::HighVisibility),
+        _ => None,
+    }
+}
+
+/// Same pure `menu ID -> enum value` mapping pattern as
+/// `popup_layout_for_menu_id`, for `VirtualDesktopScope`.
+fn virtual_desktop_scope_for_menu_id(id: u16) -> Option<VirtualDesktopScope> {
+    match id {
+        IDM_VIRTUAL_DESKTOP_SCOPE_ALL => Some(VirtualDesktopScope::All),
+        IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY => Some(VirtualDesktopScope::CurrentOnly),
         _ => None,
     }
 }
@@ -2153,6 +2178,14 @@ struct SettingsFile {
     popup_layout: PopupLayout,
     #[serde(default, deserialize_with = "deserialize_app_theme")]
     app_theme: AppTheme,
+    #[serde(default, deserialize_with = "deserialize_virtual_desktop_scope")]
+    virtual_desktop_scope: VirtualDesktopScope,
+    /// The virtual desktop id `virtual_desktop_scope` = `CurrentOnly` is
+    /// pinned to, stored as `GUID::to_u128` for stable, serde-friendly
+    /// round-tripping. `None` means `All`, or a `CurrentOnly` target that
+    /// has not been resolved yet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    virtual_desktop_target: Option<u128>,
 }
 
 impl Default for SettingsFile {
@@ -2180,6 +2213,8 @@ impl Default for SettingsFile {
             short_window_alert_sensitivity: ShortWindowAlertSensitivity::default(),
             popup_layout: PopupLayout::default(),
             app_theme: AppTheme::default(),
+            virtual_desktop_scope: VirtualDesktopScope::default(),
+            virtual_desktop_target: None,
         }
     }
 }
@@ -2266,6 +2301,20 @@ where
     Ok(serde_json::Value::deserialize(deserializer)
         .ok()
         .and_then(|value| serde_json::from_value::<AppTheme>(value).ok())
+        .unwrap_or_default())
+}
+
+/// Same lenient fallback as `deserialize_display_basis`, for
+/// `VirtualDesktopScope`.
+fn deserialize_virtual_desktop_scope<'de, D>(
+    deserializer: D,
+) -> Result<VirtualDesktopScope, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)
+        .ok()
+        .and_then(|value| serde_json::from_value::<VirtualDesktopScope>(value).ok())
         .unwrap_or_default())
 }
 
@@ -2359,7 +2408,127 @@ fn save_state_settings() {
             short_window_alert_sensitivity: s.short_window_alert_sensitivity,
             popup_layout: s.popup_layout,
             app_theme: s.app_theme,
+            virtual_desktop_scope: s.virtual_desktop_scope,
+            virtual_desktop_target: s.virtual_desktop_target.map(|guid| guid.to_u128()),
         });
+    }
+}
+
+/// Applied once at startup (`run`), after the main window and `AppState`
+/// exist. Resolves `settings.virtual_desktop_scope`/`virtual_desktop_target`
+/// against the live Virtual Desktop API and updates `AppState` (and, if the
+/// saved target turned out to be stale, the persisted settings) to match
+/// what was actually achieved — so a deleted/invalid saved desktop id can
+/// never leave the widget silently hidden forever; it always falls open to
+/// the currently active desktop, or to `All` if the API is unavailable.
+fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
+    let (scope, target) = {
+        let state = lock_state();
+        match state.as_ref() {
+            Some(s) => (s.virtual_desktop_scope, s.virtual_desktop_target),
+            None => return,
+        }
+    };
+    if scope != VirtualDesktopScope::CurrentOnly {
+        return;
+    }
+    let resolved = target
+        .filter(|guid| virtual_desktop::move_window_to_desktop(hwnd, *guid))
+        .or_else(|| {
+            let active = virtual_desktop::get_active_desktop_id()?;
+            virtual_desktop::move_window_to_desktop(hwnd, active).then_some(active)
+        });
+    match resolved {
+        Some(guid) => {
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.virtual_desktop_target = Some(guid);
+                }
+            }
+            if target != Some(guid) {
+                save_state_settings();
+            }
+        }
+        None => {
+            diagnose::log(
+                "virtual_desktop: startup could not resolve a target desktop; \
+                 failing open to all desktops",
+            );
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.virtual_desktop_scope = VirtualDesktopScope::All;
+                    s.virtual_desktop_target = None;
+                }
+            }
+            save_state_settings();
+        }
+    }
+}
+
+/// Handle a "Virtual desktop" submenu selection. `CurrentOnly` is applied
+/// in place — assigning `hwnd` to the active desktop via the public
+/// `MoveWindowToDesktop`, after which Windows shows/hides the widget
+/// natively per desktop with no polling involved — and this also covers
+/// re-targeting an already-`CurrentOnly` widget from whichever desktop the
+/// menu was opened on. Switching back to `All` instead relaunches the
+/// process (see `relaunch_self`): the public API has no "unassign" call, so
+/// recreating the window from scratch (which the explorer-restart watchdog
+/// already does, safely, for a similar reason) is the only public-API-only
+/// way to reliably restore the widget's original show-on-every-desktop
+/// behavior.
+fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopScope) {
+    match new_scope {
+        VirtualDesktopScope::CurrentOnly => {
+            let Some(active) = virtual_desktop::get_active_desktop_id() else {
+                diagnose::log(
+                    "virtual_desktop: could not resolve the active desktop; leaving scope unchanged",
+                );
+                return;
+            };
+            if !virtual_desktop::move_window_to_desktop(hwnd, active) {
+                diagnose::log(
+                    "virtual_desktop: MoveWindowToDesktop failed; leaving scope unchanged",
+                );
+                return;
+            }
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.virtual_desktop_scope = VirtualDesktopScope::CurrentOnly;
+                    s.virtual_desktop_target = Some(active);
+                }
+            }
+            save_state_settings();
+        }
+        VirtualDesktopScope::All => {
+            let already_all = {
+                let state = lock_state();
+                state
+                    .as_ref()
+                    .map(|s| s.virtual_desktop_scope == VirtualDesktopScope::All)
+                    .unwrap_or(true)
+            };
+            if already_all {
+                return;
+            }
+            {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    s.virtual_desktop_scope = VirtualDesktopScope::All;
+                    s.virtual_desktop_target = None;
+                }
+            }
+            // Settings are saved before relaunching so the fresh process
+            // reads `All` back on startup. `relaunch_self` exits this
+            // process on success and never returns; if spawning the
+            // replacement failed (already logged there) execution falls
+            // through and this window keeps its current desktop
+            // assignment until the next successful restart.
+            save_state_settings();
+            relaunch_self();
+        }
     }
 }
 
@@ -4241,6 +4410,12 @@ pub fn run() {
     }
     diagnose::log("window::run started");
 
+    // Initializes COM (STA) on this, the UI thread, for the Virtual Desktop
+    // scope feature. Safe to call even when `winrt_initialized` already set
+    // up the same apartment type. Every `virtual_desktop` call happens on
+    // this thread from here on.
+    virtual_desktop::ensure_com_initialized();
+
     // Single-instance guard: silently exit if another instance is running.
     // Exception: when relaunched after an explorer restart (ENV_RELAUNCH set),
     // wait for the previous instance to release the mutex, then take over.
@@ -4436,6 +4611,8 @@ pub fn run() {
                 widget_width_logical: settings.widget_width_logical,
                 widget_visible: settings.widget_visible,
                 always_on_top: settings.always_on_top,
+                virtual_desktop_scope: settings.virtual_desktop_scope,
+                virtual_desktop_target: settings.virtual_desktop_target.map(GUID::from_u128),
             });
             if let Some(s) = state.as_mut() {
                 refresh_usage_texts(s);
@@ -4450,6 +4627,11 @@ pub fn run() {
         let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_ALPHA);
         // Register the application-wide system tray icon.
         sync_tray_icons(hwnd);
+
+        // Resolve the saved virtual-desktop scope before the window is
+        // shown, so a `CurrentOnly` widget never flashes visible on the
+        // wrong desktop first.
+        apply_virtual_desktop_scope_at_startup(hwnd);
 
         // Position and show (only if widget_visible preference is true)
         position_at_taskbar();
@@ -6669,6 +6851,17 @@ unsafe extern "system" fn wnd_proc(
                     save_state_settings();
                     render_layered();
                 }
+                IDM_VIRTUAL_DESKTOP_SCOPE_ALL | IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY => {
+                    // Unlike the settings above, this mutates the live
+                    // window's virtual-desktop assignment (and, for a
+                    // switch back to `All`, relaunches the process) rather
+                    // than only touching `AppState` — see
+                    // `apply_virtual_desktop_scope_from_menu`, which also
+                    // owns its own `save_state_settings()` call.
+                    if let Some(new_scope) = virtual_desktop_scope_for_menu_id(id) {
+                        apply_virtual_desktop_scope_from_menu(hwnd, new_scope);
+                    }
+                }
                 IDM_SHORT_WINDOW_VISIBILITY_ALWAYS
                 | IDM_SHORT_WINDOW_VISIBILITY_WARNING_ONLY
                 | IDM_SHORT_WINDOW_VISIBILITY_HIDDEN => {
@@ -6923,6 +7116,7 @@ fn show_context_menu(hwnd: HWND) {
             short_window_alert_sensitivity,
             popup_layout,
             app_theme,
+            virtual_desktop_scope,
         ) = {
             let state = lock_state();
             match state.as_ref() {
@@ -6944,6 +7138,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.short_window_alert_sensitivity,
                     s.popup_layout,
                     s.app_theme,
+                    s.virtual_desktop_scope,
                 ),
                 None => (
                     POLL_15_MIN,
@@ -6963,6 +7158,7 @@ fn show_context_menu(hwnd: HWND) {
                     ShortWindowAlertSensitivity::default(),
                     PopupLayout::default(),
                     AppTheme::default(),
+                    VirtualDesktopScope::default(),
                 ),
             }
         };
@@ -7024,6 +7220,54 @@ fn show_context_menu(hwnd: HWND) {
             startup_flags,
             IDM_START_WITH_WINDOWS as usize,
             PCWSTR::from_raw(startup_str.as_ptr()),
+        );
+
+        // Virtual desktop scope submenu: mutually exclusive, radio-style,
+        // same pattern as the other settings submenus below.
+        let virtual_desktop_scope_menu = CreatePopupMenu().unwrap();
+        let virtual_desktop_scope_items: [(u16, VirtualDesktopScope, &str); 2] = [
+            (
+                IDM_VIRTUAL_DESKTOP_SCOPE_ALL,
+                VirtualDesktopScope::All,
+                strings.virtual_desktop_scope_all,
+            ),
+            (
+                IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY,
+                VirtualDesktopScope::CurrentOnly,
+                strings.virtual_desktop_scope_current_only,
+            ),
+        ];
+        for (id, value, label) in virtual_desktop_scope_items {
+            let label_str = native_interop::wide_str(label);
+            let flags = if value == virtual_desktop_scope {
+                MF_CHECKED
+            } else {
+                MENU_ITEM_FLAGS(0)
+            };
+            let _ = AppendMenuW(
+                virtual_desktop_scope_menu,
+                flags,
+                id as usize,
+                PCWSTR::from_raw(label_str.as_ptr()),
+            );
+        }
+        let selected_virtual_desktop_scope_id = match virtual_desktop_scope {
+            VirtualDesktopScope::All => IDM_VIRTUAL_DESKTOP_SCOPE_ALL,
+            VirtualDesktopScope::CurrentOnly => IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY,
+        };
+        let _ = CheckMenuRadioItem(
+            virtual_desktop_scope_menu,
+            IDM_VIRTUAL_DESKTOP_SCOPE_ALL as u32,
+            IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY as u32,
+            selected_virtual_desktop_scope_id as u32,
+            MF_BYCOMMAND.0,
+        );
+        let virtual_desktop_scope_label = native_interop::wide_str(strings.virtual_desktop_scope);
+        let _ = AppendMenuW(
+            menu,
+            MF_POPUP,
+            virtual_desktop_scope_menu.0 as usize,
+            PCWSTR::from_raw(virtual_desktop_scope_label.as_ptr()),
         );
 
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -7719,8 +7963,43 @@ fn show_context_menu(hwnd: HWND) {
 
         let mut pt = POINT::default();
         let _ = GetCursorPos(&mut pt);
-        let _ = SetForegroundWindow(hwnd);
-        let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+
+        if virtual_desktop_scope == VirtualDesktopScope::CurrentOnly {
+            // `hwnd` may currently be assigned to a different virtual
+            // desktop than the one the menu was opened from. Bringing it to
+            // the foreground here would make Windows switch the active
+            // desktop out from under the user just to open a menu, so route
+            // the menu through a throwaway tool window that always lives on
+            // the current desktop instead, and pick the command up via
+            // `TPM_RETURNCMD` rather than the normal `WM_COMMAND` routing
+            // (which would otherwise go to that throwaway window, not the
+            // real one).
+            if let Some(owner) = virtual_desktop::create_probe_window() {
+                let _ = SetForegroundWindow(owner);
+                let cmd = TrackPopupMenu(
+                    menu,
+                    TPM_RIGHTBUTTON | TPM_RETURNCMD,
+                    pt.x,
+                    pt.y,
+                    0,
+                    owner,
+                    None,
+                );
+                let _ = DestroyWindow(owner);
+                if cmd.0 != 0 {
+                    let _ = PostMessageW(hwnd, WM_COMMAND, WPARAM(cmd.0 as usize), LPARAM(0));
+                }
+            } else {
+                // No public API path to a safe menu owner (COM/probe window
+                // creation failed) — fail open to the previous behavior
+                // rather than not showing the menu at all.
+                let _ = SetForegroundWindow(hwnd);
+                let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+            }
+        } else {
+            let _ = SetForegroundWindow(hwnd);
+            let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
+        }
         let _ = DestroyMenu(menu);
     }
 }
@@ -10383,6 +10662,103 @@ mod tests {
         }
     }
 
+    #[test]
+    fn virtual_desktop_scope_default_is_all() {
+        assert_eq!(VirtualDesktopScope::default(), VirtualDesktopScope::All);
+    }
+
+    #[test]
+    fn virtual_desktop_scope_serializes_to_expected_snake_case() {
+        assert_eq!(
+            serde_json::to_value(VirtualDesktopScope::All).unwrap(),
+            serde_json::json!("all")
+        );
+        assert_eq!(
+            serde_json::to_value(VirtualDesktopScope::CurrentOnly).unwrap(),
+            serde_json::json!("current_only")
+        );
+    }
+
+    #[test]
+    fn legacy_settings_without_virtual_desktop_scope_key_deserialize_to_all() {
+        let settings: SettingsFile = serde_json::from_str("{}")
+            .expect("legacy settings without virtual_desktop_scope should still deserialize");
+        assert_eq!(settings.virtual_desktop_scope, VirtualDesktopScope::All);
+        assert_eq!(settings.virtual_desktop_target, None);
+    }
+
+    #[test]
+    fn settings_with_unrecognized_virtual_desktop_scope_falls_back_to_all_without_failing_the_whole_file(
+    ) {
+        let settings: SettingsFile = serde_json::from_str(
+            r#"{"virtual_desktop_scope":"every_other_monitor","tray_offset":9}"#,
+        )
+        .expect("an unrecognized virtual_desktop_scope must not fail the whole settings file");
+        assert_eq!(settings.virtual_desktop_scope, VirtualDesktopScope::All);
+        assert_eq!(settings.tray_offset, 9);
+    }
+
+    #[test]
+    fn virtual_desktop_scope_round_trips_through_serialization_alongside_other_settings() {
+        let settings = SettingsFile {
+            virtual_desktop_scope: VirtualDesktopScope::CurrentOnly,
+            virtual_desktop_target: Some(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef),
+            tray_offset: 42,
+            popup_layout: PopupLayout::Standard,
+            ..SettingsFile::default()
+        };
+        let json = serde_json::to_string(&settings).expect("settings should serialize");
+        let round_tripped: SettingsFile =
+            serde_json::from_str(&json).expect("round trip should deserialize");
+        assert_eq!(
+            round_tripped.virtual_desktop_scope,
+            VirtualDesktopScope::CurrentOnly
+        );
+        assert_eq!(
+            round_tripped.virtual_desktop_target,
+            Some(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef)
+        );
+        assert_eq!(round_tripped.tray_offset, 42);
+        assert_eq!(round_tripped.popup_layout, PopupLayout::Standard);
+    }
+
+    #[test]
+    fn virtual_desktop_target_is_omitted_from_json_when_scope_is_all() {
+        let json = serde_json::to_string(&SettingsFile::default()).unwrap();
+        assert!(
+            !json.contains("virtual_desktop_target"),
+            "default settings (scope=all, no target) should not serialize a target field: {json}"
+        );
+    }
+
+    #[test]
+    fn virtual_desktop_scope_for_menu_id_maps_each_known_id_and_is_bijective() {
+        assert_eq!(
+            virtual_desktop_scope_for_menu_id(IDM_VIRTUAL_DESKTOP_SCOPE_ALL),
+            Some(VirtualDesktopScope::All)
+        );
+        assert_eq!(
+            virtual_desktop_scope_for_menu_id(IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY),
+            Some(VirtualDesktopScope::CurrentOnly)
+        );
+        assert_eq!(virtual_desktop_scope_for_menu_id(9999), None);
+
+        assert_ne!(
+            virtual_desktop_scope_for_menu_id(IDM_VIRTUAL_DESKTOP_SCOPE_ALL),
+            virtual_desktop_scope_for_menu_id(IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY)
+        );
+    }
+
+    #[test]
+    fn all_languages_have_non_empty_virtual_desktop_scope_menu_strings() {
+        for language in LanguageId::ALL {
+            let strings = language.strings();
+            assert!(!strings.virtual_desktop_scope.is_empty());
+            assert!(!strings.virtual_desktop_scope_all.is_empty());
+            assert!(!strings.virtual_desktop_scope_current_only.is_empty());
+        }
+    }
+
     fn assert_color_hex(color: Color, hex: &str, label: &str) {
         let expected = Color::from_hex(hex);
         assert_eq!(
@@ -10996,6 +11372,8 @@ mod tests {
             IDM_HELP_AI_QUOTAS,
             IDM_HELP_README,
             IDM_HELP_VERSION_INFORMATION,
+            IDM_VIRTUAL_DESKTOP_SCOPE_ALL,
+            IDM_VIRTUAL_DESKTOP_SCOPE_CURRENT_ONLY,
             tray_icon::IDM_TOGGLE_WIDGET,
         ];
         #[cfg(feature = "self-update")]

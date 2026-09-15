@@ -268,6 +268,9 @@ pub struct Strings {
     pub app_theme_recommended_dark: &'static str,
     pub app_theme_light: &'static str,
     pub app_theme_high_visibility: &'static str,
+    pub virtual_desktop_scope: &'static str,
+    pub virtual_desktop_scope_all: &'static str,
+    pub virtual_desktop_scope_current_only: &'static str,
 }
 
 pub fn resolve_language(language_override: Option<LanguageId>) -> LanguageId {

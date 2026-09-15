@@ -133,4 +133,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "深色",
     app_theme_light: "浅色",
     app_theme_high_visibility: "高可视性",
+    virtual_desktop_scope: "虚拟桌面",
+    virtual_desktop_scope_all: "所有虚拟桌面",
+    virtual_desktop_scope_current_only: "仅当前虚拟桌面",
 };

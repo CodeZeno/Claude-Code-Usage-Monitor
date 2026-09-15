@@ -148,4 +148,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "ダーク",
     app_theme_light: "ライト",
     app_theme_high_visibility: "高視認性",
+    virtual_desktop_scope: "仮想デスクトップ",
+    virtual_desktop_scope_all: "すべての仮想デスクトップ",
+    virtual_desktop_scope_current_only: "この仮想デスクトップのみ",
 };

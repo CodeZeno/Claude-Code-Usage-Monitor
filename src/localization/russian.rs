@@ -133,4 +133,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "Тёмная",
     app_theme_light: "Светлая",
     app_theme_high_visibility: "Высокая контрастность",
+    virtual_desktop_scope: "Виртуальный рабочий стол",
+    virtual_desktop_scope_all: "Все рабочие столы",
+    virtual_desktop_scope_current_only: "Только этот рабочий стол",
 };

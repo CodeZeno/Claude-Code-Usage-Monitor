@@ -145,4 +145,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "Dark",
     app_theme_light: "Light",
     app_theme_high_visibility: "High Visibility",
+    virtual_desktop_scope: "Virtual Desktop",
+    virtual_desktop_scope_all: "All Desktops",
+    virtual_desktop_scope_current_only: "This Desktop Only",
 };

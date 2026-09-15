@@ -133,4 +133,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "다크",
     app_theme_light: "라이트",
     app_theme_high_visibility: "고가시성",
+    virtual_desktop_scope: "가상 데스크톱",
+    virtual_desktop_scope_all: "모든 데스크톱",
+    virtual_desktop_scope_current_only: "이 데스크톱에서만",
 };

@@ -133,4 +133,7 @@ pub(super) const STRINGS: Strings = Strings {
     app_theme_recommended_dark: "Donker",
     app_theme_light: "Licht",
     app_theme_high_visibility: "Hoog contrast",
+    virtual_desktop_scope: "Virtueel bureaublad",
+    virtual_desktop_scope_all: "Alle bureaubladen",
+    virtual_desktop_scope_current_only: "Alleen dit bureaublad",
 };

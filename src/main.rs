@@ -18,6 +18,7 @@ mod updater;
 #[cfg(not(feature = "self-update"))]
 #[path = "updater_disabled.rs"]
 mod updater;
+mod virtual_desktop;
 mod window;
 
 fn main() {
