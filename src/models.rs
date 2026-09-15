@@ -93,6 +93,20 @@ pub struct CodexCreditsState {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AppUsageData {
     providers: BTreeMap<ProviderId, UsageData>,
+    pub accounts: Vec<AccountUsage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AccountUsage {
+    pub provider: ProviderId,
+    pub profile: crate::accounts::AccountProfile,
+    pub source_signature: String,
+    #[serde(default)]
+    pub source_path: Option<std::path::PathBuf>,
+    pub usage: Option<UsageData>,
+    pub error: Option<crate::poller::PollError>,
+    #[serde(default)]
+    pub selected: bool,
 }
 
 impl AppUsageData {
@@ -105,7 +119,7 @@ impl AppUsageData {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.providers.is_empty()
+        self.providers.is_empty() && self.accounts.iter().all(|account| account.usage.is_none())
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (ProviderId, &UsageData)> {
@@ -113,12 +127,103 @@ impl AppUsageData {
             .iter()
             .map(|(provider, usage)| (*provider, usage))
     }
+
+    pub fn all_usage(&self) -> impl Iterator<Item = &UsageData> {
+        self.providers.values().chain(
+            self.accounts
+                .iter()
+                .filter_map(|account| account.usage.as_ref()),
+        )
+    }
+
+    /// Rebuild the legacy provider bindings from the user's selected accounts.
+    /// A missing selection must never display another account's cached usage.
+    pub fn select_accounts(&mut self, settings: &crate::accounts::AccountSettings) {
+        for account in &mut self.accounts {
+            if let Some(profile) = settings.get(account.provider).and_then(|configured| {
+                configured
+                    .profiles
+                    .iter()
+                    .find(|profile| profile.enabled && profile.same_source(&account.profile))
+            }) {
+                account.profile = profile.clone();
+            }
+            account.selected = settings
+                .get(account.provider)
+                .and_then(|configured| configured.selected())
+                .is_some_and(|selected| *selected == account.profile);
+        }
+        for provider in [ProviderId::Claude, ProviderId::Codex] {
+            let configured = settings.get(provider).unwrap();
+            let tracked = self
+                .accounts
+                .iter()
+                .any(|account| account.provider == provider);
+            if tracked || configured != &crate::accounts::ProviderAccounts::default() {
+                self.providers.remove(&provider);
+                if let Some(selected) = configured.selected() {
+                    if let Some(usage) = self
+                        .accounts
+                        .iter()
+                        .find(|account| {
+                            account.provider == provider && account.profile == *selected
+                        })
+                        .and_then(|account| account.usage.clone())
+                    {
+                        self.providers.insert(provider, usage);
+                    }
+                }
+            }
+        }
+        self.accounts.retain(|account| {
+            settings.get(account.provider).is_some_and(|configured| {
+                configured
+                    .profiles
+                    .iter()
+                    .any(|profile| profile.enabled && *profile == account.profile)
+            })
+        });
+    }
+
+    pub fn selected_account_name(&self, provider: ProviderId) -> Option<&str> {
+        self.accounts
+            .iter()
+            .find(|account| account.provider == provider && account.selected)
+            .map(|account| account.profile.name.as_str())
+    }
+
+    /// A cached reading must not outlive a login change or a different inherited
+    /// config directory. This only stats files; it never starts a CLI or WSL.
+    pub fn invalidate_changed_credentials(&mut self) {
+        for account in &mut self.accounts {
+            let expected = account
+                .profile
+                .credential_path(account.provider)
+                .ok()
+                .flatten()
+                .or_else(|| crate::accounts::default_credential_path(account.provider));
+            let changed = match &account.source_path {
+                Some(path) => {
+                    expected.as_ref().is_none_or(|expected| {
+                        crate::accounts::source_key(expected) != crate::accounts::source_key(path)
+                    }) || crate::accounts::file_signature(path) != account.source_signature
+                }
+                None => crate::accounts::environment_directory(account.provider).is_some(),
+            };
+            if changed {
+                account.usage = None;
+                account.error = None;
+                self.providers.remove(&account.provider);
+            }
+        }
+    }
 }
 
 impl FromIterator<(ProviderId, UsageData)> for AppUsageData {
     fn from_iter<T: IntoIterator<Item = (ProviderId, UsageData)>>(iter: T) -> Self {
         Self {
             providers: iter.into_iter().collect(),
+            accounts: Vec::new(),
         }
     }
 }
@@ -128,9 +233,12 @@ impl Serialize for AppUsageData {
     where
         S: Serializer,
     {
-        let mut map = serializer.serialize_map(Some(self.providers.len()))?;
+        let mut map = serializer.serialize_map(None)?;
         for (provider, usage) in &self.providers {
             map.serialize_entry(provider.descriptor().cache_key, usage)?;
+        }
+        if !self.accounts.is_empty() {
+            map.serialize_entry("accounts", &self.accounts)?;
         }
         map.end()
     }
@@ -141,16 +249,24 @@ impl<'de> Deserialize<'de> for AppUsageData {
     where
         D: Deserializer<'de>,
     {
-        let values = BTreeMap::<String, Option<UsageData>>::deserialize(deserializer)?;
-        Ok(values
+        let mut values = BTreeMap::<String, serde_json::Value>::deserialize(deserializer)?;
+        let accounts = values
+            .remove("accounts")
+            .map(serde_json::from_value)
+            .transpose()
+            .map_err(serde::de::Error::custom)?
+            .unwrap_or_default();
+        let mut data: Self = values
             .into_iter()
             .filter_map(|(key, usage)| {
-                let usage = usage?;
+                let usage = serde_json::from_value::<Option<UsageData>>(usage).ok()??;
                 ProviderId::from_cache_key(&key)
                     .or_else(|| ProviderId::from_key(&key))
                     .map(|provider| (provider, usage))
             })
-            .collect())
+            .collect();
+        data.accounts = accounts;
+        Ok(data)
     }
 }
 

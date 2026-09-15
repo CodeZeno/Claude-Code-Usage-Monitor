@@ -1364,7 +1364,40 @@ impl DataContext {
         }
         context.insert("display.countdown", runtime.countdown as u8 as f64);
         if let Some(data) = data {
+            for account in &data.accounts {
+                let key = format!(
+                    "accounts.{}.{}",
+                    account.provider.descriptor().key,
+                    account.profile.id
+                );
+                context.insert_string(&format!("{key}.name"), &account.profile.name);
+                context.insert(&format!("{key}.selected"), account.selected as u8 as f64);
+                context.insert(
+                    &format!("{key}.has_error"),
+                    account.error.is_some() as u8 as f64,
+                );
+                context.insert_provider(
+                    &key,
+                    account.usage.as_ref(),
+                    account.provider == ProviderId::Codex,
+                    runtime.countdown,
+                );
+            }
             for descriptor in PROVIDER_DESCRIPTORS {
+                if let Some(account) = data
+                    .accounts
+                    .iter()
+                    .find(|account| account.provider == descriptor.id && account.selected)
+                {
+                    context.insert(
+                        &format!("{}.has_error", descriptor.key),
+                        account.error.is_some() as u8 as f64,
+                    );
+                }
+                context.insert_string(
+                    &format!("{}.account.name", descriptor.key),
+                    data.selected_account_name(descriptor.id).unwrap_or(""),
+                );
                 context.insert_provider(
                     descriptor.key,
                     data.get(descriptor.id),

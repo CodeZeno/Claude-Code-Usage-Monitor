@@ -12,6 +12,7 @@ A lightweight, open-source Windows taskbar widget for monitoring Claude Code usa
 - Displays current usage and time remaining until each limit resets
 - Counts usage up from zero or down from the full allowance, whichever you prefer
 - Supports Claude Code, Codex, Google Antigravity, OpenCode Go, and Cursor
+- Supports multiple accounts for Claude Code and Codex
 - Lives in the Windows taskbar with quick controls in the system tray
 - Supports multiple monitors and Windows startup
 - Includes configurable refresh intervals, providers, languages, and updates

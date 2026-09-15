@@ -81,9 +81,23 @@ pub(super) fn poll_claude_code() -> Result<UsageData, PollError> {
         }
     };
 
-    let creds = refresh_or_fallback(creds)?;
+    let creds = refresh_credentials(creds)?;
 
     fetch_usage_with_fallback(&creds.access_token)
+}
+
+/// Explicit profiles are pinned to one source, including when refresh fails.
+pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
+    let source = CredentialSource::Windows(path.to_path_buf());
+    let mut credentials = read_credentials_from_source(&source).ok_or(PollError::NoCredentials)?;
+    if is_token_expired(credentials.expires_at) {
+        cli_refresh_token(&source);
+        credentials = read_credentials_from_source(&source).ok_or(PollError::TokenExpired)?;
+        if is_token_expired(credentials.expires_at) {
+            return Err(PollError::TokenExpired);
+        }
+    }
+    fetch_usage_with_fallback(&credentials.access_token)
 }
 
 pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
@@ -348,35 +362,32 @@ pub(super) fn credential_watch_snapshot(all_sources: bool) -> Vec<String> {
     snapshot
 }
 
-fn refresh_or_fallback(mut credentials: Credentials) -> Result<Credentials, PollError> {
-    loop {
-        if !is_token_expired(credentials.expires_at) {
-            return Ok(credentials);
-        }
-
-        let source = credentials.source.clone();
-        cli_refresh_token(&source);
-
-        match read_credentials_from_source(&source) {
-            Some(refreshed) if !is_token_expired(refreshed.expires_at) => return Ok(refreshed),
-            Some(_) => diagnose::log(format!(
-                "credentials from {source:?} still expired after refresh attempt"
-            )),
-            None => diagnose::log(format!(
-                "credentials from {source:?} unavailable after refresh attempt"
-            )),
-        }
-
-        match read_next_credentials_after(&source) {
-            Some(next) => credentials = next,
-            None => return Err(PollError::TokenExpired),
-        }
+fn refresh_credentials(credentials: Credentials) -> Result<Credentials, PollError> {
+    if !is_token_expired(credentials.expires_at) {
+        return Ok(credentials);
     }
+    let source = credentials.source;
+    cli_refresh_token(&source);
+    // An expired login is still a selected account. Do not replace it with
+    // another account found in Desktop or WSL when its refresh fails.
+    read_credentials_from_source(&source)
+        .filter(|credentials| !is_token_expired(credentials.expires_at))
+        .ok_or(PollError::TokenExpired)
 }
 
 fn cli_refresh_token(source: &CredentialSource) {
     match source {
-        CredentialSource::Windows(_) => cli_refresh_windows_token(),
+        CredentialSource::Windows(path) => {
+            // The CLI only owns this filename. A custom export is read-only.
+            if path
+                .file_name()
+                .is_some_and(|name| name == ".credentials.json")
+            {
+                if let Some(directory) = path.parent() {
+                    cli_refresh_windows_token(directory);
+                }
+            }
+        }
         // The desktop app owns this token and refreshes it itself, so there is
         // nothing to drive from here; re-reading the cache is the whole retry.
         CredentialSource::DesktopApp(_) => {
@@ -386,7 +397,7 @@ fn cli_refresh_token(source: &CredentialSource) {
     }
 }
 
-fn cli_refresh_windows_token() {
+fn cli_refresh_windows_token(directory: &Path) {
     let claude_path = resolve_windows_claude_path();
     let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
     diagnose::log(format!(
@@ -404,6 +415,7 @@ fn cli_refresh_windows_token() {
         command
     };
     command
+        .env("CLAUDE_CONFIG_DIR", directory)
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .creation_flags(CREATE_NO_WINDOW)
@@ -432,7 +444,7 @@ fn cli_refresh_wsl_token(distro: &str) {
         .arg("--")
         .arg("bash")
         .arg("-lic")
-        .arg("if command -v claude >/dev/null 2>&1; then claude -p .; elif [ -x \"$HOME/.local/bin/claude\" ]; then \"$HOME/.local/bin/claude\" -p .; else exit 127; fi")
+        .arg("export CLAUDE_CONFIG_DIR=\"$HOME/.claude\"; if command -v claude >/dev/null 2>&1; then claude -p .; elif [ -x \"$HOME/.local/bin/claude\" ]; then \"$HOME/.local/bin/claude\" -p .; else exit 127; fi")
         .env_remove("CLAUDECODE")
         .env_remove("CLAUDE_CODE_ENTRYPOINT")
         .creation_flags(CREATE_NO_WINDOW)
@@ -595,29 +607,33 @@ fn parse_credentials(content: &str, source: CredentialSource) -> Option<Credenti
     let json: serde_json::Value = serde_json::from_str(content).ok()?;
     let oauth = json.get("claudeAiOauth")?;
     Some(Credentials {
-        access_token: oauth.get("accessToken")?.as_str()?.to_string(),
+        access_token: oauth
+            .get("accessToken")?
+            .as_str()
+            .filter(|token| !token.trim().is_empty())?
+            .to_string(),
         expires_at: oauth.get("expiresAt").and_then(|value| value.as_i64()),
         source,
     })
 }
 
-fn read_next_credentials_after(source: &CredentialSource) -> Option<Credentials> {
-    credential_sources_in_order()
-        .skip_while(|candidate| candidate != source)
-        .skip(1)
-        .find_map(|candidate| read_credentials_from_source(&candidate))
-}
-
 /// Credential sources, cheapest first. The WSL probe stays lazy so a machine
 /// that resolves a token locally never has to spawn `wsl.exe`.
 fn credential_sources_in_order() -> impl Iterator<Item = CredentialSource> {
+    let explicit = std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty());
     windows_credential_source()
         .into_iter()
-        .chain(desktop_app_credential_source())
+        .chain((!explicit).then(desktop_app_credential_source).flatten())
         .chain(
-            std::iter::once_with(list_wsl_distros)
-                .flatten()
-                .map(|distro| CredentialSource::Wsl { distro }),
+            std::iter::once_with(move || {
+                if explicit {
+                    Vec::new()
+                } else {
+                    list_wsl_distros()
+                }
+            })
+            .flatten()
+            .map(|distro| CredentialSource::Wsl { distro }),
         )
 }
 
@@ -626,6 +642,10 @@ fn all_known_credential_sources() -> Vec<CredentialSource> {
 }
 
 fn windows_credential_source() -> Option<CredentialSource> {
+    if std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty()) {
+        return crate::accounts::environment_directory(crate::providers::ProviderId::Claude)
+            .map(|directory| CredentialSource::Windows(directory.join(".credentials.json")));
+    }
     Some(CredentialSource::Windows(
         dirs::home_dir()?.join(".claude").join(".credentials.json"),
     ))
@@ -633,6 +653,13 @@ fn windows_credential_source() -> Option<CredentialSource> {
 
 fn desktop_app_credential_source() -> Option<CredentialSource> {
     claude_desktop::config_path().map(CredentialSource::DesktopApp)
+}
+
+pub(super) fn native_credential_path() -> Option<PathBuf> {
+    match windows_credential_source()? {
+        CredentialSource::Windows(path) if read_windows_credentials(&path).is_some() => Some(path),
+        _ => None,
+    }
 }
 
 fn credential_watch_signature(source: &CredentialSource) -> Option<String> {
@@ -651,7 +678,7 @@ fn windows_credential_watch_signature(path: &PathBuf) -> String {
                 .modified()
                 .ok()
                 .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
-                .map(|value| value.as_secs())
+                .map(|value| value.as_nanos())
                 .unwrap_or(0);
             format!("{key}|present|{}|{modified}", metadata.len())
         }
@@ -787,6 +814,29 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn explicit_missing_or_expired_export_never_uses_another_login() {
+        let directory = std::env::temp_dir().join(format!(
+            "claude-profile-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("export.json");
+        assert_eq!(poll_account(&path), Err(PollError::NoCredentials));
+        std::fs::write(
+            &path,
+            r#"{"claudeAiOauth":{"accessToken":"fixture-token","expiresAt":0}}"#,
+        )
+        .unwrap();
+        assert_eq!(poll_account(&path), Err(PollError::TokenExpired));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
+    }
 
     #[test]
     fn bundled_claude_versions_sort_numerically() {

@@ -81,9 +81,22 @@ impl StudioApp {
             .as_deref()
             .and_then(|path| context_menu::load_context_menu(path).ok())
             .unwrap_or_else(context_menu::classic_context_menu);
-        let usage_cache = app_settings::load_usage_cache();
-        let usage_poll_ok = usage_cache.as_ref().is_some_and(|cache| cache.poll_ok);
-        let usage_has_error = usage_cache.as_ref().is_some_and(|cache| !cache.poll_ok);
+        let usage_cache = app_settings::load_usage_cache().map(|mut cache| {
+            cache.data.select_accounts(&settings.accounts);
+            cache
+        });
+        let usage_poll_ok = usage_cache
+            .as_ref()
+            .is_some_and(|cache| cache.poll_ok && !cache.data.is_empty());
+        let usage_has_error = usage_cache.as_ref().is_some_and(|cache| {
+            !cache.poll_ok
+                || (cache.data.is_empty()
+                    && cache
+                        .data
+                        .accounts
+                        .iter()
+                        .any(|account| account.error.is_some()))
+        });
         let usage = usage_cache.map(|cache| cache.data);
         let next_preview_countdown_refresh = preview_countdown_refresh_delay(usage.as_ref())
             .and_then(|delay| Instant::now().checked_add(delay));
@@ -746,9 +759,16 @@ impl StudioApp {
         }
     }
 
-    pub(super) fn update_usage_cache(&mut self, cache: UsageCache) -> bool {
-        let poll_ok = cache.poll_ok;
-        let has_error = !poll_ok;
+    pub(super) fn update_usage_cache(&mut self, mut cache: UsageCache) -> bool {
+        cache.data.select_accounts(&self.settings.accounts);
+        let poll_ok = cache.poll_ok && !cache.data.is_empty();
+        let has_error = !cache.poll_ok
+            || (cache.data.is_empty()
+                && cache
+                    .data
+                    .accounts
+                    .iter()
+                    .any(|account| account.error.is_some()));
         let changed = self.usage.as_ref() != Some(&cache.data)
             || self.usage_poll_ok != poll_ok
             || self.usage_has_error != has_error;

@@ -637,8 +637,8 @@ fn preview_render_scale(
 fn preview_countdown_refresh_delay(data: Option<&AppUsageData>) -> Option<Duration> {
     let now = std::time::SystemTime::now();
     data?
-        .iter()
-        .flat_map(|(_, usage)| [&usage.session, &usage.weekly])
+        .all_usage()
+        .flat_map(|usage| [&usage.session, &usage.weekly])
         .filter_map(|section| section.resets_at?.duration_since(now).ok())
         .map(preview_countdown_delay)
         .min()

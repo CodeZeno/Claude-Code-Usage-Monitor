@@ -1,6 +1,102 @@
 use super::*;
 
 #[test]
+fn named_account_bindings_show_independent_usage_and_errors() {
+    use crate::accounts::{AccountProfile, AccountSettings};
+    use crate::models::{AccountUsage, UsageData, UsageSection};
+    let personal = AccountProfile {
+        id: "personal".into(),
+        name: "Personal".into(),
+        config_dir: "C:\\personal".into(),
+        ..Default::default()
+    };
+    let work = AccountProfile {
+        id: "work".into(),
+        name: "Work".into(),
+        config_dir: "C:\\work".into(),
+        ..Default::default()
+    };
+    let mut settings = AccountSettings::default();
+    settings.codex.profiles = vec![personal.clone(), work.clone()];
+    settings.codex.selected = "work".into();
+    let mut data = AppUsageData::default();
+    data.accounts = vec![
+        AccountUsage {
+            provider: ProviderId::Codex,
+            profile: personal,
+            source_signature: "fixture".into(),
+            source_path: None,
+            selected: false,
+            usage: Some(UsageData {
+                weekly: UsageSection {
+                    available: true,
+                    percentage: 25.0,
+                    resets_at: None,
+                },
+                ..Default::default()
+            }),
+            error: None,
+        },
+        AccountUsage {
+            provider: ProviderId::Codex,
+            profile: work,
+            source_signature: "fixture".into(),
+            source_path: None,
+            selected: false,
+            usage: None,
+            error: Some(crate::poller::PollError::AuthRequired),
+        },
+    ];
+    data.select_accounts(&settings);
+    let context = DataContext::from_usage_with_runtime(
+        Some(&data),
+        &Canvas::default(),
+        ThemeRuntime::default()
+            .with_poll_state(false, true)
+            .with_countdown(true),
+    );
+    assert_eq!(format_template("{codex.account.name}", &context), "Work");
+    assert_eq!(
+        format_template("{accounts.codex.personal.name}", &context),
+        "Personal"
+    );
+    assert_eq!(
+        format_template(
+            "{accounts.codex.personal.weekly.display:usage_line}",
+            &context
+        ),
+        "75%"
+    );
+    assert_eq!(
+        format_template("{accounts.codex.work.weekly:usage_badge}", &context),
+        "!"
+    );
+    assert_eq!(format_template("{codex.weekly:usage_badge}", &context), "!");
+    assert_eq!(
+        evaluate("accounts.codex.personal.weekly.percentage", &context).unwrap(),
+        25.0
+    );
+    assert_eq!(
+        evaluate("accounts.codex.work.selected", &context).unwrap(),
+        1.0
+    );
+    assert!(
+        !data.is_empty(),
+        "a healthy unselected account still has usable data"
+    );
+    data.accounts[1].error = None;
+    let waiting = DataContext::from_usage_with_runtime(
+        Some(&data),
+        &Canvas::default(),
+        ThemeRuntime::default().with_poll_state(true, false),
+    );
+    assert_eq!(
+        format_template("{accounts.codex.work.weekly:usage_badge}", &waiting),
+        "--"
+    );
+}
+
+#[test]
 fn managed_asset_paths_stay_inside_the_asset_directory() {
     assert_eq!(managed_asset_file_name("assets/logo.png"), Some("logo.png"));
     assert_eq!(managed_asset_file_name("logo.png"), None);

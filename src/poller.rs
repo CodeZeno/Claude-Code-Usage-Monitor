@@ -5,7 +5,8 @@ use crate::diagnose;
 use crate::models::{AppUsageData, UsageData, UsageSection};
 use crate::providers::{ProviderId, ProviderSet};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PollError {
     AuthRequired,
     NoCredentials,
@@ -27,8 +28,18 @@ pub struct PollFailure {
     pub error: PollError,
 }
 
-pub fn poll(enabled_providers: ProviderSet) -> Result<AppUsageData, PollFailure> {
-    poll_concurrently_with(enabled_providers, poll_provider)
+pub fn poll(
+    enabled_providers: ProviderSet,
+    settings: &crate::accounts::AccountSettings,
+) -> Result<AppUsageData, PollFailure> {
+    if enabled_providers
+        .iter()
+        .any(|provider| settings.get(provider).is_some())
+    {
+        accounts::poll_accounts(enabled_providers, settings)
+    } else {
+        poll_concurrently_with(enabled_providers, poll_provider)
+    }
 }
 
 /// Keep the previous reading for any enabled provider that failed this cycle.
@@ -43,7 +54,19 @@ pub fn carry_forward_failures(
     enabled: ProviderSet,
 ) -> AppUsageData {
     let mut merged = fresh;
+    accounts::carry_accounts(&mut merged, previous);
     for provider in enabled.iter() {
+        if merged
+            .accounts
+            .iter()
+            .any(|account| account.provider == provider)
+            || previous
+                .accounts
+                .iter()
+                .any(|account| account.provider == provider)
+        {
+            continue;
+        }
         if merged.get(provider).is_some() {
             continue;
         }
@@ -140,6 +163,7 @@ fn merge_poll_results(
     }
 }
 
+mod accounts;
 mod antigravity;
 mod claude;
 mod claude_desktop;
@@ -409,7 +433,7 @@ pub fn is_past_reset(data: &UsageData) -> bool {
 }
 
 pub fn app_is_past_reset(data: &AppUsageData) -> bool {
-    data.iter().any(|(_, usage)| is_past_reset(usage))
+    data.all_usage().any(is_past_reset)
 }
 
 #[cfg(test)]

@@ -23,6 +23,8 @@ pub const POLL_1_HOUR: u32 = POLL_1_HOUR_SECONDS * 1_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SettingsFile {
+    #[serde(default)]
+    pub accounts: crate::accounts::AccountSettings,
     #[serde(default, skip_serializing)]
     pub tray_offset: i32,
     #[serde(default, skip_serializing)]
@@ -71,6 +73,7 @@ pub struct SettingsFile {
 impl Default for SettingsFile {
     fn default() -> Self {
         Self {
+            accounts: Default::default(),
             tray_offset: 0,
             taskbar_index: 0,
             legacy_placement_pending: false,
@@ -101,6 +104,8 @@ pub struct LegacyPlacement {
 
 impl SettingsFile {
     pub fn normalize(&mut self) {
+        self.accounts.claude.normalize();
+        self.accounts.codex.normalize();
         if !matches!(
             self.poll_interval_ms,
             POLL_1_MIN | POLL_5_MIN | POLL_15_MIN | POLL_1_HOUR
@@ -267,7 +272,9 @@ pub fn save_codex_credits(state: &CodexCreditsState) -> Result<(), String> {
 }
 
 pub fn load_usage_cache() -> Option<UsageCache> {
-    read_json(&usage_cache_path())
+    let mut cache: UsageCache = read_json(&usage_cache_path())?;
+    cache.data.invalidate_changed_credentials();
+    Some(cache)
 }
 
 pub fn save_usage_cache(data: &AppUsageData, poll_ok: bool) -> Result<(), String> {
@@ -341,6 +348,20 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn named_accounts_round_trip_without_changing_legacy_provider_preferences() {
+        let old = decode_settings(r#"{"show_claude_code":true,"show_codex":true}"#).unwrap();
+        assert_eq!(old.accounts, crate::accounts::AccountSettings::default());
+        let mut settings = old;
+        settings.accounts.codex.add();
+        settings.accounts.codex.profiles[1].config_dir = "C:\\Users\\Test\\.codex-work".into();
+        settings.accounts.codex.profiles[1].enabled = true;
+        settings.accounts.codex.selected = "account_1".into();
+        let decoded = decode_settings(&settings_json(&settings).to_string()).unwrap();
+        assert_eq!(decoded.accounts, settings.accounts);
+        assert_eq!(decoded.enabled_providers(), settings.enabled_providers());
+    }
 
     #[test]
     fn settings_never_disable_every_provider() {

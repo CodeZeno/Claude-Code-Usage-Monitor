@@ -93,6 +93,7 @@ struct AppState {
     install_channel: InstallChannel,
 
     providers: ProviderSet,
+    accounts: crate::accounts::AccountSettings,
 
     data: Option<AppUsageData>,
 
@@ -478,6 +479,13 @@ fn poll_display_state(
     auth_error_paused_polling: bool,
     data: Option<&AppUsageData>,
 ) -> (bool, bool) {
+    if let Some(data) = data.filter(|data| !data.accounts.is_empty()) {
+        let has_error = data.accounts.iter().any(|account| account.error.is_some());
+        return (
+            !data.is_empty(),
+            data.is_empty() && (has_error || retry_count > 0),
+        );
+    }
     let has_usable_stale_data = !auth_error_paused_polling
         && data.is_some_and(|data| data.iter().any(|(_, usage)| usage.stale));
     (
@@ -586,7 +594,10 @@ fn tray_usage_summary_lines(
                 .unwrap_or(strings.weekly_window);
             Some(format!(
                 "{} {}: {:.0}% | {}: {:.0}%",
-                language.text(descriptor.display_name),
+                match data.selected_account_name(provider) {
+                    Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
+                    None => language.text(descriptor.display_name).to_string(),
+                },
                 strings.session_window,
                 shown(usage.session.percentage),
                 weekly_label,
@@ -1812,6 +1823,7 @@ pub fn run() {
                 language,
                 install_channel,
                 providers: settings.enabled_providers(),
+                accounts: settings.accounts.clone(),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
@@ -2103,21 +2115,28 @@ fn poll_worker(send_hwnd: SendHwnd) {
 }
 
 fn do_poll_once(hwnd: HWND) {
-    let enabled_providers = {
+    let (enabled_providers, accounts) = {
         let state = lock_state();
         state
             .as_ref()
-            .map(|state| state.providers)
+            .map(|state| (state.providers, state.accounts.clone()))
             .unwrap_or_default()
     };
 
-    match poller::poll(enabled_providers) {
+    match poller::poll(enabled_providers, &accounts) {
         Ok(data) => {
             let mut state = lock_state();
-            let data = match state.as_ref().and_then(|s| s.data.as_ref()) {
+            if state
+                .as_ref()
+                .is_some_and(|s| s.providers != enabled_providers || s.accounts != accounts)
+            {
+                return;
+            }
+            let mut data = match state.as_ref().and_then(|s| s.data.as_ref()) {
                 Some(previous) => poller::carry_forward_failures(data, previous, enabled_providers),
                 None => data,
             };
+            data.select_accounts(&accounts);
             let cache_data = data.clone();
             if let Some(s) = state.as_mut() {
                 // Stop fast-poll if reset data is now fresh
@@ -2153,6 +2172,12 @@ fn do_poll_once(hwnd: HWND) {
             }
         }
         Err(failure) => {
+            if lock_state()
+                .as_ref()
+                .is_some_and(|s| s.providers != enabled_providers || s.accounts != accounts)
+            {
+                return;
+            }
             let auth_watch = match failure.error {
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired => {
                     let mode = poller::CredentialWatchMode::ActiveSource(failure.provider);
@@ -2167,6 +2192,12 @@ fn do_poll_once(hwnd: HWND) {
             // Distinguish auth-required errors from transient errors.
             let (notify_auth_error, cache_data, cache_poll_ok) = {
                 let mut state = lock_state();
+                if state
+                    .as_ref()
+                    .is_some_and(|s| s.providers != enabled_providers || s.accounts != accounts)
+                {
+                    return;
+                }
                 let mut should_notify = false;
                 if let Some(s) = state.as_mut() {
                     if matches!(failure.error, poller::PollError::RequestFailed) {
@@ -2281,8 +2312,8 @@ fn schedule_countdown_timer() {
     }
 
     let min_delay = s.data.as_ref().and_then(|data| {
-        data.iter()
-            .flat_map(|(_, usage)| [&usage.session, &usage.weekly])
+        data.all_usage()
+            .flat_map(|usage| [&usage.session, &usage.weekly])
             .filter_map(|section| poller::time_until_display_change(section.resets_at))
             .min()
     });
@@ -2361,7 +2392,12 @@ fn reload_external_settings(hwnd: HWND) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        providers_changed = state.providers != settings.enabled_providers();
+        providers_changed =
+            state.providers != settings.enabled_providers() || state.accounts != settings.accounts;
+        state.accounts = settings.accounts.clone();
+        if let Some(data) = state.data.as_mut() {
+            data.select_accounts(&settings.accounts);
+        }
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
