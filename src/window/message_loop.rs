@@ -117,6 +117,12 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 TIMER_TRAY_HOVER => {
                     clear_tray_mouse_hover_if_left(hwnd);
                 }
+                TIMER_TRAY_REPOSITION => {
+                    let _ = KillTimer(Some(hwnd), TIMER_TRAY_REPOSITION);
+                    refresh_theme_host_geometry();
+                    position_at_taskbar();
+                    render_layered();
+                }
                 _ => {}
             }
             LRESULT(0)

@@ -511,6 +511,46 @@ pub(super) fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_heigh
     (anchor_bottom - widget_height).max(anchor_top)
 }
 
+pub(super) fn rect_changed(previous: Option<RECT>, current: Option<RECT>) -> bool {
+    match (previous, current) {
+        (Some(p), Some(c)) => {
+            p.left != c.left || p.top != c.top || p.right != c.right || p.bottom != c.bottom
+        }
+        (None, None) => false,
+        _ => true,
+    }
+}
+
+pub(super) fn is_tray_event_source(
+    hwnd: HWND,
+    tray_hwnd: Option<HWND>,
+    taskbar_hwnd: Option<HWND>,
+    our_hwnds: &[HWND],
+) -> bool {
+    if hwnd.is_invalid() {
+        return false;
+    }
+    // Never treat our own surface windows as tray events (prevents feedback loops)
+    for &our in our_hwnds {
+        if our == hwnd || unsafe { IsChild(our, hwnd).as_bool() } {
+            return false;
+        }
+    }
+    // Check if hwnd is TrayNotifyWnd or any descendant (e.g. ToolbarWindow32, SIBTrayButton, SysPager)
+    if let Some(tray) = tray_hwnd {
+        if tray == hwnd || unsafe { IsChild(tray, hwnd).as_bool() } {
+            return true;
+        }
+    }
+    // Check if hwnd is the taskbar or a child window (e.g. overflow chevron buttons placed directly on Shell_TrayWnd)
+    if let Some(taskbar) = taskbar_hwnd {
+        if taskbar == hwnd || unsafe { IsChild(taskbar, hwnd).as_bool() } {
+            return true;
+        }
+    }
+    false
+}
+
 /// WinEvent callback for tray icon location changes
 pub(super) unsafe extern "system" fn on_tray_location_changed(
     _hook: HWINEVENTHOOK,
@@ -521,39 +561,65 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
     _thread: u32,
     _time: u32,
 ) {
-    static LAST_REPOSITION: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+    if tray_reposition_is_suppressed() {
+        return;
+    }
 
-    let is_tray = {
+    let (is_tray, our_hwnd, tray_hwnd) = {
         let state = lock_state();
-        state
-            .as_ref()
-            .and_then(|s| s.tray_notify_hwnd)
-            .map(|h| h.to_hwnd() == hwnd)
-            .unwrap_or(false)
+        let Some(s) = state.as_ref() else {
+            return;
+        };
+        let our_hwnds = std::iter::once(s.hwnd.to_hwnd())
+            .chain(s.mirror_hwnds.iter().map(|h| h.to_hwnd()))
+            .chain(s.desktop_hwnds.iter().flatten().map(|h| h.to_hwnd()))
+            .collect::<Vec<_>>();
+        let tray = s.tray_notify_hwnd.map(|h| h.to_hwnd());
+        let taskbar = s.taskbar_hwnd.map(|h| h.to_hwnd());
+        let is_tray = is_tray_event_source(hwnd, tray, taskbar, &our_hwnds);
+        (is_tray, s.hwnd.to_hwnd(), tray)
     };
 
-    if is_tray {
-        if tray_reposition_is_suppressed() {
-            return;
-        }
+    if !is_tray {
+        return;
+    }
 
-        let should_reposition = {
-            let mut last = LAST_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
-            let now = std::time::Instant::now();
-            if last
-                .map(|t| now.duration_since(t).as_millis() > 500)
-                .unwrap_or(true)
-            {
-                *last = Some(now);
-                true
-            } else {
-                false
-            }
-        };
-        if should_reposition {
-            refresh_theme_host_geometry();
-            position_at_taskbar();
-            render_layered();
+    // Schedule a trailing-edge timer so that after animations complete or multi-step
+    // layout passes settle, the widget reliably snaps to the final tray position.
+    const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 120;
+    let _ = SetTimer(
+        Some(our_hwnd),
+        TIMER_TRAY_REPOSITION,
+        TRAY_REPOSITION_TRAILING_DELAY_MS,
+        None,
+    );
+
+    // Also perform an immediate reposition if the tray rect has actually changed,
+    // providing an instant visual response without waiting for the trailing timer.
+    static LAST_TRAY_RECT: Mutex<Option<RECT>> = Mutex::new(None);
+    static LAST_IMMEDIATE_REPOSITION: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+    let current_rect = tray_hwnd.and_then(native_interop::get_window_rect_safe);
+    let should_reposition_now = {
+        let mut last_rect = LAST_TRAY_RECT.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_time = LAST_IMMEDIATE_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        let changed = rect_changed(*last_rect, current_rect);
+        let time_ok = last_time
+            .map(|t| now.duration_since(t).as_millis() > 60)
+            .unwrap_or(true);
+        if changed && time_ok {
+            *last_rect = current_rect;
+            *last_time = Some(now);
+            true
+        } else {
+            false
         }
+    };
+
+    if should_reposition_now {
+        refresh_theme_host_geometry();
+        position_at_taskbar();
+        render_layered();
     }
 }
