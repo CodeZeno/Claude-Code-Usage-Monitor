@@ -27,15 +27,66 @@
 //!   after switching back — with no further switch input at all.
 //!
 //! Given that instability, this module does not attempt to make the shell
-//! itself cloak/uncloak the widget. Instead, `window.rs` polls
-//! [`sense_current_desktop_id`] on a lightweight timer while
-//! `virtual_desktop_scope` is `CurrentOnly`, compares the result against the
-//! saved target desktop id, and drives the widget's own `ShowWindow`
-//! calls — the same ones the "Show Widget" toggle already uses. The widget
-//! itself is never moved to any desktop; it keeps its existing
+//! itself cloak/uncloak the widget. Instead, `window.rs` re-senses
+//! [`sense_current_desktop_id`] and drives the widget's own `ShowWindow`
+//! calls — the same ones the "Show Widget" toggle already uses — the widget
+//! itself is never moved to any desktop and keeps its existing
 //! `WS_EX_TOOLWINDOW` top-level style completely unchanged. See
-//! `window::effective_widget_visible` for the visibility rule and
-//! `window::TIMER_VIRTUAL_DESKTOP_SYNC` for the poll timer.
+//! `window::effective_widget_visible` for the visibility rule.
+//!
+//! ## Event-driven trigger: system-wide `EVENT_OBJECT_CLOAKED`/`UNCLOAKED`
+//!
+//! `window.rs` re-senses on demand — at startup, on a `CurrentOnly`/`All`
+//! scope change, and driven by a **system-wide**
+//! `SetWinEventHook(EVENT_OBJECT_CLOAKED, EVENT_OBJECT_UNCLOAKED, ...,
+//! idProcess = 0, idThread = 0, WINEVENT_OUTOFCONTEXT |
+//! WINEVENT_SKIPOWNPROCESS)` — never a periodic poll. Confirmed live: a
+//! real desktop switch reliably produces a burst of dozens of
+//! `EVENT_OBJECT_CLOAKED`/`UNCLOAKED` events (every window on the system
+//! cloaking/uncloaking together, filtered to `idObject == OBJID_WINDOW` /
+//! `idChild == CHILDID_SELF`) within roughly 170-260ms, with near-zero
+//! latency to the first event and zero events at all between switches
+//! (idle is silent). `window::system_wide_cloak_event_proc` coalesces one
+//! whole burst into exactly one confirmation resync once it settles
+//! (`window::TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE`, a one-shot timer
+//! re-armed by every event in the burst, never a repeating poll) — see
+//! `window::resync_virtual_desktop`. An earlier version also resynced
+//! immediately on the burst's first event, but that could sense a
+//! transient, mid-animation desktop id and briefly show/hide the widget
+//! incorrectly before the settle confirmation corrected it — confirmed
+//! live as a real, noticeable flash — so the settle confirmation is now
+//! the only resync for a burst, at the cost of up to
+//! `VIRTUAL_DESKTOP_EVENT_SETTLE_MS` of latency on every switch.
+//!
+//! **Why system-wide, with no sentinel window.** An earlier design tried a
+//! dedicated sentinel window to scope the hook and avoid this noise
+//! filtering. Confirmed live, against every documented way to keep a
+//! sentinel window hidden from the taskbar/Alt+Tab:
+//!
+//! - The widget's own `WS_EX_TOOLWINDOW` style never receives
+//!   `WM_CLOAKED_STATE_CHANGED`/cloak events at all (consistent with this
+//!   module's other finding that tool windows sit outside the shell's
+//!   normal per-desktop tracking).
+//! - An *owned* window (owner keeps it out of the taskbar) also never
+//!   receives them.
+//! - An *unowned*, ordinary-styled window does receive them, but — with no
+//!   owner and no `WS_EX_TOOLWINDOW` — necessarily shows its own taskbar
+//!   button/Alt+Tab entry, which was rejected as a real, unwanted UI
+//!   regression.
+//!
+//! Since every documented way to hide a window from the taskbar also
+//! blocks it from receiving cloak events, there is no sentinel-window
+//! design that both works and stays invisible. The system-wide hook needs
+//! no window of its own at all, sidestepping the conflict entirely, at the
+//! cost of receiving (and filtering out) other processes' unrelated cloak
+//! events too.
+//!
+//! **No polling fallback.** If `SetWinEventHook` registration itself
+//! fails, this app does not fall back to a timer. `virtual_desktop_current`
+//! simply stays `None`, which `window::effective_widget_visible`'s
+//! existing fail-open rule already turns into "always visible" — the same
+//! safe behavior as a `CurrentOnly` widget that has not sensed anything
+//! yet.
 //!
 //! ## Current Desktop Sensor
 //!

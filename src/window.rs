@@ -36,7 +36,7 @@ use crate::models::{AppUsageData, BankedResetCount, QuotaFamilyId, QuotaMetric, 
 #[cfg(feature = "self-update")]
 use crate::native_interop::TIMER_UPDATE_CHECK;
 use crate::native_interop::{
-    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_VIRTUAL_DESKTOP_SYNC,
+    self, Color, TIMER_COUNTDOWN, TIMER_POLL, TIMER_RESET_POLL, TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE,
     WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
@@ -319,22 +319,24 @@ struct AppState {
     /// The desktop `CurrentOnly` should show the widget on. `None` while
     /// `virtual_desktop_scope` is `All`.
     virtual_desktop_target: Option<GUID>,
-    /// The last desktop id `TIMER_VIRTUAL_DESKTOP_SYNC` has *committed* as
-    /// the current desktop (after debouncing — see
-    /// `virtual_desktop_pending`). `None` means unknown (sensor has not
-    /// succeeded yet, or scope is `All` and this is simply unused).
+    /// The last desktop id `window::resync_virtual_desktop` sensed and
+    /// committed. `None` means unknown (sensor has not succeeded yet, the
+    /// event hook failed to register, or scope is `All` and this is simply
+    /// unused) — `effective_widget_visible` fails open to visible in that
+    /// case, which is also this app's documented behavior when the
+    /// system-wide cloak-event hook could not be registered at all (no
+    /// polling fallback — see `virtual_desktop` module docs).
     virtual_desktop_current: Option<GUID>,
-    /// A newly-sensed desktop id that differs from `virtual_desktop_current`
-    /// but has not yet been observed on two consecutive poll ticks. Debounce
-    /// staging so a single transient reading during a desktop-switch
-    /// animation cannot flip visibility — see
-    /// `window::poll_virtual_desktop_sync`.
-    virtual_desktop_pending: Option<GUID>,
     /// The widget's actual, last-applied OS-level show/hide state driven by
     /// `effective_widget_visible` — kept separate from the `widget_visible`
     /// user preference so `sync_effective_widget_visibility` only calls
     /// `ShowWindow` when the effective state actually changes.
     virtual_desktop_applied_visible: bool,
+    /// The system-wide `EVENT_OBJECT_CLOAKED`/`EVENT_OBJECT_UNCLOAKED` hook
+    /// driving event-driven `CurrentOnly` sync — `None` whenever
+    /// `CurrentOnly` is off, or registration failed (in which case this app
+    /// never falls back to polling; see `virtual_desktop` module docs).
+    virtual_desktop_event_hook: Option<HWINEVENTHOOK>,
 }
 
 #[derive(Clone, Debug)]
@@ -2535,13 +2537,20 @@ fn save_state_settings() {
     }
 }
 
-/// How often `TIMER_VIRTUAL_DESKTOP_SYNC` re-senses the current desktop
-/// while `virtual_desktop_scope` is `CurrentOnly`. 500ms was chosen as the
-/// slowest interval that still keeps the widget's appear/disappear latency
-/// within roughly a second of the user's own desktop switch (see
-/// `virtual_desktop` module docs for why this polls instead of relying on
-/// native Shell enforcement).
-const VIRTUAL_DESKTOP_SYNC_POLL_MS: u32 = 500;
+/// How long to wait, after the *last* `EVENT_OBJECT_CLOAKED`/`UNCLOAKED`
+/// event of a desktop-switch burst, before doing the one-shot confirmation
+/// resync — this is the *only* resync for the whole burst (see
+/// `system_wide_cloak_event_proc`; there is deliberately no separate
+/// immediate resync). A burst as a whole spans ~170-260ms (dozens of
+/// events, every window on the system), but measured live, the
+/// *adjacent-event* gap within one burst never exceeded 14ms — waiting for
+/// the whole burst span before confirming (an earlier 250ms) was adding
+/// real, felt latency on top of the burst itself for no benefit. 80ms is a
+/// ~5.7x margin over that 14ms maximum. A live A/B check against 40ms (a
+/// ~2.9x margin) found no perceptible difference in felt latency, so 80ms
+/// is kept as the final value — the extra margin is free (no felt cost)
+/// and safer against timing jitter this session's live data didn't cover.
+const VIRTUAL_DESKTOP_EVENT_SETTLE_MS: u32 = 80;
 
 /// Pure visibility rule combining the user's "Show Widget" preference with
 /// the virtual-desktop scope — the single place both are reconciled, so
@@ -2612,89 +2621,139 @@ fn sync_effective_widget_visibility(hwnd: HWND) {
     }
 }
 
-/// Start (or restart) the virtual-desktop sync poll timer. Only meaningful
-/// while `virtual_desktop_scope` is `CurrentOnly` — callers are responsible
-/// for calling `stop_virtual_desktop_sync` when leaving that scope.
-fn start_virtual_desktop_sync(hwnd: HWND) {
+/// Re-senses the current desktop (see
+/// `virtual_desktop::sense_current_desktop_id`) and applies effective
+/// visibility immediately. Called only on demand — at startup, on a
+/// `CurrentOnly`/`All` scope change, and by the event-driven trigger below
+/// — never on a periodic timer. A sensor failure (`None`) leaves
+/// `virtual_desktop_current` untouched entirely, never treated as "hide",
+/// per `effective_widget_visible`'s fail-open rule.
+fn resync_virtual_desktop(hwnd: HWND) {
+    let Some(sensed) = virtual_desktop::sense_current_desktop_id(hwnd) else {
+        return;
+    };
+    {
+        let mut state = lock_state();
+        let Some(s) = state.as_mut() else {
+            return;
+        };
+        s.virtual_desktop_current = Some(sensed);
+    }
+    sync_effective_widget_visibility(hwnd);
+}
+
+/// `WinEventProc` for the system-wide `EVENT_OBJECT_CLOAKED`/`UNCLOAKED`
+/// hook — see `virtual_desktop` module docs for why this is system-wide
+/// rather than scoped to any one window (no sentinel window exists to
+/// scope it to). One real desktop switch produces a burst of dozens of
+/// these events (every window on the system, cloaked and uncloaked
+/// together), so every event in a burst just (re-)arms the one-shot
+/// `TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE` timer — coalescing the whole burst
+/// into exactly one confirmation resync once it settles, never one resync
+/// per event and never a periodic poll. Deliberately does *not* resync
+/// immediately on the burst's first event — an earlier version did, but
+/// that could sense a transient, mid-switch-animation desktop id and
+/// briefly show/hide the widget incorrectly before the settle
+/// confirmation corrected it; confirmed live as a real, noticeable flash.
+///
+/// Filters to `idObject == OBJID_WINDOW`/`idChild == CHILDID_SELF`: the
+/// whole-window cloak transition, not the flood of child/control-level
+/// object events the same hook also delivers.
+unsafe extern "system" fn system_wide_cloak_event_proc(
+    _hook: HWINEVENTHOOK,
+    _event: u32,
+    _event_hwnd: HWND,
+    idobject: i32,
+    idchild: i32,
+    _dweventthread: u32,
+    _dwmseventtime: u32,
+) {
+    if idobject != OBJID_WINDOW.0 || idchild != CHILDID_SELF as i32 {
+        return;
+    }
+
+    let main_hwnd = {
+        let state = lock_state();
+        state.as_ref().map(|s| s.hwnd.to_hwnd())
+    };
+    let Some(main_hwnd) = main_hwnd else {
+        return;
+    };
+
+    // Every event in a burst only (re-)arms the one-shot settle timer —
+    // deliberately no immediate resync here. An earlier version resynced
+    // on the burst's first event too, but that could sense a transient,
+    // mid-switch-animation desktop id and briefly apply the wrong
+    // visibility before the settle confirmation corrected it a moment
+    // later — confirmed live as a real, noticeable flash. Waiting for the
+    // burst to settle is the only resync, at the cost of up to
+    // `VIRTUAL_DESKTOP_EVENT_SETTLE_MS` of extra latency.
     unsafe {
         SetTimer(
-            hwnd,
-            TIMER_VIRTUAL_DESKTOP_SYNC,
-            VIRTUAL_DESKTOP_SYNC_POLL_MS,
+            main_hwnd,
+            TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE,
+            VIRTUAL_DESKTOP_EVENT_SETTLE_MS,
             None,
         );
     }
 }
 
-fn stop_virtual_desktop_sync(hwnd: HWND) {
+/// `WM_TIMER` handler for `TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE`. Always
+/// `KillTimer`'d immediately (this is a one-shot "burst has settled"
+/// signal, re-armed by every event during a burst — see
+/// `system_wide_cloak_event_proc` — never a repeating poll), then does the
+/// final confirmation resync.
+fn handle_virtual_desktop_event_settle(hwnd: HWND) {
     unsafe {
-        let _ = KillTimer(hwnd, TIMER_VIRTUAL_DESKTOP_SYNC);
+        let _ = KillTimer(hwnd, TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE);
     }
+    resync_virtual_desktop(hwnd);
 }
 
-/// Pure debounce step for one sensor reading. `committed` is the currently
-/// confirmed current-desktop id, `pending` is a not-yet-confirmed reading
-/// from the previous tick, and `sensed` is this tick's fresh reading.
-/// Returns the new `(committed, pending)` pair: a changed reading is only
-/// committed once it has been observed on two consecutive ticks (roughly
-/// one poll interval), so a single transient value during a desktop-switch
-/// animation cannot flip visibility by itself.
-fn debounce_virtual_desktop_reading(
-    committed: Option<GUID>,
-    pending: Option<GUID>,
-    sensed: GUID,
-) -> (Option<GUID>, Option<GUID>) {
-    if committed == Some(sensed) {
-        // Already the committed value; drop any stale pending reading that
-        // never got confirmed.
-        (committed, None)
-    } else if pending == Some(sensed) {
-        // Same new value observed on two consecutive ticks: commit it.
-        (Some(sensed), None)
-    } else {
-        // First time seeing this value: stage it, wait for confirmation.
-        (committed, Some(sensed))
-    }
-}
-
-/// `WM_TIMER` handler for `TIMER_VIRTUAL_DESKTOP_SYNC`. Senses the current
-/// desktop (see `virtual_desktop::sense_current_desktop_id`), debounces it
-/// (see `debounce_virtual_desktop_reading`), and only re-evaluates/applies
-/// effective visibility when the commit actually changes. A sensor failure
-/// (`None`) leaves `virtual_desktop_current`/`virtual_desktop_pending`
-/// untouched entirely — never treated as "hide", per
-/// `effective_widget_visible`'s fail-open rule.
-fn poll_virtual_desktop_sync(hwnd: HWND) {
-    let Some(sensed) = virtual_desktop::sense_current_desktop_id(hwnd) else {
-        return;
-    };
-    let changed = {
-        let mut state = lock_state();
-        let Some(s) = state.as_mut() else {
-            return;
-        };
-        let (new_committed, new_pending) = debounce_virtual_desktop_reading(
-            s.virtual_desktop_current,
-            s.virtual_desktop_pending,
-            sensed,
+/// Registers the system-wide cloak-event hook driving event-driven
+/// `CurrentOnly` sync — see `virtual_desktop` module docs. On failure,
+/// logs and leaves `virtual_desktop_event_hook` as `None`; this app never
+/// falls back to polling in that case, relying instead on
+/// `effective_widget_visible`'s existing fail-open rule (an unknown
+/// current desktop always shows the widget).
+fn start_virtual_desktop_event_sync() {
+    let hook = native_interop::set_system_wide_cloak_event_hook(system_wide_cloak_event_proc);
+    if hook.is_none() {
+        diagnose::log(
+            "virtual_desktop: system-wide cloak event hook registration failed; \
+             CurrentOnly fails open to all-desktops visible (no polling fallback)",
         );
-        let changed = new_committed != s.virtual_desktop_current;
-        s.virtual_desktop_current = new_committed;
-        s.virtual_desktop_pending = new_pending;
-        changed
+    }
+    let mut state = lock_state();
+    if let Some(s) = state.as_mut() {
+        s.virtual_desktop_event_hook = hook;
+    }
+}
+
+/// Tears down the event-driven sync hook and any pending settle timer —
+/// safe to call unconditionally (a no-op when nothing is active).
+fn stop_virtual_desktop_event_sync(hwnd: HWND) {
+    let hook = {
+        let mut state = lock_state();
+        state
+            .as_mut()
+            .and_then(|s| s.virtual_desktop_event_hook.take())
     };
-    if changed {
-        sync_effective_widget_visibility(hwnd);
+    if let Some(hook) = hook {
+        native_interop::unhook_win_event(hook);
+    }
+    unsafe {
+        let _ = KillTimer(hwnd, TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE);
     }
 }
 
 /// Applied once at startup (`run`), after the main window and `AppState`
 /// exist. If the saved scope is `CurrentOnly`, senses the current desktop
-/// once (so the widget doesn't wait a full poll interval for its first
-/// visibility decision), starts the sync timer, and applies effective
-/// visibility immediately. Never touches the widget's window style or
-/// calls `MoveWindowToDesktop` — see the `virtual_desktop` module docs for
-/// why.
+/// once (so the widget doesn't wait for the first cloak event to get its
+/// first visibility decision), starts the event-driven sync hook, and
+/// applies effective visibility immediately. Never touches the widget's
+/// window style or calls `MoveWindowToDesktop` — see the `virtual_desktop`
+/// module docs for why.
 fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
     let scope = {
         let state = lock_state();
@@ -2713,7 +2772,7 @@ fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
             s.virtual_desktop_current = sensed;
         }
     }
-    start_virtual_desktop_sync(hwnd);
+    start_virtual_desktop_event_sync();
     sync_effective_widget_visibility(hwnd);
 }
 
@@ -2721,15 +2780,15 @@ fn apply_virtual_desktop_scope_at_startup(hwnd: HWND) {
 ///
 /// `CurrentOnly` senses the current desktop (via
 /// `virtual_desktop::sense_current_desktop_id`, the same public-API-only
-/// sensor the poll timer uses — never `MoveWindowToDesktop`) and saves it
-/// as the target. This also covers re-targeting: selecting `CurrentOnly`
-/// again while already in that scope, from a different desktop than the
-/// current target, simply re-senses and overwrites the target with
-/// wherever the menu was actually opened from.
+/// sensor `resync_virtual_desktop` uses — never `MoveWindowToDesktop`) and
+/// saves it as the target. This also covers re-targeting: selecting
+/// `CurrentOnly` again while already in that scope, from a different
+/// desktop than the current target, simply re-senses and overwrites the
+/// target with wherever the menu was actually opened from.
 ///
-/// `All` stops the sync timer and clears the target; the widget's window
-/// itself was never moved or restyled for `CurrentOnly`, so there is
-/// nothing to undo and no process relaunch is needed.
+/// `All` stops the event-driven sync and clears the target; the widget's
+/// window itself was never moved or restyled for `CurrentOnly`, so there
+/// is nothing to undo and no process relaunch is needed.
 fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopScope) {
     match new_scope {
         VirtualDesktopScope::CurrentOnly => {
@@ -2745,11 +2804,10 @@ fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopSc
                     s.virtual_desktop_scope = VirtualDesktopScope::CurrentOnly;
                     s.virtual_desktop_target = Some(current);
                     s.virtual_desktop_current = Some(current);
-                    s.virtual_desktop_pending = None;
                 }
             }
             save_state_settings();
-            start_virtual_desktop_sync(hwnd);
+            start_virtual_desktop_event_sync();
             sync_effective_widget_visibility(hwnd);
         }
         VirtualDesktopScope::All => {
@@ -2763,14 +2821,13 @@ fn apply_virtual_desktop_scope_from_menu(hwnd: HWND, new_scope: VirtualDesktopSc
             if already_all {
                 return;
             }
-            stop_virtual_desktop_sync(hwnd);
+            stop_virtual_desktop_event_sync(hwnd);
             {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     s.virtual_desktop_scope = VirtualDesktopScope::All;
                     s.virtual_desktop_target = None;
                     s.virtual_desktop_current = None;
-                    s.virtual_desktop_pending = None;
                 }
             }
             save_state_settings();
@@ -2860,10 +2917,10 @@ fn show_widget_without_activation(hwnd: HWND, always_on_top: bool) {
 /// `effective_widget_visible`/`sync_effective_widget_visibility`, so a
 /// `CurrentOnly` scope still keeps the widget hidden on a non-target
 /// desktop even when the user turns this preference back on. Also starts
-/// or stops the virtual-desktop sync timer per the "no unnecessary polling
-/// while the widget is off" rule — see the `virtual_desktop` module docs —
-/// and, when turning back on, senses the current desktop immediately
-/// rather than waiting for the next poll tick.
+/// or stops the event-driven sync hook per the "no unnecessary event
+/// subscription while the widget is off" rule — see the `virtual_desktop`
+/// module docs — and, when turning back on, senses the current desktop
+/// immediately rather than waiting for the first cloak event.
 fn toggle_widget_visibility(hwnd: HWND) {
     let (new_visible, scope) = {
         let mut state = lock_state();
@@ -2881,12 +2938,11 @@ fn toggle_widget_visibility(hwnd: HWND) {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     s.virtual_desktop_current = Some(sensed);
-                    s.virtual_desktop_pending = None;
                 }
             }
-            start_virtual_desktop_sync(hwnd);
+            start_virtual_desktop_event_sync();
         } else {
-            stop_virtual_desktop_sync(hwnd);
+            stop_virtual_desktop_event_sync(hwnd);
         }
     }
     sync_effective_widget_visibility(hwnd);
@@ -5020,13 +5076,13 @@ pub fn run() {
                 virtual_desktop_scope: settings.virtual_desktop_scope,
                 virtual_desktop_target: settings.virtual_desktop_target.map(GUID::from_u128),
                 virtual_desktop_current: None,
-                virtual_desktop_pending: None,
                 // The window has not been shown yet at all at this point,
                 // regardless of the `widget_visible` preference — matches
                 // reality so the first real show/hide decision below (or
                 // inside `apply_virtual_desktop_scope_at_startup` for
                 // `CurrentOnly`) is not skipped as a false no-op.
                 virtual_desktop_applied_visible: false,
+                virtual_desktop_event_hook: None,
             });
             if let Some(s) = state.as_mut() {
                 refresh_usage_texts(s);
@@ -6780,8 +6836,8 @@ unsafe extern "system" fn wnd_proc(
                 TIMER_UPDATE_CHECK => {
                     begin_update_check(hwnd, false);
                 }
-                TIMER_VIRTUAL_DESKTOP_SYNC => {
-                    poll_virtual_desktop_sync(hwnd);
+                TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE => {
+                    handle_virtual_desktop_event_settle(hwnd);
                 }
                 _ => {}
             }
@@ -7549,6 +7605,7 @@ unsafe extern "system" fn wnd_proc(
             if let Some(h) = hook {
                 native_interop::unhook_win_event(h);
             }
+            stop_virtual_desktop_event_sync(hwnd);
             tray_icon::remove_all(hwnd);
             PostQuitMessage(0);
             LRESULT(0)
@@ -11312,57 +11369,6 @@ mod tests {
             Some(guid(1)),
             None
         ));
-    }
-
-    #[test]
-    fn debounce_keeps_committed_value_when_sensed_matches_it() {
-        let (committed, pending) =
-            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(1));
-        assert_eq!(committed, Some(guid(1)));
-        assert_eq!(
-            pending, None,
-            "a confirmed committed reading clears pending"
-        );
-    }
-
-    #[test]
-    fn debounce_stages_a_new_value_without_committing_on_first_observation() {
-        let (committed, pending) = debounce_virtual_desktop_reading(Some(guid(1)), None, guid(2));
-        assert_eq!(
-            committed,
-            Some(guid(1)),
-            "must not commit on a single observation"
-        );
-        assert_eq!(pending, Some(guid(2)));
-    }
-
-    #[test]
-    fn debounce_commits_a_new_value_after_two_consecutive_matching_observations() {
-        let (committed, pending) =
-            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(2));
-        assert_eq!(committed, Some(guid(2)));
-        assert_eq!(pending, None);
-    }
-
-    #[test]
-    fn debounce_restarts_staging_when_a_different_new_value_appears() {
-        // Pending was guid(2); a different guid(3) shows up next tick —
-        // must not commit guid(3) immediately either.
-        let (committed, pending) =
-            debounce_virtual_desktop_reading(Some(guid(1)), Some(guid(2)), guid(3));
-        assert_eq!(committed, Some(guid(1)));
-        assert_eq!(pending, Some(guid(3)));
-    }
-
-    #[test]
-    fn debounce_from_unknown_committed_state_commits_after_two_ticks() {
-        let (committed, pending) = debounce_virtual_desktop_reading(None, None, guid(1));
-        assert_eq!(committed, None);
-        assert_eq!(pending, Some(guid(1)));
-
-        let (committed, pending) = debounce_virtual_desktop_reading(committed, pending, guid(1));
-        assert_eq!(committed, Some(guid(1)));
-        assert_eq!(pending, None);
     }
 
     fn assert_color_hex(color: Color, hex: &str, label: &str) {

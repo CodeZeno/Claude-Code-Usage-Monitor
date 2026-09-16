@@ -21,11 +21,13 @@ pub const TIMER_POLL: usize = 1;
 pub const TIMER_COUNTDOWN: usize = 2;
 pub const TIMER_RESET_POLL: usize = 3;
 pub const TIMER_UPDATE_CHECK: usize = 4;
-/// Polls the current virtual desktop while `virtual_desktop_scope` is
-/// `CurrentOnly`, to synchronize the widget's own `ShowWindow` state — see
-/// `virtual_desktop` module docs for why this is app-level synchronization
-/// rather than native per-desktop `Show`/`Hide` enforcement.
-pub const TIMER_VIRTUAL_DESKTOP_SYNC: usize = 5;
+/// One-shot "burst settle" timer for the event-driven `CurrentOnly` sync —
+/// see `virtual_desktop` module docs. Armed (re-armed on every event,
+/// coalescing a switch's whole `EVENT_OBJECT_CLOAKED`/`UNCLOAKED` burst
+/// into one confirmation) by `window::system_wide_cloak_event_proc`, and
+/// always `KillTimer`'d the moment it fires — this is never a repeating
+/// poll.
+pub const TIMER_VIRTUAL_DESKTOP_EVENT_SETTLE: usize = 5;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -210,6 +212,37 @@ pub fn set_tray_event_hook(
 /// Get the thread ID that owns a window
 pub fn get_window_thread_id(hwnd: HWND) -> u32 {
     unsafe { GetWindowThreadProcessId(hwnd, None) }
+}
+
+/// Registers a system-wide (`idProcess = 0`, `idThread = 0`) hook for
+/// `EVENT_OBJECT_CLOAKED`..`EVENT_OBJECT_UNCLOAKED`, the event-driven
+/// trigger behind `virtual_desktop_scope = CurrentOnly` — see the
+/// `virtual_desktop` module docs. System-wide rather than scoped to one
+/// window: this app deliberately creates no dedicated sentinel window for
+/// it (an earlier design's sentinel could not simultaneously receive these
+/// events *and* stay hidden from the taskbar/Alt+Tab using only documented
+/// APIs — confirmed live). `WINEVENT_SKIPOWNPROCESS` excludes this
+/// process's own windows, since only other processes' cloak transitions
+/// are useful signal here.
+pub fn set_system_wide_cloak_event_hook(
+    callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
+) -> Option<HWINEVENTHOOK> {
+    unsafe {
+        let hook = SetWinEventHook(
+            EVENT_OBJECT_CLOAKED,
+            EVENT_OBJECT_UNCLOAKED,
+            None,
+            Some(callback),
+            0,
+            0,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        if hook.is_invalid() {
+            None
+        } else {
+            Some(hook)
+        }
+    }
 }
 
 /// Unhook a WinEvent hook
