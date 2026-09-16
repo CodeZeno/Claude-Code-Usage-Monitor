@@ -1,6 +1,104 @@
 use super::*;
 
 #[test]
+fn account_bindings_validate_without_live_credentials_or_usage() {
+    let mut theme = ThemeDocument::starter();
+    theme.id = "account-validation-test".into();
+    theme.surfaces[0].render = Expression("accounts.codex.account_1.available".into());
+    let text = theme.surfaces[0]
+        .children
+        .iter_mut()
+        .find_map(|object| {
+            if let SceneContent::Text { template, .. } = &mut object.content {
+                Some(template)
+            } else {
+                None
+            }
+        })
+        .unwrap();
+    *text = "{accounts.codex.account_1.name} {codex.account.name} {accounts.claude.work.weekly.percentage:0}%".into();
+    let errors = theme.validate();
+    assert!(errors.is_empty(), "{errors:?}");
+    let json = serde_json::to_string(&theme).unwrap();
+    let reloaded: ThemeDocument = serde_json::from_str(&json).unwrap();
+    assert!(reloaded.validate().is_empty());
+
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert_eq!(context.get("accounts.codex.account_1.available"), Some(0.0));
+    assert_eq!(
+        format_template("{accounts.codex.account_1.weekly:usage_line}", &context),
+        "--"
+    );
+    assert_eq!(
+        format_template(
+            "{accounts.codex.account_1.name}/{codex.account.name}",
+            &context
+        ),
+        "/"
+    );
+    for invalid in [
+        "accounts.codex.work.weekly.percentge",
+        "accounts.cursor.work.weekly.percentage",
+        "accounts.codex..available",
+    ] {
+        assert!(evaluate(invalid, &context).is_err(), "{invalid}");
+    }
+}
+
+#[test]
+fn normalized_account_ids_keep_theme_values_independent() {
+    use crate::accounts::{AccountProfile, ProviderAccounts};
+    use crate::models::{AccountUsage, UsageData, UsageSection};
+    let mut configured = ProviderAccounts {
+        profiles: ["Work", "work"]
+            .into_iter()
+            .map(|id| AccountProfile {
+                id: id.into(),
+                name: id.into(),
+                config_dir: format!("C:/review/{id}"),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    };
+    configured.normalize();
+    let mut data = AppUsageData::default();
+    for (profile, percentage) in configured.profiles.iter().cloned().zip([25.0, 80.0]) {
+        data.accounts.push(AccountUsage {
+            provider: ProviderId::Codex,
+            profile,
+            source_signature: "fixture".into(),
+            source_path: None,
+            selected: false,
+            error: None,
+            usage: Some(UsageData {
+                weekly: UsageSection {
+                    available: true,
+                    percentage,
+                    resets_at: None,
+                },
+                ..Default::default()
+            }),
+        });
+    }
+    let context = DataContext::from_usage(Some(&data), &Canvas::default());
+    for (profile, expected) in configured.profiles.iter().zip([25.0, 80.0]) {
+        assert_eq!(
+            context.get(&format!("accounts.codex.{}.weekly.percentage", profile.id)),
+            Some(expected)
+        );
+    }
+    // Removal and startup use the same typed defaults, including countdown.
+    let empty = DataContext::from_usage_with_runtime(
+        None,
+        &Canvas::default(),
+        ThemeRuntime::default().with_countdown(true),
+    );
+    assert_eq!(empty.get("accounts.codex.Work.weekly.display"), Some(100.0));
+    assert_eq!(empty.get_string("accounts.codex.Work.name"), Some(""));
+}
+
+#[test]
 fn named_account_bindings_show_independent_usage_and_errors() {
     use crate::accounts::{AccountProfile, AccountSettings};
     use crate::models::{AccountUsage, UsageData, UsageSection};

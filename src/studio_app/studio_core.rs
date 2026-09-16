@@ -106,6 +106,8 @@ impl StudioApp {
         Self {
             owner,
             page: initial_page,
+            synced_poll_interval_ms: settings.poll_interval_ms,
+            poll_interval_editor_generation: 0,
             settings,
             startup_enabled: crate::window::is_startup_enabled(),
             theme,
@@ -185,9 +187,26 @@ impl StudioApp {
         }
     }
 
+    pub(super) fn sync_poll_interval(&mut self, persisted_interval: u32) {
+        // A local frequency edit wins; other dashboard edits must preserve a
+        // newer interval selected from the widget's context menu.
+        if self.settings.poll_interval_ms == self.synced_poll_interval_ms
+            && self.settings.poll_interval_ms != persisted_interval
+        {
+            self.settings.poll_interval_ms = persisted_interval;
+            // Drop the numeric control's old text buffer so losing focus cannot
+            // commit the previous custom value over the menu selection.
+            self.poll_interval_editor_generation =
+                self.poll_interval_editor_generation.wrapping_add(1);
+        }
+        self.synced_poll_interval_ms = persisted_interval;
+    }
+
     pub(super) fn save_settings(&mut self) {
+        self.sync_poll_interval(app_settings::load_settings().poll_interval_ms);
         match app_settings::save_settings(&self.settings) {
             Ok(()) => {
+                self.synced_poll_interval_ms = self.settings.poll_interval_ms;
                 self.settings_error = None;
                 self.notify_owner();
             }
@@ -786,6 +805,7 @@ impl StudioApp {
         }
         let now = Instant::now();
         self.last_cache_read = now;
+        self.sync_poll_interval(app_settings::load_settings().poll_interval_ms);
         let usage_changed =
             app_settings::load_usage_cache().is_some_and(|cache| self.update_usage_cache(cache));
         let countdown_due = self

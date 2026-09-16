@@ -138,6 +138,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_APP_REFRESH_NOW => {
+            if let Some(state) = lock_state().as_mut() {
+                state.force_notify_auth_error = true;
+            }
             request_poll(hwnd);
             LRESULT(0)
         }

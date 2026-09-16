@@ -20,6 +20,8 @@ pub const POLL_1_MIN: u32 = POLL_1_MIN_SECONDS * 1_000;
 pub const POLL_5_MIN: u32 = POLL_5_MIN_SECONDS * 1_000;
 pub const POLL_15_MIN: u32 = POLL_15_MIN_SECONDS * 1_000;
 pub const POLL_1_HOUR: u32 = POLL_1_HOUR_SECONDS * 1_000;
+// SetTimer clamps longer intervals to USER_TIMER_MAXIMUM (i32::MAX ms).
+pub const MAX_POLL_MINUTES: u32 = i32::MAX as u32 / POLL_1_MIN;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SettingsFile {
@@ -106,10 +108,9 @@ impl SettingsFile {
     pub fn normalize(&mut self) {
         self.accounts.claude.normalize();
         self.accounts.codex.normalize();
-        if !matches!(
-            self.poll_interval_ms,
-            POLL_1_MIN | POLL_5_MIN | POLL_15_MIN | POLL_1_HOUR
-        ) {
+        if !(POLL_1_MIN..=MAX_POLL_MINUTES * POLL_1_MIN).contains(&self.poll_interval_ms)
+            || !self.poll_interval_ms.is_multiple_of(POLL_1_MIN)
+        {
             self.poll_interval_ms = default_poll_interval();
         }
         if self.enabled_providers().is_empty() {
@@ -348,6 +349,36 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_poll_minutes_and_presets_survive_settings_round_trip() {
+        for minutes in [1, 2, 5, 7, 15, 60, 120, 1_440, MAX_POLL_MINUTES] {
+            let interval = minutes * POLL_1_MIN;
+            let mut decoded =
+                decode_settings(&format!(r#"{{"poll_interval_ms":{interval}}}"#)).unwrap();
+            decoded.normalize();
+            assert_eq!(decoded.poll_interval_ms, interval);
+            let mut reloaded = decode_settings(&settings_json(&decoded).to_string()).unwrap();
+            reloaded.normalize();
+            assert_eq!(reloaded.poll_interval_ms, interval);
+        }
+    }
+
+    #[test]
+    fn invalid_poll_intervals_fall_back_to_the_default() {
+        for interval in [
+            0,
+            POLL_1_MIN - 1,
+            POLL_1_MIN + 1,
+            (MAX_POLL_MINUTES + 1) * POLL_1_MIN,
+            u32::MAX,
+        ] {
+            let mut decoded =
+                decode_settings(&format!(r#"{{"poll_interval_ms":{interval}}}"#)).unwrap();
+            decoded.normalize();
+            assert_eq!(decoded.poll_interval_ms, default_poll_interval());
+        }
+    }
 
     #[test]
     fn named_accounts_round_trip_without_changing_legacy_provider_preferences() {

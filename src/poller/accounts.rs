@@ -29,20 +29,42 @@ impl Target {
 pub(super) fn poll_accounts(
     enabled: ProviderSet,
     settings: &AccountSettings,
+    previous: Option<&AppUsageData>,
+    force: bool,
 ) -> Result<AppUsageData, PollFailure> {
-    poll_accounts_with(enabled, settings, |provider, path| match path {
-        Some(path) => match provider {
-            ProviderId::Claude => claude::poll_account(path),
-            ProviderId::Codex => codex::poll_account(path),
-            _ => poll_provider(provider),
+    poll_accounts_with_history(
+        enabled,
+        settings,
+        previous,
+        force,
+        |provider, path| match path {
+            Some(path) => match provider {
+                ProviderId::Claude => claude::poll_account(path),
+                ProviderId::Codex => codex::poll_account(path),
+                _ => poll_provider(provider),
+            },
+            None => poll_provider(provider),
         },
-        None => poll_provider(provider),
-    })
+    )
 }
 
+#[cfg(test)]
 fn poll_accounts_with<F>(
     enabled: ProviderSet,
     settings: &AccountSettings,
+    poll: F,
+) -> Result<AppUsageData, PollFailure>
+where
+    F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
+{
+    poll_accounts_with_history(enabled, settings, None, false, poll)
+}
+
+fn poll_accounts_with_history<F>(
+    enabled: ProviderSet,
+    settings: &AccountSettings,
+    previous: Option<&AppUsageData>,
+    force: bool,
     poll: F,
 ) -> Result<AppUsageData, PollFailure>
 where
@@ -103,8 +125,19 @@ where
                 };
                 let target = &group[0];
                 let mut signature = target.signature();
-                let mut result = Err(PollError::RequestFailed);
-                for _ in 0..2 {
+                let paused_error = if force {
+                    None
+                } else {
+                    group.iter().find_map(|target| {
+                        previous?.auth_error_for_source(
+                            target.provider,
+                            target.profile.as_ref()?,
+                            &signature,
+                        )
+                    })
+                };
+                let mut result = Err(paused_error.unwrap_or(PollError::RequestFailed));
+                for _ in 0..if paused_error.is_some() { 0 } else { 2 } {
                     result = match &target.path {
                         Err(_) => Err(PollError::NoCredentials),
                         Ok(path) => poll(target.provider, path.as_deref()),
@@ -222,6 +255,7 @@ mod tests {
                     })
                     .collect(),
                 selected: "work".into(),
+                ..Default::default()
             },
             ..Default::default()
         }
@@ -236,6 +270,130 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn auth_failures_pause_only_the_failed_account_and_notify_once() {
+        let settings = settings();
+        for error in [PollError::AuthRequired, PollError::TokenExpired] {
+            let first = poll_accounts_with(ProviderSet::default(), &settings, |_, path| {
+                if path.unwrap().to_string_lossy().contains("work") {
+                    Err(error)
+                } else {
+                    Ok(usage(25.0))
+                }
+            })
+            .unwrap();
+            assert_eq!(first.new_auth_failures(None, false).len(), 1);
+            let calls = AtomicUsize::new(0);
+            let second = poll_accounts_with_history(
+                ProviderSet::default(),
+                &settings,
+                Some(&first),
+                false,
+                |_, path| {
+                    assert!(
+                        !path.unwrap().to_string_lossy().contains("work"),
+                        "paused account must not refresh its CLI token"
+                    );
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Ok(usage(30.0))
+                },
+            )
+            .unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            assert_eq!(
+                second.accounts[0]
+                    .usage
+                    .as_ref()
+                    .unwrap()
+                    .session
+                    .percentage,
+                30.0
+            );
+            assert_eq!(second.accounts[1].error, Some(error));
+            assert!(second.new_auth_failures(Some(&first), false).is_empty());
+
+            let forced = poll_accounts_with_history(
+                ProviderSet::default(),
+                &settings,
+                Some(&second),
+                true,
+                |_, _| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    Err(error)
+                },
+            )
+            .unwrap();
+            assert_eq!(calls.load(Ordering::SeqCst), 3);
+            assert_eq!(forced.new_auth_failures(Some(&second), true).len(), 2);
+        }
+    }
+
+    #[test]
+    fn all_accounts_can_wait_for_login_and_resume_after_credential_change() {
+        let directory = std::env::temp_dir().join(format!(
+            "usage-auth-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join(".credentials.json");
+        std::fs::write(&path, "old fixture").unwrap();
+        let mut settings = settings();
+        settings.claude.profiles.truncate(1);
+        settings.claude.profiles[0].config_dir = directory.to_string_lossy().into_owned();
+        let first = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+            Err(PollError::TokenExpired)
+        })
+        .unwrap();
+        assert!(first.is_empty());
+        assert_eq!(first.new_auth_failures(None, false).len(), 1);
+        let waiting = poll_accounts_with_history(
+            ProviderSet::default(),
+            &settings,
+            Some(&first),
+            false,
+            |_, _| panic!("unchanged expired credentials must stay paused"),
+        )
+        .unwrap();
+        assert!(waiting.new_auth_failures(Some(&first), false).is_empty());
+        std::fs::write(&path, "new credentials fixture after login").unwrap();
+        let resumed = poll_accounts_with_history(
+            ProviderSet::default(),
+            &settings,
+            Some(&waiting),
+            false,
+            |_, _| Ok(usage(80.0)),
+        )
+        .unwrap();
+        assert!(resumed.new_auth_failures(Some(&waiting), false).is_empty());
+        assert_eq!(
+            resumed.accounts[0]
+                .usage
+                .as_ref()
+                .unwrap()
+                .session
+                .percentage,
+            80.0
+        );
+        let failed_again = poll_accounts_with_history(
+            ProviderSet::default(),
+            &settings,
+            Some(&resumed),
+            false,
+            |_, _| Err(PollError::AuthRequired),
+        )
+        .unwrap();
+        assert_eq!(
+            failed_again.new_auth_failures(Some(&resumed), false).len(),
+            1
+        );
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 
     #[test]

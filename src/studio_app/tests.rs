@@ -347,6 +347,8 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         owner: 0,
         page: Page::Studio,
         settings: SettingsFile::default(),
+        synced_poll_interval_ms: SettingsFile::default().poll_interval_ms,
+        poll_interval_editor_generation: 0,
         startup_enabled: false,
         theme,
         theme_path: None,
@@ -397,6 +399,45 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         context_menu_action_helper: None,
         delete_context_menu_confirmation: None,
     }
+}
+
+#[test]
+fn context_menu_frequency_replaces_custom_dashboard_value_and_edit_buffer() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    app.settings.poll_interval_ms = 2 * POLL_1_MIN;
+    app.synced_poll_interval_ms = app.settings.poll_interval_ms;
+    app.dirty = true;
+
+    app.sync_poll_interval(POLL_5_MIN);
+    assert_eq!(app.settings.poll_interval_ms, POLL_5_MIN);
+    assert_eq!(app.poll_interval_editor_generation, 1);
+    assert!(app.dirty);
+
+    // An unrelated settings edit must not restore the previous two minutes.
+    app.settings.usage_countdown = true;
+    app.sync_poll_interval(POLL_5_MIN);
+    assert_eq!(app.settings.poll_interval_ms, POLL_5_MIN);
+    assert_eq!(app.poll_interval_editor_generation, 1);
+    assert!(app.settings.usage_countdown);
+}
+
+#[test]
+fn local_frequency_edits_survive_sync_before_save() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    app.sync_poll_interval(POLL_5_MIN);
+    let generation = app.poll_interval_editor_generation;
+    app.settings.poll_interval_ms = 2 * POLL_1_MIN;
+
+    // The on-disk preset is still five until the local edit has been saved.
+    app.sync_poll_interval(POLL_5_MIN);
+    assert_eq!(app.settings.poll_interval_ms, 2 * POLL_1_MIN);
+    assert_eq!(app.poll_interval_editor_generation, generation);
+
+    // After saving, a later context-menu selection becomes authoritative again.
+    app.synced_poll_interval_ms = app.settings.poll_interval_ms;
+    app.sync_poll_interval(POLL_15_MIN);
+    assert_eq!(app.settings.poll_interval_ms, POLL_15_MIN);
+    assert_eq!(app.poll_interval_editor_generation, generation + 1);
 }
 
 #[test]

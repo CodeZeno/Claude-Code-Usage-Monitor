@@ -14,6 +14,12 @@ pub enum PollError {
     RequestFailed,
 }
 
+impl PollError {
+    pub fn is_auth(self) -> bool {
+        matches!(self, Self::AuthRequired | Self::TokenExpired)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CredentialWatchMode {
     ActiveSource(ProviderId),
@@ -31,12 +37,14 @@ pub struct PollFailure {
 pub fn poll(
     enabled_providers: ProviderSet,
     settings: &crate::accounts::AccountSettings,
+    previous: Option<&AppUsageData>,
+    force: bool,
 ) -> Result<AppUsageData, PollFailure> {
     if enabled_providers
         .iter()
         .any(|provider| settings.get(provider).is_some())
     {
-        accounts::poll_accounts(enabled_providers, settings)
+        accounts::poll_accounts(enabled_providers, settings, previous, force)
     } else {
         poll_concurrently_with(enabled_providers, poll_provider)
     }

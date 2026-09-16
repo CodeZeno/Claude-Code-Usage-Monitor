@@ -657,6 +657,8 @@ struct StudioApp {
     owner: isize,
     page: Page,
     settings: SettingsFile,
+    synced_poll_interval_ms: u32,
+    poll_interval_editor_generation: u64,
     startup_enabled: bool,
     theme: ThemeDocument,
     theme_path: Option<PathBuf>,

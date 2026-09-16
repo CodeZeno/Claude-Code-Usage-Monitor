@@ -2115,15 +2115,22 @@ fn poll_worker(send_hwnd: SendHwnd) {
 }
 
 fn do_poll_once(hwnd: HWND) {
-    let (enabled_providers, accounts) = {
-        let state = lock_state();
+    let (enabled_providers, accounts, previous, force) = {
+        let mut state = lock_state();
         state
-            .as_ref()
-            .map(|state| (state.providers, state.accounts.clone()))
+            .as_mut()
+            .map(|state| {
+                (
+                    state.providers,
+                    state.accounts.clone(),
+                    state.data.clone(),
+                    std::mem::take(&mut state.force_notify_auth_error),
+                )
+            })
             .unwrap_or_default()
     };
 
-    match poller::poll(enabled_providers, &accounts) {
+    match poller::poll(enabled_providers, &accounts, previous.as_ref(), force) {
         Ok(data) => {
             let mut state = lock_state();
             if state
@@ -2137,6 +2144,15 @@ fn do_poll_once(hwnd: HWND) {
                 None => data,
             };
             data.select_accounts(&accounts);
+            let notifications: Vec<_> = data
+                .new_auth_failures(previous.as_ref(), force)
+                .into_iter()
+                .map(|account| (account.provider, account.profile.name.clone()))
+                .collect();
+            let language = state
+                .as_ref()
+                .map(|state| state.language)
+                .unwrap_or(LanguageId::English);
             let cache_data = data.clone();
             if let Some(s) = state.as_mut() {
                 // Stop fast-poll if reset data is now fresh
@@ -2157,7 +2173,6 @@ fn do_poll_once(hwnd: HWND) {
                         SetTimer(Some(hwnd), TIMER_POLL, interval, None);
                     }
                 }
-                s.force_notify_auth_error = false;
                 s.auth_error_paused_polling = false;
                 s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource(
                     s.providers.first().unwrap_or_default(),
@@ -2166,6 +2181,20 @@ fn do_poll_once(hwnd: HWND) {
             }
             drop(state);
             let _ = app_settings::save_usage_cache(&cache_data, true);
+            if !notifications.is_empty() {
+                let body = notifications
+                    .iter()
+                    .map(|(provider, name)| {
+                        format!(
+                            "{} ({name}): {}",
+                            language.text(provider.descriptor().display_name),
+                            language.provider_auth_error(*provider).1
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                tray_icon::notify_balloon(hwnd, language.text("Sign in again"), &body);
+            }
 
             unsafe {
                 let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
@@ -2214,10 +2243,9 @@ fn do_poll_once(hwnd: HWND) {
                     match auth_watch {
                         Some((watch_mode, watch_snapshot)) => {
                             // Only show the balloon on the first failure so it doesn't spam.
-                            if s.retry_count == 0 || s.force_notify_auth_error {
+                            if s.retry_count == 0 || force {
                                 should_notify = true;
                             }
-                            s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = true;
                             s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
@@ -2231,7 +2259,6 @@ fn do_poll_once(hwnd: HWND) {
                         }
                         _ => {
                             // Transient network / credential-missing errors: exponential backoff.
-                            s.force_notify_auth_error = false;
                             s.auth_error_paused_polling = false;
                             s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource(
                                 s.providers.first().unwrap_or_default(),

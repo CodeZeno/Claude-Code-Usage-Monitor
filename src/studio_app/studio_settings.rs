@@ -19,39 +19,24 @@ impl StudioApp {
                     language.text("Update frequency"),
                     language.text("How often provider usage is refreshed"),
                     |ui| {
-                        Dropdown::from_id_salt("poll_interval")
-                            .width(220.0)
-                            .selected_text(interval_name(language, self.settings.poll_interval_ms))
-                            .show_ui(ui, |ui| {
-                                changed |= dropdown_selectable_value(
-                                    ui,
-                                    &mut self.settings.poll_interval_ms,
-                                    POLL_1_MIN,
-                                    language.text("Every minute"),
-                                )
-                                .changed();
-                                changed |= dropdown_selectable_value(
-                                    ui,
-                                    &mut self.settings.poll_interval_ms,
-                                    POLL_5_MIN,
-                                    language.text("Every 5 minutes"),
-                                )
-                                .changed();
-                                changed |= dropdown_selectable_value(
-                                    ui,
-                                    &mut self.settings.poll_interval_ms,
-                                    POLL_15_MIN,
-                                    language.text("Every 15 minutes"),
-                                )
-                                .changed();
-                                changed |= dropdown_selectable_value(
-                                    ui,
-                                    &mut self.settings.poll_interval_ms,
-                                    POLL_1_HOUR,
-                                    language.text("Every hour"),
-                                )
-                                .changed();
-                            });
+                        ui.label(language.text("minutes"));
+                        let mut minutes = self.settings.poll_interval_ms / POLL_1_MIN;
+                        if ui
+                            .push_id(
+                                ("poll_interval", self.poll_interval_editor_generation),
+                                |ui| {
+                                    NumberField::new(&mut minutes)
+                                        .range(1..=app_settings::MAX_POLL_MINUTES)
+                                        .speed(1.0)
+                                        .show(ui, 100.0)
+                                },
+                            )
+                            .inner
+                            .changed()
+                        {
+                            self.settings.poll_interval_ms = minutes * POLL_1_MIN;
+                            changed = true;
+                        }
                         if ui.button(language.text("Refresh now")).clicked() {
                             self.post_owner(WM_APP_REFRESH_NOW);
                         }

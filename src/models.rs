@@ -110,6 +110,43 @@ pub struct AccountUsage {
 }
 
 impl AppUsageData {
+    /// Authentication failures stay paused until this source changes or the
+    /// user explicitly asks to retry. Other accounts remain independently live.
+    pub fn auth_error_for_source(
+        &self,
+        provider: ProviderId,
+        profile: &crate::accounts::AccountProfile,
+        signature: &str,
+    ) -> Option<crate::poller::PollError> {
+        self.accounts.iter().find_map(|account| {
+            (account.provider == provider
+                && account.profile.same_source(profile)
+                && account.source_signature == signature)
+                .then_some(account.error)
+                .flatten()
+                .filter(|error| error.is_auth())
+        })
+    }
+
+    pub fn new_auth_failures(&self, previous: Option<&Self>, force: bool) -> Vec<&AccountUsage> {
+        self.accounts
+            .iter()
+            .filter(|account| {
+                account.error.is_some_and(crate::poller::PollError::is_auth)
+                    && (force
+                        || previous
+                            .and_then(|previous| {
+                                previous.auth_error_for_source(
+                                    account.provider,
+                                    &account.profile,
+                                    &account.source_signature,
+                                )
+                            })
+                            .is_none())
+            })
+            .collect()
+    }
+
     pub fn get(&self, provider: ProviderId) -> Option<&UsageData> {
         self.providers.get(&provider)
     }

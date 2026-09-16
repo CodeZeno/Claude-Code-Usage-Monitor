@@ -74,6 +74,8 @@ impl Default for AccountProfile {
 pub struct ProviderAccounts {
     pub profiles: Vec<AccountProfile>,
     pub selected: String,
+    /// Retain retired IDs so existing theme bindings never target a new account.
+    pub used_ids: std::collections::BTreeSet<String>,
 }
 
 impl Default for ProviderAccounts {
@@ -81,6 +83,7 @@ impl Default for ProviderAccounts {
         Self {
             profiles: vec![AccountProfile::default()],
             selected: "default".into(),
+            used_ids: ["default".into()].into(),
         }
     }
 }
@@ -94,41 +97,68 @@ impl ProviderAccounts {
     }
 
     pub fn add(&mut self) {
-        let mut number = 1;
-        while self
-            .profiles
-            .iter()
-            .any(|p| p.id == format!("account_{number}"))
-        {
-            number += 1;
-        }
+        self.normalize();
+        let (id, number) = self.allocate_id();
         self.profiles.push(AccountProfile {
-            id: format!("account_{number}"),
+            id,
             name: format!("Account {number}"),
             enabled: false,
             ..Default::default()
         });
     }
 
+    fn allocate_id(&mut self) -> (String, usize) {
+        let mut number = 1;
+        while self.used_ids.contains(&format!("account_{number}")) {
+            number += 1;
+        }
+        let id = format!("account_{number}");
+        self.used_ids.insert(id.clone());
+        (id, number)
+    }
+
     pub fn normalize(&mut self) {
+        let selected_index = self
+            .profiles
+            .iter()
+            .position(|profile| profile.id == self.selected)
+            .or_else(|| {
+                self.profiles
+                    .iter()
+                    .position(|profile| profile.id.eq_ignore_ascii_case(&self.selected))
+            });
+        self.used_ids = std::mem::take(&mut self.used_ids)
+            .into_iter()
+            .map(|id| id.to_ascii_lowercase())
+            .collect();
+        // Reserve every existing ID before allocating replacements. An earlier
+        // invalid profile must not steal a later valid profile's binding.
+        self.used_ids.extend(
+            self.profiles
+                .iter()
+                .map(|profile| profile.id.to_ascii_lowercase()),
+        );
         let mut seen = std::collections::HashSet::new();
-        for (index, profile) in self.profiles.iter_mut().enumerate() {
+        for index in 0..self.profiles.len() {
+            let profile = &self.profiles[index];
             if profile.id.is_empty()
                 || !profile
                     .id
                     .bytes()
                     .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-                || !seen.insert(profile.id.clone())
+                || !seen.insert(profile.id.to_ascii_lowercase())
             {
-                let mut id = format!("account_{}", index + 1);
-                while !seen.insert(id.clone()) {
-                    id.push('_');
-                }
-                profile.id = id;
+                let (id, _) = self.allocate_id();
+                seen.insert(id.to_ascii_lowercase());
+                self.profiles[index].id = id;
             }
+            let profile = &mut self.profiles[index];
             if profile.name.trim().is_empty() {
                 profile.name = profile.id.clone();
             }
+        }
+        if let Some(index) = selected_index {
+            self.selected = self.profiles[index].id.clone();
         }
         self.selected = self.selected().map(|p| p.id.clone()).unwrap_or_default();
     }
@@ -217,6 +247,46 @@ impl AccountProfile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleted_ids_are_not_reused_after_saving_and_restarting() {
+        let mut accounts = ProviderAccounts::default();
+        accounts.add();
+        let removed_id = accounts.profiles.pop().unwrap().id;
+        let json = serde_json::to_string(&accounts).unwrap();
+        let mut reloaded: ProviderAccounts = serde_json::from_str(&json).unwrap();
+        reloaded.add();
+        assert_ne!(reloaded.profiles.last().unwrap().id, removed_id);
+        assert!(reloaded.used_ids.contains(&removed_id));
+    }
+
+    #[test]
+    fn legacy_ids_are_reserved_and_case_collisions_keep_the_selected_account() {
+        let mut accounts: ProviderAccounts = serde_json::from_str(
+            r#"{
+            "profiles": [
+                {"id":"Work","name":"First","config_dir":"C:/first"},
+                {"id":"work","name":"Second","config_dir":"C:/second"},
+                {"id":"account_1","name":"Existing"}
+            ], "selected":"work"
+        }"#,
+        )
+        .unwrap();
+        accounts.normalize();
+        assert_eq!(accounts.profiles[0].id, "Work");
+        assert_eq!(accounts.profiles[2].id, "account_1");
+        assert_ne!(accounts.profiles[1].id.to_ascii_lowercase(), "work");
+        assert_eq!(accounts.selected().unwrap().name, "Second");
+        let normalized = accounts.clone();
+        accounts.normalize();
+        assert_eq!(accounts, normalized);
+        accounts.profiles.clear();
+        accounts.add();
+        assert!(!normalized
+            .profiles
+            .iter()
+            .any(|old| old.id.eq_ignore_ascii_case(&accounts.profiles[0].id)));
+    }
 
     #[test]
     fn environment_overrides_handle_empty_tilde_and_spaces_without_global_mutation() {
