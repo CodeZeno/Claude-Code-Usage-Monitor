@@ -110,3 +110,82 @@ fn fullscreen_bounds_cover_the_monitor_but_maximized_work_area_does_not() {
         monitor,
     ));
 }
+
+#[test]
+fn tray_rect_changed_detects_all_edge_shifts() {
+    let base = RECT {
+        left: 1600,
+        top: 0,
+        right: 1920,
+        bottom: 48,
+    };
+    assert!(!rect_changed(Some(base), Some(base)));
+    assert!(!rect_changed(None, None));
+    assert!(rect_changed(None, Some(base)));
+    assert!(rect_changed(Some(base), None));
+
+    // Left edge changes when icons appear or hide
+    let expanded = RECT {
+        left: 1576,
+        top: 0,
+        right: 1920,
+        bottom: 48,
+    };
+    assert!(rect_changed(Some(base), Some(expanded)));
+
+    let shrunk = RECT {
+        left: 1624,
+        top: 0,
+        right: 1920,
+        bottom: 48,
+    };
+    assert!(rect_changed(Some(base), Some(shrunk)));
+}
+
+#[test]
+fn is_tray_event_source_identifies_tray_and_excludes_own_windows() {
+    let dummy_our = HWND(0x1000 as _);
+    let dummy_tray = HWND(0x2000 as _);
+    let dummy_taskbar = HWND(0x3000 as _);
+    let dummy_other = HWND(0x4000 as _);
+
+    // Invalid HWND should be ignored
+    assert!(!is_tray_event_source(
+        HWND::default(),
+        Some(dummy_tray),
+        Some(dummy_taskbar),
+        &[dummy_our],
+    ));
+
+    // Own windows must be excluded
+    assert!(!is_tray_event_source(
+        dummy_our,
+        Some(dummy_tray),
+        Some(dummy_taskbar),
+        &[dummy_our],
+    ));
+
+    // TrayNotifyWnd itself is accepted
+    assert!(is_tray_event_source(
+        dummy_tray,
+        Some(dummy_tray),
+        Some(dummy_taskbar),
+        &[dummy_our],
+    ));
+
+    // Taskbar itself is accepted
+    assert!(is_tray_event_source(
+        dummy_taskbar,
+        Some(dummy_tray),
+        Some(dummy_taskbar),
+        &[dummy_our],
+    ));
+
+    // Unrelated top-level window is ignored
+    assert!(!is_tray_event_source(
+        dummy_other,
+        Some(dummy_tray),
+        Some(dummy_taskbar),
+        &[dummy_our],
+    ));
+}
