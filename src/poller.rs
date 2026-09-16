@@ -1,12 +1,4 @@
-#[cfg(feature = "antigravity")]
-use std::collections::hash_map::DefaultHasher;
-#[cfg(feature = "antigravity")]
-use std::collections::HashMap;
-#[cfg(feature = "antigravity")]
-use std::ffi::c_void;
 use std::ffi::OsStr;
-#[cfg(feature = "antigravity")]
-use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -38,14 +30,6 @@ const CODEX_APP_SERVER_TIMEOUT: Duration = Duration::from_secs(10);
 const CODEX_RATE_LIMITS_CACHE_TTL: Duration = Duration::from_secs(45);
 const GITHUB_API_VERSION: &str = "2026-03-10";
 const GITHUB_COPILOT_USAGE_ENDPOINT_SUFFIX: &str = "/settings/billing/ai_credit/usage";
-#[cfg(feature = "antigravity")]
-const ANTIGRAVITY_CREDENTIAL_TARGET: &str = "gemini:antigravity";
-#[cfg(feature = "antigravity")]
-const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
-    "https://daily-cloudcode-pa.googleapis.com",
-    "https://daily-cloudcode-pa.sandbox.googleapis.com",
-    "https://cloudcode-pa.googleapis.com",
-];
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 fn resolve_user_home() -> Option<PathBuf> {
@@ -164,7 +148,25 @@ impl PollReport {
             match outcome {
                 ProviderPollOutcome::Success { usage, .. } => {
                     any_success = true;
-                    data.upsert(usage.into_quota_family(id));
+                    let mut family = usage.into_quota_family(id);
+                    // Antigravity's official-cache items are judged for
+                    // staleness per reset boundary, independently of each
+                    // other (see `antigravity_statusline::
+                    // quota_items_from_cache`). If every item that came
+                    // back is past its own reset, the family as a whole has
+                    // no current reading either — reflect that at the
+                    // family level too, rather than showing "Available"
+                    // over a family with nothing but stale items.
+                    if id == QuotaFamilyId::Antigravity
+                        && !family.items.is_empty()
+                        && family
+                            .items
+                            .iter()
+                            .all(|item| item.availability != QuotaItemAvailability::Available)
+                    {
+                        family.status = QuotaFamilyStatus::Stale;
+                    }
+                    data.upsert(family);
                 }
                 ProviderPollOutcome::Error { error, .. } => {
                     first_error.get_or_insert(error);
@@ -188,7 +190,6 @@ impl PollReport {
 pub enum CredentialWatchMode {
     ActiveSource,
     AllSources,
-    Antigravity,
 }
 
 pub type CredentialWatchSnapshot = Vec<String>;
@@ -274,105 +275,6 @@ enum CodexAppServerMessage {
 struct CodexUsageCache {
     fetched_at: Option<Instant>,
     usage: Option<Result<UsageData, CodexAppServerError>>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityAuthFile {
-    token: AntigravityTokenData,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityTokenData {
-    access_token: String,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityLoadResponse {
-    #[serde(rename = "cloudaicompanionProject")]
-    project: Option<String>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityModelsResponse {
-    models: HashMap<String, AntigravityModelInfo>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityModelInfo {
-    #[serde(rename = "quotaInfo")]
-    quota_info: Option<AntigravityQuotaInfo>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityQuotaInfo {
-    #[serde(rename = "remainingFraction")]
-    remaining_fraction: Option<f64>,
-    #[serde(rename = "resetTime")]
-    reset_time: Option<String>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityQuotaSummaryResponse {
-    groups: Option<Vec<AntigravityQuotaSummaryGroup>>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Deserialize)]
-struct AntigravityQuotaSummaryGroup {
-    #[serde(rename = "displayName")]
-    display_name: Option<String>,
-    description: Option<String>,
-    buckets: Option<Vec<AntigravityQuotaSummaryBucket>>,
-}
-
-#[cfg(feature = "antigravity")]
-#[derive(Clone, Deserialize)]
-struct AntigravityQuotaSummaryBucket {
-    #[serde(rename = "bucketId")]
-    bucket_id: Option<String>,
-    #[serde(rename = "displayName")]
-    display_name: Option<String>,
-    window: Option<String>,
-    #[serde(rename = "remainingFraction")]
-    remaining_fraction: Option<f64>,
-    #[serde(rename = "resetTime")]
-    reset_time: Option<String>,
-}
-
-#[cfg(feature = "antigravity")]
-#[repr(C)]
-struct CredentialW {
-    flags: u32,
-    type_: u32,
-    target_name: *mut u16,
-    comment: *mut u16,
-    last_written: u64,
-    credential_blob_size: u32,
-    credential_blob: *mut u8,
-    persist: u32,
-    attribute_count: u32,
-    attributes: *mut c_void,
-    target_alias: *mut u16,
-    user_name: *mut u16,
-}
-
-#[cfg(feature = "antigravity")]
-#[link(name = "Advapi32")]
-extern "system" {
-    fn CredReadW(
-        target_name: *const u16,
-        type_: u32,
-        reserved_flags: u32,
-        credential: *mut *mut CredentialW,
-    ) -> i32;
-    fn CredFree(buffer: *mut c_void);
 }
 
 pub fn poll(
@@ -691,17 +593,44 @@ fn poll_codex() -> Result<UsageData, PollError> {
     cached_codex_usage().map_err(codex_app_server_error_to_poll_error)
 }
 
+/// Reads the Antigravity CLI's official `/statusline <command>` cache
+/// (`antigravity_statusline`) rather than talking to Google or Antigravity
+/// directly — see `ANTIGRAVITY-STATUSLINE-BRIDGE-01` /
+/// `ANTIGRAVITY-ROUTING-SWITCH-01`. This path makes no network call, reads
+/// no OAuth token, and touches Windows Credential Manager for nothing;
+/// `PollError::RequestFailed` covers a missing, malformed, or
+/// unsupported-schema cache alike (all "no usable current reading", never
+/// "zero usage") since there is no legacy path left to fall back to.
 #[cfg(feature = "antigravity")]
 fn poll_antigravity() -> Result<UsageData, PollError> {
-    let creds = match read_antigravity_credentials() {
-        Some(creds) => creds,
-        None => {
-            diagnose::log("Antigravity usage poll failed: no Antigravity credentials found");
-            return Err(PollError::NoCredentials);
+    use crate::antigravity_statusline::{self, CacheReadResult};
+
+    let cache_path = antigravity_statusline::default_cache_path();
+    let cache = match antigravity_statusline::read_cache(&cache_path) {
+        CacheReadResult::Missing => {
+            diagnose::log("Antigravity statusline cache is missing (bridge not configured yet)");
+            return Err(PollError::RequestFailed);
         }
+        CacheReadResult::Malformed(error) => {
+            diagnose::log(format!(
+                "Antigravity statusline cache is malformed: {error}"
+            ));
+            return Err(PollError::RequestFailed);
+        }
+        CacheReadResult::UnsupportedSchema(version) => {
+            diagnose::log(format!(
+                "Antigravity statusline cache has unsupported schema_version {version}"
+            ));
+            return Err(PollError::RequestFailed);
+        }
+        CacheReadResult::Valid(cache) => cache,
     };
 
-    fetch_antigravity_usage(&creds.access_token)
+    let items = antigravity_statusline::quota_items_from_cache(&cache, SystemTime::now());
+    if items.is_empty() {
+        return Err(PollError::RequestFailed);
+    }
+    Ok(UsageData::from_quota_items(items))
 }
 
 fn poll_github_copilot(plan: GithubCopilotPlan) -> Result<UsageData, PollError> {
@@ -1400,20 +1329,11 @@ fn build_agent() -> Result<ureq::Agent, PollError> {
 }
 
 pub fn credential_watch_snapshot(mode: CredentialWatchMode) -> CredentialWatchSnapshot {
-    if mode == CredentialWatchMode::Antigravity {
-        #[cfg(feature = "antigravity")]
-        return vec![antigravity_credential_watch_signature()];
-
-        #[cfg(not(feature = "antigravity"))]
-        return Vec::new();
-    }
-
     let sources = match mode {
         CredentialWatchMode::ActiveSource => read_first_credentials()
             .map(|creds| vec![creds.source])
             .unwrap_or_else(all_known_credential_sources),
         CredentialWatchMode::AllSources => all_known_credential_sources(),
-        CredentialWatchMode::Antigravity => unreachable!(),
     };
 
     let mut snapshot: CredentialWatchSnapshot = sources
@@ -1689,309 +1609,6 @@ fn parse_rate_limit_headers(response: &ureq::Response) -> UsageData {
     data
 }
 
-#[cfg(feature = "antigravity")]
-fn antigravity_credential_watch_signature() -> String {
-    let Some(content) = read_windows_generic_credential(ANTIGRAVITY_CREDENTIAL_TARGET) else {
-        return format!("{ANTIGRAVITY_CREDENTIAL_TARGET}|missing");
-    };
-
-    let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
-    format!(
-        "{ANTIGRAVITY_CREDENTIAL_TARGET}|present|{}|{}",
-        content.len(),
-        hasher.finish()
-    )
-}
-
-#[cfg(feature = "antigravity")]
-fn fetch_antigravity_usage(token: &str) -> Result<UsageData, PollError> {
-    let mut auth_error = false;
-    let mut last_error = PollError::RequestFailed;
-
-    for base_url in ANTIGRAVITY_ENDPOINTS {
-        match fetch_antigravity_usage_from_endpoint(base_url, token) {
-            Ok(data) => return Ok(data),
-            Err(PollError::AuthRequired) => auth_error = true,
-            Err(error) => last_error = error,
-        }
-    }
-
-    if auth_error {
-        Err(PollError::AuthRequired)
-    } else {
-        Err(last_error)
-    }
-}
-
-#[cfg(feature = "antigravity")]
-fn fetch_antigravity_usage_from_endpoint(
-    base_url: &str,
-    token: &str,
-) -> Result<UsageData, PollError> {
-    let project = fetch_antigravity_project(base_url, token)?;
-    if let Some(project) = project.as_deref() {
-        match fetch_antigravity_quota_summary(base_url, token, project) {
-            Ok(data) => return Ok(data),
-            Err(PollError::AuthRequired) => return Err(PollError::AuthRequired),
-            Err(error) => diagnose::log(format!(
-                "Antigravity retrieveUserQuotaSummary failed, falling back to model quota: {error:?}"
-            )),
-        }
-    }
-
-    let session = fetch_antigravity_model_quota(base_url, token, project.as_deref())?;
-    let mut data = UsageData::default();
-    data.set_session(session);
-
-    Ok(data)
-}
-
-#[cfg(feature = "antigravity")]
-fn fetch_antigravity_project(base_url: &str, token: &str) -> Result<Option<String>, PollError> {
-    let agent = build_agent()?;
-    let body = serde_json::json!({
-        "metadata": {
-            "ideType": "ANTIGRAVITY"
-        }
-    });
-
-    let resp = match agent
-        .post(&format!("{base_url}/v1internal:loadCodeAssist"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
-        .send_json(&body)
-    {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!(
-                "Antigravity loadCodeAssist returned auth error status {code}"
-            ));
-            return Err(PollError::AuthRequired);
-        }
-        Err(error) => {
-            diagnose::log_error("Antigravity loadCodeAssist request failed", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    let response: AntigravityLoadResponse = match resp.into_json() {
-        Ok(response) => response,
-        Err(error) => {
-            diagnose::log_error("unable to parse Antigravity loadCodeAssist response", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    Ok(response.project.filter(|project| !project.is_empty()))
-}
-
-#[cfg(feature = "antigravity")]
-fn fetch_antigravity_model_quota(
-    base_url: &str,
-    token: &str,
-    project: Option<&str>,
-) -> Result<UsageSection, PollError> {
-    let agent = build_agent()?;
-    let body = match project {
-        Some(project) => serde_json::json!({ "project": project }),
-        None => serde_json::json!({}),
-    };
-
-    let resp = match agent
-        .post(&format!("{base_url}/v1internal:fetchAvailableModels"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
-        .send_json(&body)
-    {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            diagnose::log(format!(
-                "Antigravity fetchAvailableModels returned auth error status {code}"
-            ));
-            return Err(PollError::AuthRequired);
-        }
-        Err(error) => {
-            diagnose::log_error("Antigravity fetchAvailableModels request failed", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    let response: AntigravityModelsResponse = match resp.into_json() {
-        Ok(response) => response,
-        Err(error) => {
-            diagnose::log_error(
-                "unable to parse Antigravity fetchAvailableModels response",
-                error,
-            );
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    best_antigravity_section(response.models.into_iter().filter_map(|(model, info)| {
-        let quota = info.quota_info?;
-        if !is_antigravity_display_model(&model) {
-            return None;
-        }
-        antigravity_section_from_quota(quota)
-    }))
-    .ok_or(PollError::RequestFailed)
-}
-
-#[cfg(feature = "antigravity")]
-fn fetch_antigravity_quota_summary(
-    base_url: &str,
-    token: &str,
-    project: &str,
-) -> Result<UsageData, PollError> {
-    let agent = build_agent()?;
-    let body = serde_json::json!({ "project": project });
-
-    let resp = match agent
-        .post(&format!("{base_url}/v1internal:retrieveUserQuotaSummary"))
-        .set("Authorization", &format!("Bearer {token}"))
-        .set("Content-Type", "application/json")
-        .set("User-Agent", "antigravity")
-        .send_json(&body)
-    {
-        Ok(resp) => resp,
-        Err(ureq::Error::Status(code, _)) if code == 401 || code == 403 => {
-            return Err(PollError::AuthRequired);
-        }
-        Err(error) => {
-            diagnose::log_error("Antigravity retrieveUserQuotaSummary request failed", error);
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    let response: AntigravityQuotaSummaryResponse = match resp.into_json() {
-        Ok(response) => response,
-        Err(error) => {
-            diagnose::log_error(
-                "unable to parse Antigravity retrieveUserQuotaSummary response",
-                error,
-            );
-            return Err(PollError::RequestFailed);
-        }
-    };
-
-    antigravity_usage_from_summary(response).ok_or(PollError::RequestFailed)
-}
-
-#[cfg(feature = "antigravity")]
-fn antigravity_section_from_quota(quota: AntigravityQuotaInfo) -> Option<UsageSection> {
-    let remaining = quota.remaining_fraction?.clamp(0.0, 1.0);
-    Some(UsageSection {
-        percentage: (1.0 - remaining) * 100.0,
-        resets_at: parse_iso8601(quota.reset_time.as_deref()),
-    })
-}
-
-#[cfg(feature = "antigravity")]
-fn antigravity_section_from_summary_bucket(
-    bucket: &AntigravityQuotaSummaryBucket,
-) -> Option<UsageSection> {
-    let remaining = bucket.remaining_fraction?.clamp(0.0, 1.0);
-    Some(UsageSection {
-        percentage: (1.0 - remaining) * 100.0,
-        resets_at: parse_iso8601(bucket.reset_time.as_deref()),
-    })
-}
-
-#[cfg(feature = "antigravity")]
-fn antigravity_usage_from_summary(response: AntigravityQuotaSummaryResponse) -> Option<UsageData> {
-    let mut fallback = None;
-
-    for group in response.groups.unwrap_or_default() {
-        let is_gemini = is_antigravity_gemini_summary_group(&group);
-        let usage = antigravity_usage_from_summary_group(group);
-
-        if is_gemini && usage.is_some() {
-            return usage;
-        }
-
-        if fallback.is_none() {
-            fallback = usage;
-        }
-    }
-
-    fallback
-}
-
-#[cfg(feature = "antigravity")]
-fn antigravity_usage_from_summary_group(group: AntigravityQuotaSummaryGroup) -> Option<UsageData> {
-    let mut data = UsageData::default();
-    let mut has_quota = false;
-
-    for bucket in group.buckets.unwrap_or_default() {
-        let Some(section) = antigravity_section_from_summary_bucket(&bucket) else {
-            continue;
-        };
-
-        match bucket.window.as_deref() {
-            Some(window) if window.eq_ignore_ascii_case("5h") => {
-                data.set_session(section);
-                has_quota = true;
-            }
-            Some(window) if window.eq_ignore_ascii_case("weekly") => {
-                data.set_weekly(section);
-                has_quota = true;
-            }
-            _ => {}
-        }
-    }
-
-    has_quota.then_some(data)
-}
-
-#[cfg(feature = "antigravity")]
-fn is_antigravity_gemini_summary_group(group: &AntigravityQuotaSummaryGroup) -> bool {
-    group
-        .display_name
-        .as_deref()
-        .is_some_and(|name| name.to_ascii_lowercase().contains("gemini"))
-        || group
-            .description
-            .as_deref()
-            .is_some_and(|description| description.to_ascii_lowercase().contains("gemini"))
-        || group.buckets.as_ref().is_some_and(|buckets| {
-            buckets.iter().any(|bucket| {
-                bucket
-                    .bucket_id
-                    .as_deref()
-                    .is_some_and(|id| id.to_ascii_lowercase().starts_with("gemini-"))
-                    || bucket
-                        .display_name
-                        .as_deref()
-                        .is_some_and(|name| name.to_ascii_lowercase().contains("gemini"))
-            })
-        })
-}
-
-#[cfg(feature = "antigravity")]
-fn best_antigravity_section<I>(sections: I) -> Option<UsageSection>
-where
-    I: IntoIterator<Item = UsageSection>,
-{
-    sections.into_iter().max_by(|a, b| {
-        a.percentage
-            .partial_cmp(&b.percentage)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| a.resets_at.cmp(&b.resets_at))
-    })
-}
-
-#[cfg(feature = "antigravity")]
-fn is_antigravity_display_model(model: &str) -> bool {
-    model.starts_with("gemini")
-        || model.starts_with("claude")
-        || model.starts_with("gpt")
-        || model.starts_with("image")
-        || model.starts_with("imagen")
-}
-
 #[cfg(feature = "claude-messages-fallback")]
 fn get_header_f64(response: &ureq::Response, name: &str) -> Option<f64> {
     response.header(name).and_then(|s| s.parse::<f64>().ok())
@@ -2066,56 +1683,6 @@ fn read_credentials_from_source(source: &CredentialSource) -> Option<Credentials
         }
         CredentialSource::Wsl { distro } => read_wsl_credentials(distro),
     }
-}
-
-#[cfg(feature = "antigravity")]
-fn read_antigravity_credentials() -> Option<AntigravityTokenData> {
-    let content = read_windows_generic_credential(ANTIGRAVITY_CREDENTIAL_TARGET)?;
-    let auth: AntigravityAuthFile = serde_json::from_str(&content).ok()?;
-    if auth.token.access_token.is_empty() {
-        None
-    } else {
-        Some(auth.token)
-    }
-}
-
-#[cfg(feature = "antigravity")]
-fn read_windows_generic_credential(target: &str) -> Option<String> {
-    const CRED_TYPE_GENERIC: u32 = 1;
-
-    let mut target_wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut credential: *mut CredentialW = std::ptr::null_mut();
-
-    let ok = unsafe {
-        CredReadW(
-            target_wide.as_mut_ptr(),
-            CRED_TYPE_GENERIC,
-            0,
-            &mut credential,
-        )
-    };
-
-    if ok == 0 || credential.is_null() {
-        diagnose::log(format!(
-            "unable to read Windows generic credential target {target}"
-        ));
-        return None;
-    }
-
-    let result = unsafe {
-        let cred = &*credential;
-        if cred.credential_blob_size == 0 || cred.credential_blob.is_null() {
-            CredFree(credential as *mut c_void);
-            return None;
-        }
-        let bytes =
-            std::slice::from_raw_parts(cred.credential_blob, cred.credential_blob_size as usize);
-        let text = String::from_utf8(bytes.to_vec()).ok();
-        CredFree(credential as *mut c_void);
-        text
-    };
-
-    result
 }
 
 fn read_wsl_credentials(distro: &str) -> Option<Credentials> {
@@ -3081,6 +2648,75 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_family_status_is_stale_when_every_item_is_past_reset() {
+        let stale_items = vec![
+            QuotaItem {
+                id: "gemini-weekly".to_string(),
+                label: "Gemini Weekly".to_string(),
+                availability: QuotaItemAvailability::Stale,
+                metric: None,
+                unit: QuotaUnit::Percent,
+                resets_at: None,
+            },
+            QuotaItem {
+                id: "3p-weekly".to_string(),
+                label: "3p-weekly".to_string(),
+                availability: QuotaItemAvailability::Stale,
+                metric: None,
+                unit: QuotaUnit::Percent,
+                resets_at: None,
+            },
+        ];
+        let data = poll_with(
+            false,
+            false,
+            true,
+            || unreachable!("claude code is disabled"),
+            || unreachable!("codex is disabled"),
+            || Ok(UsageData::from_quota_items(stale_items.clone())),
+        )
+        .expect("an all-stale Antigravity family is still a successful poll, not an error");
+
+        let family = data.family(QuotaFamilyId::Antigravity).unwrap();
+        assert_eq!(family.status, QuotaFamilyStatus::Stale);
+        assert!(family
+            .items
+            .iter()
+            .all(|item| item.availability == QuotaItemAvailability::Stale));
+    }
+
+    #[test]
+    fn antigravity_family_stays_available_when_at_least_one_item_is_current() {
+        let items = vec![
+            QuotaItem::percentage("gemini-weekly", "Gemini Weekly", 12.0, None),
+            QuotaItem {
+                id: "3p-weekly".to_string(),
+                label: "3p-weekly".to_string(),
+                availability: QuotaItemAvailability::Stale,
+                metric: None,
+                unit: QuotaUnit::Percent,
+                resets_at: None,
+            },
+        ];
+        let data = poll_with(
+            false,
+            false,
+            true,
+            || unreachable!("claude code is disabled"),
+            || unreachable!("codex is disabled"),
+            || Ok(UsageData::from_quota_items(items.clone())),
+        )
+        .expect("a partially-current Antigravity family is a successful poll");
+
+        let family = data.family(QuotaFamilyId::Antigravity).unwrap();
+        assert_eq!(family.status, QuotaFamilyStatus::Available);
+        assert_eq!(
+            family.item("gemini-weekly").unwrap().used_percentage(),
+            Some(12.0)
+        );
+    }
+
+    #[test]
     fn github_copilot_uses_gross_quantity_and_ignores_net_quantity() {
         let response: GithubAiCreditUsageResponse = serde_json::from_str(
             r#"{
@@ -3218,68 +2854,5 @@ mod tests {
             matches!(poll(false, false, true), Err(PollError::RequestFailed)),
             "the disabled provider must not enter a poll path"
         );
-        assert!(
-            credential_watch_snapshot(CredentialWatchMode::Antigravity).is_empty(),
-            "the disabled provider must not read Windows Credential Manager"
-        );
-    }
-
-    #[cfg(feature = "antigravity")]
-    #[test]
-    fn antigravity_summary_prefers_gemini_group() {
-        let response: AntigravityQuotaSummaryResponse = serde_json::from_str(
-            r#"{
-                "groups": [
-                    {
-                        "displayName": "Claude and GPT models",
-                        "buckets": [
-                            {
-                                "bucketId": "3p-weekly",
-                                "window": "weekly",
-                                "resetTime": "2026-06-20T18:32:02Z",
-                                "remainingFraction": 1
-                            },
-                            {
-                                "bucketId": "3p-5h",
-                                "window": "5h",
-                                "resetTime": "2026-06-13T23:32:02Z",
-                                "remainingFraction": 1
-                            }
-                        ]
-                    },
-                    {
-                        "displayName": "Gemini Models",
-                        "description": "Models within this group: Gemini Flash, Gemini Pro",
-                        "buckets": [
-                            {
-                                "bucketId": "gemini-weekly",
-                                "displayName": "Weekly Limit",
-                                "window": "weekly",
-                                "resetTime": "2026-06-20T17:08:54Z",
-                                "remainingFraction": 0.99304295
-                            },
-                            {
-                                "bucketId": "gemini-5h",
-                                "displayName": "Five Hour Limit",
-                                "window": "5h",
-                                "resetTime": "2026-06-13T22:08:54Z",
-                                "remainingFraction": 0.9582575
-                            }
-                        ]
-                    }
-                ]
-            }"#,
-        )
-        .expect("summary response should deserialize");
-
-        let usage =
-            antigravity_usage_from_summary(response).expect("Gemini quota should be selected");
-
-        assert!((usage.weekly.percentage - 0.695705).abs() < 0.000001);
-        assert!((usage.session.percentage - 4.17425).abs() < 0.000001);
-        assert!(usage.weekly_available());
-        assert!(usage.session_available());
-        assert!(usage.weekly.resets_at.is_some());
-        assert!(usage.session.resets_at.is_some());
     }
 }

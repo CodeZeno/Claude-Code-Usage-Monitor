@@ -1,6 +1,6 @@
 # Quota Rules
 
-`Quota rules revision: 2026-09-16-01`
+`Quota rules revision: 2026-09-16-02`
 `Last verified: 2026-09-16`
 
 This is the specification of record for how this app interprets and labels
@@ -112,71 +112,18 @@ Codex app-server protocol and lifecycle rules:
 |---|---|
 | Display name | Antigravity |
 | Stable family ID | `antigravity` |
-| Internal adapter | `poll_antigravity`, `antigravity_usage_from_summary`, gated behind the `antigravity` Cargo feature |
-| Source | Google Cloud Code / Antigravity quota endpoints, authenticated with the OAuth token from Windows Credential Manager target `gemini:antigravity` |
+| Internal adapter | `poll_antigravity` (reads `antigravity_statusline`'s local cache only), gated behind the `antigravity` Cargo feature |
+| Source | The Antigravity CLI's (`agy`) own official `/statusline <command>` feature — a small external command `agy` invokes with a JSON payload on stdin once per interactive-TUI refresh. This app never calls a Google/Antigravity endpoint, reads an OAuth token, reads Windows Credential Manager, or launches `agy` itself; production data comes only from a sanitized local cache this app's own `aum-quota antigravity-statusline-bridge` subcommand wrote from that payload. Packaged as a stable, update-surviving MSIX App Execution Alias (`aum-quota.exe`) — see `ANTIGRAVITY-PACKAGING-BRIDGE-FIX-01` |
 | Quota scope | Independent — this is Antigravity's own quota system, not a standalone Gemini API/app quota |
-| Quota items | `session`: percentage + reset from the selected group's `5h` bucket; `weekly`: percentage + reset from its `weekly` bucket |
-| Fallback behavior | The quota summary can contain multiple model-family groups (Gemini, Claude, GPT, image models). The fetch prefers the group whose name/description/bucket IDs match "Gemini"; if no Gemini group is present, it falls back to the first group it was able to parse, and further falls back to a separate model-quota endpoint if the summary itself is unavailable |
-| Unavailable conditions | No Antigravity credentials found; `antigravity` Cargo feature not compiled in (default release build did not include it until 2026-08-08 — see rule revision 2026-08-08-01 in the app's own change history) |
-| Minimum fetchable unit | A single aggregate percentage + reset time per window, taken from one selected group — not a per-model breakdown |
-| Display caveats | The number is **not guaranteed to be Gemini's quota specifically**. It is Gemini's quota when a Gemini group is present in the summary, and some other model's quota otherwise. This is why Gemini is not listed as its own separate provider in this document — see [Section 4](#4-conditions-for-adding-a-future-provider) |
-| Last verified | 2026-08-08 |
-| Rule revision | 2026-08-08-01 |
-
-#### Official statusLine bridge (parallel path, not yet wired into runtime)
-
-`ANTIGRAVITY-STATUSLINE-BRIDGE-01` added a second, not-yet-active data path
-for this provider, built to eventually replace the credential/backend path
-above:
-
-- **Technical source**: the Antigravity CLI's (`agy`) own official
-  `/statusline <command>` feature — a small external command the CLI
-  invokes with a JSON payload on stdin once per interactive-TUI refresh,
-  confirmed live against `agy 1.1.23`. This app never talks to Google or
-  Antigravity directly through this path, never reads an OAuth token or
-  any credential, and never launches `agy` itself; it only ever reads
-  bytes handed to it on stdin by the CLI the *user* is already running.
-- **Bridge/cache**: `antigravity_statusline` module + the
-  `aum-quota antigravity-statusline-bridge` subcommand. The subcommand
-  reads one statusLine JSON payload from stdin, keeps only an allowlisted
-  set of fields (`quota.*.remaining_fraction`, `quota.*.reset_time`,
-  `quota.*.reset_in_seconds`, `plan_tier`, and a CLI/version string if
-  present), and atomically writes them to
-  `%APPDATA%\ClaudeCodeUsageMonitor\antigravity_statusline_cache.json`.
-  Every other field in the raw payload — including `email`, `session_id`,
-  `conversation_id`, `transcript_path`, `cwd`, `workspace`, and any
-  prompt/conversation content — is never read by this bridge, let alone
-  persisted.
-- **Verified payload fields** (live capture, 2026-09-16): a `quota` object
-  keyed by an internal quota name, each entry carrying
-  `remaining_fraction` (`0.0`-`1.0`), `reset_time` (RFC 3339 UTC, e.g.
-  `2026-09-22T21:44:07Z`), and `reset_in_seconds`; plus a top-level
-  `plan_tier` string (e.g. `"Google AI Plus"`). The only two quota keys
-  observed live so far are `gemini-weekly` and `3p-weekly` — **no 5h-scoped
-  quota key has been observed yet**, so this provider's official-path data
-  is weekly-only until/unless one appears. The reader must not panic, and
-  must not fabricate a 5h value, when a payload has only weekly keys, or
-  when a future payload adds keys this app doesn't yet recognize.
-- **`gemini-weekly`** may be treated as a Gemini-family weekly quota.
-- **`3p-weekly`**'s semantics are **not documented by Google** and are
-  **not finalized by this app**. It is carried through under its raw key
-  rather than renamed to a specific model family (e.g. "Claude weekly" or
-  "GPT weekly") until that meaning is confirmed from an authoritative
-  source.
-- **Opt-in, not automatic**: configuring `/statusline <command>` inside
-  Antigravity replaces its built-in status line unless
-  `stack_with_default: true` is also set. This app does not modify the
-  user's Antigravity configuration on its own; any future setup flow that
-  offers to configure it must be an explicit, reversible, user-initiated
-  action, and must preserve the built-in status line via
-  `stack_with_default: true`.
-- **Runtime status**: as of `ANTIGRAVITY-STATUSLINE-BRIDGE-01`, this bridge
-  and its cache reader exist and are tested, but `poll_antigravity` above
-  is still the only path actually wired into the running app. Replacing it
-  is a separate, later decision — see the revision log entry for this
-  change for what is and isn't done yet.
-- **Distribution/Store permission is a separate, unresolved question** from
-  this technical implementation and is not addressed by this document.
+| Quota items | One item per quota key present in the cache (e.g. `gemini-weekly`, `3p-weekly`) — a weekly-only payload is normal; a future 5h-scoped key is picked up automatically without a code change |
+| Freshness semantics | **No fixed cache-age TTL.** The cache only updates on Antigravity-TUI activity, not a timer (live measurement showed multi-minute gaps even during active use), so cache age alone is not evidence the data is wrong. Each quota item is instead judged against its own `reset_time`: still in the future → usable as the current reading; already past → the item is marked `Stale` with no value shown, because the pre-reset number must never be displayed as current and the true post-reset value hasn't been observed yet. A family with at least one non-stale item is `Available`; a family where every item has passed its reset is `Stale` at the family level too. `captured_at_unix` is retained on the cache as "last observed" metadata only, not a staleness signal — see `ANTIGRAVITY-ROUTING-SWITCH-01` |
+| Unavailable conditions | Cache file missing (bridge never run / not opted into), malformed, or an unsupported `schema_version` — all three map to the same `Unavailable` family status as any other polling error, and are never displayed as `0%` usage. There is no legacy network/credential path to fall back to on any of these |
+| Minimum fetchable unit | One item per quota key from the cache, judged independently for staleness — not a single aggregate percentage |
+| Display caveats | `gemini-weekly` is treated as a Gemini-family weekly quota. `3p-weekly`'s semantics are **not documented by Google** and are **not finalized by this app**; it is carried through under its raw key rather than renamed to a specific model family (e.g. "Claude weekly" or "GPT weekly") until that meaning is confirmed from an authoritative source. No 5h-scoped key has been observed live yet, so this provider's data is weekly-only until/unless one appears — the reader must not panic or fabricate a 5h value in that case |
+| Opt-in, not automatic | Configuring `/statusline <command>` inside Antigravity replaces its built-in status line unless `stack_with_default: true` is also set. This app does not modify the user's Antigravity configuration on its own; any future setup flow that offers to configure it must be an explicit, reversible, user-initiated action, and must preserve the built-in status line via `stack_with_default: true` |
+| Distribution/Store permission | A separate, unresolved question from this technical implementation and not addressed by this document |
+| Last verified | 2026-09-16 |
+| Rule revision | 2026-09-16-02 |
 
 ### GitHub Copilot
 
@@ -237,6 +184,7 @@ column that misrepresents what is actually being measured.
 
 | Revision | Date | Change |
 |---|---|---|
+| 2026-09-16-02 | 2026-09-16 | `ANTIGRAVITY-ROUTING-SWITCH-01`: switches `poll_antigravity` from the legacy Google Cloud Code HTTP/OAuth path onto the official statusLine cache exclusively, and removes the legacy path's code entirely (credential read, Windows Credential Manager access, HTTP fetch/summary-parsing functions, and their dedicated `CredentialWatchMode::Antigravity` variant). Decides against a fixed cache-age TTL (measured update cadence is activity-driven and irregular); freshness is instead judged per quota item against that item's own `reset_time`, with items past their reset marked `Stale` (never shown as current, never assumed `0`) and independent per key. A family with no current item is `Stale` at the family level. Cache missing/malformed/unsupported-schema all map to the existing `Unavailable` status, never `0%`, with no legacy fallback. |
 | 2026-09-16-01 | 2026-09-16 | `ANTIGRAVITY-STATUSLINE-BRIDGE-01`: adds a parallel, opt-in, not-yet-active Antigravity data path via the Antigravity CLI's official `/statusline <command>` feature — a sanitized local cache (`antigravity_statusline` module + `aum-quota antigravity-statusline-bridge`) that never touches Google/Antigravity credentials or backends directly. Documents the verified payload shape, the `gemini-weekly`/`3p-weekly` quota keys (`3p-weekly`'s semantics unconfirmed), and that this path is weekly-only so far (no 5h key observed). Does not change which path `poll_antigravity` actually uses at runtime. |
 | 2026-09-08-01 | 2026-09-08 | `CODEX-OFFICIAL-PATH-IMPLEMENT-01`: unifies Codex quota onto the official `codex app-server` `account/rateLimits/read` method only. Removes the `~/.codex/auth.json` credential read, the Codex OAuth token extraction/refresh, and the direct `https://chatgpt.com/backend-api/wham/usage` HTTP fetch entirely — 5h/7d usage and the banked Full reset count now come from one cached app-server response, with no fallback to any legacy path. |
 | 2026-08-10-01 | 2026-08-10 | Generalizes the runtime record to stable quota families with ordered quota items, restores the Codex display name, and adds GitHub Copilot Paid Individual monthly AI Credits with GitHub CLI authentication, gross-usage, manual-plan, reset, failure, and non-retention rules. |

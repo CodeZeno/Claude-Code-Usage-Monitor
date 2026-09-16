@@ -139,13 +139,13 @@ What the app reads:
 - Your local Claude Code OAuth credentials from `~/.claude/.credentials.json`
 - If needed, the same credentials file inside an installed WSL distro
 - If Codex is enabled, your local Codex credentials from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`
-- If Antigravity is enabled, your local Antigravity OAuth token from Windows Credential Manager target `gemini:antigravity`
+- If Antigravity is enabled, a sanitized local cache file this app itself wrote from the Antigravity CLI's official `/statusline` feature — never an OAuth token or Windows Credential Manager entry
 
 What the app sends over the network:
 
 - Requests to Anthropic's Claude endpoints to read your usage and rate-limit information
 - Requests to ChatGPT's Codex usage endpoint to read your Codex usage and rate-limit information, if Codex is enabled
-- Requests to Google's Cloud Code / Antigravity endpoints to read your Antigravity quota information, if Antigravity is enabled
+- Nothing to Google or Antigravity — if Antigravity is enabled, this app only reads its own local cache file; see `docs/quota-rules.md` for how that cache is populated
 - Requests to GitHub only if you use the app's update check / self-update feature
 - If proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` are set, those outbound requests may use that proxy
 

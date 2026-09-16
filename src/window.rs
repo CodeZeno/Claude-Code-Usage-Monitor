@@ -5855,14 +5855,6 @@ fn do_poll(send_hwnd: SendHwnd) {
                 {
                     None
                 }
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired
-                    if show_antigravity && !show_claude_code && !show_codex =>
-                {
-                    Some((
-                        poller::CredentialWatchMode::Antigravity,
-                        poller::credential_watch_snapshot(poller::CredentialWatchMode::Antigravity),
-                    ))
-                }
                 poller::PollError::AuthRequired | poller::PollError::TokenExpired => Some((
                     poller::CredentialWatchMode::ActiveSource,
                     poller::credential_watch_snapshot(poller::CredentialWatchMode::ActiveSource),

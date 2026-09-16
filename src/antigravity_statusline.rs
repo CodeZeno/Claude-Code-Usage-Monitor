@@ -32,18 +32,21 @@
 //! subcommand, the intended `command` target of an opt-in
 //! `/statusline <command>` configuration) and reads/writes the cache file.
 //!
-//! ## Open design question: staleness threshold
+//! ## Freshness policy: no fixed TTL
 //!
-//! This module intentionally does not hardcode a "how old is too old"
-//! threshold. No general freshness/TTL policy exists elsewhere in this
-//! codebase to reuse (`QuotaFamilyStatus::Stale` and
-//! `QuotaItemAvailability::Stale` are declared in `models` but not
-//! constructed anywhere yet; the one TTL that does exist,
-//! `poller::CODEX_RATE_LIMITS_CACHE_TTL`, is a narrow 45-second
-//! anti-thrashing cache around a single app-server round trip, not a
-//! general "is this data stale" policy). [`is_stale`] takes the threshold
-//! as a parameter rather than inventing one, leaving the actual value as a
-//! decision for whoever wires this cache into the UI.
+//! `ANTIGRAVITY-ROUTING-SWITCH-01` decided against a fixed cache-age TTL.
+//! This cache is only ever written on Antigravity-TUI activity, not a
+//! timer — live measurement showed gaps of several minutes between
+//! updates even while actively using the TUI — so "the cache is N minutes
+//! old" is not a reliable signal that the reading is wrong. Production
+//! freshness is instead judged per quota item against that item's own
+//! `reset_time_unix` (see [`quota_items_from_cache`]): a reading is usable
+//! for as long as its own reset hasn't happened yet, and is
+//! [`QuotaItemAvailability::Stale`] once it has, regardless of how old
+//! `captured_at_unix` is. [`is_stale`] (an age-vs-threshold check) is kept
+//! as a tested utility but is deliberately *not* called from the
+//! production polling path for this reason; `captured_at_unix` itself is
+//! still retained on [`SanitizedCache`] as "last observed" metadata.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -53,7 +56,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::models::QuotaItem;
+use crate::models::{QuotaItem, QuotaItemAvailability, QuotaUnit};
 
 /// Bumped whenever [`SanitizedCache`]'s on-disk shape changes in a way that
 /// isn't purely additive.
@@ -328,25 +331,54 @@ fn quota_key_label(key: &str) -> &str {
     }
 }
 
-/// Converts every entry in `cache.quota` into a display-ready [`QuotaItem`].
+/// Converts every entry in `cache.quota` into a display-ready [`QuotaItem`],
+/// applying reset-boundary semantics rather than a cache-age TTL (see the
+/// module docs: this cache updates on Antigravity-TUI activity, not a fixed
+/// timer, so "how old is the cache" is not a reliable freshness signal —
+/// `ANTIGRAVITY-ROUTING-SWITCH-01`).
+///
+/// For each entry, `now` is compared against that entry's own
+/// `reset_time_unix`:
+/// - reset time still in the future: the cached `remaining_fraction` is a
+///   valid *current* reading, so this produces a normal available item.
+/// - reset time has already passed: the cached value is from *before* that
+///   reset and must never be shown as the current one (nor guessed at as
+///   `0`, since the real post-reset value hasn't been observed yet), so this
+///   produces a [`QuotaItemAvailability::Stale`] item with no metric. Each
+///   quota key is judged independently, so a payload with one item past its
+///   reset and another not yet reset produces one stale item and one normal
+///   item, not a single all-or-nothing family state.
+///
 /// One item per quota key present — a weekly-only payload (no 5h entry, as
 /// with every payload captured live so far) simply produces one item per
 /// week-scoped key; a future payload with additional keys (a 5h bucket, or
 /// an entirely new quota name) produces additional items without any code
 /// change here.
-pub fn quota_items_from_cache(cache: &SanitizedCache) -> Vec<QuotaItem> {
+pub fn quota_items_from_cache(cache: &SanitizedCache, now: SystemTime) -> Vec<QuotaItem> {
+    let now_unix = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
     cache
         .quota
         .iter()
         .map(|(key, entry)| {
-            let used_percentage = ((1.0 - entry.remaining_fraction) * 100.0).clamp(0.0, 100.0);
-            let resets_at = UNIX_EPOCH + Duration::from_secs(entry.reset_time_unix);
-            QuotaItem::percentage(
-                key.clone(),
-                quota_key_label(key).to_string(),
-                used_percentage,
-                Some(resets_at),
-            )
+            let label = quota_key_label(key).to_string();
+            if entry.reset_time_unix > now_unix {
+                let used_percentage = ((1.0 - entry.remaining_fraction) * 100.0).clamp(0.0, 100.0);
+                let resets_at = UNIX_EPOCH + Duration::from_secs(entry.reset_time_unix);
+                QuotaItem::percentage(key.clone(), label, used_percentage, Some(resets_at))
+            } else {
+                QuotaItem {
+                    id: key.clone(),
+                    label,
+                    availability: QuotaItemAvailability::Stale,
+                    metric: None,
+                    unit: QuotaUnit::Percent,
+                    resets_at: None,
+                }
+            }
         })
         .collect()
 }
@@ -467,7 +499,7 @@ mod tests {
     #[test]
     fn remaining_fraction_one_maps_to_zero_used_percentage() {
         let cache = sanitize_statusline_payload(VERIFIED_PAYLOAD, UNIX_EPOCH).unwrap();
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         let three_p = items.iter().find(|i| i.id == "3p-weekly").unwrap();
         assert_eq!(three_p.used_percentage(), Some(0.0));
     }
@@ -475,7 +507,7 @@ mod tests {
     #[test]
     fn remaining_fraction_decimal_maps_to_expected_used_percentage() {
         let cache = sanitize_statusline_payload(VERIFIED_PAYLOAD, UNIX_EPOCH).unwrap();
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         let gemini = items.iter().find(|i| i.id == "gemini-weekly").unwrap();
         let used = gemini.used_percentage().unwrap();
         assert!((used - 4.556).abs() < 0.01, "used={used}");
@@ -485,7 +517,7 @@ mod tests {
     fn remaining_fraction_zero_maps_to_hundred_percent_used() {
         let payload = r#"{"quota":{"gemini-weekly":{"remaining_fraction":0,"reset_time":"2026-09-22T21:26:44Z"}}}"#;
         let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         assert_eq!(items[0].used_percentage(), Some(100.0));
     }
 
@@ -571,7 +603,7 @@ mod tests {
     fn unknown_quota_key_is_kept_with_raw_key_as_label() {
         let payload = r#"{"quota":{"some-future-key":{"remaining_fraction":0.2,"reset_time":"2026-09-22T21:26:44Z"}}}"#;
         let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, "some-future-key");
         assert_eq!(items[0].label, "some-future-key");
@@ -580,7 +612,7 @@ mod tests {
     #[test]
     fn weekly_only_payload_produces_no_5h_item() {
         let cache = sanitize_statusline_payload(VERIFIED_PAYLOAD, UNIX_EPOCH).unwrap();
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         assert!(items
             .iter()
             .all(|item| !item.id.contains("5h") && !item.id.contains("session")));
@@ -594,8 +626,92 @@ mod tests {
         }}"#;
         let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
         assert_eq!(cache.quota.len(), 2);
-        let items = quota_items_from_cache(&cache);
+        let items = quota_items_from_cache(&cache, UNIX_EPOCH);
         assert_eq!(items.len(), 2);
+    }
+
+    #[test]
+    fn item_with_reset_time_still_in_future_is_available() {
+        let cache = sanitize_statusline_payload(VERIFIED_PAYLOAD, UNIX_EPOCH).unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(60);
+        let items = quota_items_from_cache(&cache, now);
+        let gemini = items.iter().find(|i| i.id == "gemini-weekly").unwrap();
+        assert_eq!(gemini.availability, QuotaItemAvailability::Available);
+        assert!(gemini.used_percentage().is_some());
+    }
+
+    #[test]
+    fn item_past_its_own_reset_boundary_is_stale_not_current_or_zero() {
+        let payload = r#"{"quota":{
+            "gemini-weekly":{"remaining_fraction":0.2,"reset_time":"2026-09-22T21:26:44Z"}
+        }}"#;
+        let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
+        let reset_unix = cache.quota["gemini-weekly"].reset_time_unix;
+        // `now` is exactly at, and then just past, the reset boundary.
+        for now in [
+            UNIX_EPOCH + Duration::from_secs(reset_unix),
+            UNIX_EPOCH + Duration::from_secs(reset_unix + 1),
+        ] {
+            let items = quota_items_from_cache(&cache, now);
+            let item = &items[0];
+            assert_eq!(item.availability, QuotaItemAvailability::Stale);
+            assert!(item.metric.is_none());
+            assert_eq!(
+                item.used_percentage(),
+                None,
+                "a stale item must never report the pre-reset value as current"
+            );
+        }
+    }
+
+    #[test]
+    fn mixed_current_and_expired_items_are_judged_independently() {
+        let payload = r#"{"quota":{
+            "gemini-weekly":{"remaining_fraction":0.5,"reset_time":"2026-09-22T21:26:44Z"},
+            "3p-weekly":{"remaining_fraction":0.5,"reset_time":"2020-01-01T00:00:00Z"}
+        }}"#;
+        let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let items = quota_items_from_cache(&cache, now);
+
+        let current = items.iter().find(|i| i.id == "gemini-weekly").unwrap();
+        assert_eq!(current.availability, QuotaItemAvailability::Available);
+
+        let expired = items.iter().find(|i| i.id == "3p-weekly").unwrap();
+        assert_eq!(expired.availability, QuotaItemAvailability::Stale);
+    }
+
+    #[test]
+    fn all_items_expired_yields_all_stale_items_not_zero_usage() {
+        let payload = r#"{"quota":{
+            "gemini-weekly":{"remaining_fraction":0.5,"reset_time":"2020-01-01T00:00:00Z"},
+            "3p-weekly":{"remaining_fraction":0.5,"reset_time":"2020-01-02T00:00:00Z"}
+        }}"#;
+        let cache = sanitize_statusline_payload(payload, UNIX_EPOCH).unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let items = quota_items_from_cache(&cache, now);
+
+        assert_eq!(items.len(), 2);
+        assert!(items
+            .iter()
+            .all(|item| item.availability == QuotaItemAvailability::Stale));
+        assert!(items.iter().all(|item| item.used_percentage().is_none()));
+    }
+
+    #[test]
+    fn cache_age_alone_does_not_make_an_unexpired_item_stale() {
+        // A cache captured long ago, but whose reset time is still in the
+        // future, must not be treated as stale just because it is old —
+        // this app deliberately has no cache-age TTL for this provider.
+        let payload = r#"{"quota":{
+            "gemini-weekly":{"remaining_fraction":0.3,"reset_time":"2026-09-22T21:26:44Z"}
+        }}"#;
+        let old_capture = UNIX_EPOCH + Duration::from_secs(1_000);
+        let cache = sanitize_statusline_payload(payload, old_capture).unwrap();
+        let now = UNIX_EPOCH + Duration::from_secs(10_000_000); // long after capture
+        let items = quota_items_from_cache(&cache, now);
+        assert_eq!(items[0].availability, QuotaItemAvailability::Available);
+        assert!(items[0].used_percentage().is_some());
     }
 
     #[test]
