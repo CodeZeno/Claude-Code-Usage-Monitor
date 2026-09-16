@@ -448,6 +448,32 @@ fn spawn_taskbar_watchdog() {
             diagnose::log("watchdog: shell-hosted surface was destroyed -> relaunching");
             relaunch_self();
         }
+
+        static LAST_WATCHDOG_TRAY_RECT: Mutex<Option<RECT>> = Mutex::new(None);
+        let (reposition_target, current_tray_rect) = {
+            let state = lock_state();
+            if let Some(s) = state.as_ref() {
+                let tray_hwnd = s.tray_notify_hwnd.map(|h| h.to_hwnd());
+                let target_hwnd = s.hwnd.to_hwnd();
+                (target_hwnd, tray_hwnd.and_then(native_interop::get_window_rect_safe))
+            } else {
+                (HWND::default(), None)
+            }
+        };
+        if !reposition_target.is_invalid() && current_tray_rect.is_some() {
+            let mut last_rect = LAST_WATCHDOG_TRAY_RECT.lock().unwrap_or_else(|e| e.into_inner());
+            if rect_changed(*last_rect, current_tray_rect) {
+                *last_rect = current_tray_rect;
+                unsafe {
+                    let _ = PostMessageW(
+                        Some(reposition_target),
+                        WM_TIMER,
+                        WPARAM(TIMER_TRAY_REPOSITION),
+                        LPARAM(0),
+                    );
+                }
+            }
+        }
     });
 }
 
@@ -1868,6 +1894,12 @@ pub fn run() {
         // Register the persistent application tray icon.
         if !no_poll {
             sync_tray_icon(hwnd);
+        }
+
+        // Ensure tray event hook is active so tray movements are tracked immediately.
+        let taskbars = native_interop::find_taskbars();
+        if let Some(taskbar) = taskbars.get(settings.taskbar_index).or_else(|| taskbars.first()) {
+            ensure_tray_event_hook_for_taskbar(taskbar.hwnd);
         }
 
         // Theme surfaces decide whether their windows render.
