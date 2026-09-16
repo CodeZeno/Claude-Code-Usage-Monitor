@@ -1277,21 +1277,38 @@ fn extract_account_usage(response: &UsageResponse) -> Option<AccountUsage> {
         response.cinder_cove.is_some(),
         response.spend.is_some()
     ));
-    let credit_bucket = response.cinder_cove.as_ref()?;
+    // `spend` alone is enough to compute the Month/Week/Day spend-pace view
+    // (see spend_pace::compute_spend_pace, which only reads spend_used/
+    // spend_limit for the bars themselves). `cinder_cove` only supplies the
+    // separate credit_pct/credit_expiry shown in the tray tooltip's "Cr" row.
+    // Requiring both via `?` meant a response that stopped including
+    // cinder_cove (confirmed live, repeatedly, for spend-still-present
+    // responses) silently killed the whole account view - falling back to
+    // the far less useful raw 5h/7d rate-limit display (both at 0%, since
+    // this account has no rate-limit buckets either) instead of just losing
+    // the credit percentage. Default credit fields when cinder_cove is
+    // absent rather than bailing out entirely.
     let spend = response.spend.as_ref()?;
 
     let used_divisor = 10f64.powi(spend.used.exponent as i32);
     let limit_divisor = 10f64.powi(spend.limit.exponent as i32);
 
+    let (credit_pct, credit_expiry) = match response.cinder_cove.as_ref() {
+        Some(credit_bucket) => (
+            credit_bucket.utilization,
+            parse_iso8601(credit_bucket.resets_at.as_deref()),
+        ),
+        None => (0.0, None),
+    };
+
     let result = Some(AccountUsage {
-        credit_pct: credit_bucket.utilization,
-        credit_expiry: parse_iso8601(credit_bucket.resets_at.as_deref()),
+        credit_pct,
+        credit_expiry,
         spend_used: spend.used.amount_minor as f64 / used_divisor,
         spend_limit: spend.limit.amount_minor as f64 / limit_divisor,
     });
     diagnose::log(format!(
-        "extract_account_usage: returning Some with credit_pct={}",
-        credit_bucket.utilization
+        "extract_account_usage: returning Some with credit_pct={credit_pct}"
     ));
     result
 }
