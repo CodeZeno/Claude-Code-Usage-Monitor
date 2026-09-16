@@ -1,6 +1,6 @@
 # Quota Rules
 
-`Quota rules revision: 2026-09-16-02`
+`Quota rules revision: 2026-09-16-03`
 `Last verified: 2026-09-16`
 
 This is the specification of record for how this app interprets and labels
@@ -121,9 +121,10 @@ Codex app-server protocol and lifecycle rules:
 | Minimum fetchable unit | One item per quota key from the cache, judged independently for staleness — not a single aggregate percentage |
 | Display caveats | `gemini-weekly` is treated as a Gemini-family weekly quota. `3p-weekly`'s semantics are **not documented by Google** and are **not finalized by this app**; it is carried through under its raw key rather than renamed to a specific model family (e.g. "Claude weekly" or "GPT weekly") until that meaning is confirmed from an authoritative source. No 5h-scoped key has been observed live yet, so this provider's data is weekly-only until/unless one appears — the reader must not panic or fabricate a 5h value in that case |
 | Opt-in, not automatic | Configuring `/statusline <command>` inside Antigravity replaces its built-in status line unless `stack_with_default: true` is also set. This app does not modify the user's Antigravity configuration on its own; any future setup flow that offers to configure it must be an explicit, reversible, user-initiated action, and must preserve the built-in status line via `stack_with_default: true` |
+| Setup UX | `ANTIGRAVITY-SETUP-UX-01`: the right-click Help menu's "Antigravity Setup..." item (feature-gated) shows the exact `/statusline aum-quota.exe antigravity-statusline-bridge` command (copied to the clipboard when the item is clicked), the exact `/statusline delete` command to remove it, and the last-observed time read fresh from the cache file (never a fabricated timestamp — a missing/malformed/unsupported-schema cache shows "no usage observed yet" instead). This app never edits the Antigravity CLI's own `settings.json` on the user's behalf, in setup or in teardown; turning this app's own `show_antigravity` display toggle off is a separate action from the Antigravity CLI's own statusLine configuration, and the dialog text is explicit about that distinction |
 | Distribution/Store permission | A separate, unresolved question from this technical implementation and not addressed by this document |
 | Last verified | 2026-09-16 |
-| Rule revision | 2026-09-16-02 |
+| Rule revision | 2026-09-16-03 |
 
 ### GitHub Copilot
 
@@ -184,6 +185,7 @@ column that misrepresents what is actually being measured.
 
 | Revision | Date | Change |
 |---|---|---|
+| 2026-09-16-03 | 2026-09-16 | `ANTIGRAVITY-SETUP-UX-01`: adds a Help-menu "Antigravity Setup..." dialog (setup command, disable command, last-observed time — clipboard-copies the setup command on click) and, as a prerequisite fix, replaces Antigravity's fixed session/weekly display slots with a dynamic per-cache-item bar list (`gemini-weekly` keeps its own weekly slot with pace guidance; every other item, including unrecognized future keys, gets its own always-visible bar, never hidden in a details-only view) — the prior routing-switch commit had left these bars permanently showing "not available" regardless of real cache content, since `UsageData::from_quota_items` never sets the fixed session/weekly availability flags the display code checked. |
 | 2026-09-16-02 | 2026-09-16 | `ANTIGRAVITY-ROUTING-SWITCH-01`: switches `poll_antigravity` from the legacy Google Cloud Code HTTP/OAuth path onto the official statusLine cache exclusively, and removes the legacy path's code entirely (credential read, Windows Credential Manager access, HTTP fetch/summary-parsing functions, and their dedicated `CredentialWatchMode::Antigravity` variant). Decides against a fixed cache-age TTL (measured update cadence is activity-driven and irregular); freshness is instead judged per quota item against that item's own `reset_time`, with items past their reset marked `Stale` (never shown as current, never assumed `0`) and independent per key. A family with no current item is `Stale` at the family level. Cache missing/malformed/unsupported-schema all map to the existing `Unavailable` status, never `0%`, with no legacy fallback. |
 | 2026-09-16-01 | 2026-09-16 | `ANTIGRAVITY-STATUSLINE-BRIDGE-01`: adds a parallel, opt-in, not-yet-active Antigravity data path via the Antigravity CLI's official `/statusline <command>` feature — a sanitized local cache (`antigravity_statusline` module + `aum-quota antigravity-statusline-bridge`) that never touches Google/Antigravity credentials or backends directly. Documents the verified payload shape, the `gemini-weekly`/`3p-weekly` quota keys (`3p-weekly`'s semantics unconfirmed), and that this path is weekly-only so far (no 5h key observed). Does not change which path `poll_antigravity` actually uses at runtime. |
 | 2026-09-08-01 | 2026-09-08 | `CODEX-OFFICIAL-PATH-IMPLEMENT-01`: unifies Codex quota onto the official `codex app-server` `account/rateLimits/read` method only. Removes the `~/.codex/auth.json` credential read, the Codex OAuth token extraction/refresh, and the direct `https://chatgpt.com/backend-api/wham/usage` HTTP fetch entirely — 5h/7d usage and the banked Full reset count now come from one cached app-server response, with no fallback to any legacy path. |

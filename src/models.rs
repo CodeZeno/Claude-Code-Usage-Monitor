@@ -202,7 +202,7 @@ pub(crate) enum BankedResetCount {
     Unavailable,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsageSection {
     pub percentage: f64,
     pub resets_at: Option<SystemTime>,

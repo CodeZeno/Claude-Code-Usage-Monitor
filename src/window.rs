@@ -10,7 +10,11 @@ use windows::ApplicationModel::{StartupTask, StartupTaskState};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+use windows::Win32::System::DataExchange::{
+    CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+};
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Registry::*;
 use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
 use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
@@ -254,6 +258,12 @@ struct AppState {
     antigravity_weekly_text: String,
     antigravity_weekly_pace: Option<PaceGuidanceLines>,
     antigravity_weekly_remaining_text: Option<String>,
+    /// Every Antigravity cache item except `gemini-weekly` (which keeps its
+    /// own dedicated weekly slot above, with pace guidance) — one persistent
+    /// bar per item, so a cache key this build doesn't specifically
+    /// recognize (e.g. `3p-weekly`, or any future key) still gets an
+    /// always-visible row rather than being hidden in a details view.
+    antigravity_extra_items: Vec<AntigravityItemDisplay>,
     github_copilot_state: CellState,
     github_copilot_percent: Option<f64>,
     github_copilot_text: String,
@@ -465,6 +475,18 @@ enum CellState {
 /// status word).
 struct CellDisplay {
     bar_percent: Option<f64>,
+    text: String,
+}
+
+/// One persistent, always-visible row for an Antigravity quota item beyond
+/// the dedicated `gemini-weekly` slot. `label` is whatever
+/// `antigravity_statusline::quota_key_label` (or the raw cache key, for an
+/// unrecognized one) produced for this item — never invented here, and
+/// never panics on a key this build has never seen before.
+#[derive(Clone, Debug, Default)]
+struct AntigravityItemDisplay {
+    label: String,
+    percent: Option<f64>,
     text: String,
 }
 
@@ -842,6 +864,64 @@ fn render_generic_quota_item(
     )
 }
 
+/// The `UsageSection` view of `gemini-weekly` used only for weekly pace
+/// guidance and the compact "remaining" text — both of which are pure
+/// `UsageSection`-shaped helpers that predate this provider's dynamic item
+/// list. `None` whenever there is no `gemini-weekly` item, or it exists but
+/// isn't `Available` (Stale — past its own reset boundary — or
+/// Unavailable): pace guidance must never run against a pre-reset value
+/// that `render_generic_quota_item_with_reset_mode` has already decided not
+/// to show as current.
+fn antigravity_weekly_pace_section(
+    item: Option<&crate::models::QuotaItem>,
+) -> Option<UsageSection> {
+    let item = item?;
+    if item.availability != crate::models::QuotaItemAvailability::Available {
+        return None;
+    }
+    Some(UsageSection {
+        percentage: item.used_percentage()?,
+        resets_at: item.resets_at,
+    })
+}
+
+/// Every Antigravity cache item except `gemini-weekly`, rendered via the
+/// same generic per-item renderer GitHub Copilot's single custom item
+/// already uses — safe for any `QuotaItemAvailability` (Available, Stale,
+/// Unavailable) and any key this build doesn't specifically recognize,
+/// since `item.label` was already resolved to a safe display label (or the
+/// raw key) by `antigravity_statusline::quota_key_label` when the item was
+/// built. `state` is the shared provider-level gate
+/// (`antigravity_provider_cell_state`) — never per-item — since a
+/// successful poll's per-item availability is what the renderer itself
+/// checks.
+fn antigravity_extra_items_from(
+    items: &[crate::models::QuotaItem],
+    state: CellState,
+    basis: DisplayBasis,
+    reset_display_mode: ResetDisplayMode,
+    strings: Strings,
+) -> Vec<AntigravityItemDisplay> {
+    items
+        .iter()
+        .filter(|item| item.id != "gemini-weekly")
+        .map(|item| {
+            let display = render_generic_quota_item_with_reset_mode(
+                state,
+                Some(item),
+                basis,
+                reset_display_mode,
+                strings,
+            );
+            AntigravityItemDisplay {
+                label: item.label.clone(),
+                percent: display.bar_percent,
+                text: display.text,
+            }
+        })
+        .collect()
+}
+
 /// Classify a just-completed provider poll into session/weekly cell states.
 /// `Disabled` (provider not requested this poll) is not a normal render
 /// target — it maps to `NotAvailable` rather than `Loading`, since it does
@@ -910,6 +990,25 @@ fn poll_quota_item_state(
     }
 }
 
+/// The single provider-level gate used for every Antigravity display row
+/// (the dedicated `gemini-weekly` slot and every extra-item row alike).
+/// Antigravity's items are a dynamic, arbitrarily-keyed list rather than a
+/// fixed session/weekly pair, so — unlike `poll_cell_states` — this never
+/// inspects `UsageData::session_available`/`weekly_available` (always
+/// `false` for `UsageData::from_quota_items`); a successful poll is always
+/// `Ok` here, and each item's own `QuotaItemAvailability` (Available/
+/// Stale/Unavailable) is what actually decides whether that specific row
+/// shows a value, inside `render_generic_quota_item_with_reset_mode`.
+fn antigravity_provider_cell_state(outcome: &poller::ProviderPollOutcome) -> CellState {
+    match outcome {
+        poller::ProviderPollOutcome::Success { .. } => CellState::Ok,
+        poller::ProviderPollOutcome::Error { error, .. } => {
+            provider_error_cell_state(QuotaFamilyId::Antigravity, *error)
+        }
+        poller::ProviderPollOutcome::Disabled => CellState::Disabled,
+    }
+}
+
 fn banked_reset_count_for_poll(outcome: &poller::ProviderPollOutcome) -> BankedResetCount {
     match outcome {
         poller::ProviderPollOutcome::Success { usage, .. } => usage.banked_reset_count,
@@ -967,9 +1066,13 @@ fn apply_provider_poll_update(
             state.codex_banked_reset_count = banked_reset_count_for_poll(outcome);
         }
         QuotaFamilyId::Antigravity => {
-            let (session_state, weekly_state) = poll_cell_states(provider, outcome);
-            state.antigravity_session_state = session_state;
-            state.antigravity_weekly_state = weekly_state;
+            // `antigravity_session_state` has no real item to back it (no
+            // 5h-scoped Antigravity quota key has ever been observed — see
+            // `antigravity_statusline` module docs) and always renders
+            // "not available"; kept only so that legacy slot doesn't get
+            // stuck on its initial `Loading` value forever.
+            state.antigravity_session_state = poll_cell_states(provider, outcome).0;
+            state.antigravity_weekly_state = antigravity_provider_cell_state(outcome);
         }
         QuotaFamilyId::GithubCopilot => {
             state.github_copilot_state =
@@ -1838,6 +1941,8 @@ const IDM_HELP_DISPLAY_GUIDE: u16 = 100;
 const IDM_HELP_AI_QUOTAS: u16 = 101;
 const IDM_HELP_README: u16 = 102;
 const IDM_HELP_VERSION_INFORMATION: u16 = 103;
+#[cfg(feature = "antigravity")]
+const IDM_HELP_ANTIGRAVITY_SETUP: u16 = 104;
 const IDM_LANG_SYSTEM: u16 = 40;
 const IDM_LANG_ENGLISH: u16 = 41;
 const IDM_LANG_DUTCH: u16 = 42;
@@ -3011,37 +3116,36 @@ fn refresh_usage_texts(state: &mut AppState) {
     state.codex_banked_reset_text =
         format_banked_reset_text(state.codex_banked_reset_count, strings);
 
-    let antigravity_session_section =
-        quota_item_section(data, QuotaFamilyId::Antigravity, "session");
-    let antigravity_weekly_section = quota_item_section(data, QuotaFamilyId::Antigravity, "weekly");
+    // Antigravity's items are a dynamic, arbitrarily-keyed list (from the
+    // official statusLine cache — see `antigravity_statusline` module docs),
+    // not a fixed session/weekly pair, so `state.antigravity_weekly_state`
+    // (really: the provider-level Ok/error/disabled gate, computed by
+    // `antigravity_provider_cell_state`) is reused for every item's `state`
+    // argument below; each item's own `QuotaItemAvailability` is what
+    // decides whether that specific row shows a value.
     let antigravity_session = render_cell_with_reset_mode(
         state.antigravity_session_state,
-        antigravity_session_section.as_ref(),
+        None,
         basis,
         reset_display_mode,
         strings,
     );
     state.antigravity_session_percent = antigravity_session.bar_percent;
     state.antigravity_session_text = antigravity_session.text;
-    state.antigravity_session_pace = session_pace_for_cell_with_reset_mode(
-        state.antigravity_session_state,
-        antigravity_session_section.as_ref(),
-        now,
-        basis,
-        visibility,
-        sensitivity,
-        reset_display_mode,
-        strings,
-    );
-    let antigravity_weekly = render_cell_with_reset_mode(
+    state.antigravity_session_pace = None;
+
+    let antigravity_family = data.and_then(|d| d.family(QuotaFamilyId::Antigravity));
+    let antigravity_weekly_item = antigravity_family.and_then(|f| f.item("gemini-weekly"));
+    let antigravity_weekly = render_generic_quota_item_with_reset_mode(
         state.antigravity_weekly_state,
-        antigravity_weekly_section.as_ref(),
+        antigravity_weekly_item,
         basis,
         reset_display_mode,
         strings,
     );
     state.antigravity_weekly_percent = antigravity_weekly.bar_percent;
     state.antigravity_weekly_text = antigravity_weekly.text;
+    let antigravity_weekly_section = antigravity_weekly_pace_section(antigravity_weekly_item);
     state.antigravity_weekly_pace = weekly_pace_for_cell_with_reset_mode(
         state.antigravity_weekly_state,
         antigravity_weekly_section.as_ref(),
@@ -3055,6 +3159,15 @@ fn refresh_usage_texts(state: &mut AppState) {
         state.antigravity_weekly_state,
         antigravity_weekly_section.as_ref(),
         now,
+        reset_display_mode,
+        strings,
+    );
+    state.antigravity_extra_items = antigravity_extra_items_from(
+        antigravity_family
+            .map(|f| f.items.as_slice())
+            .unwrap_or(&[]),
+        state.antigravity_weekly_state,
+        basis,
         reset_display_mode,
         strings,
     );
@@ -3095,6 +3208,50 @@ fn show_info_message(hwnd: HWND, title: &str, message: &str) {
 
 const README_URL: &str = "https://github.com/ysawase/ai-usage-monitor#readme";
 
+/// The exact `/statusline <command>` this app's own packaged App Execution
+/// Alias needs, verified against a real installed MSIX — see
+/// `ANTIGRAVITY-PACKAGING-BRIDGE-FIX-01` and `docs/quota-rules.md`. Not
+/// localized: it is a literal command, not user-facing prose.
+const ANTIGRAVITY_SETUP_COMMAND: &str = "/statusline aum-quota.exe antigravity-statusline-bridge";
+/// Restores Antigravity's built-in status line. Distinct from this app's
+/// own `show_antigravity` display toggle — turning Antigravity display off
+/// in this app never runs this on the user's behalf.
+const ANTIGRAVITY_DISABLE_COMMAND: &str = "/statusline delete";
+
+/// Copies `text` to the clipboard as plain Unicode text. Best-effort: a
+/// failure at any step (open, alloc, lock, set) is reported back as `false`
+/// so the caller can still show the command as plain text for the user to
+/// select manually, but never panics and never leaves the clipboard
+/// partially open.
+fn copy_text_to_clipboard(hwnd: HWND, text: &str) -> bool {
+    const CF_UNICODETEXT: u32 = 13;
+
+    unsafe {
+        if OpenClipboard(hwnd).is_err() {
+            return false;
+        }
+
+        let copied = (|| -> Option<()> {
+            EmptyClipboard().ok()?;
+            let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
+            let byte_len = wide.len() * std::mem::size_of::<u16>();
+            let hglobal = GlobalAlloc(GMEM_MOVEABLE, byte_len).ok()?;
+            let ptr = GlobalLock(hglobal);
+            if ptr.is_null() {
+                return None;
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr().cast::<u8>(), ptr.cast::<u8>(), byte_len);
+            let _ = GlobalUnlock(hglobal);
+            SetClipboardData(CF_UNICODETEXT, HANDLE(hglobal.0)).ok()?;
+            Some(())
+        })()
+        .is_some();
+
+        let _ = CloseClipboard();
+        copied
+    }
+}
+
 fn current_strings() -> Strings {
     let state = lock_state();
     state
@@ -3120,6 +3277,63 @@ fn show_display_guide(hwnd: HWND) {
         hwnd,
         strings.help_display_guide,
         strings.help_display_guide_body,
+    );
+}
+
+/// Builds the full setup/disable/last-observed message body shown by the
+/// "Antigravity Setup..." menu item. Always shows the setup and disable
+/// commands (this app's own display toggle for Antigravity is a separate
+/// thing from the Antigravity CLI's own statusLine configuration, and a
+/// user who wants to reconfigure or remove it needs both regardless of
+/// which state the cache is currently in). The last-observed line reflects
+/// only what `antigravity_statusline::read_cache` actually finds on disk —
+/// a missing, malformed, or unsupported-schema cache all show
+/// `antigravity_never_observed` rather than a fabricated timestamp.
+fn build_antigravity_setup_text(strings: Strings) -> String {
+    let mut message = String::from(strings.antigravity_setup_intro);
+    message.push_str("\n\n");
+    message.push_str(strings.antigravity_setup_command_label);
+    message.push('\n');
+    message.push_str(ANTIGRAVITY_SETUP_COMMAND);
+    message.push_str("\n\n");
+    message.push_str(strings.antigravity_setup_disable_label);
+    message.push('\n');
+    message.push_str(ANTIGRAVITY_DISABLE_COMMAND);
+    message.push_str("\n\n");
+    message.push_str(strings.antigravity_last_observed_label);
+    message.push_str(&antigravity_last_observed_text(strings));
+    message
+}
+
+/// "Last observed: HH:MM" (local time) for a valid cache, or
+/// `antigravity_never_observed` for anything else — a missing file is
+/// exactly as "never observed" as a malformed or unsupported-schema one;
+/// none of them are a real captured reading.
+fn antigravity_last_observed_text(strings: Strings) -> String {
+    let path = crate::antigravity_statusline::default_cache_path();
+    let crate::antigravity_statusline::CacheReadResult::Valid(cache) =
+        crate::antigravity_statusline::read_cache(&path)
+    else {
+        return strings.antigravity_never_observed.to_string();
+    };
+    let captured_at = UNIX_EPOCH + Duration::from_secs(cache.captured_at_unix);
+    match system_time_to_local_parts(captured_at) {
+        Some(parts) => format!("{:02}:{:02}", parts.hour, parts.minute),
+        None => strings.antigravity_never_observed.to_string(),
+    }
+}
+
+/// Copies `ANTIGRAVITY_SETUP_COMMAND` to the clipboard (best-effort — the
+/// command is also shown as plain text in the dialog either way, so a
+/// clipboard failure never blocks the user from copying it manually) and
+/// shows the full setup/disable/last-observed dialog.
+fn show_antigravity_setup(hwnd: HWND) {
+    let _ = copy_text_to_clipboard(hwnd, ANTIGRAVITY_SETUP_COMMAND);
+    let strings = current_strings();
+    show_info_message(
+        hwnd,
+        strings.antigravity_setup_title,
+        &build_antigravity_setup_text(strings),
     );
 }
 
@@ -3857,6 +4071,11 @@ struct VisibleRows {
     weekly_extra_lines: i32,
     session_row: bool,
     monthly_row: bool,
+    /// Count of Antigravity extra-item rows (every cache item besides
+    /// `gemini-weekly`) — always shown regardless of `PopupLayout`, the same
+    /// treatment `monthly_row` gets, since these are current quota data, not
+    /// an optional detail line.
+    antigravity_extra_rows: i32,
 }
 
 fn visible_rows(
@@ -3864,7 +4083,14 @@ fn visible_rows(
     weekly_extra_lines: i32,
     needs_session_row: bool,
 ) -> VisibleRows {
-    visible_rows_for_quota(layout, true, weekly_extra_lines, needs_session_row, false)
+    visible_rows_for_quota(
+        layout,
+        true,
+        weekly_extra_lines,
+        needs_session_row,
+        false,
+        0,
+    )
 }
 
 fn visible_rows_for_quota(
@@ -3873,6 +4099,7 @@ fn visible_rows_for_quota(
     weekly_extra_lines: i32,
     session_row: bool,
     monthly_row: bool,
+    antigravity_extra_rows: i32,
 ) -> VisibleRows {
     match layout {
         PopupLayout::Compact => VisibleRows {
@@ -3880,12 +4107,14 @@ fn visible_rows_for_quota(
             weekly_extra_lines: 0,
             session_row: false,
             monthly_row,
+            antigravity_extra_rows,
         },
         PopupLayout::Standard => VisibleRows {
             weekly_row,
             weekly_extra_lines: if weekly_row { weekly_extra_lines } else { 0 },
             session_row,
             monthly_row,
+            antigravity_extra_rows,
         },
     }
 }
@@ -3896,8 +4125,10 @@ fn visible_rows_for_quota(
 /// detail contributes its actual line count. Callers apply `sc(...)` once.
 fn popup_height_logical(rows: VisibleRows) -> i32 {
     const HEADER_ONLY_HEIGHT: i32 = 3 + HEADER_ROW_H + 4 + 5;
-    let row_count =
-        i32::from(rows.weekly_row) + i32::from(rows.session_row) + i32::from(rows.monthly_row);
+    let row_count = i32::from(rows.weekly_row)
+        + i32::from(rows.session_row)
+        + i32::from(rows.monthly_row)
+        + rows.antigravity_extra_rows;
     let gaps = (row_count - 1).max(0);
     HEADER_ONLY_HEIGHT
         + row_count * SEGMENT_H
@@ -3917,6 +4148,7 @@ fn widget_height_for_state(state: &AppState) -> i32 {
         weekly_pace_extra_lines(state),
         needs_session_row(state),
         needs_monthly_row(state),
+        state.antigravity_extra_items.len() as i32,
     );
     widget_height_for_rows(rows)
 }
@@ -3949,13 +4181,18 @@ struct PaceRowLayout {
     weekly_secondary_y: Option<i32>,
     session_row_y: Option<i32>,
     monthly_row_y: Option<i32>,
+    /// One Y per Antigravity extra-item row, in the same order as
+    /// `AppState::antigravity_extra_items` — empty when there are none.
+    antigravity_extra_rows_y: Vec<i32>,
 }
 
 fn pace_row_layout(height: i32, rows: VisibleRows) -> PaceRowLayout {
     let provider_header_y = sc(3);
     let mut y = provider_header_y + sc(HEADER_ROW_H) + sc(4);
-    let mut rows_left =
-        i32::from(rows.weekly_row) + i32::from(rows.session_row) + i32::from(rows.monthly_row);
+    let mut rows_left = i32::from(rows.weekly_row)
+        + i32::from(rows.session_row)
+        + i32::from(rows.monthly_row)
+        + rows.antigravity_extra_rows;
 
     let weekly_row_y = rows.weekly_row.then_some(y);
     let weekly_secondary_y = if rows.weekly_row && rows.weekly_extra_lines >= 1 {
@@ -3983,7 +4220,23 @@ fn pace_row_layout(height: i32, rows: VisibleRows) -> PaceRowLayout {
     let monthly_row_y = rows.monthly_row.then_some(y);
     if rows.monthly_row {
         y += sc(SEGMENT_H);
+        rows_left -= 1;
+        if rows_left > 0 {
+            y += sc(ROW_GAP_H);
+        }
     }
+
+    let mut antigravity_extra_rows_y =
+        Vec::with_capacity(rows.antigravity_extra_rows.max(0) as usize);
+    for _ in 0..rows.antigravity_extra_rows {
+        antigravity_extra_rows_y.push(y);
+        y += sc(SEGMENT_H);
+        rows_left -= 1;
+        if rows_left > 0 {
+            y += sc(ROW_GAP_H);
+        }
+    }
+
     debug_assert_eq!(y + sc(5), height);
     PaceRowLayout {
         provider_header_y,
@@ -3991,6 +4244,7 @@ fn pace_row_layout(height: i32, rows: VisibleRows) -> PaceRowLayout {
         weekly_secondary_y,
         session_row_y,
         monthly_row_y,
+        antigravity_extra_rows_y,
     }
 }
 
@@ -4730,6 +4984,7 @@ pub fn run() {
                 antigravity_weekly_text: String::new(),
                 antigravity_weekly_pace: None,
                 antigravity_weekly_remaining_text: None,
+                antigravity_extra_items: Vec::new(),
                 github_copilot_state: CellState::Loading,
                 github_copilot_percent: None,
                 github_copilot_text: String::new(),
@@ -4912,6 +5167,7 @@ fn render_layered() {
         antigravity_weekly_text,
         antigravity_weekly_pace,
         antigravity_weekly_remaining_text,
+        antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
         show_claude_code,
@@ -4957,6 +5213,7 @@ fn render_layered() {
                 s.antigravity_weekly_text.clone(),
                 s.antigravity_weekly_pace.clone(),
                 s.antigravity_weekly_remaining_text.clone(),
+                s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
                 s.show_claude_code,
@@ -5075,6 +5332,7 @@ fn render_layered() {
             &antigravity_weekly_text,
             antigravity_weekly_pace.as_ref(),
             antigravity_weekly_remaining_text.as_deref(),
+            &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
             show_claude_code,
@@ -5184,6 +5442,7 @@ fn paint_content(
     antigravity_weekly_text: &str,
     antigravity_weekly_pace: Option<&PaceGuidanceLines>,
     antigravity_weekly_remaining_text: Option<&str>,
+    antigravity_extra_items: &[AntigravityItemDisplay],
     github_copilot_percent: Option<f64>,
     github_copilot_text: &str,
     show_claude_code: bool,
@@ -5334,6 +5593,7 @@ fn paint_content(
             weekly_lines,
             needs_session_row,
             needs_monthly_row,
+            antigravity_extra_items.len() as i32,
         );
         let layout = pace_row_layout(height, rows);
 
@@ -5653,6 +5913,39 @@ fn paint_content(
             );
         }
 
+        // Antigravity's cache can carry any number of quota keys beyond
+        // `gemini-weekly` (already drawn in the weekly row above) — every
+        // one of them gets its own persistent row here, labeled with
+        // whatever safe display label `antigravity_statusline` gave it
+        // (a raw, un-renamed key for anything this build doesn't
+        // specifically recognize), never hidden in a details-only view.
+        for (item, &row_y) in antigravity_extra_items
+            .iter()
+            .zip(layout.antigravity_extra_rows_y.iter())
+        {
+            draw_row(
+                hdc,
+                width,
+                content_x,
+                row_y,
+                text_color,
+                &item.label,
+                &[RowCell {
+                    percent: item.percent,
+                    text: &item.text,
+                    accent: antigravity_accent,
+                    provider_text_color: antigravity_usage_text_color(provider_tint_dark),
+                    is_warning: false,
+                    auth_action: None,
+                }],
+                track,
+                warning,
+                track_outline,
+                hovered_auth_cta_rect,
+                auth_cta_hits,
+            );
+        }
+
         // AUM-WINDOW-UI-01B: outer 1px frame in the palette's border color,
         // drawn last (on top of the rows/divider) and inset within the
         // existing client rect so it never expands the popup's bounds.
@@ -5804,10 +6097,9 @@ fn do_poll(send_hwnd: SendHwnd) {
                 s.codex_session_state = codex_session_state;
                 s.codex_weekly_state = codex_weekly_state;
                 s.codex_banked_reset_count = banked_reset_count_for_poll(&report.codex);
-                let (antigravity_session_state, antigravity_weekly_state) =
-                    poll_cell_states(QuotaFamilyId::Antigravity, &report.antigravity);
-                s.antigravity_session_state = antigravity_session_state;
-                s.antigravity_weekly_state = antigravity_weekly_state;
+                s.antigravity_session_state =
+                    poll_cell_states(QuotaFamilyId::Antigravity, &report.antigravity).0;
+                s.antigravity_weekly_state = antigravity_provider_cell_state(&report.antigravity);
                 s.github_copilot_state = poll_quota_item_state(
                     QuotaFamilyId::GithubCopilot,
                     &report.github_copilot,
@@ -5888,10 +6180,10 @@ fn do_poll(send_hwnd: SendHwnd) {
                     s.codex_session_state = codex_session_state;
                     s.codex_weekly_state = codex_weekly_state;
                     s.codex_banked_reset_count = banked_reset_count_for_poll(&report.codex);
-                    let (antigravity_session_state, antigravity_weekly_state) =
-                        poll_cell_states(QuotaFamilyId::Antigravity, &report.antigravity);
-                    s.antigravity_session_state = antigravity_session_state;
-                    s.antigravity_weekly_state = antigravity_weekly_state;
+                    s.antigravity_session_state =
+                        poll_cell_states(QuotaFamilyId::Antigravity, &report.antigravity).0;
+                    s.antigravity_weekly_state =
+                        antigravity_provider_cell_state(&report.antigravity);
                     s.github_copilot_state = poll_quota_item_state(
                         QuotaFamilyId::GithubCopilot,
                         &report.github_copilot,
@@ -6870,6 +7162,8 @@ unsafe extern "system" fn wnd_proc(
                     }
                 }
                 IDM_HELP_VERSION_INFORMATION => show_version_information(hwnd),
+                #[cfg(feature = "antigravity")]
+                IDM_HELP_ANTIGRAVITY_SETUP => show_antigravity_setup(hwnd),
                 #[cfg(feature = "self-update")]
                 IDM_VERSION_ACTION => {
                     let (install_channel, release) = {
@@ -8072,6 +8366,17 @@ fn show_context_menu(hwnd: HWND) {
                 PCWSTR::from_raw(label_str.as_ptr()),
             );
         }
+        #[cfg(feature = "antigravity")]
+        {
+            let antigravity_setup_label =
+                native_interop::wide_str(strings.antigravity_setup_menu_item);
+            let _ = AppendMenuW(
+                help_menu,
+                MENU_ITEM_FLAGS(0),
+                IDM_HELP_ANTIGRAVITY_SETUP as usize,
+                PCWSTR::from_raw(antigravity_setup_label.as_ptr()),
+            );
+        }
         let _ = AppendMenuW(help_menu, MF_SEPARATOR, 0, PCWSTR::null());
 
         let readme_label = native_interop::wide_str(strings.help_readme);
@@ -8205,6 +8510,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_weekly_text,
         antigravity_weekly_pace,
         antigravity_weekly_remaining_text,
+        antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
         show_claude_code,
@@ -8247,6 +8553,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_weekly_text.clone(),
                 s.antigravity_weekly_pace.clone(),
                 s.antigravity_weekly_remaining_text.clone(),
+                s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
                 s.show_claude_code,
@@ -8324,6 +8631,7 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_weekly_text,
             antigravity_weekly_pace.as_ref(),
             antigravity_weekly_remaining_text.as_deref(),
+            &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
             show_claude_code,
@@ -10040,14 +10348,15 @@ mod tests {
 
     #[test]
     fn four_provider_poll_growth_has_current_height_visible_header_and_safe_bottom() {
-        let loading_rows = visible_rows_for_quota(PopupLayout::Standard, true, 0, true, true);
-        let polled_rows = visible_rows_for_quota(PopupLayout::Standard, true, 2, true, true);
+        let loading_rows = visible_rows_for_quota(PopupLayout::Standard, true, 0, true, true, 0);
+        let polled_rows = visible_rows_for_quota(PopupLayout::Standard, true, 2, true, true, 0);
         let loading_height = widget_height_for_rows(loading_rows);
         let polled_height = widget_height_for_rows(polled_rows);
 
         assert_eq!(active_family_count(true, true, true, true), 4);
         assert!(polled_height > loading_height);
-        let without_monthly = visible_rows_for_quota(PopupLayout::Standard, true, 2, true, false);
+        let without_monthly =
+            visible_rows_for_quota(PopupLayout::Standard, true, 2, true, false, 0);
         assert!(polled_height > widget_height_for_rows(without_monthly));
 
         let width = total_widget_width_for(4);
@@ -11381,13 +11690,170 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_extra_rows_add_one_segment_height_each() {
+        let none = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false, 0);
+        let two = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false, 2);
+        assert_eq!(
+            popup_height_logical(two) - popup_height_logical(none),
+            2 * SEGMENT_H + 2 * ROW_GAP_H,
+            "each extra row adds its own segment height plus a gap before it"
+        );
+    }
+
+    #[test]
+    fn antigravity_extra_rows_are_shown_in_compact_layout_too() {
+        // Unlike `session_row`, extra Antigravity items are current quota
+        // data, not an optional detail — Compact must not zero them out.
+        let rows = visible_rows_for_quota(PopupLayout::Compact, true, 0, true, false, 3);
+        assert_eq!(rows.antigravity_extra_rows, 3);
+        assert!(!rows.session_row);
+    }
+
+    #[test]
+    fn pace_row_layout_places_antigravity_extra_rows_after_monthly_row_without_panicking() {
+        let rows = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, true, 2);
+        let height = sc(popup_height_logical(rows));
+        let layout = pace_row_layout(height, rows); // must not hit the debug_assert
+        assert_eq!(layout.antigravity_extra_rows_y.len(), 2);
+        let monthly_y = layout.monthly_row_y.expect("monthly row is visible");
+        assert!(layout.antigravity_extra_rows_y[0] > monthly_y);
+        assert!(layout.antigravity_extra_rows_y[1] > layout.antigravity_extra_rows_y[0]);
+    }
+
+    #[test]
+    fn pace_row_layout_antigravity_extra_rows_empty_when_none() {
+        let rows = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, true, 0);
+        let height = sc(popup_height_logical(rows));
+        let layout = pace_row_layout(height, rows);
+        assert!(layout.antigravity_extra_rows_y.is_empty());
+    }
+
+    #[test]
+    fn antigravity_provider_state_is_ok_on_success_regardless_of_session_weekly_flags() {
+        // `UsageData::from_quota_items` never sets `session_available`/
+        // `weekly_available` — the whole point of this function is to not
+        // depend on those flags for Antigravity.
+        let usage = UsageData::from_quota_items(vec![QuotaItem::percentage(
+            "gemini-weekly",
+            "Gemini Weekly",
+            10.0,
+            None,
+        )]);
+        let outcome = poller::ProviderPollOutcome::Success {
+            source: poller::ProviderPollSource::AntigravityQuotaUsage,
+            attempted_at: SystemTime::UNIX_EPOCH,
+            acquired_at: SystemTime::UNIX_EPOCH,
+            usage,
+        };
+        assert_eq!(antigravity_provider_cell_state(&outcome), CellState::Ok);
+    }
+
+    #[test]
+    fn antigravity_provider_state_is_disabled_when_provider_disabled() {
+        assert_eq!(
+            antigravity_provider_cell_state(&poller::ProviderPollOutcome::Disabled),
+            CellState::Disabled
+        );
+    }
+
+    #[test]
+    fn antigravity_weekly_pace_section_is_none_for_missing_item() {
+        assert_eq!(antigravity_weekly_pace_section(None), None);
+    }
+
+    #[test]
+    fn antigravity_weekly_pace_section_is_none_for_stale_item() {
+        let item = crate::models::QuotaItem {
+            id: "gemini-weekly".to_string(),
+            label: "Gemini Weekly".to_string(),
+            availability: crate::models::QuotaItemAvailability::Stale,
+            metric: None,
+            unit: crate::models::QuotaUnit::Percent,
+            resets_at: None,
+        };
+        assert_eq!(
+            antigravity_weekly_pace_section(Some(&item)),
+            None,
+            "a stale gemini-weekly item must never feed pace guidance a pre-reset value"
+        );
+    }
+
+    #[test]
+    fn antigravity_weekly_pace_section_is_some_for_available_item() {
+        let resets_at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let item = QuotaItem::percentage("gemini-weekly", "Gemini Weekly", 37.0, Some(resets_at));
+        let section = antigravity_weekly_pace_section(Some(&item)).expect("available item");
+        assert_eq!(section.percentage, 37.0);
+        assert_eq!(section.resets_at, Some(resets_at));
+    }
+
+    #[test]
+    fn antigravity_extra_items_excludes_gemini_weekly_and_keeps_others() {
+        let items = vec![
+            QuotaItem::percentage("gemini-weekly", "Gemini Weekly", 10.0, None),
+            QuotaItem::percentage("3p-weekly", "3p-weekly", 5.0, None),
+        ];
+        let extras = antigravity_extra_items_from(
+            &items,
+            CellState::Ok,
+            DisplayBasis::UsedPercentage,
+            ResetDisplayMode::Relative,
+            LanguageId::English.strings(),
+        );
+        assert_eq!(extras.len(), 1);
+        assert_eq!(extras[0].label, "3p-weekly");
+        assert_eq!(extras[0].percent, Some(5.0));
+    }
+
+    #[test]
+    fn antigravity_extra_items_handles_stale_and_unknown_keys_without_panicking() {
+        let items = vec![
+            crate::models::QuotaItem {
+                id: "3p-weekly".to_string(),
+                label: "3p-weekly".to_string(),
+                availability: crate::models::QuotaItemAvailability::Stale,
+                metric: None,
+                unit: crate::models::QuotaUnit::Percent,
+                resets_at: None,
+            },
+            QuotaItem::percentage("some-future-key", "some-future-key", 42.0, None),
+        ];
+        let extras = antigravity_extra_items_from(
+            &items,
+            CellState::Ok,
+            DisplayBasis::UsedPercentage,
+            ResetDisplayMode::Relative,
+            LanguageId::English.strings(),
+        );
+        assert_eq!(extras.len(), 2);
+        assert_eq!(extras[0].percent, None, "stale item must not show a value");
+        assert_eq!(extras[1].label, "some-future-key");
+        assert_eq!(extras[1].percent, Some(42.0));
+    }
+
+    #[test]
+    fn antigravity_extra_items_is_empty_list_when_provider_state_is_not_ok() {
+        let items = vec![QuotaItem::percentage("3p-weekly", "3p-weekly", 5.0, None)];
+        let extras = antigravity_extra_items_from(
+            &items,
+            CellState::FetchFailed,
+            DisplayBasis::UsedPercentage,
+            ResetDisplayMode::Relative,
+            LanguageId::English.strings(),
+        );
+        // The item still exists in the slice, but a non-Ok provider state
+        // must short-circuit every row to its status text, never a value.
+        assert_eq!(extras[0].percent, None);
+    }
+
+    #[test]
     fn quota_row_with_every_provider_hidden_has_no_label_or_height() {
         assert!(!quota_row_visible(&[
             (true, false),
             (false, true),
             (false, false),
         ]));
-        let rows = visible_rows_for_quota(PopupLayout::Standard, false, 2, false, false);
+        let rows = visible_rows_for_quota(PopupLayout::Standard, false, 2, false, false, 0);
         assert!(!rows.weekly_row);
         assert_eq!(rows.weekly_extra_lines, 0);
         assert_eq!(rows.session_row, false);
@@ -11434,9 +11900,9 @@ mod tests {
     #[test]
     fn five_hour_weekly_and_monthly_rows_share_visibility_and_height_rules() {
         for visible_row in [
-            visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false),
-            visible_rows_for_quota(PopupLayout::Standard, false, 0, true, false),
-            visible_rows_for_quota(PopupLayout::Standard, false, 0, false, true),
+            visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false, 0),
+            visible_rows_for_quota(PopupLayout::Standard, false, 0, true, false, 0),
+            visible_rows_for_quota(PopupLayout::Standard, false, 0, false, true, 0),
         ] {
             assert_eq!(
                 popup_height_logical(visible_row),
@@ -11454,9 +11920,9 @@ mod tests {
 
     #[test]
     fn row_visibility_and_height_add_exactly_one_row_and_gap() {
-        let weekly_only = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false);
+        let weekly_only = visible_rows_for_quota(PopupLayout::Standard, true, 0, false, false, 0);
         let weekly_and_monthly =
-            visible_rows_for_quota(PopupLayout::Standard, true, 0, false, true);
+            visible_rows_for_quota(PopupLayout::Standard, true, 0, false, true, 0);
         assert_eq!(
             popup_height_logical(weekly_and_monthly) - popup_height_logical(weekly_only),
             ROW_GAP_H + SEGMENT_H
@@ -11677,6 +12143,8 @@ mod tests {
         ids.push(IDM_VERSION_ACTION);
         #[cfg(feature = "antigravity")]
         ids.push(IDM_MODEL_ANTIGRAVITY);
+        #[cfg(feature = "antigravity")]
+        ids.push(IDM_HELP_ANTIGRAVITY_SETUP);
 
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
