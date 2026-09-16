@@ -282,6 +282,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                     return;
                 };
                 native_interop::embed_as_child(hwnd, taskbar.hwnd);
+                ensure_tray_event_hook_for_taskbar(taskbar.hwnd);
                 let mut point = [POINT { x, y }];
                 MapWindowPoints(None, Some(taskbar.hwnd), &mut point);
                 let _ = SetWindowPos(
@@ -509,6 +510,36 @@ pub(super) fn vertical_anchor_factor(anchor: VerticalAnchor) -> f64 {
 pub(super) fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_height: i32) -> i32 {
     let anchor_bottom = anchor_top + anchor_height;
     (anchor_bottom - widget_height).max(anchor_top)
+}
+
+pub(super) fn ensure_tray_event_hook_for_taskbar(taskbar_hwnd: HWND) {
+    let tray_notify = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd");
+    let hook_needed = {
+        let mut state = lock_state();
+        if let Some(s) = state.as_mut() {
+            s.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar_hwnd));
+            s.tray_notify_hwnd = tray_notify.map(SendHwnd::from_hwnd);
+            s.embedded = true;
+            s.win_event_hook.is_none()
+        } else {
+            false
+        }
+    };
+    if hook_needed {
+        if let Some(tray) = tray_notify {
+            let thread_id = native_interop::get_window_thread_id(tray);
+            let hook = native_interop::set_tray_event_hook(thread_id, on_tray_location_changed);
+            let mut state = lock_state();
+            if let Some(s) = state.as_mut() {
+                s.win_event_hook = hook.map(SendWinEventHook::from_hook);
+            }
+            diagnose::log(if hook.is_some() {
+                "tray event hook installed successfully"
+            } else {
+                "tray event hook could not be installed"
+            });
+        }
+    }
 }
 
 pub(super) fn rect_changed(previous: Option<RECT>, current: Option<RECT>) -> bool {
