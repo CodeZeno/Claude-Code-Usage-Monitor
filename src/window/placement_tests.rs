@@ -462,9 +462,9 @@ fn test_drag_release_capture_state_ordering() {
 
 #[test]
 fn test_high_dpi_widget_capacity_and_watchdog_recovery() {
-    let logical_w = 217.0;
-    let logical_h = 46.0;
-    let dpi_scale = 1.5; // 150% High DPI
+    let logical_w: f64 = 217.0;
+    let logical_h: f64 = 46.0;
+    let dpi_scale: f64 = 1.5; // 150% High DPI
     let physical_w = (logical_w * dpi_scale).round() as i32; // 326
     let physical_h = (logical_h * dpi_scale).round() as i32; // 69
     assert_eq!(physical_w, 326);
