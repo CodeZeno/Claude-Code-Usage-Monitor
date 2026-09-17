@@ -5098,6 +5098,11 @@ pub fn run() {
         // Register the application-wide system tray icon.
         sync_tray_icons(hwnd);
 
+        // CreateWindowExW used the legacy fixed height, which can exceed the
+        // height of the rows actually visible. Size the hidden window before
+        // the virtual-desktop COM call, which can dispatch a reentrant WM_PAINT.
+        position_at_taskbar();
+
         // Resolve the saved virtual-desktop scope before the window is
         // shown, so a `CurrentOnly` widget never flashes visible first and
         // only then gets hidden. For `CurrentOnly` this is also the
@@ -5109,9 +5114,8 @@ pub fn run() {
         // existed.
         apply_virtual_desktop_scope_at_startup(hwnd);
 
-        // Position and show (only if widget_visible preference is true).
-        // Scope `CurrentOnly` was already fully handled above.
-        position_at_taskbar();
+        // Show only if widget_visible preference is true. Scope
+        // `CurrentOnly` was already fully handled above.
         if settings.virtual_desktop_scope == VirtualDesktopScope::All {
             if settings.widget_visible {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
@@ -10400,6 +10404,37 @@ mod tests {
             Some(same_size_at_manual_position),
             300,
             85
+        ));
+    }
+
+    #[test]
+    fn startup_fixed_height_must_be_synced_to_visible_rows_before_paint() {
+        // At 125% scaling, CreateWindowExW's legacy height is 98 px, but
+        // the current two-row layout is 78 px. A reentrant first paint must
+        // see the resized window rather than the stale creation height.
+        let rows = visible_rows(PopupLayout::Standard, 0, true);
+        let initial_height = scaled_for_dpi(WIDGET_HEIGHT, 120);
+        let required_height = scaled_for_dpi(popup_height_logical(rows), 120);
+        assert_eq!((initial_height, required_height), (98, 78));
+        let initial_rect = RECT {
+            left: 400,
+            top: 700,
+            right: 700,
+            bottom: 700 + initial_height,
+        };
+        assert!(window_size_needs_sync(
+            Some(initial_rect),
+            300,
+            required_height
+        ));
+        let resized_rect = RECT {
+            bottom: 700 + required_height,
+            ..initial_rect
+        };
+        assert!(!window_size_needs_sync(
+            Some(resized_rect),
+            300,
+            required_height
         ));
     }
 
