@@ -330,9 +330,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             Some(HWND_TOPMOST),
                             final_x,
                             final_y,
-                            widget_w,
-                            widget_h,
-                            SWP_NOACTIVATE,
+                            0,
+                            0,
+                            SWP_NOACTIVATE | SWP_NOSIZE,
                         );
                     }
                 }
@@ -358,17 +358,18 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
-            let drag_ended = {
+            let (drag_ended, was_snapped) = {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     let was_dragging = s.dragging;
                     let was_pending = s.pending_drag;
+                    let was_snapped = s.is_snapped;
                     s.dragging = false;
                     s.pending_drag = false;
                     s.is_snapped = false;
-                    (was_dragging, was_pending)
+                    ((was_dragging, was_pending), was_snapped)
                 } else {
-                    (false, false)
+                    ((false, false), false)
                 }
             };
             unsafe {
@@ -394,10 +395,6 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 let widget_h = (widget_rect.bottom - widget_rect.top).max(1);
 
                 let taskbars = native_interop::find_taskbars();
-                let was_snapped = {
-                    let state = lock_state();
-                    state.as_ref().map_or(false, |s| s.is_snapped)
-                };
                 let target_dock = taskbars.iter().enumerate().find_map(|(idx, tb)| {
                     let free_dock_slot = positioning::taskbar_free_dock_slot(tb.hwnd, tb.rect);
                     let capacity_ok = positioning::is_taskbar_capacity_sufficient(
