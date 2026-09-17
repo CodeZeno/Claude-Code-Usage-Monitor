@@ -4320,21 +4320,9 @@ fn pace_row_layout(height: i32, rows: VisibleRows) -> PaceRowLayout {
     }
 }
 
-/// AUM-WINDOW-UI-01C-2-STEP2 (drag UX): the fixed y-boundary immediately
-/// below the provider header. Optional quota rows begin at this boundary;
-/// hiding any of them changes only the content below, never the established
-/// header drag target.
-fn header_band_bottom(state: &AppState) -> i32 {
-    let _ = state;
-    sc(3 + HEADER_ROW_H + 4)
-}
-
-/// Whether `(client_x, client_y)` falls within the popup's draggable header
-/// band — the full-width strip from the top edge down to (not including)
-/// `header_band_bottom`. Replaces the old narrow left-edge handle
-/// (AUM-WINDOW-UI-01C-2-STEP2): the header band already shows the provider
-/// names, making it a far more discoverable drag target than a 10px-wide
-/// strip ever was.
+/// The popup's non-interactive background is draggable. Interactive targets
+/// such as resize edges, Help, and auth CTAs take priority in
+/// `pointer_interaction_target`.
 fn is_drag_region_point(client_x: i32, client_y: i32, width: i32, height: i32) -> bool {
     client_x >= 0 && client_x < width && client_y >= 0 && client_y < height
 }
