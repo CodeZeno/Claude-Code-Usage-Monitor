@@ -38,6 +38,7 @@ It works best if you want a simple "how close am I to the limit?" display that i
 - Claude Code (CLI or App) installed and authenticated
 - Optional: Codex CLI installed and authenticated, if you want Codex usage
 - Optional: Google Antigravity installed and authenticated, if you want Antigravity usage
+- Optional: GitHub CLI (`gh`) installed and authenticated, if you want GitHub Copilot AI Credits usage
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
@@ -145,7 +146,7 @@ What the app sends over the network:
 - Requests to Anthropic's Claude endpoints to read your usage and rate-limit information
 - No direct HTTP request for Codex usage — the monitor talks locally to the official `codex app-server`, which handles the Codex CLI session and its own network activity
 - Nothing to Google or Antigravity — if Antigravity is enabled, this app only reads its own local cache file; see `docs/quota-rules.md` for how that cache is populated
-- Requests to GitHub only if you use the app's update check / self-update feature
+- If GitHub Copilot is enabled, the GitHub CLI makes the user billing API request for AI-credit usage; update check / self-update may also contact GitHub
 - If proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` are set, those outbound requests may use that proxy
 
 What the app stores locally:
@@ -172,7 +173,7 @@ Usage snapshots and the machine ID are stored under:
 
 When a snapshot is created successfully, the app attempts to update `current.json` and append to `history.jsonl` independently.
 
-Each snapshot records session and weekly usage percentages, reset times, and provider statuses such as `success`, `error`, `stale`, or `disabled`. It does not include credentials, tokens, or raw provider responses.
+Each snapshot records provider statuses and the available usage windows or quota items, including reset times. It does not include credentials, tokens, or raw provider responses.
 
 What it does **not** do:
 
@@ -196,12 +197,12 @@ Notes:
 The monitor:
 
 1. Uses each enabled provider's supported local integration or authenticated source
-2. Reads current usage from Anthropic, the official Codex app-server, and/or the Antigravity statusline-derived cache
+2. Reads current usage from Anthropic, the official Codex app-server, the Antigravity statusline-derived cache, and/or GitHub's billing API through the GitHub CLI
 3. Shows the result directly in the Windows taskbar
 4. Keeps the widget aligned with the selected taskbar and tray area
 5. Refreshes periodically in the background
 
-If the newer usage endpoint is unavailable, it can fall back to reading the rate-limit headers returned by Claude's Messages API.
+A legacy Claude Messages-header fallback exists only in builds compiled with the optional `claude-messages-fallback` feature; default builds do not enable it.
 
 ## Open Source
 
