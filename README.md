@@ -14,7 +14,7 @@ It sits in your taskbar and shows your configured providers' available quota win
 - A **5h** bar for your current 5-hour Claude usage window
 - A **7d** bar for your current 7-day window
 - Optional Codex usage bars alongside Claude Code
-- Optional Antigravity model usage bars for Google's 5-hour and weekly Gemini quota windows
+- Optional Antigravity quota items captured through its official statusline integration
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
 - System tray icon badges showing your enabled model usage percentage
@@ -28,7 +28,7 @@ This app is for Windows users who already have **Claude Code (CLI or App) instal
 
 Codex support is optional. To show Codex usage, install and sign in to the Codex CLI, then enable Codex from the right-click **Models** menu.
 
-Antigravity support is optional too. To show Antigravity usage, install and sign in to Google Antigravity, then enable the **Antigravity** model from the right-click **Models** menu.
+Antigravity support is optional too. Enable it from the **Models** menu and use **Help > Antigravity Setup...** for the statusline bridge command.
 
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
@@ -80,14 +80,14 @@ When multiple models are shown, each model has its own usage bar and matching us
 The widget keeps its labels short. Here's what each one actually represents:
 
 - **Claude** is the shared Claude / Claude Code usage window, not a Claude Code-specific metric
-- **Codex** displays usage fetched through the Codex CLI's credentials from the ChatGPT backend
+- **Codex** displays native rate-limit data through OpenAI's official `codex app-server`; the monitor does not read Codex credential files or call a ChatGPT/Codex backend endpoint directly
 - When available, the Codex heading also shows the number of banked **Full resets** reported by the Codex CLI; an unavailable count is shown separately from zero
-- **Antigravity** is shown as its own provider column. Its number prefers Google's Gemini quota summary when available, and falls back to model quota data when it isn't
-- Antigravity's quota summary can include several model families (Gemini, Claude, GPT, image models), so its number isn't a dedicated Gemini metric
-- Gemini is not shown as its own separate provider, since the underlying quota isn't guaranteed to always be Gemini specifically
+- **Antigravity** reads only a sanitized local cache populated from Antigravity's official `/statusline <command>` payload; the monitor does not call Google/Antigravity endpoints or read its OAuth credentials
+- Antigravity quota items are carried through by quota key. A weekly-only payload is normal; the app does not fabricate a 5-hour value when none was observed
+- `gemini-weekly` is treated as a Gemini-family weekly quota. Other keys such as `3p-weekly` are not renamed until their meaning is authoritatively documented
 - These columns are a common display for whatever usage data is available per provider, not a separate UI design per provider
 
-*Last verified: 2026-08-08*
+*Last verified: 2026-09-16*
 
 ### System Tray Icon
 
@@ -138,13 +138,13 @@ What the app reads:
 
 - Your local Claude Code OAuth credentials from `~/.claude/.credentials.json`
 - If needed, the same credentials file inside an installed WSL distro
-- If Codex is enabled, your local Codex credentials from `$CODEX_HOME/auth.json` or `~/.codex/auth.json`
+- If Codex is enabled, native rate-limit data from the local official `codex app-server`; authentication remains the Codex CLI/app-server's responsibility
 - If Antigravity is enabled, a sanitized local cache file this app itself wrote from the Antigravity CLI's official `/statusline` feature — never an OAuth token or Windows Credential Manager entry
 
 What the app sends over the network:
 
 - Requests to Anthropic's Claude endpoints to read your usage and rate-limit information
-- Requests to ChatGPT's Codex usage endpoint to read your Codex usage and rate-limit information, if Codex is enabled
+- No direct HTTP request for Codex usage — the monitor talks locally to the official `codex app-server`, which handles the Codex CLI session and its own network activity
 - Nothing to Google or Antigravity — if Antigravity is enabled, this app only reads its own local cache file; see `docs/quota-rules.md` for how that cache is populated
 - Requests to GitHub only if you use the app's update check / self-update feature
 - If proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` are set, those outbound requests may use that proxy
@@ -181,13 +181,13 @@ What it does **not** do:
 - It does not use a separate backend service
 - It does not collect analytics or telemetry
 - It does not upload your project files
-- It does not directly edit your Codex credentials file
+- It does not read or edit your Codex credentials file
 - It does not upload usage snapshots or the machine ID to any server
 
 Notes:
 
 - If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
-- If your Codex token is expired, the app may ask the local Codex CLI to refresh it in the background. The monitor does not write `auth.json` itself; any credential update is handled by the Codex CLI.
+- If Codex usage is unavailable because the CLI/app-server session is not authenticated, sign in with the Codex CLI; the monitor does not manage Codex credentials itself
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository
 - Proxies should be trusted because proxied usage requests include your OAuth bearer token inside the TLS connection
@@ -196,8 +196,8 @@ Notes:
 
 The monitor:
 
-1. Finds your enabled model login credentials
-2. Reads your current usage from Anthropic, ChatGPT, and/or Google's Antigravity endpoints
+1. Uses each enabled provider's supported local integration or authenticated source
+2. Reads current usage from Anthropic, the official Codex app-server, and/or the Antigravity statusline-derived cache
 3. Shows the result directly in the Windows taskbar
 4. Keeps the widget aligned with the selected taskbar and tray area
 5. Refreshes periodically in the background
