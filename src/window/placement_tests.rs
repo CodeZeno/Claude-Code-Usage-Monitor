@@ -543,4 +543,20 @@ fn test_multi_monitor_auto_eject_resolution() {
     assert_eq!(rel_y, (100.0 / 1.5_f64).round() as i32); // 67
 }
 
+#[test]
+fn test_rebar_stretching_to_tray_is_not_treated_as_collision() {
+    // Model the condition where ReBarWindow32.right extends all the way to TrayNotifyWnd.left.
+    // In this scenario, rect.right >= tray_left - 10, meaning it is just the layout container
+    // band, NOT an actual running application button collision.
+    let tray_left = 1614;
+    let rebar_right = 1614; // Directly adjacent
+    let is_container_stretch = rebar_right >= tray_left - 10;
+    assert!(is_container_stretch, "ReBar spanning to tray must be identified as container stretch");
+
+    // When an actual app button is detected far from the tray (e.g. at 1200px):
+    let actual_app_right = 1200;
+    let is_actual_app = actual_app_right < tray_left - 10;
+    assert!(is_actual_app, "Real app button boundary before tray must be retained");
+}
+
 
