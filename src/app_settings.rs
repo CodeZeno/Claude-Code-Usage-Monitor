@@ -70,6 +70,23 @@ pub struct SettingsFile {
     pub dashboard_width: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dashboard_height: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating_card_opacity: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub placement_override: Option<PlacementOverride>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PlacementOverride {
+    pub nest: String,
+    #[serde(default)]
+    pub monitor_index: usize,
+    #[serde(default)]
+    pub screen_x: i32,
+    #[serde(default)]
+    pub screen_y: i32,
+    #[serde(default)]
+    pub tray_offset: i32,
 }
 
 impl Default for SettingsFile {
@@ -94,6 +111,8 @@ impl Default for SettingsFile {
             active_theme_path: None,
             dashboard_width: None,
             dashboard_height: None,
+            floating_card_opacity: None,
+            placement_override: None,
         }
     }
 }
@@ -115,6 +134,9 @@ impl SettingsFile {
         }
         if self.enabled_providers().is_empty() {
             self.set_enabled_providers(ProviderSet::default());
+        }
+        if let Some(opacity) = self.floating_card_opacity {
+            self.floating_card_opacity = Some(opacity.min(100));
         }
         // The widget and Theme Studio are now one system. Keep accepting this
         // legacy setting so older settings files migrate cleanly.

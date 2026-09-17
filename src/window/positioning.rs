@@ -1,6 +1,13 @@
 use super::*;
 
 pub(super) fn position_at_taskbar() {
+    let should_skip = {
+        let state = lock_state();
+        state.as_ref().is_some_and(|s| s.dragging || s.auto_ejected)
+    };
+    if should_skip {
+        return;
+    }
     refresh_dpi();
     let custom_position = {
         let state = lock_state();
@@ -218,6 +225,13 @@ pub(super) fn position_custom_theme(hwnd: HWND, theme: &ThemeDocument, scale: f6
 }
 
 pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, scale: f64) {
+    let is_dragging = {
+        let state = lock_state();
+        state.as_ref().is_some_and(|s| s.dragging)
+    };
+    if is_dragging {
+        return;
+    }
     let taskbars = native_interop::find_taskbars();
     let displays = native_interop::find_monitors();
     let display_index = theme.placement.reference.display;
@@ -652,5 +666,76 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
         refresh_theme_host_geometry();
         position_at_taskbar();
         render_layered();
+    }
+}
+
+pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {
+    let inter_left = a.left.max(b.left);
+    let inter_top = a.top.max(b.top);
+    let inter_right = a.right.min(b.right);
+    let inter_bottom = a.bottom.min(b.bottom);
+
+    if inter_right <= inter_left || inter_bottom <= inter_top {
+        return 0.0;
+    }
+
+    let inter_area = ((inter_right - inter_left) as f64) * ((inter_bottom - inter_top) as f64);
+    let a_area = (((a.right - a.left) as f64) * ((a.bottom - a.top) as f64)).max(1.0);
+
+    inter_area / a_area
+}
+
+pub(super) fn is_taskbar_capacity_sufficient(
+    taskbar_rect: RECT,
+    free_dock_slot: RECT,
+    widget_width: i32,
+    widget_height: i32,
+) -> bool {
+    let taskbar_w = taskbar_rect.right - taskbar_rect.left;
+    let taskbar_h = taskbar_rect.bottom - taskbar_rect.top;
+    let slot_w = free_dock_slot.right - free_dock_slot.left;
+    let slot_h = free_dock_slot.bottom - free_dock_slot.top;
+
+    if taskbar_w >= taskbar_h {
+        // Horizontal taskbar
+        slot_w >= widget_width && taskbar_h >= widget_height.min(24)
+    } else {
+        // Vertical taskbar: widget doesn't fit inside narrow vertical bar
+        taskbar_w >= widget_width && slot_h >= widget_height
+    }
+}
+
+pub(super) fn taskbar_tasklist_right_edge(taskbar_hwnd: HWND) -> Option<i32> {
+    if let Some(rebar) = native_interop::find_child_window(taskbar_hwnd, "ReBarWindow32") {
+        if let Some(rect) = native_interop::get_window_rect_safe(rebar) {
+            return Some(rect.right);
+        }
+    }
+    if let Some(tasks) = native_interop::find_child_window(taskbar_hwnd, "MSTaskListWClass") {
+        if let Some(rect) = native_interop::get_window_rect_safe(tasks) {
+            return Some(rect.right);
+        }
+    }
+    None
+}
+
+pub(super) fn taskbar_free_dock_slot(taskbar_hwnd: HWND, taskbar_rect: RECT) -> RECT {
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+    let is_horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
+    if is_horizontal {
+        let app_right = taskbar_tasklist_right_edge(taskbar_hwnd).unwrap_or(taskbar_rect.left);
+        RECT {
+            left: app_right.max(taskbar_rect.left),
+            top: taskbar_rect.top,
+            right: tray_left.min(taskbar_rect.right),
+            bottom: taskbar_rect.bottom,
+        }
+    } else {
+        RECT {
+            left: taskbar_rect.left,
+            top: taskbar_rect.top,
+            right: taskbar_rect.right,
+            bottom: tray_left.min(taskbar_rect.bottom),
+        }
     }
 }

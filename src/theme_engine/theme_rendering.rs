@@ -94,6 +94,33 @@ pub fn render_theme_surface_with_runtime_at_scale(
     };
     let context = DataContext::from_usage_with_runtime(data, &resolved_canvas, runtime);
     let mut pixels = vec![0u32; width as usize * height as usize];
+    if runtime.surface_nest == SurfaceNest::Floating
+        && matches!(surface.background, LayerBackground::None)
+    {
+        let alpha = ((runtime.floating_card_opacity.min(100) as u32 * 255) / 100) as u8;
+        let card_color = Rgba {
+            r: 24,
+            g: 24,
+            b: 32,
+            a: alpha,
+        };
+        let radius = 8.0 * scale;
+        fill_rounded(&mut pixels, width, height, card_color, radius);
+        let border_color = Rgba {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 35,
+        };
+        stroke_rounded_rectangle(
+            &mut pixels,
+            width,
+            height,
+            border_color,
+            radius,
+            (1.0 * scale).max(1.0),
+        );
+    }
     let root_layer = ResolvedObject {
         source: surface,
         x: 0.0,
