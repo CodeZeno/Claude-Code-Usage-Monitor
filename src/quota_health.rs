@@ -116,7 +116,11 @@ pub fn provider_health(provider: &ProviderQuota, generated_at: u64) -> ProviderH
     }
 }
 
-pub fn window_health(window: &QuotaWindow, generated_at: u64, window_total_seconds: u64) -> WindowHealth {
+pub fn window_health(
+    window: &QuotaWindow,
+    generated_at: u64,
+    window_total_seconds: u64,
+) -> WindowHealth {
     let remaining_quota_fraction = (1.0 - window.used_percent / 100.0).clamp(0.0, 1.0);
 
     let remaining_window_fraction = match window.resets_at {
@@ -133,7 +137,8 @@ pub fn window_health(window: &QuotaWindow, generated_at: u64, window_total_secon
         None => 1.0,
     };
 
-    let score = remaining_quota_fraction / remaining_window_fraction.max(MIN_REMAINING_WINDOW_FRACTION);
+    let score =
+        remaining_quota_fraction / remaining_window_fraction.max(MIN_REMAINING_WINDOW_FRACTION);
     WindowHealth {
         score,
         category: category_for_score(score),
@@ -177,7 +182,11 @@ mod tests {
         // Half the 5h window elapsed, half the quota used: exactly on pace.
         let generated_at = 1_000_000;
         let resets_at = generated_at + FIVE_HOUR_SECONDS / 2;
-        let health = window_health(&window(50.0, Some(resets_at)), generated_at, FIVE_HOUR_SECONDS);
+        let health = window_health(
+            &window(50.0, Some(resets_at)),
+            generated_at,
+            FIVE_HOUR_SECONDS,
+        );
         assert!((health.score - 1.0).abs() < 1e-9);
         assert_eq!(health.category, HealthCategory::Healthy);
     }
@@ -186,7 +195,11 @@ mod tests {
     fn reset_imminent_with_low_remaining_quota_is_still_healthy() {
         let generated_at = 1_000_000;
         let resets_at = generated_at + 5; // 5 seconds left in a 5h window
-        let health = window_health(&window(97.0, Some(resets_at)), generated_at, FIVE_HOUR_SECONDS);
+        let health = window_health(
+            &window(97.0, Some(resets_at)),
+            generated_at,
+            FIVE_HOUR_SECONDS,
+        );
         assert_eq!(health.category, HealthCategory::Healthy);
         assert!(health.score > HEALTHY_SCORE);
     }
@@ -196,7 +209,11 @@ mod tests {
         // 7d window just reset (nearly all of it remains) but already 80% used.
         let generated_at = 1_000_000;
         let resets_at = generated_at + SEVEN_DAY_SECONDS - 60;
-        let health = window_health(&window(80.0, Some(resets_at)), generated_at, SEVEN_DAY_SECONDS);
+        let health = window_health(
+            &window(80.0, Some(resets_at)),
+            generated_at,
+            SEVEN_DAY_SECONDS,
+        );
         assert_eq!(health.category, HealthCategory::Critical);
         assert!(health.score < CONSTRAINED_SCORE);
     }
@@ -206,7 +223,11 @@ mod tests {
         // remaining_quota_fraction / remaining_window_fraction == 0.4 exactly.
         let generated_at = 1_000_000;
         let resets_at = generated_at + FIVE_HOUR_SECONDS; // fraction = 1.0
-        let health = window_health(&window(60.0, Some(resets_at)), generated_at, FIVE_HOUR_SECONDS);
+        let health = window_health(
+            &window(60.0, Some(resets_at)),
+            generated_at,
+            FIVE_HOUR_SECONDS,
+        );
         assert!((health.score - 0.4).abs() < 1e-9);
         assert_eq!(health.category, HealthCategory::Constrained);
     }
@@ -215,7 +236,11 @@ mod tests {
     fn just_below_constrained_boundary_is_critical() {
         let generated_at = 1_000_000;
         let resets_at = generated_at + FIVE_HOUR_SECONDS;
-        let health = window_health(&window(60.01, Some(resets_at)), generated_at, FIVE_HOUR_SECONDS);
+        let health = window_health(
+            &window(60.01, Some(resets_at)),
+            generated_at,
+            FIVE_HOUR_SECONDS,
+        );
         assert_eq!(health.category, HealthCategory::Critical);
     }
 
@@ -229,7 +254,11 @@ mod tests {
     #[test]
     fn stale_past_reset_is_treated_as_imminent_not_critical() {
         let generated_at = 1_000_000;
-        let health = window_health(&window(95.0, Some(generated_at - 10)), generated_at, FIVE_HOUR_SECONDS);
+        let health = window_health(
+            &window(95.0, Some(generated_at - 10)),
+            generated_at,
+            FIVE_HOUR_SECONDS,
+        );
         assert_eq!(health.category, HealthCategory::Healthy);
     }
 

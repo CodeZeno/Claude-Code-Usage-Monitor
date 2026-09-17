@@ -180,7 +180,11 @@ pub struct RoutingDecision {
 /// Poll both providers fresh and route. Does not require the GUI monitor to
 /// be running.
 pub fn route(task: &Task, mapping: &ModelMapping) -> RoutingDecision {
-    route_with_snapshot(task, mapping, crate::quota_report::collect_selected(true, true))
+    route_with_snapshot(
+        task,
+        mapping,
+        crate::quota_report::collect_selected(true, true),
+    )
 }
 
 pub fn route_with_suitability(
@@ -224,11 +228,14 @@ pub fn route_with_snapshot_and_suitability(
         .map(|p| provider_health(p, generated_at))
         .unwrap_or_else(unavailable_health);
 
-    let (provider, complexity_used, reason) = decide(task, suitability, claude_health, codex_health)?;
-    let model = task
-        .model_lock
-        .clone()
-        .or_else(|| mapping.tiers(provider).for_complexity(complexity_used).map(str::to_string));
+    let (provider, complexity_used, reason) =
+        decide(task, suitability, claude_health, codex_health)?;
+    let model = task.model_lock.clone().or_else(|| {
+        mapping
+            .tiers(provider)
+            .for_complexity(complexity_used)
+            .map(str::to_string)
+    });
 
     Ok(RoutingDecision {
         provider,
@@ -300,7 +307,8 @@ fn decide(
             complexity,
             format!(
                 "{} is the only available executor in the highest suitability tier {:?}",
-                provider.report_key(), highest_tier
+                provider.report_key(),
+                highest_tier
             ),
         ));
     }
@@ -335,7 +343,8 @@ fn decide(
                 complexity,
                 format!(
                     "preferred executor {} kept within suitability tier {:?}: quota health is {:?}",
-                    preferred.report_key(), highest_tier,
+                    preferred.report_key(),
+                    highest_tier,
                     preferred_health.category
                 ),
             ));
@@ -365,7 +374,8 @@ pub fn build_command(decision: &RoutingDecision, task: &Task) -> Command {
     match decision.provider {
         Provider::Claude => build_claude_command(&resolve_claude_executable(), decision, task),
         Provider::Codex => {
-            let executable = poller::resolve_windows_codex_path().unwrap_or_else(|| "codex.cmd".to_string());
+            let executable =
+                poller::resolve_windows_codex_path().unwrap_or_else(|| "codex.cmd".to_string());
             build_codex_command(&executable, decision, task)
         }
     }
@@ -422,7 +432,11 @@ fn resolve_claude_executable() -> String {
     }
 
     for name in ["claude.cmd", "claude"] {
-        if let Ok(output) = Command::new("where.exe").arg(name).creation_flags(CREATE_NO_WINDOW).output() {
+        if let Ok(output) = Command::new("where.exe")
+            .arg(name)
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
             if output.status.success() {
                 if let Some(first_line) = String::from_utf8_lossy(&output.stdout).lines().next() {
                     let path = first_line.trim().to_string();
@@ -444,20 +458,41 @@ mod tests {
 
     fn healthy_windows() -> QuotaWindows {
         QuotaWindows {
-            five_hour: Some(QuotaWindow { used_percent: 5.0, resets_at: Some(2_010_000), stale: false }),
-            seven_day: Some(QuotaWindow { used_percent: 5.0, resets_at: Some(2_600_000), stale: false }),
+            five_hour: Some(QuotaWindow {
+                used_percent: 5.0,
+                resets_at: Some(2_010_000),
+                stale: false,
+            }),
+            seven_day: Some(QuotaWindow {
+                used_percent: 5.0,
+                resets_at: Some(2_600_000),
+                stale: false,
+            }),
         }
     }
 
     fn critical_windows() -> QuotaWindows {
         QuotaWindows {
-            five_hour: Some(QuotaWindow { used_percent: 95.0, resets_at: Some(2_010_000), stale: false }),
-            seven_day: Some(QuotaWindow { used_percent: 95.0, resets_at: Some(2_600_000), stale: false }),
+            five_hour: Some(QuotaWindow {
+                used_percent: 95.0,
+                resets_at: Some(2_010_000),
+                stale: false,
+            }),
+            seven_day: Some(QuotaWindow {
+                used_percent: 95.0,
+                resets_at: Some(2_600_000),
+                stale: false,
+            }),
         }
     }
 
     fn provider(key: &str, status: ProviderStatus, windows: QuotaWindows) -> ProviderQuota {
-        ProviderQuota { provider: key.to_string(), status, error: None, windows }
+        ProviderQuota {
+            provider: key.to_string(),
+            status,
+            error: None,
+            windows,
+        }
     }
 
     fn snapshot(claude: ProviderQuota, codex: ProviderQuota) -> QuotaSnapshot {
@@ -589,7 +624,11 @@ mod tests {
     #[test]
     fn unavailable_best_provider_falls_back_to_available_acceptable_tier() {
         let snap = snapshot(
-            provider("claude_code", ProviderStatus::Unavailable, QuotaWindows::default()),
+            provider(
+                "claude_code",
+                ProviderStatus::Unavailable,
+                QuotaWindows::default(),
+            ),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
         let task = task(PreferredExecutor::Claude, Complexity::Hard);
@@ -611,7 +650,11 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, healthy_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Claude, Complexity::Standard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Claude);
         assert_eq!(decision.model.as_deref(), Some("sonnet"));
         assert_eq!(decision.complexity_used, Complexity::Standard);
@@ -623,7 +666,11 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Claude, Complexity::Standard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Codex);
         assert!(decision.reason.contains("offloaded"));
     }
@@ -634,7 +681,11 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
-        let decision = route_ok(&task(PreferredExecutor::Claude, Complexity::Hard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Claude, Complexity::Hard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Claude);
         assert_eq!(decision.complexity_used, Complexity::Hard);
         assert_eq!(decision.model.as_deref(), Some("opus"));
@@ -660,14 +711,26 @@ mod tests {
         // codex is a few points healthier on both windows, but well within
         // AUTO_SWITCH_MARGIN — should not cause a flip away from claude.
         let codex_windows = QuotaWindows {
-            five_hour: Some(QuotaWindow { used_percent: 2.0, resets_at: Some(2_010_000), stale: false }),
-            seven_day: Some(QuotaWindow { used_percent: 2.0, resets_at: Some(2_600_000), stale: false }),
+            five_hour: Some(QuotaWindow {
+                used_percent: 2.0,
+                resets_at: Some(2_010_000),
+                stale: false,
+            }),
+            seven_day: Some(QuotaWindow {
+                used_percent: 2.0,
+                resets_at: Some(2_600_000),
+                stale: false,
+            }),
         };
         let snap = snapshot(
             provider("claude_code", ProviderStatus::Ok, healthy_windows()),
             provider("codex", ProviderStatus::Ok, codex_windows),
         );
-        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Auto, Complexity::Standard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Claude);
     }
 
@@ -677,17 +740,29 @@ mod tests {
             provider("claude_code", ProviderStatus::Ok, critical_windows()),
             provider("codex", ProviderStatus::Ok, healthy_windows()),
         );
-        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Auto, Complexity::Standard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Codex);
     }
 
     #[test]
     fn auto_mode_routes_around_an_unavailable_provider() {
         let snap = snapshot(
-            provider("claude_code", ProviderStatus::Unavailable, QuotaWindows::default()),
+            provider(
+                "claude_code",
+                ProviderStatus::Unavailable,
+                QuotaWindows::default(),
+            ),
             provider("codex", ProviderStatus::Ok, critical_windows()),
         );
-        let decision = route_ok(&task(PreferredExecutor::Auto, Complexity::Standard), &ModelMapping::default(), snap);
+        let decision = route_ok(
+            &task(PreferredExecutor::Auto, Complexity::Standard),
+            &ModelMapping::default(),
+            snap,
+        );
         assert_eq!(decision.provider, Provider::Codex);
     }
 
@@ -735,11 +810,32 @@ mod tests {
             codex_health: unavailable_health(),
             reason: "test".to_string(),
         };
-        let task = Task { prompt: "hello world".to_string(), preferred_executor: PreferredExecutor::Claude, complexity: Complexity::Standard, model_lock: None };
+        let task = Task {
+            prompt: "hello world".to_string(),
+            preferred_executor: PreferredExecutor::Claude,
+            complexity: Complexity::Standard,
+            model_lock: None,
+        };
         let command = build_claude_command("claude.cmd", &decision, &task);
         assert_eq!(command.get_program().to_string_lossy(), "cmd.exe");
-        let args: Vec<String> = command.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-        assert_eq!(args, vec!["/d", "/c", "claude.cmd", "-p", "hello world", "--output-format", "json", "--model", "sonnet"]);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "/d",
+                "/c",
+                "claude.cmd",
+                "-p",
+                "hello world",
+                "--output-format",
+                "json",
+                "--model",
+                "sonnet"
+            ]
+        );
     }
 
     #[test]
@@ -752,9 +848,28 @@ mod tests {
             codex_health: unavailable_health(),
             reason: "test".to_string(),
         };
-        let task = Task { prompt: "hello codex".to_string(), preferred_executor: PreferredExecutor::Codex, complexity: Complexity::Hard, model_lock: None };
+        let task = Task {
+            prompt: "hello codex".to_string(),
+            preferred_executor: PreferredExecutor::Codex,
+            complexity: Complexity::Hard,
+            model_lock: None,
+        };
         let command = build_codex_command("codex.cmd", &decision, &task);
-        let args: Vec<String> = command.get_args().map(|a| a.to_string_lossy().to_string()).collect();
-        assert_eq!(args, vec!["/d", "/c", "codex.cmd", "exec", "-m", "gpt-5.1-codex", "hello codex"]);
+        let args: Vec<String> = command
+            .get_args()
+            .map(|a| a.to_string_lossy().to_string())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "/d",
+                "/c",
+                "codex.cmd",
+                "exec",
+                "-m",
+                "gpt-5.1-codex",
+                "hello codex"
+            ]
+        );
     }
 }

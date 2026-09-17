@@ -125,16 +125,28 @@ fn provider_quota(name: &str, outcome: ProviderPollOutcome, generated_at: u64) -
 
 fn windows_from_usage(usage: &UsageData, generated_at: u64) -> QuotaWindows {
     QuotaWindows {
-        five_hour: usage
-            .session_available()
-            .then(|| quota_window(usage.session.percentage, usage.session.resets_at, generated_at)),
-        seven_day: usage
-            .weekly_available()
-            .then(|| quota_window(usage.weekly.percentage, usage.weekly.resets_at, generated_at)),
+        five_hour: usage.session_available().then(|| {
+            quota_window(
+                usage.session.percentage,
+                usage.session.resets_at,
+                generated_at,
+            )
+        }),
+        seven_day: usage.weekly_available().then(|| {
+            quota_window(
+                usage.weekly.percentage,
+                usage.weekly.resets_at,
+                generated_at,
+            )
+        }),
     }
 }
 
-fn quota_window(used_percent: f64, resets_at: Option<SystemTime>, generated_at: u64) -> QuotaWindow {
+fn quota_window(
+    used_percent: f64,
+    resets_at: Option<SystemTime>,
+    generated_at: u64,
+) -> QuotaWindow {
     let resets_at = resets_at.and_then(system_time_to_unix);
     let stale = resets_at.is_some_and(|resets_at| resets_at <= generated_at);
     QuotaWindow {
@@ -278,10 +290,16 @@ mod tests {
         assert_eq!(snapshot.schema_version, SCHEMA_VERSION);
         assert_eq!(snapshot.generated_at, generated_at);
         for banned in [
-            "token", "access_token", "credential", "authorization", "Bearer",
+            "token",
+            "access_token",
+            "credential",
+            "authorization",
+            "Bearer",
         ] {
             assert!(
-                !json.to_ascii_lowercase().contains(&banned.to_ascii_lowercase()),
+                !json
+                    .to_ascii_lowercase()
+                    .contains(&banned.to_ascii_lowercase()),
                 "json unexpectedly contained {banned:?}: {json}"
             );
         }
