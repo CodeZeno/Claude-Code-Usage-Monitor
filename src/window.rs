@@ -1489,7 +1489,10 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
         .as_ref()
         .map_or(1, |theme| {
             let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
-            theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).0 as i32
+            let logical_w =
+                theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).0 as f64;
+            let scale = theme_surface_scale(theme, 0);
+            (logical_w * scale).round().max(1.0) as i32
         })
 }
 
@@ -1810,7 +1813,10 @@ fn total_widget_height_for_state(state: &AppState) -> i32 {
         .as_ref()
         .map_or(1, |theme| {
             let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
-            theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).1 as i32
+            let logical_h =
+                theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).1 as f64;
+            let scale = theme_surface_scale(theme, 0);
+            (logical_h * scale).round().max(1.0) as i32
         })
 }
 

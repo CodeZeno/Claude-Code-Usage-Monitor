@@ -414,9 +414,10 @@ fn test_drag_release_capture_state_ordering() {
 
     impl DragStateMachine {
         // Correct implementation: extract before releasing capture
-        fn on_lbuttonup_correct(&mut self) -> (bool, bool) {
+        fn on_lbuttonup_correct(&mut self) -> ((bool, bool), bool) {
             let was_dragging = self.dragging;
             let was_pending = self.pending_drag;
+            let was_snapped = self.is_snapped;
             self.dragging = false;
             self.pending_drag = false;
             self.is_snapped = false;
@@ -424,7 +425,7 @@ fn test_drag_release_capture_state_ordering() {
             // ReleaseCapture() synchronously triggers on_capture_changed()
             self.on_capture_changed();
 
-            (was_dragging, was_pending)
+            ((was_dragging, was_pending), was_snapped)
         }
 
         fn on_capture_changed(&mut self) {
@@ -434,15 +435,16 @@ fn test_drag_release_capture_state_ordering() {
         }
     }
 
-    // Case 1: Was dragging actively
+    // Case 1: Was dragging actively while snapped
     let mut sm1 = DragStateMachine {
         dragging: true,
         pending_drag: false,
         is_snapped: true,
     };
-    let (was_dragging, was_pending) = sm1.on_lbuttonup_correct();
+    let ((was_dragging, was_pending), was_snapped) = sm1.on_lbuttonup_correct();
     assert!(was_dragging, "Drop must receive was_dragging = true");
     assert!(!was_pending);
+    assert!(was_snapped, "Drop must preserve was_snapped = true for 0.45 threshold");
     assert!(!sm1.dragging);
     assert!(!sm1.is_snapped);
 
@@ -452,9 +454,54 @@ fn test_drag_release_capture_state_ordering() {
         pending_drag: true,
         is_snapped: false,
     };
-    let (was_dragging2, was_pending2) = sm2.on_lbuttonup_correct();
+    let ((was_dragging2, was_pending2), was_snapped2) = sm2.on_lbuttonup_correct();
     assert!(!was_dragging2);
     assert!(was_pending2, "Click dispatch must receive was_pending = true");
+    assert!(!was_snapped2);
+}
+
+#[test]
+fn test_high_dpi_widget_capacity_and_watchdog_recovery() {
+    let logical_w = 217.0;
+    let logical_h = 46.0;
+    let dpi_scale = 1.5; // 150% High DPI
+    let physical_w = (logical_w * dpi_scale).round() as i32; // 326
+    let physical_h = (logical_h * dpi_scale).round() as i32; // 69
+    assert_eq!(physical_w, 326);
+    assert_eq!(physical_h, 69);
+
+    let taskbar = RECT {
+        left: 0,
+        top: 1032,
+        right: 1920,
+        bottom: 1080,
+    };
+    // Available slot is only 260px wide
+    let slot = RECT {
+        left: 1000,
+        top: 1032,
+        right: 1260,
+        bottom: 1080,
+    };
+
+    // With physical width (326px), capacity is NOT sufficient
+    assert!(!positioning::is_taskbar_capacity_sufficient(
+        taskbar,
+        slot,
+        physical_w,
+        physical_h,
+    ));
+
+    // Watchdog check: free_space = 260. If evaluated against logical_w (217 + 20 = 237),
+    // it would erroneously re-dock (260 >= 237).
+    // With physical_w (326 + 20 = 346), it correctly refuses to re-dock:
+    let free_space = slot.right - slot.left;
+    let can_redock = free_space >= physical_w + 20;
+    assert!(!can_redock, "Watchdog must not re-dock into undersized slot on high DPI");
+
+    // Only when free_space expands to at least physical_w + 20 (346px) can it re-dock:
+    let wide_slot_space = 350;
+    assert!(wide_slot_space >= physical_w + 20);
 }
 
 #[test]
