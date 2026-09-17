@@ -4335,8 +4335,8 @@ fn header_band_bottom(state: &AppState) -> i32 {
 /// (AUM-WINDOW-UI-01C-2-STEP2): the header band already shows the provider
 /// names, making it a far more discoverable drag target than a 10px-wide
 /// strip ever was.
-fn is_drag_region_point(client_x: i32, client_y: i32, width: i32, header_band_bottom: i32) -> bool {
-    client_x >= 0 && client_x < width && client_y >= 0 && client_y < header_band_bottom
+fn is_drag_region_point(client_x: i32, client_y: i32, width: i32, height: i32) -> bool {
+    client_x >= 0 && client_x < width && client_y >= 0 && client_y < height
 }
 
 fn horizontal_resize_edge_width_for_dpi(dpi: u32) -> i32 {
@@ -4403,7 +4403,7 @@ fn pointer_interaction_target(
     client_y: i32,
     client_width: i32,
     resize_edge_width: i32,
-    header_bottom: i32,
+    client_height: i32,
     help_button_rect: RECT,
     auth_cta_hit_targets: &[AuthCtaHitTarget],
 ) -> PointerInteractionTarget {
@@ -4416,7 +4416,7 @@ fn pointer_interaction_target(
         .find(|hit| point_is_in_rect(client_x, client_y, hit.rect))
     {
         PointerInteractionTarget::AuthCta(hit.action)
-    } else if is_drag_region_point(client_x, client_y, client_width, header_bottom) {
+    } else if is_drag_region_point(client_x, client_y, client_width, client_height) {
         PointerInteractionTarget::HeaderDrag
     } else {
         PointerInteractionTarget::None
@@ -4454,7 +4454,7 @@ fn pointer_interaction_under_cursor(hwnd: HWND) -> PointerInteractionTarget {
         point.y,
         client_rect.right - client_rect.left,
         horizontal_resize_edge_width_for_dpi(dpi),
-        header_band_bottom(s),
+        client_rect.bottom - client_rect.top,
         help_button_rect_for_client_width(client_rect.right - client_rect.left, dpi),
         &s.auth_cta_hit_targets,
     )
@@ -6934,7 +6934,7 @@ unsafe extern "system" fn wnd_proc(
                         client_y,
                         client_width,
                         resize_edge_width,
-                        header_band_bottom(s),
+                        client_rect.bottom - client_rect.top,
                         help_button_rect_for_client_width(client_width, window_dpi(hwnd)),
                         &s.auth_cta_hit_targets,
                     ),
@@ -10067,6 +10067,15 @@ mod tests {
         assert_eq!(
             pointer_interaction_target(300, 40, 600, 6, 30, help_rect, &[]),
             PointerInteractionTarget::None
+        );
+    }
+
+    #[test]
+    fn quota_row_background_is_draggable() {
+        let help_rect = help_button_rect_for_client_width(600, 96);
+        assert_eq!(
+            pointer_interaction_target(300, 40, 600, 6, 80, help_rect, &[]),
+            PointerInteractionTarget::HeaderDrag
         );
     }
 
