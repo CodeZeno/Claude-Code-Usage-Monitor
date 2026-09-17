@@ -706,14 +706,24 @@ pub(super) fn is_taskbar_capacity_sufficient(
 }
 
 pub(super) fn taskbar_tasklist_right_edge(taskbar_hwnd: HWND) -> Option<i32> {
+    let taskbar_rect = native_interop::get_taskbar_rect(taskbar_hwnd)?;
+    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+
     if let Some(rebar) = native_interop::find_child_window(taskbar_hwnd, "ReBarWindow32") {
         if let Some(rect) = native_interop::get_window_rect_safe(rebar) {
-            return Some(rect.right);
+            // If the rebar fills the taskbar up to the system tray, it is just
+            // the layout host container spanning between Start and TrayNotifyWnd,
+            // NOT the actual boundary of running applications.
+            if rect.right < tray_left - 10 {
+                return Some(rect.right);
+            }
         }
     }
     if let Some(tasks) = native_interop::find_child_window(taskbar_hwnd, "MSTaskListWClass") {
         if let Some(rect) = native_interop::get_window_rect_safe(tasks) {
-            return Some(rect.right);
+            if rect.right < tray_left - 10 {
+                return Some(rect.right);
+            }
         }
     }
     None
