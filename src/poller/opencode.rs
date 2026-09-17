@@ -1,16 +1,15 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Deserialize;
 
-use super::{build_agent, PollError};
+use super::{build_agent, parse_iso8601, PollError};
 use crate::diagnose;
 use crate::models::{UsageData, UsageSection};
 
-const DASHBOARD_URL_PREFIX: &str = "https://opencode.ai/workspace/";
-const DASHBOARD_URL_SUFFIX: &str = "/go";
+const GO_STATUS_URL: &str = "https://opencode.ai/console/api/go/status";
 const DASHBOARD_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
      (KHTML, like Gecko) Chrome/126.0 Safari/537.36";
 const WORKSPACE_ID_ENV: &str = "OPENCODE_GO_WORKSPACE_ID";
@@ -34,7 +33,7 @@ struct DashboardCredentials {
 #[derive(Clone, Debug, PartialEq)]
 struct UsageWindow {
     usage_percent: f64,
-    reset_in_sec: i64,
+    resets_at: Option<SystemTime>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -42,6 +41,43 @@ struct DashboardUsage {
     rolling: Option<UsageWindow>,
     weekly: Option<UsageWindow>,
     monthly: Option<UsageWindow>,
+}
+
+// The console JSON API serializes microcent amounts as strings (JavaScript BigInts).
+#[derive(Deserialize)]
+struct GoStatus {
+    access: Option<GoAccess>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoAccess {
+    ends_at: String,
+    meters: GoMeters,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoMeters {
+    five_hour: GoTimedMeter,
+    week: GoTimedMeter,
+    month: GoMeter,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoTimedMeter {
+    #[serde(flatten)]
+    meter: GoMeter,
+    // An unused rolling window has no reset time until the first request.
+    resets_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GoMeter {
+    limit_micro_cents: String,
+    used_micro_cents: String,
 }
 
 pub(super) fn poll_opencode() -> Result<UsageData, PollError> {
@@ -72,13 +108,12 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         return Err(PollError::RequestFailed);
     }
 
-    let now = SystemTime::now();
     let session = usage
         .rolling
         .as_ref()
-        .map(|window| section_from_window(window, now))
+        .map(section_from_window)
         .unwrap_or_default();
-    let (weekly, weekly_label) = select_long_window(&usage, now);
+    let (weekly, weekly_label) = select_long_window(&usage);
 
     Ok(UsageData {
         session,
@@ -87,31 +122,28 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         // The monthly window is kept available to themes alongside the
         // auto-selected `weekly` slot (which prefers the more constrained
         // of the two windows, as before).
-        monthly: usage
-            .monthly
-            .as_ref()
-            .map(|window| section_from_window(window, now)),
+        monthly: usage.monthly.as_ref().map(section_from_window),
         credits: None,
         stale: false,
     })
 }
 
-fn select_long_window(usage: &DashboardUsage, now: SystemTime) -> (UsageSection, Option<String>) {
+fn select_long_window(usage: &DashboardUsage) -> (UsageSection, Option<String>) {
     match (&usage.weekly, &usage.monthly) {
         (Some(weekly), Some(monthly)) if monthly.usage_percent > weekly.usage_percent => {
-            (section_from_window(monthly, now), Some("30d".to_string()))
+            (section_from_window(monthly), Some("30d".to_string()))
         }
-        (Some(weekly), _) => (section_from_window(weekly, now), Some("7d".to_string())),
-        (None, Some(monthly)) => (section_from_window(monthly, now), Some("30d".to_string())),
+        (Some(weekly), _) => (section_from_window(weekly), Some("7d".to_string())),
+        (None, Some(monthly)) => (section_from_window(monthly), Some("30d".to_string())),
         (None, None) => (UsageSection::default(), None),
     }
 }
 
-fn section_from_window(window: &UsageWindow, now: SystemTime) -> UsageSection {
+fn section_from_window(window: &UsageWindow) -> UsageSection {
     UsageSection {
         available: true,
         percentage: window.usage_percent.clamp(0.0, 100.0),
-        resets_at: now.checked_add(Duration::from_secs(window.reset_in_sec.max(0) as u64)),
+        resets_at: window.resets_at,
     }
 }
 
@@ -150,10 +182,13 @@ fn read_dashboard_config(path: &Path) -> Option<DashboardCredentials> {
 }
 
 fn fetch_dashboard_usage(credentials: &DashboardCredentials) -> Result<DashboardUsage, PollError> {
-    let url = format!(
-        "{DASHBOARD_URL_PREFIX}{}{DASHBOARD_URL_SUFFIX}",
-        credentials.workspace_id
-    );
+    fetch_go_status(credentials, GO_STATUS_URL)
+}
+
+fn fetch_go_status(
+    credentials: &DashboardCredentials,
+    url: &str,
+) -> Result<DashboardUsage, PollError> {
     let cookie = if credentials
         .auth_cookie
         .split(';')
@@ -165,8 +200,9 @@ fn fetch_dashboard_usage(credentials: &DashboardCredentials) -> Result<Dashboard
     };
 
     let mut response = match build_agent()?
-        .get(&url)
-        .header("Accept", "text/html,application/xhtml+xml")
+        .get(url)
+        .header("Accept", "application/json")
+        .header("x-org-id", &credentials.workspace_id)
         .header("Cookie", &cookie)
         .header("User-Agent", DASHBOARD_USER_AGENT)
         .call()
@@ -174,102 +210,67 @@ fn fetch_dashboard_usage(credentials: &DashboardCredentials) -> Result<Dashboard
         Ok(response) => response,
         Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),
         Err(error) => {
-            diagnose::log_error("OpenCode Go dashboard request failed", error);
+            diagnose::log_error("OpenCode Go status request failed", error);
             return Err(PollError::RequestFailed);
         }
     };
 
-    let html = response.body_mut().read_to_string().map_err(|error| {
-        diagnose::log_error("OpenCode Go dashboard response is not UTF-8", error);
+    let status = response
+        .body_mut()
+        .read_json::<Option<GoStatus>>()
+        .map_err(|error| {
+            diagnose::log_error("OpenCode Go status response is not valid JSON", error);
+            PollError::RequestFailed
+        })?;
+    usage_from_status(status)
+}
+
+fn usage_from_status(status: Option<GoStatus>) -> Result<DashboardUsage, PollError> {
+    let access = status.and_then(|status| status.access).ok_or_else(|| {
+        diagnose::log("OpenCode Go status returned no active subscription access");
         PollError::RequestFailed
     })?;
-    Ok(parse_dashboard_html(&html))
-}
-
-fn parse_dashboard_html(html: &str) -> DashboardUsage {
-    let normalized = html
-        .replace("&quot;", "\"")
-        .replace("&#34;", "\"")
-        .replace("&#x27;", "'")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&")
-        .replace("\\\"", "\"")
-        .replace("\\u0022", "\"");
-    DashboardUsage {
-        rolling: parse_window("rollingUsage", &normalized),
-        weekly: parse_window("weeklyUsage", &normalized),
-        monthly: parse_window("monthlyUsage", &normalized),
-    }
-}
-
-fn parse_window(field_name: &str, text: &str) -> Option<UsageWindow> {
-    text.match_indices(field_name)
-        .find_map(|(index, _)| parse_window_value(field_value_at(text, field_name, index)?))
-}
-
-fn parse_window_value(mut value: &str) -> Option<UsageWindow> {
-    if let Some(rest) = value.strip_prefix("$R[") {
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits == 0 {
-            return None;
-        }
-        value = rest.get(digits..)?.strip_prefix(']')?.trim_start();
-        value = value.strip_prefix('=')?.trim_start();
-    }
-    let body = value.strip_prefix('{')?.split_once('}')?.0;
-    Some(UsageWindow {
-        usage_percent: numeric_field(body, "usagePercent")?,
-        reset_in_sec: numeric_field(body, "resetInSec")?.max(0.0) as i64,
+    Ok(DashboardUsage {
+        rolling: Some(window_from_meter(
+            &access.meters.five_hour.meter,
+            access.meters.five_hour.resets_at.as_deref(),
+        )?),
+        weekly: Some(window_from_meter(
+            &access.meters.week.meter,
+            access.meters.week.resets_at.as_deref(),
+        )?),
+        monthly: Some(window_from_meter(
+            &access.meters.month,
+            Some(&access.ends_at),
+        )?),
     })
 }
 
-fn field_value<'a>(text: &'a str, field_name: &str) -> Option<&'a str> {
-    text.match_indices(field_name)
-        .find_map(|(index, _)| field_value_at(text, field_name, index))
-}
-
-fn field_value_at<'a>(text: &'a str, field_name: &str, index: usize) -> Option<&'a str> {
-    let preceding = text[..index].bytes().next_back();
-    if preceding.is_some_and(|byte| byte.is_ascii_alphanumeric() || byte == b'_') {
-        return None;
-    }
-
-    let mut remainder = &text[index + field_name.len()..];
-    if remainder.starts_with(['\'', '"']) {
-        remainder = &remainder[1..];
-    }
-    remainder
-        .trim_start()
-        .strip_prefix(':')
-        .map(str::trim_start)
-}
-
-fn numeric_field(text: &str, field_name: &str) -> Option<f64> {
-    let mut value = field_value(text, field_name)?;
-    if value.starts_with(['\'', '"']) {
-        value = &value[1..];
-    }
-
-    let bytes = value.as_bytes();
-    let mut end = usize::from(bytes.first() == Some(&b'-'));
-    let integer_start = end;
-    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-        end += 1;
-    }
-    if end == integer_start {
-        return None;
-    }
-    if bytes.get(end) == Some(&b'.') {
-        let fraction_start = end + 1;
-        end = fraction_start;
-        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
-            end += 1;
-        }
-        if end == fraction_start {
-            return None;
-        }
-    }
-    value[..end].parse().ok()
+fn window_from_meter(meter: &GoMeter, resets_at: Option<&str>) -> Result<UsageWindow, PollError> {
+    let limit = meter.limit_micro_cents.parse::<u128>().map_err(|_| {
+        diagnose::log("OpenCode Go status contains an invalid usage limit");
+        PollError::RequestFailed
+    })?;
+    let used = meter.used_micro_cents.parse::<u128>().map_err(|_| {
+        diagnose::log("OpenCode Go status contains an invalid usage amount");
+        PollError::RequestFailed
+    })?;
+    let resets_at = resets_at
+        .map(|value| {
+            parse_iso8601(Some(value)).ok_or_else(|| {
+                diagnose::log("OpenCode Go status contains an invalid reset time");
+                PollError::RequestFailed
+            })
+        })
+        .transpose()?;
+    Ok(UsageWindow {
+        usage_percent: if limit == 0 {
+            0.0
+        } else {
+            used as f64 / limit as f64 * 100.0
+        },
+        resets_at,
+    })
 }
 
 fn dashboard_config_paths() -> Vec<PathBuf> {
@@ -363,28 +364,193 @@ fn path_signature(kind: &str, path: &Path) -> String {
 mod tests {
     use super::*;
 
+    // Wire shape verified against the console's Go status schema and usage UI.
+    const GO_STATUS_JSON: &str = r#"{
+        "subscriberUserID": "usr_example",
+        "useBalance": false,
+        "access": {
+            "startsAt": "2026-09-01T00:00:00.000Z",
+            "endsAt": "2026-10-01T00:00:00.000Z",
+            "meters": {
+                "fiveHour": {
+                    "limitMicroCents": "2000000000",
+                    "usedMicroCents": "250000000",
+                    "resetsAt": "2026-09-17T05:00:00.000Z"
+                },
+                "week": {
+                    "limitMicroCents": "10000000000",
+                    "usedMicroCents": "4500000000",
+                    "resetsAt": "2026-09-21T00:00:00.000Z"
+                },
+                "month": {
+                    "limitMicroCents": "20000000000",
+                    "usedMicroCents": "12000000000"
+                }
+            }
+        }
+    }"#;
+
     #[test]
-    fn dashboard_parser_accepts_serialized_and_html_escaped_windows() {
-        let html = r#"rollingUsage:{usagePercent:12.5,resetInSec:300},&quot;weeklyUsage&quot;:{&quot;usagePercent&quot;:&quot;45&quot;,&quot;resetInSec&quot;:7200},monthlyUsage:$R[7]={usagePercent:60,resetInSec:9000}"#;
-        let usage = parse_dashboard_html(html);
-        assert_eq!(usage.rolling.unwrap().usage_percent, 12.5);
-        assert_eq!(usage.weekly.unwrap().reset_in_sec, 7_200);
-        assert_eq!(usage.monthly.unwrap().usage_percent, 60.0);
+    fn console_status_maps_meter_percentages_and_absolute_resets() {
+        let usage = usage_from_status(serde_json::from_str(GO_STATUS_JSON).unwrap()).unwrap();
+        let rolling = usage.rolling.as_ref().unwrap();
+        assert_eq!(rolling.usage_percent, 12.5);
+        assert_eq!(
+            rolling.resets_at,
+            parse_iso8601(Some("2026-09-17T05:00:00Z"))
+        );
+        let weekly = usage.weekly.as_ref().unwrap();
+        assert_eq!(weekly.usage_percent, 45.0);
+        assert_eq!(
+            weekly.resets_at,
+            parse_iso8601(Some("2026-09-21T00:00:00Z"))
+        );
+        let (long, label) = select_long_window(&usage);
+        assert_eq!(long.percentage, 60.0);
+        assert_eq!(label.as_deref(), Some("30d"));
+        assert_eq!(long.resets_at, parse_iso8601(Some("2026-10-01T00:00:00Z")));
     }
 
     #[test]
-    fn dashboard_parser_rejects_lookalike_and_malformed_fields() {
-        let html = r#"notrollingUsage:{usagePercent:1,resetInSec:2},rollingUsage:null,rollingUsage:{usagePercent:7,resetInSec:8},weeklyUsage:$R[x]={usagePercent:3,resetInSec:4},monthlyUsage:{usagePercent:.5,resetInSec:6}"#;
-        let usage = parse_dashboard_html(html);
+    fn console_status_preserves_idle_rolling_window_without_reset() {
+        let json = GO_STATUS_JSON
+            .replace("\"250000000\"", "\"0\"")
+            .replace("\"2026-09-17T05:00:00.000Z\"", "null");
+        let usage = usage_from_status(serde_json::from_str(&json).unwrap()).unwrap();
+        let section = section_from_window(usage.rolling.as_ref().unwrap());
+        assert!(section.available);
+        assert_eq!(section.percentage, 0.0);
+        assert_eq!(section.resets_at, None);
+    }
+
+    #[test]
+    fn console_status_rejects_missing_access_and_invalid_meter_values() {
+        for json in ["null", r#"{"access":null}"#] {
+            assert_eq!(
+                usage_from_status(serde_json::from_str(json).unwrap()),
+                Err(PollError::RequestFailed)
+            );
+        }
+        for json in [
+            GO_STATUS_JSON.replace("250000000", "-1"),
+            GO_STATUS_JSON.replace("250000000", "NaN"),
+            GO_STATUS_JSON.replace("250000000", "1.5"),
+            GO_STATUS_JSON.replace("2026-09-17T05:00:00.000Z", "invalid-date"),
+        ] {
+            assert_eq!(
+                usage_from_status(serde_json::from_str(&json).unwrap()),
+                Err(PollError::RequestFailed)
+            );
+        }
+    }
+
+    #[test]
+    fn console_meter_handles_zero_limits_large_amounts_and_overages() {
+        let meter = |used: &str, limit: &str| GoMeter {
+            used_micro_cents: used.into(),
+            limit_micro_cents: limit.into(),
+        };
         assert_eq!(
-            usage.rolling,
-            Some(UsageWindow {
-                usage_percent: 7.0,
-                reset_in_sec: 8,
-            })
+            window_from_meter(&meter("0", "0"), None)
+                .unwrap()
+                .usage_percent,
+            0.0
         );
-        assert!(usage.weekly.is_none());
-        assert!(usage.monthly.is_none());
+        assert_eq!(
+            window_from_meter(&meter("10000000000000000000", "20000000000000000000"), None)
+                .unwrap()
+                .usage_percent,
+            50.0
+        );
+        let window = window_from_meter(&meter("120", "100"), None).unwrap();
+        assert_eq!(section_from_window(&window).percentage, 100.0);
+    }
+
+    fn mock_status_request(
+        status: u16,
+        body: &str,
+        cookie: &str,
+    ) -> (Result<DashboardUsage, PollError>, String) {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::time::Duration;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!(
+            "http://{}/console/api/go/status",
+            listener.local_addr().unwrap()
+        );
+        let response = format!(
+            "HTTP/1.1 {status} Test\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            stream
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            stream.write_all(response.as_bytes()).unwrap();
+            String::from_utf8(request).unwrap()
+        });
+        let result = fetch_go_status(
+            &DashboardCredentials {
+                workspace_id: "wrk_example".into(),
+                auth_cookie: cookie.into(),
+                source: "test".into(),
+            },
+            &url,
+        );
+        (result, server.join().unwrap())
+    }
+
+    #[test]
+    fn console_request_sends_workspace_context_and_normalizes_auth_cookie() {
+        for (cookie, expected) in [
+            ("test-token", "auth=test-token"),
+            ("auth=test-token; theme=dark", "auth=test-token; theme=dark"),
+        ] {
+            let (result, request) = mock_status_request(200, GO_STATUS_JSON, cookie);
+            assert_eq!(result.unwrap().rolling.unwrap().usage_percent, 12.5);
+            let request = request.to_ascii_lowercase();
+            assert!(request.starts_with("get /console/api/go/status http/1.1\r\n"));
+            assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
+            assert!(request.contains("\r\naccept: application/json\r\n"));
+            assert!(request.contains(&format!("\r\ncookie: {expected}\r\n")));
+        }
+    }
+
+    #[test]
+    fn console_request_distinguishes_auth_errors_from_bad_responses() {
+        for status in [401, 403] {
+            assert_eq!(
+                mock_status_request(status, "{}", "test-token").0,
+                Err(PollError::AuthRequired)
+            );
+        }
+        for (status, body) in [
+            (400, "{}"),
+            (500, "{}"),
+            (200, "<html><div id=app></div></html>"),
+            (200, "{invalid"),
+            (200, "{}"),
+            (200, "null"),
+            (200, r#"{"access":{"meters":{}}}"#),
+        ] {
+            assert_eq!(
+                mock_status_request(status, body, "test-token").0,
+                Err(PollError::RequestFailed)
+            );
+        }
     }
 
     #[test]
@@ -392,15 +558,15 @@ mod tests {
         let usage = DashboardUsage {
             weekly: Some(UsageWindow {
                 usage_percent: 40.0,
-                reset_in_sec: 60,
+                resets_at: Some(UNIX_EPOCH),
             }),
             monthly: Some(UsageWindow {
                 usage_percent: 70.0,
-                reset_in_sec: 120,
+                resets_at: Some(UNIX_EPOCH),
             }),
             ..Default::default()
         };
-        let (section, label) = select_long_window(&usage, UNIX_EPOCH);
+        let (section, label) = select_long_window(&usage);
         assert_eq!(section.percentage, 70.0);
         assert_eq!(label.as_deref(), Some("30d"));
     }
@@ -409,23 +575,19 @@ mod tests {
     fn idle_opencode_windows_are_available_and_missing_windows_are_not() {
         let window = UsageWindow {
             usage_percent: 0.0,
-            reset_in_sec: 0,
+            resets_at: None,
         };
-        let section = section_from_window(&window, UNIX_EPOCH);
+        let section = section_from_window(&window);
         assert!(section.available);
         assert_eq!(section.percentage, 0.0);
         let usage = DashboardUsage {
             monthly: Some(window),
             ..Default::default()
         };
-        let (section, label) = select_long_window(&usage, UNIX_EPOCH);
+        let (section, label) = select_long_window(&usage);
         assert!(section.available);
         assert_eq!(label.as_deref(), Some("30d"));
-        assert!(
-            !select_long_window(&DashboardUsage::default(), UNIX_EPOCH)
-                .0
-                .available
-        );
+        assert!(!select_long_window(&DashboardUsage::default()).0.available);
     }
 
     #[test]
