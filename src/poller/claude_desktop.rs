@@ -16,7 +16,10 @@ use std::path::{Path, PathBuf};
 
 use crate::diagnose;
 
-const TOKEN_CACHE_KEY: &str = "oauth:tokenCache";
+/// Newest layout first. The desktop app migrated its cache to
+/// `oauth:tokenCacheV2` and leaves the older `oauth:tokenCache` key in place,
+/// so both are tried and the first that yields a usable token wins.
+const TOKEN_CACHE_KEYS: &[&str] = &["oauth:tokenCacheV2", "oauth:tokenCache"];
 const DPAPI_KEY_PREFIX: &[u8] = b"DPAPI";
 const OS_CRYPT_PREFIX: &[u8] = b"v10";
 const GCM_NONCE_LEN: usize = 12;
@@ -56,15 +59,31 @@ pub(super) fn read_token(config_path: &Path) -> Option<DesktopToken> {
         }
     };
 
-    let cache = token_cache_value(&config)?;
-    let key = os_crypt_key(&local_state_path(config_path))?;
-    let plaintext = decrypt_os_crypt_value(&cache, &key)?;
-    let plaintext = String::from_utf8(plaintext).ok()?;
-    let token = select_token(&plaintext);
-    if token.is_none() {
-        diagnose::log("Claude desktop token cache held no usable inference token");
+    let caches = token_cache_values(&config);
+    if caches.is_empty() {
+        diagnose::log("Claude desktop config held no OAuth token cache");
+        return None;
     }
-    token
+    let key = os_crypt_key(&local_state_path(config_path))?;
+
+    for (name, cache) in &caches {
+        let Some(plaintext) = decrypt_os_crypt_value(cache, &key) else {
+            diagnose::log(&format!("unable to decrypt Claude desktop {name}"));
+            continue;
+        };
+        let Ok(plaintext) = String::from_utf8(plaintext) else {
+            diagnose::log(&format!("Claude desktop {name} was not valid UTF-8"));
+            continue;
+        };
+        if let Some(token) = select_token(&plaintext) {
+            return Some(token);
+        }
+        diagnose::log(&format!(
+            "Claude desktop {name} held no usable inference token"
+        ));
+    }
+
+    None
 }
 
 /// Signature over the encrypted cache rather than the file's mtime: the
@@ -72,18 +91,33 @@ pub(super) fn read_token(config_path: &Path) -> Option<DesktopToken> {
 /// placement, and that must not read as a credential change.
 pub(super) fn watch_signature(config_path: &Path) -> String {
     let key = format!("desktop:{}", config_path.display());
-    match std::fs::read_to_string(config_path)
+    let caches = std::fs::read_to_string(config_path)
         .ok()
-        .and_then(|config| token_cache_value(&config))
-    {
-        Some(cache) => format!("{key}|present|{}", fnv1a(cache.as_bytes())),
-        None => format!("{key}|missing"),
+        .map(|config| token_cache_values(&config))
+        .unwrap_or_default();
+    if caches.is_empty() {
+        return format!("{key}|missing");
     }
+
+    let mut signature = format!("{key}|present");
+    for (name, cache) in caches {
+        signature.push_str(&format!("|{name}:{}", fnv1a(cache.as_bytes())));
+    }
+    signature
 }
 
-fn token_cache_value(config: &str) -> Option<String> {
-    let json: serde_json::Value = serde_json::from_str(config).ok()?;
-    Some(json.get(TOKEN_CACHE_KEY)?.as_str()?.to_string())
+/// Every token cache the config carries, newest layout first.
+fn token_cache_values(config: &str) -> Vec<(&'static str, String)> {
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(config) else {
+        return Vec::new();
+    };
+    TOKEN_CACHE_KEYS
+        .iter()
+        .filter_map(|key| {
+            let value = json.get(*key)?.as_str()?;
+            (!value.is_empty()).then(|| (*key, value.to_string()))
+        })
+        .collect()
 }
 
 /// Picks the freshest entry that carries the inference scope, falling back to
@@ -475,8 +509,35 @@ mod tests {
     #[test]
     fn reads_the_token_cache_out_of_a_desktop_config() {
         let config = r#"{"locale": "en-US", "oauth:tokenCache": "djEwYWJj"}"#;
-        assert_eq!(token_cache_value(config).as_deref(), Some("djEwYWJj"));
-        assert!(token_cache_value(r#"{"locale": "en-US"}"#).is_none());
+        assert_eq!(
+            token_cache_values(config),
+            vec![("oauth:tokenCache", "djEwYWJj".to_string())]
+        );
+        assert!(token_cache_values(r#"{"locale": "en-US"}"#).is_empty());
+        assert!(token_cache_values("not json").is_empty());
+    }
+
+    #[test]
+    fn prefers_the_v2_cache_but_keeps_the_legacy_one_as_a_fallback() {
+        let config = r#"{"oauth:tokenCache": "djEwb2xk", "oauth:tokenCacheV2": "djEwbmV3"}"#;
+        assert_eq!(
+            token_cache_values(config),
+            vec![
+                ("oauth:tokenCacheV2", "djEwbmV3".to_string()),
+                ("oauth:tokenCache", "djEwb2xk".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn ignores_emptied_token_caches() {
+        // The desktop app leaves the key in place with an empty value after a
+        // migration; that must not mask a populated cache under the other key.
+        let config = r#"{"oauth:tokenCacheV2": "", "oauth:tokenCache": "djEwb2xk"}"#;
+        assert_eq!(
+            token_cache_values(config),
+            vec![("oauth:tokenCache", "djEwb2xk".to_string())]
+        );
     }
 
     #[test]
