@@ -15,15 +15,15 @@ use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetDoubleClickTime, ReleaseCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+    GetDoubleClickTime, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::app_settings::{
-    self, load_settings, save_settings, LegacyPlacement, SettingsFile, POLL_15_MIN,
-    POLL_15_MIN_SECONDS, POLL_1_HOUR, POLL_1_HOUR_SECONDS, POLL_1_MIN, POLL_1_MIN_SECONDS,
-    POLL_5_MIN, POLL_5_MIN_SECONDS,
+    self, load_settings, save_settings, LegacyPlacement, PlacementOverride, SettingsFile,
+    POLL_15_MIN, POLL_15_MIN_SECONDS, POLL_1_HOUR, POLL_1_HOUR_SECONDS, POLL_1_MIN,
+    POLL_1_MIN_SECONDS, POLL_5_MIN, POLL_5_MIN_SECONDS,
 };
 use crate::context_menu::{self, ContextMenuAction, ContextMenuItem, ContextMenuItemKind};
 use crate::diagnose;
@@ -32,8 +32,8 @@ use crate::models::AppUsageData;
 use crate::native_interop::{
     self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL,
     TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE,
-    WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED,
+    WM_APP_TASKBAR_COLLISION, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::providers::{ProviderId, ProviderSet};
@@ -110,9 +110,17 @@ struct AppState {
     taskbar_index: usize,
     tray_offset: i32,
     dragging: bool,
+    pending_drag: bool,
+    drag_start_cursor: POINT,
+    drag_start_origin: POINT,
     drag_start_mouse_x: i32,
     drag_start_client_x: i32,
     drag_start_offset: i32,
+    auto_ejected: bool,
+    auto_ejected_origin: Option<POINT>,
+    is_switching_window_style: bool,
+    placement_override: Option<PlacementOverride>,
+    floating_card_opacity: Option<u8>,
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
@@ -473,6 +481,69 @@ fn spawn_taskbar_watchdog() {
                 }
             }
         }
+
+        let collision_action = {
+            let state = lock_state();
+            if let Some(s) = state.as_ref() {
+                if s.dragging {
+                    None
+                } else if !s.auto_ejected && s.embedded {
+                    let widget_hwnd = s.hwnd.to_hwnd();
+                    let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
+                    if let (Some(tb), Some(widget_rect)) = (
+                        taskbar_hwnd,
+                        native_interop::get_window_rect_safe(widget_hwnd),
+                    ) {
+                        if let Some(app_right) = positioning::taskbar_tasklist_right_edge(tb) {
+                            if app_right > widget_rect.left {
+                                Some((widget_hwnd, 1usize))
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else if s.auto_ejected {
+                    let widget_hwnd = s.hwnd.to_hwnd();
+                    let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
+                    if let (Some(tb), Some(taskbar_rect)) = (
+                        taskbar_hwnd,
+                        taskbar_hwnd.and_then(native_interop::get_window_rect_safe),
+                    ) {
+                        let tray_left = tray_left_for_taskbar(tb, taskbar_rect);
+                        let app_right = positioning::taskbar_tasklist_right_edge(tb)
+                            .unwrap_or(taskbar_rect.left);
+                        let free_space = tray_left - app_right;
+                        let widget_width = total_widget_width_for_state(s);
+                        if free_space >= widget_width + 20 {
+                            Some((widget_hwnd, 0usize))
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        if let Some((target_hwnd, action)) = collision_action {
+            unsafe {
+                let _ = PostMessageW(
+                    Some(target_hwnd),
+                    native_interop::WM_APP_TASKBAR_COLLISION,
+                    WPARAM(action),
+                    LPARAM(0),
+                );
+            }
+        }
     });
 }
 
@@ -490,10 +561,24 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         state.auth_error_paused_polling,
         state.data.as_ref(),
     );
+    let nest = if state.auto_ejected {
+        SurfaceNest::Floating
+    } else if let Some(ref ov) = state.placement_override {
+        if ov.nest == "floating" {
+            SurfaceNest::Floating
+        } else {
+            SurfaceNest::Taskbar
+        }
+    } else {
+        SurfaceNest::Taskbar
+    };
+    let opacity = state.floating_card_opacity.unwrap_or(85);
     ThemeRuntime::from_providers(state.providers)
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_nest(nest)
+        .with_floating_card_opacity(opacity)
 }
 
 /// A transient outage can keep presenting the last real reading while its
@@ -514,9 +599,94 @@ fn poll_display_state(
 }
 
 fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
-    state.active_theme.as_ref().map(|theme| {
+    let mut result = state.active_theme.as_ref().map(|theme| {
         theme_engine::apply_mouse_action_overrides(theme, &state.mouse_action_overrides)
-    })
+    })?;
+
+    if state.auto_ejected {
+        if let Some(pt) = state.auto_ejected_origin {
+            let displays = native_interop::find_monitors();
+            let primary_display = displays
+                .iter()
+                .find(|d| d.primary)
+                .copied()
+                .or_else(|| displays.first().copied());
+            if let Some(display) = primary_display {
+                let scale = theme_surface_scale(&result, 0);
+                let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
+                let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
+
+                result.placement.horizontal = HorizontalAnchor::Left;
+                result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+                result.placement.vertical = VerticalAnchor::Top;
+                result.placement.surface_vertical = Some(VerticalAnchor::Top);
+                result.placement.reference.region = ReferenceRegion::Monitor;
+                result.placement.reference.display = 0;
+                result.placement.nest = SurfaceNest::Floating;
+                result.placement.offset_x = rel_x;
+                result.placement.offset_y = rel_y;
+
+                if let Some(surface) = result.surfaces.get_mut(0) {
+                    surface.placement.horizontal = HorizontalAnchor::Left;
+                    surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+                    surface.placement.vertical = VerticalAnchor::Top;
+                    surface.placement.surface_vertical = Some(VerticalAnchor::Top);
+                    surface.placement.reference.region = ReferenceRegion::Monitor;
+                    surface.placement.reference.display = 0;
+                    surface.placement.nest = SurfaceNest::Floating;
+                    surface.placement.offset_x = rel_x;
+                    surface.placement.offset_y = rel_y;
+                }
+            }
+        }
+    } else if let Some(ref override_val) = state.placement_override {
+        if override_val.nest == "floating" {
+            let displays = native_interop::find_monitors();
+            let monitor_index = override_val.monitor_index.min(displays.len().saturating_sub(1));
+            let selected_display = displays
+                .get(monitor_index)
+                .copied()
+                .or_else(|| displays.first().copied());
+            if let Some(display) = selected_display {
+                let scale = theme_surface_scale(&result, 0);
+                let rel_x = ((override_val.screen_x - display.rect.left) as f64 / scale).round() as i32;
+                let rel_y = ((override_val.screen_y - display.rect.top) as f64 / scale).round() as i32;
+
+                result.placement.horizontal = HorizontalAnchor::Left;
+                result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+                result.placement.vertical = VerticalAnchor::Top;
+                result.placement.surface_vertical = Some(VerticalAnchor::Top);
+                result.placement.reference.region = ReferenceRegion::Monitor;
+                result.placement.reference.display = monitor_index;
+                result.placement.nest = SurfaceNest::Floating;
+                result.placement.offset_x = rel_x;
+                result.placement.offset_y = rel_y;
+
+                if let Some(surface) = result.surfaces.get_mut(0) {
+                    surface.placement.horizontal = HorizontalAnchor::Left;
+                    surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+                    surface.placement.vertical = VerticalAnchor::Top;
+                    surface.placement.surface_vertical = Some(VerticalAnchor::Top);
+                    surface.placement.reference.region = ReferenceRegion::Monitor;
+                    surface.placement.reference.display = monitor_index;
+                    surface.placement.nest = SurfaceNest::Floating;
+                    surface.placement.offset_x = rel_x;
+                    surface.placement.offset_y = rel_y;
+                }
+            }
+        } else if override_val.nest == "taskbar" {
+            let scale = theme_surface_scale(&result, 0);
+            let theme_offset = legacy_offset_to_theme_offset(override_val.tray_offset, scale);
+            result.placement.nest = SurfaceNest::Taskbar;
+            result.placement.offset_x = theme_offset;
+            if let Some(surface) = result.surfaces.get_mut(0) {
+                surface.placement.nest = SurfaceNest::Taskbar;
+                surface.placement.offset_x = theme_offset;
+            }
+        }
+    }
+
+    Some(result)
 }
 
 fn theme_has_floating_surface(theme: &ThemeDocument) -> bool {
@@ -574,6 +744,8 @@ fn save_state_settings() {
             .active_theme_path
             .as_ref()
             .map(|path| path.to_string_lossy().to_string());
+        persisted.placement_override = s.placement_override.clone();
+        persisted.floating_card_opacity = s.floating_card_opacity;
         // The dashboard process owns its dimensions, so leave the freshly
         // loaded values unchanged when monitor actions persist settings.
         if let Err(error) = save_settings(&persisted) {
@@ -1854,9 +2026,17 @@ pub fn run() {
                 taskbar_index: settings.taskbar_index,
                 tray_offset: settings.tray_offset,
                 dragging: false,
+                pending_drag: false,
+                drag_start_cursor: POINT::default(),
+                drag_start_origin: POINT::default(),
                 drag_start_mouse_x: 0,
                 drag_start_client_x: 0,
                 drag_start_offset: 0,
+                auto_ejected: false,
+                auto_ejected_origin: None,
+                is_switching_window_style: false,
+                placement_override: settings.placement_override.clone(),
+                floating_card_opacity: settings.floating_card_opacity,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
                 active_theme_path,

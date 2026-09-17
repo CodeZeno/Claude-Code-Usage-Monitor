@@ -1209,6 +1209,8 @@ pub struct ThemeRuntime {
     /// the `.display` values and summaries using them follow this; `.percentage`
     /// always means consumption so severity thresholds keep their meaning.
     pub countdown: bool,
+    pub surface_nest: SurfaceNest,
+    pub floating_card_opacity: u8,
     host_width: u32,
     host_height: u32,
 }
@@ -1221,6 +1223,8 @@ impl Default for ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            surface_nest: SurfaceNest::Taskbar,
+            floating_card_opacity: 85,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1249,9 +1253,21 @@ impl ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            surface_nest: SurfaceNest::Taskbar,
+            floating_card_opacity: 85,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
+    }
+
+    pub fn with_nest(mut self, nest: SurfaceNest) -> Self {
+        self.surface_nest = nest;
+        self
+    }
+
+    pub fn with_floating_card_opacity(mut self, opacity: u8) -> Self {
+        self.floating_card_opacity = opacity;
+        self
     }
 
     pub fn with_poll_state(mut self, poll_ok: bool, has_error: bool) -> Self {

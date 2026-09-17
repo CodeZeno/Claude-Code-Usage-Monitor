@@ -189,3 +189,132 @@ fn is_tray_event_source_identifies_tray_and_excludes_own_windows() {
         &[dummy_our],
     ));
 }
+
+#[test]
+fn test_calculate_rect_overlap_ratio() {
+    let widget = RECT {
+        left: 100,
+        top: 0,
+        right: 200,
+        bottom: 50,
+    }; // width 100, height 50, area 5000
+
+    // Complete overlap
+    let target_full = RECT {
+        left: 50,
+        top: 0,
+        right: 250,
+        bottom: 50,
+    };
+    assert!((positioning::calculate_rect_overlap_ratio(widget, target_full) - 1.0).abs() < 1e-4);
+
+    // No overlap
+    let target_none = RECT {
+        left: 300,
+        top: 0,
+        right: 400,
+        bottom: 50,
+    };
+    assert_eq!(positioning::calculate_rect_overlap_ratio(widget, target_none), 0.0);
+
+    // 70% overlap (width 70 overlap across full height 50)
+    let target_70 = RECT {
+        left: 130,
+        top: 0,
+        right: 300,
+        bottom: 50,
+    };
+    let ratio = positioning::calculate_rect_overlap_ratio(widget, target_70);
+    assert!((ratio - 0.70).abs() < 1e-4);
+    assert!(ratio >= 0.67); // Triggers snap
+
+    // 40% overlap
+    let target_40 = RECT {
+        left: 160,
+        top: 0,
+        right: 300,
+        bottom: 50,
+    };
+    let ratio_40 = positioning::calculate_rect_overlap_ratio(widget, target_40);
+    assert!((ratio_40 - 0.40).abs() < 1e-4);
+    assert!(ratio_40 < 0.45); // Below hysteresis threshold
+}
+
+#[test]
+fn test_is_taskbar_capacity_sufficient() {
+    // Horizontal taskbar 1920x48
+    let taskbar_h = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 48,
+    };
+    let free_slot_plenty = RECT {
+        left: 1000,
+        top: 0,
+        right: 1500,
+        bottom: 48,
+    }; // width 500
+    assert!(positioning::is_taskbar_capacity_sufficient(
+        taskbar_h,
+        free_slot_plenty,
+        250,
+        46
+    ));
+
+    let free_slot_crowded = RECT {
+        left: 1400,
+        top: 0,
+        right: 1500,
+        bottom: 48,
+    }; // width 100 < widget_w 250
+    assert!(!positioning::is_taskbar_capacity_sufficient(
+        taskbar_h,
+        free_slot_crowded,
+        250,
+        46
+    ));
+
+    // Vertical taskbar 48x1080
+    let taskbar_v = RECT {
+        left: 0,
+        top: 0,
+        right: 48,
+        bottom: 1080,
+    };
+    let free_slot_v = RECT {
+        left: 0,
+        top: 200,
+        right: 48,
+        bottom: 800,
+    };
+    // Album widget width 250 cannot fit in 48px width
+    assert!(!positioning::is_taskbar_capacity_sufficient(
+        taskbar_v,
+        free_slot_v,
+        250,
+        46
+    ));
+}
+
+#[test]
+fn test_placement_override_serialization_and_normalization() {
+    let ov = app_settings::PlacementOverride {
+        nest: "floating".into(),
+        monitor_index: 1,
+        screen_x: 250,
+        screen_y: 120,
+        tray_offset: 0,
+    };
+    let json = serde_json::to_string(&ov).unwrap();
+    assert!(json.contains("\"nest\":\"floating\""));
+    assert!(json.contains("\"screen_x\":250"));
+
+    let deserialized: app_settings::PlacementOverride = serde_json::from_str(&json).unwrap();
+    assert_eq!(ov, deserialized);
+
+    let mut settings = app_settings::SettingsFile::default();
+    settings.floating_card_opacity = Some(150);
+    settings.normalize();
+    assert_eq!(settings.floating_card_opacity, Some(100));
+}
