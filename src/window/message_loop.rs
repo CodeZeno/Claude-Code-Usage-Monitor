@@ -171,6 +171,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 s.pending_drag = true;
+                s.is_snapped = false;
                 s.drag_start_cursor = pt;
                 s.drag_start_origin = POINT {
                     x: rect.left,
@@ -272,6 +273,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     });
 
                     let mut snapped_pos = None;
+                    let mut now_snapped = false;
                     if let Some(taskbar) = target_taskbar {
                         let free_dock_slot =
                             positioning::taskbar_free_dock_slot(taskbar.hwnd, taskbar.rect);
@@ -282,11 +284,17 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             widget_h,
                         );
                         if capacity_ok {
+                            let was_snapped = {
+                                let state = lock_state();
+                                state.as_ref().map_or(false, |s| s.is_snapped)
+                            };
+                            let threshold = if was_snapped { 0.45 } else { 0.67 };
                             let overlap = positioning::calculate_rect_overlap_ratio(
                                 virtual_rect,
                                 free_dock_slot,
                             );
-                            if overlap >= 0.67 {
+                            if overlap >= threshold {
+                                now_snapped = true;
                                 let is_horizontal =
                                     native_interop::is_taskbar_horizontal(taskbar.rect);
                                 if is_horizontal {
@@ -305,6 +313,13 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     snapped_pos = Some((snapped_x, snapped_y));
                                 }
                             }
+                        }
+                    }
+
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.is_snapped = now_snapped;
                         }
                     }
 
@@ -379,7 +394,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 let widget_h = (widget_rect.bottom - widget_rect.top).max(1);
 
                 let taskbars = native_interop::find_taskbars();
-                let target_taskbar = taskbars.into_iter().find(|tb| {
+                let was_snapped = {
+                    let state = lock_state();
+                    state.as_ref().map_or(false, |s| s.is_snapped)
+                };
+                let target_dock = taskbars.iter().enumerate().find_map(|(idx, tb)| {
                     let free_dock_slot = positioning::taskbar_free_dock_slot(tb.hwnd, tb.rect);
                     let capacity_ok = positioning::is_taskbar_capacity_sufficient(
                         tb.rect,
@@ -388,26 +407,33 @@ pub(super) unsafe extern "system" fn wnd_proc(
                         widget_h,
                     );
                     if !capacity_ok {
-                        return false;
+                        return None;
                     }
                     let overlap =
                         positioning::calculate_rect_overlap_ratio(widget_rect, free_dock_slot);
-                    overlap >= 0.45
+                    let threshold = if was_snapped { 0.45 } else { 0.67 };
+                    if overlap >= threshold {
+                        Some((idx, tb, free_dock_slot))
+                    } else {
+                        None
+                    }
                 });
 
-                if let Some(taskbar) = target_taskbar {
-                    let free_dock_slot =
-                        positioning::taskbar_free_dock_slot(taskbar.hwnd, taskbar.rect);
+                if let Some((target_idx, taskbar, free_dock_slot)) = target_dock {
                     let tray_offset = (free_dock_slot.right - widget_rect.right).max(0);
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
+                            s.embedded = true;
+                            s.is_snapped = false;
+                            s.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar.hwnd));
+                            s.taskbar_index = target_idx;
                             s.auto_ejected = false;
                             s.auto_ejected_origin = None;
                             s.tray_offset = tray_offset;
                             s.placement_override = Some(PlacementOverride {
                                 nest: "taskbar".into(),
-                                monitor_index: 0,
+                                monitor_index: target_idx,
                                 screen_x: 0,
                                 screen_y: 0,
                                 tray_offset,
@@ -458,6 +484,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
+                            s.embedded = false;
+                            s.is_snapped = false;
                             s.auto_ejected = false;
                             s.auto_ejected_origin = None;
                             s.placement_override = Some(PlacementOverride {
@@ -496,6 +524,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 if !s.is_switching_window_style {
                     s.dragging = false;
                     s.pending_drag = false;
+                    s.is_snapped = false;
                 }
             }
             LRESULT(0)
@@ -522,9 +551,27 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     .unwrap_or_default();
                 let is_horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
 
+                let displays = native_interop::find_monitors();
+                let mon = displays
+                    .iter()
+                    .find(|d| {
+                        taskbar_rect.left >= d.rect.left
+                            && taskbar_rect.right <= d.rect.right
+                            && taskbar_rect.top >= d.rect.top
+                            && taskbar_rect.bottom <= d.rect.bottom
+                    })
+                    .or_else(|| displays.first());
+                let mon_rect = mon.map(|m| m.rect).unwrap_or(RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                });
+
                 let pt = if is_horizontal {
                     let x = widget_rect.left;
-                    let y = if taskbar_rect.top <= 50 {
+                    let is_top = (taskbar_rect.top - mon_rect.top).abs() <= 50;
+                    let y = if is_top {
                         taskbar_rect.bottom + 6
                     } else {
                         taskbar_rect.top - widget_h - 6
@@ -532,7 +579,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     POINT { x, y }
                 } else {
                     let y = widget_rect.top;
-                    let x = if taskbar_rect.left <= 50 {
+                    let is_left = (taskbar_rect.left - mon_rect.left).abs() <= 50;
+                    let x = if is_left {
                         taskbar_rect.right + 6
                     } else {
                         taskbar_rect.left - widget_w - 6

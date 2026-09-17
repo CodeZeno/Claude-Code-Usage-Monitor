@@ -318,3 +318,88 @@ fn test_placement_override_serialization_and_normalization() {
     settings.normalize();
     assert_eq!(settings.floating_card_opacity, Some(100));
 }
+
+#[test]
+fn test_hysteresis_threshold_state_machine() {
+    let free_slot = RECT {
+        left: 1000,
+        top: 0,
+        right: 1200,
+        bottom: 48,
+    };
+    // 200px width widget
+    // If widget is placed at 1100..1300: intersection is 1100..1200 = 100px.
+    // Overlap = 100 / 200 = 0.50.
+    let widget_half = RECT {
+        left: 1100,
+        top: 0,
+        right: 1300,
+        bottom: 48,
+    };
+    let overlap_half = positioning::calculate_rect_overlap_ratio(widget_half, free_slot);
+    assert!((overlap_half - 0.50).abs() < 0.01);
+
+    // If currently unsnapped, threshold is 0.67, so 0.50 should NOT snap
+    let snap_threshold_unsnapped = 0.67;
+    assert!(overlap_half < snap_threshold_unsnapped);
+
+    // If already snapped, threshold is 0.45 (hysteresis), so 0.50 SHOULD remain snapped
+    let snap_threshold_snapped = 0.45;
+    assert!(overlap_half >= snap_threshold_snapped);
+
+    // If widget moved further out to 1130..1330: intersection is 1130..1200 = 70px (35%)
+    let widget_far = RECT {
+        left: 1130,
+        top: 0,
+        right: 1330,
+        bottom: 48,
+    };
+    let overlap_far = positioning::calculate_rect_overlap_ratio(widget_far, free_slot);
+    assert!(overlap_far < snap_threshold_snapped);
+}
+
+#[test]
+fn test_auto_eject_relative_monitor_coords() {
+    // Secondary monitor stacked vertically above primary: Y from -1080 to 0
+    let mon_rect = RECT {
+        left: 0,
+        top: -1080,
+        right: 1920,
+        bottom: 0,
+    };
+    // Taskbar at top of that secondary monitor: top = -1080, bottom = -1032
+    let taskbar_top = RECT {
+        left: 0,
+        top: -1080,
+        right: 1920,
+        bottom: -1032,
+    };
+    let is_top = (taskbar_top.top - mon_rect.top).abs() <= 50;
+    assert!(is_top, "Taskbar at top of stacked monitor should be detected as top");
+
+    let widget_h = 44;
+    let ejected_y = if is_top {
+        taskbar_top.bottom + 6
+    } else {
+        taskbar_top.top - widget_h - 6
+    };
+    assert_eq!(ejected_y, -1032 + 6); // -1026
+
+    // Taskbar at bottom of that secondary monitor: top = -48, bottom = 0
+    let taskbar_bottom = RECT {
+        left: 0,
+        top: -48,
+        right: 1920,
+        bottom: 0,
+    };
+    let is_top_bottom_tb = (taskbar_bottom.top - mon_rect.top).abs() <= 50;
+    assert!(!is_top_bottom_tb, "Taskbar at bottom of stacked monitor should NOT be detected as top");
+
+    let ejected_y_bottom = if is_top_bottom_tb {
+        taskbar_bottom.bottom + 6
+    } else {
+        taskbar_bottom.top - widget_h - 6
+    };
+    assert_eq!(ejected_y_bottom, -48 - 44 - 6); // -98
+}
+

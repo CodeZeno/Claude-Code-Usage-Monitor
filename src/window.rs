@@ -119,6 +119,7 @@ struct AppState {
     auto_ejected: bool,
     auto_ejected_origin: Option<POINT>,
     is_switching_window_style: bool,
+    is_snapped: bool,
     placement_override: Option<PlacementOverride>,
     floating_card_opacity: Option<u8>,
 
@@ -487,7 +488,10 @@ fn spawn_taskbar_watchdog() {
             if let Some(s) = state.as_ref() {
                 if s.dragging {
                     None
-                } else if !s.auto_ejected && s.embedded {
+                } else if !s.auto_ejected
+                    && s.embedded
+                    && s.placement_override.as_ref().map_or(true, |p| p.nest != "floating")
+                {
                     let widget_hwnd = s.hwnd.to_hwnd();
                     let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
                     if let (Some(tb), Some(widget_rect)) = (
@@ -648,10 +652,6 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
                 .copied()
                 .or_else(|| displays.first().copied());
             if let Some(display) = selected_display {
-                let scale = theme_surface_scale(&result, 0);
-                let rel_x = ((override_val.screen_x - display.rect.left) as f64 / scale).round() as i32;
-                let rel_y = ((override_val.screen_y - display.rect.top) as f64 / scale).round() as i32;
-
                 result.placement.horizontal = HorizontalAnchor::Left;
                 result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
                 result.placement.vertical = VerticalAnchor::Top;
@@ -659,8 +659,6 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
                 result.placement.reference.region = ReferenceRegion::Monitor;
                 result.placement.reference.display = monitor_index;
                 result.placement.nest = SurfaceNest::Floating;
-                result.placement.offset_x = rel_x;
-                result.placement.offset_y = rel_y;
 
                 if let Some(surface) = result.surfaces.get_mut(0) {
                     surface.placement.horizontal = HorizontalAnchor::Left;
@@ -670,11 +668,24 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
                     surface.placement.reference.region = ReferenceRegion::Monitor;
                     surface.placement.reference.display = monitor_index;
                     surface.placement.nest = SurfaceNest::Floating;
+                }
+
+                let scale = theme_surface_scale(&result, 0);
+                let rel_x = ((override_val.screen_x - display.rect.left) as f64 / scale).round() as i32;
+                let rel_y = ((override_val.screen_y - display.rect.top) as f64 / scale).round() as i32;
+
+                result.placement.offset_x = rel_x;
+                result.placement.offset_y = rel_y;
+                if let Some(surface) = result.surfaces.get_mut(0) {
                     surface.placement.offset_x = rel_x;
                     surface.placement.offset_y = rel_y;
                 }
             }
         } else if override_val.nest == "taskbar" {
+            result.placement.reference.display = override_val.monitor_index;
+            if let Some(surface) = result.surfaces.get_mut(0) {
+                surface.placement.reference.display = override_val.monitor_index;
+            }
             let scale = theme_surface_scale(&result, 0);
             let theme_offset = legacy_offset_to_theme_offset(override_val.tray_offset, scale);
             result.placement.nest = SurfaceNest::Taskbar;
@@ -2035,6 +2046,7 @@ pub fn run() {
                 auto_ejected: false,
                 auto_ejected_origin: None,
                 is_switching_window_style: false,
+                is_snapped: false,
                 placement_override: settings.placement_override.clone(),
                 floating_card_opacity: settings.floating_card_opacity,
                 custom_theme_enabled,
