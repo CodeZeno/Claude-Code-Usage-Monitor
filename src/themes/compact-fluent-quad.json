@@ -21,7 +21,7 @@
         "offset_x": 6,
         "offset_y": 0
       },
-      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18",
+      "width": "20 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18",
       "height": "46",
       "background": {
         "type": "none"
@@ -335,8 +335,8 @@
           "name": "Enabled providers",
           "render": "1",
           "visibility": "100",
-          "x": "0",
-          "width": "canvas.width",
+          "x": "10",
+          "width": "canvas.width - 20",
           "height": "46",
           "background": {
             "type": "none"
