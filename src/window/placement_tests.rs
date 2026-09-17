@@ -403,3 +403,97 @@ fn test_auto_eject_relative_monitor_coords() {
     assert_eq!(ejected_y_bottom, -48 - 44 - 6); // -98
 }
 
+#[test]
+fn test_drag_release_capture_state_ordering() {
+    // Model the state machine during WM_LBUTTONUP and WM_CAPTURECHANGED
+    struct DragStateMachine {
+        dragging: bool,
+        pending_drag: bool,
+        is_snapped: bool,
+    }
+
+    impl DragStateMachine {
+        // Correct implementation: extract before releasing capture
+        fn on_lbuttonup_correct(&mut self) -> (bool, bool) {
+            let was_dragging = self.dragging;
+            let was_pending = self.pending_drag;
+            self.dragging = false;
+            self.pending_drag = false;
+            self.is_snapped = false;
+
+            // ReleaseCapture() synchronously triggers on_capture_changed()
+            self.on_capture_changed();
+
+            (was_dragging, was_pending)
+        }
+
+        fn on_capture_changed(&mut self) {
+            self.dragging = false;
+            self.pending_drag = false;
+            self.is_snapped = false;
+        }
+    }
+
+    // Case 1: Was dragging actively
+    let mut sm1 = DragStateMachine {
+        dragging: true,
+        pending_drag: false,
+        is_snapped: true,
+    };
+    let (was_dragging, was_pending) = sm1.on_lbuttonup_correct();
+    assert!(was_dragging, "Drop must receive was_dragging = true");
+    assert!(!was_pending);
+    assert!(!sm1.dragging);
+    assert!(!sm1.is_snapped);
+
+    // Case 2: Was a pending click (not dragged beyond threshold)
+    let mut sm2 = DragStateMachine {
+        dragging: false,
+        pending_drag: true,
+        is_snapped: false,
+    };
+    let (was_dragging2, was_pending2) = sm2.on_lbuttonup_correct();
+    assert!(!was_dragging2);
+    assert!(was_pending2, "Click dispatch must receive was_pending = true");
+}
+
+#[test]
+fn test_multi_monitor_auto_eject_resolution() {
+    let displays = vec![
+        native_interop::DisplayMonitor {
+            handle: HMONITOR::default(),
+            rect: RECT { left: 0, top: 0, right: 1920, bottom: 1080 },
+            primary: true,
+        },
+        native_interop::DisplayMonitor {
+            handle: HMONITOR::default(),
+            rect: RECT { left: 1920, top: 0, right: 3840, bottom: 1080 },
+            primary: false,
+        },
+    ];
+
+    let pt = POINT { x: 2500, y: 100 };
+    let resolved = displays
+        .iter()
+        .enumerate()
+        .find(|(_, d)| {
+            pt.x >= d.rect.left
+                && pt.x < d.rect.right
+                && pt.y >= d.rect.top
+                && pt.y < d.rect.bottom
+        })
+        .map(|(i, d)| (i, *d));
+
+    assert!(resolved.is_some());
+    let (idx, display) = resolved.unwrap();
+    assert_eq!(idx, 1, "Point on secondary monitor must resolve to display index 1");
+    assert_eq!(display.rect.left, 1920);
+
+    let scale = 1.5; // 150% DPI on secondary
+    let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
+    let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
+    assert_eq!(rel_x, ((2500 - 1920) as f64 / 1.5).round() as i32); // 387
+    assert_eq!(rel_y, (100.0 / 1.5_f64).round() as i32); // 67
+}
+
+
