@@ -618,37 +618,69 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
     if state.auto_ejected {
         if let Some(pt) = state.auto_ejected_origin {
             let displays = native_interop::find_monitors();
-            let primary_display = displays
+            let (monitor_idx, display) = displays
                 .iter()
-                .find(|d| d.primary)
-                .copied()
-                .or_else(|| displays.first().copied());
-            if let Some(display) = primary_display {
-                let scale = theme_surface_scale(&result, 0);
-                let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
-                let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
+                .enumerate()
+                .find(|(_, d)| {
+                    pt.x >= d.rect.left
+                        && pt.x < d.rect.right
+                        && pt.y >= d.rect.top
+                        && pt.y < d.rect.bottom
+                })
+                .map(|(i, d)| (i, *d))
+                .unwrap_or_else(|| {
+                    let fallback = displays
+                        .iter()
+                        .enumerate()
+                        .find(|(_, d)| d.primary)
+                        .or_else(|| displays.iter().enumerate().next());
+                    if let Some((i, d)) = fallback {
+                        (i, *d)
+                    } else {
+                        (
+                            0,
+                            native_interop::DisplayMonitor {
+                                handle: HMONITOR::default(),
+                                rect: RECT {
+                                    left: 0,
+                                    top: 0,
+                                    right: 1920,
+                                    bottom: 1080,
+                                },
+                                primary: true,
+                            },
+                        )
+                    }
+                });
 
-                result.placement.horizontal = HorizontalAnchor::Left;
-                result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-                result.placement.vertical = VerticalAnchor::Top;
-                result.placement.surface_vertical = Some(VerticalAnchor::Top);
-                result.placement.reference.region = ReferenceRegion::Monitor;
-                result.placement.reference.display = 0;
-                result.placement.nest = SurfaceNest::Floating;
-                result.placement.offset_x = rel_x;
-                result.placement.offset_y = rel_y;
+            result.placement.horizontal = HorizontalAnchor::Left;
+            result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+            result.placement.vertical = VerticalAnchor::Top;
+            result.placement.surface_vertical = Some(VerticalAnchor::Top);
+            result.placement.reference.region = ReferenceRegion::Monitor;
+            result.placement.reference.display = monitor_idx;
+            result.placement.nest = SurfaceNest::Floating;
 
-                if let Some(surface) = result.surfaces.get_mut(0) {
-                    surface.placement.horizontal = HorizontalAnchor::Left;
-                    surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-                    surface.placement.vertical = VerticalAnchor::Top;
-                    surface.placement.surface_vertical = Some(VerticalAnchor::Top);
-                    surface.placement.reference.region = ReferenceRegion::Monitor;
-                    surface.placement.reference.display = 0;
-                    surface.placement.nest = SurfaceNest::Floating;
-                    surface.placement.offset_x = rel_x;
-                    surface.placement.offset_y = rel_y;
-                }
+            if let Some(surface) = result.surfaces.get_mut(0) {
+                surface.placement.horizontal = HorizontalAnchor::Left;
+                surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
+                surface.placement.vertical = VerticalAnchor::Top;
+                surface.placement.surface_vertical = Some(VerticalAnchor::Top);
+                surface.placement.reference.region = ReferenceRegion::Monitor;
+                surface.placement.reference.display = monitor_idx;
+                surface.placement.nest = SurfaceNest::Floating;
+            }
+
+            let scale = theme_surface_scale(&result, 0);
+            let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
+            let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
+
+            result.placement.offset_x = rel_x;
+            result.placement.offset_y = rel_y;
+
+            if let Some(surface) = result.surfaces.get_mut(0) {
+                surface.placement.offset_x = rel_x;
+                surface.placement.offset_y = rel_y;
             }
         }
     } else if let Some(ref override_val) = state.placement_override {
@@ -2654,6 +2686,9 @@ fn reload_external_settings(hwnd: HWND) {
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
         state.taskbar_index = settings.taskbar_index;
+        state.tray_offset = settings.tray_offset;
+        state.placement_override = settings.placement_override;
+        state.floating_card_opacity = settings.floating_card_opacity;
         apply_language_to_state(state, language_override);
     }
     unsafe {

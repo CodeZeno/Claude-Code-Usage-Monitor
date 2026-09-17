@@ -361,6 +361,19 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_LBUTTONUP => {
+            let drag_ended = {
+                let mut state = lock_state();
+                if let Some(s) = state.as_mut() {
+                    let was_dragging = s.dragging;
+                    let was_pending = s.pending_drag;
+                    s.dragging = false;
+                    s.pending_drag = false;
+                    s.is_snapped = false;
+                    (was_dragging, was_pending)
+                } else {
+                    (false, false)
+                }
+            };
             unsafe {
                 let _ = ReleaseCapture();
             }
@@ -377,19 +390,6 @@ pub(super) unsafe extern "system" fn wnd_proc(
             }
             let mut pt = POINT::default();
             let _ = unsafe { GetCursorPos(&mut pt) };
-
-            let drag_ended = {
-                let mut state = lock_state();
-                if let Some(s) = state.as_mut() {
-                    let was_dragging = s.dragging;
-                    let was_pending = s.pending_drag;
-                    s.dragging = false;
-                    s.pending_drag = false;
-                    (was_dragging, was_pending)
-                } else {
-                    (false, false)
-                }
-            };
 
             if drag_ended.0 {
                 let widget_rect = native_interop::get_window_rect_safe(hwnd).unwrap_or_default();
