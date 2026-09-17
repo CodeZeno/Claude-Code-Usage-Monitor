@@ -1,7 +1,7 @@
 # Quota Rules
 
-`Quota rules revision: 2026-09-16-03`
-`Last verified: 2026-09-16`
+`Quota rules revision: 2026-09-18-01`
+`Last verified: 2026-09-18`
 
 This is the specification of record for how this app interprets and labels
 provider usage data. It is not user-facing copy — README stays short and
@@ -134,14 +134,14 @@ Codex app-server protocol and lifecycle rules:
 | Stable family ID | `github_copilot` |
 | Internal adapter | `poll_github_copilot`, `github_copilot_usage_from_response` |
 | Source | Official GitHub user billing AI-credit usage REST API, `/users/{username}/settings/billing/ai_credit/usage`, invoked through `gh api` |
-| Quota scope | Independent monthly Copilot AI Credits for a paid individual account |
+| Quota scope | Independent monthly Copilot AI Credits from the personal-account user billing source. A 2026-09-18 live recheck on an account the user reports as Copilot Free returned a successful response, so Free compatibility is recorded as observed behavior rather than generalized from the API documentation |
 | Quota items | `monthly_ai_credits`: summed Copilot `grossQuantity` as used AI Credits; optionally paired with the manually selected plan allowance; reset at the first day of the next calendar month at 00:00 UTC |
 | Fallback behavior | None. GitHub CLI is the credential broker; the app does not read, refresh, or store a GitHub token itself |
-| Unavailable conditions | `gh` missing or not logged in, insufficient API permission, command/API failure, malformed values, or a non-empty response with no recognizable Copilot AI-credit rows. These conditions are never displayed as zero usage |
+| Unavailable conditions | `gh` missing or not logged in, insufficient API permission, command/API failure, malformed values, or a non-empty response with no recognizable Copilot AI-credit rows. An empty `usageItems` array is valid and is interpreted as zero observed AI-credit usage, not a fetch failure |
 | Minimum fetchable unit | Aggregate Copilot AI-credit usage rows. The app sums `grossQuantity`; it deliberately does not use `netQuantity`, which may be zero after included-credit discounts |
-| Display caveats | Initial scope is Paid Individual only. Free, Student, Business, and Enterprise are unsupported. Plan is a manual setting: `Pro` = 1,500, `Pro+` = 7,000, `Max` = 20,000 AI Credits as of 2026-08-10. These totals include a flex allotment and may change in GitHub's product specification. `Unknown` shows gross usage only and does not invent limit, remaining, or percentage. Subscription billing date is not treated as quota reset date |
-| Last verified | 2026-08-10 |
-| Rule revision | 2026-08-10-01 |
+| Display caveats | The app does not hard-code or infer a Free numeric allowance. The 2026-09-18 live Free-account recheck returned success with `usageItems: []`; under the current parser this is `0` observed AI Credits. Free remains on the `Unknown` plan setting, which shows gross usage only and does not invent a limit, remaining amount, or percentage. Paid manual settings remain `Pro` = 1,500, `Pro+` = 7,000, `Max` = 20,000 AI Credits. Student, Business, and Enterprise are not claimed supported by this personal-account path. |
+| Last verified | 2026-09-18 |
+| Rule revision | 2026-09-18-01 |
 
 Security and retention rules:
 
@@ -185,6 +185,7 @@ column that misrepresents what is actually being measured.
 
 | Revision | Date | Change |
 |---|---|---|
+| 2026-09-18-01 | 2026-09-18 | `GITHUB-COPILOT-FREE-RECHECK-01`: live Copilot Free recheck returned success with empty `usageItems`; treat as zero observed usage while keeping Free as `Unknown` / usage-only because no authoritative numeric Free limit is established. |
 | 2026-09-16-03 | 2026-09-16 | `ANTIGRAVITY-SETUP-UX-01`: adds a Help-menu "Antigravity Setup..." dialog (setup command, disable command, last-observed time — clipboard-copies the setup command on click) and, as a prerequisite fix, replaces Antigravity's fixed session/weekly display slots with a dynamic per-cache-item bar list (`gemini-weekly` keeps its own weekly slot with pace guidance; every other item, including unrecognized future keys, gets its own always-visible bar, never hidden in a details-only view) — the prior routing-switch commit had left these bars permanently showing "not available" regardless of real cache content, since `UsageData::from_quota_items` never sets the fixed session/weekly availability flags the display code checked. |
 | 2026-09-16-02 | 2026-09-16 | `ANTIGRAVITY-ROUTING-SWITCH-01`: switches `poll_antigravity` from the legacy Google Cloud Code HTTP/OAuth path onto the official statusLine cache exclusively, and removes the legacy path's code entirely (credential read, Windows Credential Manager access, HTTP fetch/summary-parsing functions, and their dedicated `CredentialWatchMode::Antigravity` variant). Decides against a fixed cache-age TTL (measured update cadence is activity-driven and irregular); freshness is instead judged per quota item against that item's own `reset_time`, with items past their reset marked `Stale` (never shown as current, never assumed `0`) and independent per key. A family with no current item is `Stale` at the family level. Cache missing/malformed/unsupported-schema all map to the existing `Unavailable` status, never `0%`, with no legacy fallback. |
 | 2026-09-16-01 | 2026-09-16 | `ANTIGRAVITY-STATUSLINE-BRIDGE-01`: adds a parallel, opt-in, not-yet-active Antigravity data path via the Antigravity CLI's official `/statusline <command>` feature — a sanitized local cache (`antigravity_statusline` module + `aum-quota antigravity-statusline-bridge`) that never touches Google/Antigravity credentials or backends directly. Documents the verified payload shape, the `gemini-weekly`/`3p-weekly` quota keys (`3p-weekly`'s semantics unconfirmed), and that this path is weekly-only so far (no 5h key observed). Does not change which path `poll_antigravity` actually uses at runtime. |

@@ -17,7 +17,7 @@ It sits in your taskbar and shows your configured providers' available quota win
 - Optional Antigravity quota items captured through its official statusline integration
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
-- System tray icon badges showing your enabled model usage percentage
+- A single provider-independent system tray icon for toggling the widget and opening settings
 - Left-click the tray icon to toggle the taskbar widget on or off
 - Right-click options for refresh, displayed models, update frequency, language, startup, widget visibility, and updates
 - Multi-monitor taskbar placement, so the widget can live on the taskbar for the screen you prefer
@@ -59,7 +59,7 @@ After installing with WinGet, run:
 claude-code-usage-monitor
 ```
 
-Once running, it will appear in your taskbar and as one or more tray icons in the notification area.
+Once running, it will appear in your taskbar and as one tray icon in the notification area.
 
 - Drag the left divider to move the taskbar widget
 - On multi-monitor setups, drag the widget onto another Windows taskbar to move it to that screen
@@ -74,6 +74,7 @@ Use the right-click **Models** menu to choose what the widget displays:
 - **Claude** is enabled by default
 - **Codex** can be enabled alongside Claude or shown by itself
 - **Antigravity** can be enabled alongside the other providers or shown by itself as its own model column
+- **GitHub Copilot** can be enabled as a monthly AI Credits column; when the plan allowance is unknown, it shows observed usage only
 
 When multiple models are shown, each model has its own usage bar and matching usage text color.
 
@@ -87,17 +88,15 @@ The widget keeps its labels short. Here's what each one actually represents:
 - `gemini-weekly` is treated as a Gemini-family weekly quota. Other keys such as `3p-weekly` are not renamed until their meaning is authoritatively documented
 - These columns are a common display for whatever usage data is available per provider, not a separate UI design per provider
 
-*Last verified: 2026-09-16*
+*Last verified: 2026-09-18*
 
 ### System Tray Icon
 
-The tray icon shows your current 5-hour usage as a percentage badge.
+The app uses one provider-independent tray icon regardless of how many providers are enabled.
 
-If multiple providers are enabled, the app shows one tray icon per provider. If only one model is enabled, it shows one tray icon.
+Left-click toggles the taskbar widget. Right-click opens the same context menu used by the widget.
 
-The Claude tray icon uses the same warm usage colors as the Claude bar. The Codex tray icon uses a black and white badge style. The Antigravity tray icon uses a blue badge style, and GitHub Copilot uses purple.
-
-Hovering over a tray icon shows the usage values for that model.
+Provider usage percentages and quota details stay in the widget instead of being duplicated as separate provider tray icons.
 
 ## Diagnostics
 
@@ -159,7 +158,7 @@ What the app stores locally:
 - Last update check time
 - Displayed model preferences
 - A local, app-specific machine ID (a random identifier generated on this PC, not a hardware or OS ID)
-- Usage snapshots for Claude Code, Codex, and Antigravity.
+- Usage snapshots for Claude, Codex, Antigravity, and GitHub Copilot.
 
 Usage snapshots and the machine ID are stored under:
 
@@ -186,7 +185,7 @@ What it does **not** do:
 
 Notes:
 
-- If your Claude Code token is expired, the app may ask the local Claude CLI to refresh it in the background
+- Default builds do not automatically refresh expired Claude credentials; use the provider login/auth recovery flow and then refresh or restart the monitor
 - If Codex usage is unavailable because the CLI/app-server session is not authenticated, sign in with the Codex CLI; the monitor does not manage Codex credentials itself
 - If your Antigravity token is expired, open Antigravity and sign in again. The monitor does not write Windows Credential Manager entries itself.
 - Portable installs can update themselves by downloading the latest release from this repository
