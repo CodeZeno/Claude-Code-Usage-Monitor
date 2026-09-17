@@ -4209,8 +4209,24 @@ fn widget_height_for_state(state: &AppState) -> i32 {
     widget_height_for_rows(rows)
 }
 
+fn popup_height_device_for_dpi(rows: VisibleRows, dpi: u32) -> i32 {
+    let row_count = i32::from(rows.weekly_row)
+        + i32::from(rows.session_row)
+        + i32::from(rows.monthly_row)
+        + rows.antigravity_extra_rows;
+    let gaps = (row_count - 1).max(0);
+
+    scaled_for_dpi(3, dpi)
+        + scaled_for_dpi(HEADER_ROW_H, dpi)
+        + scaled_for_dpi(4, dpi)
+        + row_count * scaled_for_dpi(SEGMENT_H, dpi)
+        + gaps * scaled_for_dpi(ROW_GAP_H, dpi)
+        + rows.weekly_extra_lines * scaled_for_dpi(PACE_LINE_H, dpi)
+        + scaled_for_dpi(5, dpi)
+}
+
 fn widget_height_for_rows(rows: VisibleRows) -> i32 {
-    sc(popup_height_logical(rows))
+    popup_height_device_for_dpi(rows, CURRENT_DPI.load(Ordering::Relaxed))
 }
 
 fn widget_height() -> i32 {
@@ -4257,7 +4273,7 @@ fn pace_row_layout(height: i32, rows: VisibleRows) -> PaceRowLayout {
         None
     };
     if rows.weekly_row {
-        y += sc(SEGMENT_H + rows.weekly_extra_lines * PACE_LINE_H);
+        y += sc(SEGMENT_H) + rows.weekly_extra_lines * sc(PACE_LINE_H);
         rows_left -= 1;
         if rows_left > 0 {
             y += sc(ROW_GAP_H);
@@ -11728,6 +11744,27 @@ mod tests {
         let rows = visible_rows(PopupLayout::Standard, 0, false);
         assert_eq!(rows.weekly_extra_lines, 0);
         assert!(!rows.session_row);
+    }
+
+    #[test]
+    fn three_visible_quota_rows_at_125_percent_use_component_scaled_height() {
+        let rows = visible_rows_for_quota(PopupLayout::Standard, true, 0, true, true, 0);
+
+        assert_eq!(popup_height_logical(rows), 85);
+        assert_eq!(scaled_for_dpi(popup_height_logical(rows), 120), 106);
+        assert_eq!(popup_height_device_for_dpi(rows, 120), 107);
+    }
+
+    #[test]
+    fn two_weekly_pace_lines_at_125_percent_use_component_scaled_height() {
+        let rows = visible_rows_for_quota(PopupLayout::Standard, true, 2, true, true, 0);
+
+        assert_eq!(
+            scaled_for_dpi(SEGMENT_H, 120) + 2 * scaled_for_dpi(PACE_LINE_H, 120),
+            52
+        );
+        assert_eq!(scaled_for_dpi(SEGMENT_H + 2 * PACE_LINE_H, 120), 51);
+        assert_eq!(popup_height_device_for_dpi(rows, 120), 143);
     }
 
     #[test]
