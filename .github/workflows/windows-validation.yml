@@ -41,12 +41,12 @@ jobs:
         run: cargo build --release --locked --no-default-features
 
       - name: Run tests (antigravity feature)
-        id: tests-antigravity
+        id: tests_antigravity
         continue-on-error: true
         run: cargo test --locked --no-default-features --features antigravity
 
       - name: Build release (antigravity feature)
-        id: build-antigravity
+        id: build_antigravity
         continue-on-error: true
         run: cargo build --release --locked --no-default-features --features antigravity
 
@@ -62,8 +62,8 @@ jobs:
           FORMAT_OUTCOME: ${{ steps.formatting.outcome }}
           TEST_OUTCOME: ${{ steps.tests.outcome }}
           BUILD_OUTCOME: ${{ steps.build.outcome }}
-          TEST_ANTIGRAVITY_OUTCOME: ${{ steps.tests-antigravity.outcome }}
-          BUILD_ANTIGRAVITY_OUTCOME: ${{ steps.build-antigravity.outcome }}
+          TEST_ANTIGRAVITY_OUTCOME: ${{ steps.tests_antigravity.outcome }}
+          BUILD_ANTIGRAVITY_OUTCOME: ${{ steps.build_antigravity.outcome }}
           LOCKFILE_OUTCOME: ${{ steps.lockfile.outcome }}
         run: |
           $failed = @()
