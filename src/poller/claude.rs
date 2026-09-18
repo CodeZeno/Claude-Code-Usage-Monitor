@@ -87,9 +87,23 @@ pub(super) fn poll_claude_code() -> Result<UsageData, PollError> {
 }
 
 /// Explicit profiles are pinned to one source, including when refresh fails.
+///
+/// The one exception is a profile sitting on the default CLI path. That path
+/// is where the desktop app's Claude Code build would have logged in too, and
+/// the desktop app can leave `.credentials.json` present but tokenless once it
+/// takes the login over. Treating "no token there" as the end of the search
+/// hides a perfectly good desktop token, so the default path — and only the
+/// default path — falls through to the desktop app. A custom export stays
+/// pinned, so a multi-account setup can never borrow another account's token.
 pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
-    let source = CredentialSource::Windows(path.to_path_buf());
-    let mut credentials = read_credentials_from_source(&source).ok_or(PollError::NoCredentials)?;
+    let mut credentials =
+        match read_credentials_from_source(&CredentialSource::Windows(path.to_path_buf())) {
+            Some(credentials) => credentials,
+            None => desktop_credentials_for_default_path(path).ok_or(PollError::NoCredentials)?,
+        };
+
+    // Refresh against whichever source actually produced the token.
+    let source = credentials.source.clone();
     if is_token_expired(credentials.expires_at) {
         cli_refresh_token(&source);
         credentials = read_credentials_from_source(&source).ok_or(PollError::TokenExpired)?;
@@ -98,6 +112,18 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
         }
     }
     fetch_usage_with_fallback(&credentials.access_token)
+}
+
+/// The desktop app's token, but only for a profile that points at the default
+/// CLI credentials path.
+fn desktop_credentials_for_default_path(path: &Path) -> Option<Credentials> {
+    let default = crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)?;
+    if crate::accounts::source_key(path) != crate::accounts::source_key(&default) {
+        return None;
+    }
+    let credentials = read_desktop_app_credentials(&claude_desktop::config_path()?)?;
+    diagnose::log("default profile fell back to the Claude desktop app token cache");
+    Some(credentials)
 }
 
 pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
@@ -814,6 +840,30 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    /// Ignored by default: proves the default profile resolves usage on a
+    /// machine where only the desktop app holds a token. Run it with
+    /// `cargo test -- --ignored` while signed in to the desktop app.
+    #[test]
+    #[ignore = "requires a signed-in Claude desktop app on this machine"]
+    fn the_default_profile_resolves_usage_from_the_desktop_app() {
+        let path = crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)
+            .expect("a default credential path");
+        let outcome = poll_account(&path);
+        assert!(
+            outcome.is_ok(),
+            "the default profile should resolve usage from the desktop app, got {outcome:?}"
+        );
+    }
+
+    #[test]
+    fn a_custom_export_never_falls_back_to_the_desktop_app() {
+        // The desktop fallback is scoped to the default CLI path. A profile
+        // pointing somewhere else must stay pinned even on this machine,
+        // where the desktop app does have a usable token.
+        let path = std::env::temp_dir().join("claude-custom-export.json");
+        assert!(desktop_credentials_for_default_path(&path).is_none());
+    }
 
     #[test]
     fn explicit_missing_or_expired_export_never_uses_another_login() {
