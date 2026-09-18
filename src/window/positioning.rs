@@ -115,11 +115,12 @@ pub(super) fn position_at_taskbar() {
     }
 }
 
-pub(super) fn reset_layered_window(hwnd: HWND) {
+pub(super) fn ensure_layered_window(hwnd: HWND) {
     unsafe {
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style & !(WS_EX_LAYERED.0 as i32));
-        let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        if ex_style & WS_EX_LAYERED.0 as i32 == 0 {
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        }
     }
 }
 
@@ -145,10 +146,10 @@ pub(super) fn render_custom_window(
     let width = rendered.width as i32;
     let height = rendered.height as i32;
     unsafe {
-        // SetLayeredWindowAttributes and UpdateLayeredWindow cannot be used on
-        // the same layered-style lifetime. Reset it in case this surface was
-        // previously hosted on the desktop.
-        reset_layered_window(hwnd);
+        // Keep the DWM surface alive across frames. Desktop rendering uses a
+        // separate DirectComposition window, so no layered-style reset is
+        // needed here; reparenting resets it once in embed_as_child instead.
+        ensure_layered_window(hwnd);
         // UpdateLayeredWindow expects a screen-compatible destination DC. A
         // window DC happened to work for taskbar-hosted children, but desktop
         // WorkerW/DefView composition can discard the resulting surface.

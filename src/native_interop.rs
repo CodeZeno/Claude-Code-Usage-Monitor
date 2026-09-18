@@ -199,6 +199,18 @@ pub fn embed_as_child(hwnd: HWND, parent: HWND) {
 
         if current_parent != Some(parent) {
             let _ = SetParent(hwnd, Some(parent));
+            // Windows 11 can leave a reparented layered surface beneath the
+            // taskbar's DirectComposition visual. Rebind it once after a
+            // successful parent change, never during routine positioning.
+            // Desktop DirectComposition windows are not layered and must stay
+            // that way. Callers present fresh pixels after positioning.
+            if GetParent(hwnd).ok() == Some(parent) {
+                let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+                if ex_style & WS_EX_LAYERED.0 as i32 != 0 {
+                    let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style & !(WS_EX_LAYERED.0 as i32));
+                    let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style);
+                }
+            }
         }
         let _ = SetWindowPos(
             hwnd,

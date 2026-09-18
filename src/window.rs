@@ -1440,7 +1440,7 @@ fn apply_custom_theme(
     }
     unsafe {
         native_interop::make_popup(hwnd, false);
-        reset_layered_window(hwnd);
+        ensure_layered_window(hwnd);
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_NOTOPMOST),
@@ -2655,6 +2655,9 @@ use window_context_menu::*;
 
 #[cfg(test)]
 mod placement_tests;
+
+#[cfg(test)]
+mod layered_window_tests;
 
 #[cfg(test)]
 mod language_menu_tests {
