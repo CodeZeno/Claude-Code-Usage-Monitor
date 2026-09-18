@@ -219,7 +219,7 @@ pub(super) fn carry_accounts(fresh: &mut AppUsageData, previous: &AppUsageData) 
         }
         // Only transient failures may keep a reading, and only for the same
         // configured source and unchanged credentials file.
-        if account.error != Some(PollError::RequestFailed) {
+        if !account.error.is_some_and(PollError::is_transient) {
             continue;
         }
         if let Some(last) = previous
@@ -278,7 +278,12 @@ mod tests {
     #[test]
     fn auth_failures_pause_only_the_failed_account_and_notify_once() {
         let settings = settings();
-        for error in [PollError::AuthRequired, PollError::TokenExpired] {
+        for error in [
+            PollError::AuthRequired,
+            PollError::TokenExpired,
+            PollError::HttpStatus(401),
+            PollError::HttpStatus(403),
+        ] {
             let first = poll_accounts_with(ProviderSet::default(), &settings, |_, path| {
                 if path.unwrap().to_string_lossy().contains("work") {
                     Err(error)
@@ -429,6 +434,12 @@ mod tests {
             (PollError::RequestFailed, false, false, true),
             (PollError::RequestFailed, true, false, false),
             (PollError::RequestFailed, false, true, false),
+            (PollError::HttpStatus(429), false, false, true),
+            (PollError::HttpStatus(503), false, false, true),
+            (PollError::HttpStatus(429), true, false, false),
+            (PollError::HttpStatus(429), false, true, false),
+            (PollError::HttpStatus(401), false, false, false),
+            (PollError::HttpStatus(403), false, false, false),
             (PollError::AuthRequired, false, false, false),
             (PollError::TokenExpired, false, false, false),
             (PollError::NoCredentials, false, false, false),
@@ -447,6 +458,48 @@ mod tests {
                 assert!(fresh.accounts[1].usage.as_ref().unwrap().stale);
             }
         }
+    }
+
+    #[test]
+    fn http_failure_survives_cache_and_clears_after_success() {
+        let settings = settings();
+        let failed = poll_accounts_with(ProviderSet::default(), &settings, |_, _| {
+            Err(PollError::HttpStatus(429))
+        })
+        .unwrap();
+        let cache = serde_json::to_string(&failed).unwrap();
+        let failed: AppUsageData = serde_json::from_str(&cache).unwrap();
+        assert_eq!(failed.accounts[0].error, Some(PollError::HttpStatus(429)));
+        assert!(failed.accounts[0].usage.is_none());
+        let calls = AtomicUsize::new(0);
+        let recovered = poll_accounts_with_history(
+            ProviderSet::default(),
+            &settings,
+            Some(&failed),
+            false,
+            |_, _| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(usage(35.0))
+            },
+        )
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(recovered
+            .accounts
+            .iter()
+            .all(|account| account.error.is_none()));
+        assert_eq!(
+            recovered
+                .get(ProviderId::Claude)
+                .unwrap()
+                .session
+                .percentage,
+            35.0
+        );
+        assert_eq!(
+            serde_json::from_str::<PollError>("\"request_failed\"").unwrap(),
+            PollError::RequestFailed
+        );
     }
 
     #[test]

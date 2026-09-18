@@ -12,11 +12,20 @@ pub enum PollError {
     NoCredentials,
     TokenExpired,
     RequestFailed,
+    /// Preserve the last HTTP failure so account status can explain the result.
+    HttpStatus(u16),
 }
 
 impl PollError {
     pub fn is_auth(self) -> bool {
-        matches!(self, Self::AuthRequired | Self::TokenExpired)
+        matches!(
+            self,
+            Self::AuthRequired | Self::TokenExpired | Self::HttpStatus(401 | 403)
+        )
+    }
+
+    pub fn is_transient(self) -> bool {
+        matches!(self, Self::RequestFailed | Self::HttpStatus(_)) && !self.is_auth()
     }
 }
 

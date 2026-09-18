@@ -2360,7 +2360,9 @@ fn do_poll_once(hwnd: HWND) {
                 return;
             }
             let auth_watch = match failure.error {
-                poller::PollError::AuthRequired | poller::PollError::TokenExpired => {
+                poller::PollError::AuthRequired
+                | poller::PollError::TokenExpired
+                | poller::PollError::HttpStatus(401 | 403) => {
                     let mode = poller::CredentialWatchMode::ActiveSource(failure.provider);
                     Some((mode, poller::credential_watch_snapshot(mode)))
                 }
@@ -2368,7 +2370,7 @@ fn do_poll_once(hwnd: HWND) {
                     let mode = poller::CredentialWatchMode::AllSources(failure.provider);
                     Some((mode, poller::credential_watch_snapshot(mode)))
                 }
-                poller::PollError::RequestFailed => None,
+                poller::PollError::RequestFailed | poller::PollError::HttpStatus(_) => None,
             };
             // Distinguish auth-required errors from transient errors.
             let (notify_auth_error, cache_data, cache_poll_ok) = {
@@ -2381,7 +2383,7 @@ fn do_poll_once(hwnd: HWND) {
                 }
                 let mut should_notify = false;
                 if let Some(s) = state.as_mut() {
-                    if matches!(failure.error, poller::PollError::RequestFailed) {
+                    if failure.error.is_transient() {
                         if let Some(previous) = s.data.as_ref() {
                             let carried = poller::carry_forward_failures(
                                 AppUsageData::default(),

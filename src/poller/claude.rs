@@ -197,11 +197,11 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
                 diagnose::log(format!(
                     "usage endpoint returned an auth error ({error}); re-login required"
                 ));
-                return Err(PollError::AuthRequired);
+                return Err(usage_request_error(&error));
             }
             UsageEndpointFailure::Transient => {
                 diagnose::log(format!("usage endpoint temporarily unavailable ({error})"));
-                return Err(PollError::RequestFailed);
+                return Err(usage_request_error(&error));
             }
             UsageEndpointFailure::Unsupported => {
                 diagnose::log(format!(
@@ -267,6 +267,13 @@ fn classify_usage_failure(error: &ureq::Error) -> UsageEndpointFailure {
     }
 }
 
+fn usage_request_error(error: &ureq::Error) -> PollError {
+    match error {
+        ureq::Error::StatusCode(status) => PollError::HttpStatus(*status),
+        _ => PollError::RequestFailed,
+    }
+}
+
 /// Unlike Codex, the plan states its own ceiling, so the gauge needs no
 /// history: `used` is already the spend against the current cap, and a
 /// non-zero figure is the same "credits are in play" observation that the
@@ -295,6 +302,7 @@ fn claude_credits(spend: &SpendResponse, data: &UsageData) -> Option<CreditsSect
 
 pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
     let agent = build_agent()?;
+    let mut last_error = PollError::RequestFailed;
 
     for model in MODEL_FALLBACK_CHAIN {
         let body = serde_json::json!({
@@ -314,7 +322,10 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
             .send_json(&body)
         {
             Ok(resp) => resp,
-            Err(_) => continue,
+            Err(error) => {
+                last_error = usage_request_error(&error);
+                continue;
+            }
         };
 
         let status = response.status().as_u16();
@@ -322,7 +333,7 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
             diagnose::log(format!(
                 "messages endpoint returned auth error status {status}; re-login required"
             ));
-            return Err(PollError::AuthRequired);
+            return Err(PollError::HttpStatus(status));
         }
 
         let h5 = response
@@ -336,9 +347,14 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
         if h5.is_some() || h7.is_some() || hs.is_some() {
             return Ok(parse_rate_limit_headers(&response));
         }
+        last_error = if response.status().is_client_error() || response.status().is_server_error() {
+            PollError::HttpStatus(status)
+        } else {
+            PollError::RequestFailed
+        };
     }
 
-    Err(PollError::RequestFailed)
+    Err(last_error)
 }
 
 pub(super) fn parse_rate_limit_headers(response: &HttpResponse) -> UsageData {
@@ -867,6 +883,16 @@ fn wait_for_refresh(child: &mut std::process::Child) {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn http_failures_keep_their_status_for_account_display() {
+        for status in [401, 403, 429, 500, 503] {
+            assert_eq!(
+                usage_request_error(&ureq::Error::StatusCode(status)),
+                PollError::HttpStatus(status)
+            );
+        }
+    }
 
     /// Ignored by default: proves the default profile resolves usage on a
     /// machine where only the desktop app holds a token. Run it with

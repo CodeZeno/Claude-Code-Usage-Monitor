@@ -260,15 +260,10 @@ fn account_settings(
                 if !provider_enabled || !profile.enabled {
                     ui.weak(language.text("Monitoring disabled"));
                 } else if let Some(account) = data.and_then(|data| data.accounts.iter().find(|account| {
-                    account.provider == provider && account.profile == *profile
+                    account.provider == provider && account.profile.same_source(profile)
                 })) {
                     if let Some(error) = account.error {
-                        let message = match error {
-                            crate::poller::PollError::AuthRequired | crate::poller::PollError::TokenExpired => "Sign in again for this account",
-                            crate::poller::PollError::NoCredentials => "Credentials missing or invalid",
-                            crate::poller::PollError::RequestFailed => "Usage request failed; retrying at the next refresh",
-                        };
-                        ui.colored_label(egui::Color32::from_rgb(196, 112, 32), language.text(message));
+                        ui.colored_label(egui::Color32::from_rgb(196, 112, 32), account_error_message(error, language));
                     }
                     if let Some(usage) = &account.usage {
                         if usage.stale { ui.weak(language.text("Last known usage")); }
@@ -304,4 +299,51 @@ fn account_settings(
         }
     });
     changed
+}
+
+fn account_error_message(error: crate::poller::PollError, language: LanguageId) -> String {
+    use crate::poller::PollError;
+    match error {
+        PollError::HttpStatus(code) => {
+            let reason = ureq::http::StatusCode::from_u16(code)
+                .ok()
+                .and_then(|status| status.canonical_reason())
+                .unwrap_or("Request failed");
+            let action = if error.is_auth() {
+                "Sign in again for this account"
+            } else {
+                "Retrying at the next refresh"
+            };
+            format!("HTTP {code}: {reason}. {}", language.text(action))
+        }
+        PollError::AuthRequired | PollError::TokenExpired => {
+            language.text("Sign in again for this account").into()
+        }
+        PollError::NoCredentials => language.text("Credentials missing or invalid").into(),
+        PollError::RequestFailed => language
+            .text("Usage request failed; retrying at the next refresh")
+            .into(),
+    }
+}
+
+#[cfg(test)]
+mod account_status_tests {
+    use super::*;
+
+    #[test]
+    fn status_explains_http_failure_and_correct_recovery_action() {
+        use crate::poller::PollError;
+        assert_eq!(
+            account_error_message(PollError::HttpStatus(429), LanguageId::English),
+            "HTTP 429: Too Many Requests. Retrying at the next refresh"
+        );
+        assert_eq!(
+            account_error_message(PollError::HttpStatus(401), LanguageId::English),
+            "HTTP 401: Unauthorized. Sign in again for this account"
+        );
+        assert!(
+            account_error_message(PollError::HttpStatus(503), LanguageId::English)
+                .contains("Service Unavailable")
+        );
+    }
 }
