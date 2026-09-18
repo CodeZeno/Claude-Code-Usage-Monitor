@@ -157,7 +157,7 @@ fn usage_from_quota(quota: QuotaResponse) -> Result<UsageData, PollError> {
             used: quota.current_spend,
             limit: Some(quota.limit_amount),
         }),
-        unit: QuotaUnit::Other("usd".to_string()),
+        unit: QuotaUnit::Other("USD".to_string()),
         // Vercel tells us the refresh period, but not an exact reset time.
         resets_at: None,
     }]))
@@ -317,7 +317,7 @@ mod tests {
 
         assert_eq!(item.label, "Monthly spend");
 
-        assert_eq!(item.unit.as_str(), "usd");
+        assert_eq!(item.unit.as_str(), "USD");
 
         assert_eq!(item.resets_at, None);
 

@@ -162,12 +162,12 @@ Security and retention rules:
 | Internal adapter | `vercel_ai_gateway::poll` and the Vercel GUI polling path |
 | Source | Authenticated Vercel CLI key metadata plus the official Vercel AI Gateway Quotas API |
 | Quota scope | Independent spend budget for the configured AI Gateway API key; not a model rate limit |
-| Quota items | `spend_budget`: `currentSpend` used against `limitAmount`, unit `usd`; label follows Vercel's reported refresh period |
+| Quota items | `spend_budget`: `currentSpend` used against `limitAmount`, unit `USD`; label follows Vercel's reported refresh period |
 | Fallback behavior | None. The app does not guess another key or another quota source |
 | Unavailable conditions | Missing/blank `AI_GATEWAY_API_KEY`, Vercel CLI/key-match failure, Quotas API failure, inactive/archived quota, invalid spend/limit, or unsupported refresh period |
 | Minimum fetchable unit | One aggregate spend/budget item for the uniquely matched AI Gateway API key |
 | Display caveats | The API provides a refresh period but this integration does not receive an exact reset timestamp, so the app does not fabricate one. Very small non-zero spend is preserved instead of being rounded to `0.00` |
-| Last verified | 2026-09-18 ? RAW Dev GUI displayed `0.00001638 / 1 usd`; 5-provider display and cross-monitor drag were verified |
+| Last verified | 2026-09-18 ? RAW Dev GUI displayed `0.00001638 / 1 USD`; 5-provider display and cross-monitor drag were verified |
 | Rule revision | 2026-09-18-02 |
 
 Credential rules:
