@@ -73,16 +73,17 @@ fn runtime_with_geometry(
     let Some(surface) = theme.surfaces.get(surface_index) else {
         return runtime;
     };
+    let nest = surface
+        .placement
+        .nest
+        .resolve(surface.placement.reference.region);
+    let runtime = runtime.with_nest(nest);
     let Some(host) = geometry
         .get(surface.placement.reference.display)
         .or_else(|| geometry.first())
     else {
         return runtime;
     };
-    let nest = surface
-        .placement
-        .nest
-        .resolve(surface.placement.reference.region);
     let rect = if matches!(nest, SurfaceNest::Taskbar | SurfaceNest::TrayIcon) {
         host.taskbar.unwrap_or(host.monitor)
     } else {
@@ -129,7 +130,7 @@ mod tests {
             theme.surfaces[0].placement.nest = nest;
             assert_eq!(
                 runtime_with_geometry(&theme, 0, runtime, &[display()]),
-                runtime.with_host_dimensions(1920, height)
+                runtime.with_nest(nest).with_host_dimensions(1920, height)
             );
         }
     }
@@ -150,7 +151,9 @@ mod tests {
         let runtime = ThemeRuntime::default();
         assert_eq!(
             runtime_with_geometry(&theme, 0, runtime, &[display(), secondary]),
-            runtime.with_host_dimensions(60, 1080)
+            runtime
+                .with_nest(SurfaceNest::TrayIcon)
+                .with_host_dimensions(60, 1080)
         );
     }
 
@@ -164,9 +167,14 @@ mod tests {
         host.taskbar = None;
         assert_eq!(
             runtime_with_geometry(&theme, 0, runtime, &[host]),
-            runtime.with_host_dimensions(1920, 1080)
+            runtime
+                .with_nest(SurfaceNest::TrayIcon)
+                .with_host_dimensions(1920, 1080)
         );
-        assert_eq!(runtime_with_geometry(&theme, 0, runtime, &[]), runtime);
+        assert_eq!(
+            runtime_with_geometry(&theme, 0, runtime, &[]),
+            runtime.with_nest(SurfaceNest::TrayIcon)
+        );
         assert_eq!(runtime_with_geometry(&theme, 99, runtime, &[host]), runtime);
     }
 

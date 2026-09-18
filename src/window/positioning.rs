@@ -647,7 +647,9 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
     let current_rect = tray_hwnd.and_then(native_interop::get_window_rect_safe);
     let should_reposition_now = {
         let mut last_rect = LAST_TRAY_RECT.lock().unwrap_or_else(|e| e.into_inner());
-        let mut last_time = LAST_IMMEDIATE_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_time = LAST_IMMEDIATE_REPOSITION
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         let changed = rect_changed(*last_rect, current_rect);
         let time_ok = last_time
@@ -685,6 +687,128 @@ pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {
     inter_area / a_area
 }
 
+pub(super) fn should_snap_to_slot(widget: RECT, slot: RECT, was_snapped: bool) -> bool {
+    let threshold = if was_snapped { 0.45 } else { 0.67 };
+    calculate_rect_overlap_ratio(widget, slot) >= threshold
+}
+
+pub(super) struct WidgetFrame {
+    pub width: i32,
+    pub height: i32,
+    pub content_width: i32,
+    pub inset: i32,
+}
+
+impl WidgetFrame {
+    pub fn content_rect(&self, origin: POINT) -> RECT {
+        RECT {
+            left: origin.x + self.inset,
+            top: origin.y,
+            right: origin.x + self.inset + self.content_width,
+            bottom: origin.y + self.height,
+        }
+    }
+}
+
+pub(super) fn widget_frame(
+    theme: &ThemeDocument,
+    data: Option<&AppUsageData>,
+    runtime: ThemeRuntime,
+    scale: f64,
+) -> WidgetFrame {
+    let (content_width, height) =
+        theme_engine::resolve_surface_content_size(theme, 0, data, runtime);
+    let inset = theme_engine::surface_horizontal_padding(theme, 0, runtime);
+    WidgetFrame {
+        width: scaled_theme_dimension(content_width + 2 * inset, scale),
+        height: scaled_theme_dimension(height, scale),
+        content_width: scaled_theme_dimension(content_width, scale),
+        inset: (inset as f64 * scale).round() as i32,
+    }
+}
+
+pub(super) fn can_redock(free_space: i32, physical_width: i32) -> bool {
+    free_space >= physical_width.saturating_add(20)
+}
+
+pub(super) fn auto_eject_origin(widget: RECT, taskbar: RECT, monitor: RECT) -> POINT {
+    let width = (widget.right - widget.left).max(1);
+    let height = (widget.bottom - widget.top).max(1);
+    if native_interop::is_taskbar_horizontal(taskbar) {
+        POINT {
+            x: widget.left,
+            y: if (taskbar.top - monitor.top).abs() <= 50 {
+                taskbar.bottom + 6
+            } else {
+                taskbar.top - height - 6
+            },
+        }
+    } else {
+        POINT {
+            x: if (taskbar.left - monitor.left).abs() <= 50 {
+                taskbar.right + 6
+            } else {
+                taskbar.left - width - 6
+            },
+            y: widget.top,
+        }
+    }
+}
+
+pub(super) fn monitor_for_point(
+    displays: &[native_interop::DisplayMonitor],
+    point: POINT,
+) -> (usize, native_interop::DisplayMonitor) {
+    displays
+        .iter()
+        .enumerate()
+        .find(|(_, display)| {
+            point.x >= display.rect.left
+                && point.x < display.rect.right
+                && point.y >= display.rect.top
+                && point.y < display.rect.bottom
+        })
+        .or_else(|| {
+            displays
+                .iter()
+                .enumerate()
+                .find(|(_, display)| display.primary)
+        })
+        .or_else(|| displays.iter().enumerate().next())
+        .map(|(index, display)| (index, *display))
+        .unwrap_or((
+            0,
+            native_interop::DisplayMonitor {
+                handle: HMONITOR::default(),
+                rect: RECT {
+                    left: 0,
+                    top: 0,
+                    right: 1920,
+                    bottom: 1080,
+                },
+                primary: true,
+            },
+        ))
+}
+
+pub(super) fn logical_monitor_offset(point: POINT, monitor: RECT, scale: f64) -> POINT {
+    POINT {
+        x: ((point.x - monitor.left) as f64 / scale).round() as i32,
+        y: ((point.y - monitor.top) as f64 / scale).round() as i32,
+    }
+}
+
+pub(super) fn tasklist_boundary(
+    tray_left: i32,
+    candidates: impl IntoIterator<Item = RECT>,
+) -> Option<i32> {
+    // A container that fills the space up to the tray is not an app boundary.
+    candidates
+        .into_iter()
+        .find(|rect| rect.right < tray_left - 10)
+        .map(|rect| rect.right)
+}
+
 pub(super) fn is_taskbar_capacity_sufficient(
     taskbar_rect: RECT,
     free_dock_slot: RECT,
@@ -708,25 +832,15 @@ pub(super) fn is_taskbar_capacity_sufficient(
 pub(super) fn taskbar_tasklist_right_edge(taskbar_hwnd: HWND) -> Option<i32> {
     let taskbar_rect = native_interop::get_taskbar_rect(taskbar_hwnd)?;
     let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-
-    if let Some(rebar) = native_interop::find_child_window(taskbar_hwnd, "ReBarWindow32") {
-        if let Some(rect) = native_interop::get_window_rect_safe(rebar) {
-            // If the rebar fills the taskbar up to the system tray, it is just
-            // the layout host container spanning between Start and TrayNotifyWnd,
-            // NOT the actual boundary of running applications.
-            if rect.right < tray_left - 10 {
-                return Some(rect.right);
-            }
-        }
-    }
-    if let Some(tasks) = native_interop::find_child_window(taskbar_hwnd, "MSTaskListWClass") {
-        if let Some(rect) = native_interop::get_window_rect_safe(tasks) {
-            if rect.right < tray_left - 10 {
-                return Some(rect.right);
-            }
-        }
-    }
-    None
+    tasklist_boundary(
+        tray_left,
+        ["ReBarWindow32", "MSTaskListWClass"]
+            .into_iter()
+            .filter_map(|class| {
+                native_interop::find_child_window(taskbar_hwnd, class)
+                    .and_then(native_interop::get_window_rect_safe)
+            }),
+    )
 }
 
 pub(super) fn taskbar_free_dock_slot(taskbar_hwnd: HWND, taskbar_rect: RECT) -> RECT {

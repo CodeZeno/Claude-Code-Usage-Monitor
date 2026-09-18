@@ -177,11 +177,6 @@ pub fn window_class_name(hwnd: HWND) -> Option<String> {
     }
 }
 
-/// Embed our window as a child of the taskbar
-pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
-    embed_as_child(hwnd, taskbar_hwnd);
-}
-
 /// Host a layered surface inside a shell-owned window. Parenting makes the
 /// surface share the host's visibility and z-order instead of competing with
 /// it as an independent topmost popup.
@@ -219,9 +214,37 @@ pub fn embed_as_child(hwnd: HWND, parent: HWND) {
 pub fn make_popup(hwnd: HWND, topmost: bool) {
     unsafe {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
+        let detaching = style & WS_CHILD_STYLE != 0;
+        let screen_rect = if detaching {
+            let Some(rect) = get_window_rect_safe(hwnd) else {
+                return;
+            };
+            Some(rect)
+        } else {
+            None
+        };
+        let restore_visibility = detaching && style & WS_VISIBLE.0 != 0;
+        if restore_visibility {
+            // SetParent temporarily leaves the old client coordinates in place.
+            // Do not expose that intermediate position to the compositor.
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                0,
+                0,
+                0,
+                0,
+                SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+        // SetParent's documented child-to-desktop order: detach first, then
+        // clear WS_CHILD. Read the style again so hiding stays in effect.
+        if detaching {
+            let _ = SetParent(hwnd, None);
+        }
+        let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let new_style = (style & !WS_CHILD_STYLE & !WS_CLIPSIBLINGS_STYLE) | WS_POPUP_STYLE;
         let _ = SetWindowLongW(hwnd, GWL_STYLE, new_style as i32);
-        let _ = SetParent(hwnd, None);
 
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
         let ex_style = if topmost {
@@ -230,6 +253,16 @@ pub fn make_popup(hwnd: HWND, topmost: bool) {
             ex_style & !(WS_EX_TOPMOST.0 as i32)
         };
         let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style);
+        let mut flags = SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED;
+        let (x, y) = if let Some(rect) = screen_rect {
+            (rect.left, rect.top)
+        } else {
+            flags |= SWP_NOMOVE;
+            (0, 0)
+        };
+        if restore_visibility {
+            flags |= SWP_SHOWWINDOW;
+        }
         let _ = SetWindowPos(
             hwnd,
             Some(if topmost {
@@ -237,11 +270,11 @@ pub fn make_popup(hwnd: HWND, topmost: bool) {
             } else {
                 HWND_NOTOPMOST
             }),
+            x,
+            y,
             0,
             0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            flags,
         );
     }
 }
@@ -404,3 +437,6 @@ pub fn unhook_win_event(hook: HWINEVENTHOOK) {
 pub fn wide_str(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
+
+#[cfg(test)]
+mod tests;

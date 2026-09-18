@@ -1004,6 +1004,124 @@ fn theme_surfaces_rasterize_at_requested_dpi_scales() {
 }
 
 #[test]
+fn floating_card_inset_preserves_content_layout_clipping_and_mouse_targets() {
+    let mut theme = ThemeDocument::starter();
+    let surface = &mut theme.surfaces[0];
+    surface.width = 40.0.into();
+    surface.height = 20.0.into();
+    surface.background = LayerBackground::None;
+    surface.content = SceneContent::None;
+    surface.border = None;
+    surface.mouse_events = Some(MouseEvents {
+        right_click: "refresh()".into(),
+        ..Default::default()
+    });
+    let root_id = surface.id.clone();
+    let mut parent = SceneObject::object("container", "Container");
+    parent.width = Expression("canvas.width".into());
+    parent.height = 20.0.into();
+    let mut child = SceneObject::object("edge", "Edge-to-edge content");
+    child.parent = Some(parent.id.clone());
+    child.y = 4.0.into();
+    child.width = Expression("canvas.width".into());
+    child.height = 12.0.into();
+    child.background = LayerBackground::Colour {
+        colour: Paint::new("#FF0000FF"),
+    };
+    // Moving the frame must not change authored expressions such as this.x.
+    if let LayerBackground::Colour { colour } = &mut child.background {
+        colour.opacity = Expression("this.x == 0".into());
+    }
+    child.mouse_events = Some(MouseEvents {
+        click: "refresh()".into(),
+        ..Default::default()
+    });
+    surface.children = vec![parent, child];
+    let docked = ThemeRuntime::default();
+    let floating = docked.with_nest(SurfaceNest::Floating);
+    assert_eq!(resolve_surface_size(&theme, 0, None, docked), (40, 20));
+    assert_eq!(resolve_surface_size(&theme, 0, None, floating), (60, 20));
+    assert_eq!(
+        resolve_surface_content_size(&theme, 0, None, floating),
+        (40, 20)
+    );
+    assert_eq!(
+        resolve_object_bounds_with_runtime(&theme, 0, 1, None, floating),
+        Some((10.0, 4.0, 40.0, 12.0))
+    );
+    assert_eq!(
+        hit_test_mouse_event(&theme, 0, 10.0, 10.0, None, floating).as_deref(),
+        Some("edge")
+    );
+    assert_eq!(
+        hit_test_mouse_event(&theme, 0, 49.9, 10.0, None, floating).as_deref(),
+        Some("edge")
+    );
+    for x in [0.0, 9.9, 50.0, 59.9] {
+        assert_eq!(
+            hit_test_mouse_event(&theme, 0, x, 10.0, None, floating).as_deref(),
+            Some(root_id.as_str())
+        );
+    }
+    assert_eq!(
+        hit_test_mouse_event(&theme, 0, 60.0, 10.0, None, floating),
+        None
+    );
+    let context = mouse_action_object_context(&theme, 0, "edge", None, floating).unwrap();
+    assert_eq!(context.get("canvas.width"), Some(40.0));
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
+        let rendered = render_theme_surface_with_runtime_at_scale(&theme, 0, None, floating, scale);
+        assert!(rendered.warnings.is_empty());
+        assert_eq!(rendered.width, (60.0 * scale).round() as u32);
+        let y = (10.0 * scale) as u32;
+        let start = (10.0 * scale).round() as u32;
+        let end = start + (40.0 * scale).round() as u32;
+        for x in 0..rendered.width {
+            assert_eq!(
+                rendered.pixels[(y * rendered.width + x) as usize] == 0xFFFF0000,
+                (start..end).contains(&x),
+                "scale={scale}, x={x}"
+            );
+        }
+    }
+    // Authored backgrounds do not receive the automatic card or its padding.
+    theme.surfaces[0].background = LayerBackground::Colour {
+        colour: Paint::new("#123456FF"),
+    };
+    assert_eq!(resolve_surface_size(&theme, 0, None, floating), (40, 20));
+}
+
+#[test]
+fn compact_quad_only_grows_when_the_automatic_floating_card_is_present() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    for mask in 1..(1 << ProviderId::ALL.len()) {
+        let providers = ProviderSet::from_enabled(
+            ProviderId::ALL
+                .into_iter()
+                .enumerate()
+                .filter_map(|(i, p)| (mask & (1 << i) != 0).then_some(p)),
+        );
+        let runtime = ThemeRuntime::from_providers(providers);
+        let (width, height) = resolve_surface_size(&theme, 0, None, runtime);
+        assert_eq!(
+            resolve_surface_size(&theme, 0, None, runtime.with_nest(SurfaceNest::Floating)),
+            (width + 20, height)
+        );
+        for nest in [
+            SurfaceNest::Taskbar,
+            SurfaceNest::Desktop,
+            SurfaceNest::TrayIcon,
+        ] {
+            assert_eq!(
+                resolve_surface_size(&theme, 0, None, runtime.with_nest(nest)),
+                (width, height)
+            );
+        }
+    }
+}
+
+#[test]
 fn segmented_progress_reserves_gaps_only_between_segments() {
     let mask = (0..34)
         .map(|position| segmented_position_visible(position, 34, 5, 1.0))

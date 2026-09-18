@@ -114,9 +114,7 @@ struct AppState {
     pending_drag: bool,
     drag_start_cursor: POINT,
     drag_start_origin: POINT,
-    drag_start_mouse_x: i32,
     drag_start_client_x: i32,
-    drag_start_offset: i32,
     auto_ejected: bool,
     auto_ejected_origin: Option<POINT>,
     is_switching_window_style: bool,
@@ -464,13 +462,18 @@ fn spawn_taskbar_watchdog() {
             if let Some(s) = state.as_ref() {
                 let tray_hwnd = s.tray_notify_hwnd.map(|h| h.to_hwnd());
                 let target_hwnd = s.hwnd.to_hwnd();
-                (target_hwnd, tray_hwnd.and_then(native_interop::get_window_rect_safe))
+                (
+                    target_hwnd,
+                    tray_hwnd.and_then(native_interop::get_window_rect_safe),
+                )
             } else {
                 (HWND::default(), None)
             }
         };
         if !reposition_target.is_invalid() && current_tray_rect.is_some() {
-            let mut last_rect = LAST_WATCHDOG_TRAY_RECT.lock().unwrap_or_else(|e| e.into_inner());
+            let mut last_rect = LAST_WATCHDOG_TRAY_RECT
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if rect_changed(*last_rect, current_tray_rect) {
                 *last_rect = current_tray_rect;
                 unsafe {
@@ -491,7 +494,9 @@ fn spawn_taskbar_watchdog() {
                     None
                 } else if !s.auto_ejected
                     && s.embedded
-                    && s.placement_override.as_ref().map_or(true, |p| p.nest != "floating")
+                    && s.placement_override
+                        .as_ref()
+                        .is_none_or(|p| p.nest != "floating")
                 {
                     let widget_hwnd = s.hwnd.to_hwnd();
                     let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
@@ -522,8 +527,9 @@ fn spawn_taskbar_watchdog() {
                         let app_right = positioning::taskbar_tasklist_right_edge(tb)
                             .unwrap_or(taskbar_rect.left);
                         let free_space = tray_left - app_right;
-                        let widget_width = total_widget_width_for_state(s);
-                        if free_space >= widget_width + 20 {
+                        let widget_width =
+                            widget_frame_for_state(s, Some(SurfaceNest::Taskbar)).width;
+                        if positioning::can_redock(free_space, widget_width) {
                             Some((widget_hwnd, 0usize))
                         } else {
                             None
@@ -618,40 +624,7 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
     if state.auto_ejected {
         if let Some(pt) = state.auto_ejected_origin {
             let displays = native_interop::find_monitors();
-            let (monitor_idx, display) = displays
-                .iter()
-                .enumerate()
-                .find(|(_, d)| {
-                    pt.x >= d.rect.left
-                        && pt.x < d.rect.right
-                        && pt.y >= d.rect.top
-                        && pt.y < d.rect.bottom
-                })
-                .map(|(i, d)| (i, *d))
-                .unwrap_or_else(|| {
-                    let fallback = displays
-                        .iter()
-                        .enumerate()
-                        .find(|(_, d)| d.primary)
-                        .or_else(|| displays.iter().enumerate().next());
-                    if let Some((i, d)) = fallback {
-                        (i, *d)
-                    } else {
-                        (
-                            0,
-                            native_interop::DisplayMonitor {
-                                handle: HMONITOR::default(),
-                                rect: RECT {
-                                    left: 0,
-                                    top: 0,
-                                    right: 1920,
-                                    bottom: 1080,
-                                },
-                                primary: true,
-                            },
-                        )
-                    }
-                });
+            let (monitor_idx, display) = positioning::monitor_for_point(&displays, pt);
 
             result.placement.horizontal = HorizontalAnchor::Left;
             result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
@@ -672,8 +645,8 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
             }
 
             let scale = theme_surface_scale(&result, 0);
-            let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
-            let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
+            let POINT { x: rel_x, y: rel_y } =
+                positioning::logical_monitor_offset(pt, display.rect, scale);
 
             result.placement.offset_x = rel_x;
             result.placement.offset_y = rel_y;
@@ -686,7 +659,9 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
     } else if let Some(ref override_val) = state.placement_override {
         if override_val.nest == "floating" {
             let displays = native_interop::find_monitors();
-            let monitor_index = override_val.monitor_index.min(displays.len().saturating_sub(1));
+            let monitor_index = override_val
+                .monitor_index
+                .min(displays.len().saturating_sub(1));
             let selected_display = displays
                 .get(monitor_index)
                 .copied()
@@ -711,8 +686,14 @@ fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
                 }
 
                 let scale = theme_surface_scale(&result, 0);
-                let rel_x = ((override_val.screen_x - display.rect.left) as f64 / scale).round() as i32;
-                let rel_y = ((override_val.screen_y - display.rect.top) as f64 / scale).round() as i32;
+                let POINT { x: rel_x, y: rel_y } = positioning::logical_monitor_offset(
+                    POINT {
+                        x: override_val.screen_x,
+                        y: override_val.screen_y,
+                    },
+                    display.rect,
+                    scale,
+                );
 
                 result.placement.offset_x = rel_x;
                 result.placement.offset_y = rel_y;
@@ -984,75 +965,6 @@ fn taskbar_created_message() -> u32 {
     })
 }
 
-fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
-    let taskbars = native_interop::find_taskbars();
-    if taskbars.is_empty() {
-        diagnose::log("taskbar not found; using fallback popup window");
-        return false;
-    }
-
-    let index = requested_index.min(taskbars.len().saturating_sub(1));
-    let taskbar = taskbars[index];
-    diagnose::log(format!(
-        "taskbar selected index={index} count={} hwnd={:?} rect=({}, {}, {}, {})",
-        taskbars.len(),
-        taskbar.hwnd,
-        taskbar.rect.left,
-        taskbar.rect.top,
-        taskbar.rect.right,
-        taskbar.rect.bottom
-    ));
-
-    let old_hook = {
-        let mut state = lock_state();
-        state.as_mut().and_then(|s| s.win_event_hook.take())
-    };
-    if let Some(hook) = old_hook {
-        native_interop::unhook_win_event(hook.to_hook());
-    }
-
-    native_interop::embed_in_taskbar(hwnd, taskbar.hwnd);
-
-    let tray_notify = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd");
-    if tray_notify.is_some() {
-        diagnose::log("TrayNotifyWnd found");
-    } else {
-        diagnose::log("TrayNotifyWnd not found");
-    }
-
-    let hook = tray_notify.and_then(|tray_hwnd| {
-        let thread_id = native_interop::get_window_thread_id(tray_hwnd);
-        native_interop::set_tray_event_hook(thread_id, on_tray_location_changed)
-    });
-    if hook.is_some() {
-        diagnose::log("tray event hook installed");
-    } else {
-        diagnose::log("tray event hook could not be installed");
-    }
-
-    let mut state = lock_state();
-    if let Some(s) = state.as_mut() {
-        s.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar.hwnd));
-        s.tray_notify_hwnd = tray_notify.map(SendHwnd::from_hwnd);
-        s.win_event_hook = hook.map(SendWinEventHook::from_hook);
-        s.taskbar_index = index;
-        s.embedded = true;
-    }
-    true
-}
-
-fn taskbar_at_point(pt: POINT) -> Option<(usize, native_interop::TaskbarWindow)> {
-    native_interop::find_taskbars()
-        .into_iter()
-        .enumerate()
-        .find(|(_, taskbar)| {
-            pt.x >= taskbar.rect.left
-                && pt.x < taskbar.rect.right
-                && pt.y >= taskbar.rect.top
-                && pt.y < taskbar.rect.bottom
-        })
-}
-
 fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
     let mut tray_left = taskbar_rect.right;
     if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
@@ -1061,24 +973,6 @@ fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
         }
     }
     tray_left
-}
-
-fn clamp_offset_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT, offset: i32) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let max_offset = (tray_left - taskbar_rect.left - total_widget_width()).max(0);
-    offset.clamp(0, max_offset)
-}
-
-fn offset_for_drop_point(
-    taskbar_hwnd: HWND,
-    taskbar_rect: RECT,
-    pt: POINT,
-    drag_start_client_x: i32,
-) -> i32 {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    let desired_left = pt.x - taskbar_rect.left - drag_start_client_x;
-    let offset = tray_left - taskbar_rect.left - total_widget_width() - desired_left;
-    clamp_offset_for_taskbar(taskbar_hwnd, taskbar_rect, offset)
 }
 
 fn now_unix_secs() -> u64 {
@@ -1485,15 +1379,24 @@ pub(crate) fn set_startup_enabled(enable: bool) {
 }
 
 fn total_widget_width_for_state(state: &AppState) -> i32 {
-    effective_theme_from_state(state)
-        .as_ref()
-        .map_or(1, |theme| {
+    widget_frame_for_state(state, None).width
+}
+
+fn widget_frame_for_state(state: &AppState, nest: Option<SurfaceNest>) -> positioning::WidgetFrame {
+    effective_theme_from_state(state).as_ref().map_or(
+        positioning::WidgetFrame {
+            width: 1,
+            height: 1,
+            content_width: 1,
+            inset: 0,
+        },
+        |theme| {
             let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
-            let logical_w =
-                theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).0 as f64;
+            let runtime = nest.map_or(runtime, |nest| runtime.with_nest(nest));
             let scale = theme_surface_scale(theme, 0);
-            (logical_w * scale).round().max(1.0) as i32
-        })
+            positioning::widget_frame(theme, state.data.as_ref(), runtime, scale)
+        },
+    )
 }
 
 fn apply_custom_theme(
@@ -1809,15 +1712,7 @@ unsafe extern "system" fn mirror_wnd_proc(
 }
 
 fn total_widget_height_for_state(state: &AppState) -> i32 {
-    effective_theme_from_state(state)
-        .as_ref()
-        .map_or(1, |theme| {
-            let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
-            let logical_h =
-                theme_engine::resolve_surface_size(theme, 0, state.data.as_ref(), runtime).1 as f64;
-            let scale = theme_surface_scale(theme, 0);
-            (logical_h * scale).round().max(1.0) as i32
-        })
+    widget_frame_for_state(state, None).height
 }
 
 fn total_widget_height() -> i32 {
@@ -2090,9 +1985,7 @@ pub fn run() {
                 pending_drag: false,
                 drag_start_cursor: POINT::default(),
                 drag_start_origin: POINT::default(),
-                drag_start_mouse_x: 0,
                 drag_start_client_x: 0,
-                drag_start_offset: 0,
                 auto_ejected: false,
                 auto_ejected_origin: None,
                 is_switching_window_style: false,
@@ -2128,7 +2021,10 @@ pub fn run() {
 
         // Ensure tray event hook is active so tray movements are tracked immediately.
         let taskbars = native_interop::find_taskbars();
-        if let Some(taskbar) = taskbars.get(settings.taskbar_index).or_else(|| taskbars.first()) {
+        if let Some(taskbar) = taskbars
+            .get(settings.taskbar_index)
+            .or_else(|| taskbars.first())
+        {
             ensure_tray_event_hook_for_taskbar(taskbar.hwnd);
         }
 

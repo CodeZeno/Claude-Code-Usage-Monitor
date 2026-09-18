@@ -63,7 +63,7 @@ pub(super) fn context_menu_data_context(origin: Option<&(usize, String)>) -> Dat
         let surface_index = origin.map_or(0, |(surface_index, _)| *surface_index);
         if theme.surfaces.get(surface_index).is_some() {
             runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
-            let (width, height) = theme_engine::resolve_surface_size(
+            let (width, height) = theme_engine::resolve_surface_content_size(
                 &theme,
                 surface_index,
                 state.data.as_ref(),

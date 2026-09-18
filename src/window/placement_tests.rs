@@ -215,7 +215,10 @@ fn test_calculate_rect_overlap_ratio() {
         right: 400,
         bottom: 50,
     };
-    assert_eq!(positioning::calculate_rect_overlap_ratio(widget, target_none), 0.0);
+    assert_eq!(
+        positioning::calculate_rect_overlap_ratio(widget, target_none),
+        0.0
+    );
 
     // 70% overlap (width 70 overlap across full height 50)
     let target_70 = RECT {
@@ -320,155 +323,148 @@ fn test_placement_override_serialization_and_normalization() {
 }
 
 #[test]
-fn test_hysteresis_threshold_state_machine() {
-    let free_slot = RECT {
-        left: 1000,
+fn snapping_uses_hysteresis_at_both_thresholds() {
+    let slot = RECT {
+        left: 0,
         top: 0,
-        right: 1200,
-        bottom: 48,
+        right: 100,
+        bottom: 50,
     };
-    // 200px width widget
-    // If widget is placed at 1100..1300: intersection is 1100..1200 = 100px.
-    // Overlap = 100 / 200 = 0.50.
-    let widget_half = RECT {
-        left: 1100,
-        top: 0,
-        right: 1300,
-        bottom: 48,
-    };
-    let overlap_half = positioning::calculate_rect_overlap_ratio(widget_half, free_slot);
-    assert!((overlap_half - 0.50).abs() < 0.01);
-
-    // If currently unsnapped, threshold is 0.67, so 0.50 should NOT snap
-    let snap_threshold_unsnapped = 0.67;
-    assert!(overlap_half < snap_threshold_unsnapped);
-
-    // If already snapped, threshold is 0.45 (hysteresis), so 0.50 SHOULD remain snapped
-    let snap_threshold_snapped = 0.45;
-    assert!(overlap_half >= snap_threshold_snapped);
-
-    // If widget moved further out to 1130..1330: intersection is 1130..1200 = 70px (35%)
-    let widget_far = RECT {
-        left: 1130,
-        top: 0,
-        right: 1330,
-        bottom: 48,
-    };
-    let overlap_far = positioning::calculate_rect_overlap_ratio(widget_far, free_slot);
-    assert!(overlap_far < snap_threshold_snapped);
+    for (left, snapped, expected) in [
+        (33, false, true), // 67%: start snapping at the boundary.
+        (34, false, false),
+        (50, false, false),
+        (50, true, true),
+        (55, true, true), // 45%: remain snapped at the boundary.
+        (56, true, false),
+        (100, true, false),
+    ] {
+        let widget = RECT {
+            left,
+            top: 0,
+            right: left + 100,
+            bottom: 50,
+        };
+        assert_eq!(
+            positioning::should_snap_to_slot(widget, slot, snapped),
+            expected,
+            "left={left}, previously snapped={snapped}"
+        );
+    }
 }
 
 #[test]
-fn test_auto_eject_relative_monitor_coords() {
-    // Secondary monitor stacked vertically above primary: Y from -1080 to 0
-    let mon_rect = RECT {
-        left: 0,
+fn auto_ejection_uses_monitor_relative_edges() {
+    let monitor = RECT {
+        left: -1920,
         top: -1080,
-        right: 1920,
+        right: 0,
         bottom: 0,
     };
-    // Taskbar at top of that secondary monitor: top = -1080, bottom = -1032
-    let taskbar_top = RECT {
-        left: 0,
-        top: -1080,
-        right: 1920,
-        bottom: -1032,
+    let widget = RECT {
+        left: -500,
+        top: -400,
+        right: -283,
+        bottom: -354,
     };
-    let is_top = (taskbar_top.top - mon_rect.top).abs() <= 50;
-    assert!(is_top, "Taskbar at top of stacked monitor should be detected as top");
-
-    let widget_h = 44;
-    let ejected_y = if is_top {
-        taskbar_top.bottom + 6
-    } else {
-        taskbar_top.top - widget_h - 6
-    };
-    assert_eq!(ejected_y, -1032 + 6); // -1026
-
-    // Taskbar at bottom of that secondary monitor: top = -48, bottom = 0
-    let taskbar_bottom = RECT {
-        left: 0,
-        top: -48,
-        right: 1920,
-        bottom: 0,
-    };
-    let is_top_bottom_tb = (taskbar_bottom.top - mon_rect.top).abs() <= 50;
-    assert!(!is_top_bottom_tb, "Taskbar at bottom of stacked monitor should NOT be detected as top");
-
-    let ejected_y_bottom = if is_top_bottom_tb {
-        taskbar_bottom.bottom + 6
-    } else {
-        taskbar_bottom.top - widget_h - 6
-    };
-    assert_eq!(ejected_y_bottom, -48 - 44 - 6); // -98
+    for (taskbar, expected) in [
+        (
+            RECT {
+                left: -1920,
+                top: -1080,
+                right: 0,
+                bottom: -1032,
+            },
+            (-500, -1026),
+        ),
+        (
+            RECT {
+                left: -1920,
+                top: -48,
+                right: 0,
+                bottom: 0,
+            },
+            (-500, -100),
+        ),
+        (
+            RECT {
+                left: -1920,
+                top: -1080,
+                right: -1872,
+                bottom: 0,
+            },
+            (-1866, -400),
+        ),
+        (
+            RECT {
+                left: -48,
+                top: -1080,
+                right: 0,
+                bottom: 0,
+            },
+            (-271, -400),
+        ),
+    ] {
+        let point = positioning::auto_eject_origin(widget, taskbar, monitor);
+        assert_eq!((point.x, point.y), expected);
+    }
 }
 
 #[test]
-fn test_drag_release_capture_state_ordering() {
-    // Model the state machine during WM_LBUTTONUP and WM_CAPTURECHANGED
-    struct DragStateMachine {
-        dragging: bool,
-        pending_drag: bool,
-        is_snapped: bool,
+fn drag_release_snapshots_state_before_reentrant_capture_change() {
+    use message_loop::{release_drag_capture_with, DragRelease};
+    use std::cell::{Cell, RefCell};
+
+    for original in [
+        DragRelease {
+            dragging: true,
+            pending: false,
+            snapped: true,
+        },
+        DragRelease {
+            dragging: false,
+            pending: true,
+            snapped: false,
+        },
+        DragRelease::default(),
+    ] {
+        let live = RefCell::new(original);
+        let release_calls = Cell::new(0);
+        let result = release_drag_capture_with(
+            || {
+                let mut state = live.borrow_mut();
+                let DragRelease {
+                    dragging,
+                    pending,
+                    snapped,
+                } = &mut *state;
+                DragRelease::take(dragging, pending, snapped)
+            },
+            || {
+                // ReleaseCapture can synchronously re-enter the window procedure.
+                // Reborrow also proves the snapshot's guard has been dropped.
+                assert_eq!(*live.borrow(), DragRelease::default());
+                *live.borrow_mut() = DragRelease::default();
+                release_calls.set(release_calls.get() + 1);
+            },
+        );
+        assert_eq!(
+            result, original,
+            "capture change must not erase the drop/click"
+        );
+        assert_eq!(*live.borrow(), DragRelease::default());
+        assert_eq!(release_calls.get(), 1);
     }
-
-    impl DragStateMachine {
-        // Correct implementation: extract before releasing capture
-        fn on_lbuttonup_correct(&mut self) -> ((bool, bool), bool) {
-            let was_dragging = self.dragging;
-            let was_pending = self.pending_drag;
-            let was_snapped = self.is_snapped;
-            self.dragging = false;
-            self.pending_drag = false;
-            self.is_snapped = false;
-
-            // ReleaseCapture() synchronously triggers on_capture_changed()
-            self.on_capture_changed();
-
-            ((was_dragging, was_pending), was_snapped)
-        }
-
-        fn on_capture_changed(&mut self) {
-            self.dragging = false;
-            self.pending_drag = false;
-            self.is_snapped = false;
-        }
-    }
-
-    // Case 1: Was dragging actively while snapped
-    let mut sm1 = DragStateMachine {
-        dragging: true,
-        pending_drag: false,
-        is_snapped: true,
-    };
-    let ((was_dragging, was_pending), was_snapped) = sm1.on_lbuttonup_correct();
-    assert!(was_dragging, "Drop must receive was_dragging = true");
-    assert!(!was_pending);
-    assert!(was_snapped, "Drop must preserve was_snapped = true for 0.45 threshold");
-    assert!(!sm1.dragging);
-    assert!(!sm1.is_snapped);
-
-    // Case 2: Was a pending click (not dragged beyond threshold)
-    let mut sm2 = DragStateMachine {
-        dragging: false,
-        pending_drag: true,
-        is_snapped: false,
-    };
-    let ((was_dragging2, was_pending2), was_snapped2) = sm2.on_lbuttonup_correct();
-    assert!(!was_dragging2);
-    assert!(was_pending2, "Click dispatch must receive was_pending = true");
-    assert!(!was_snapped2);
 }
 
 #[test]
-fn test_high_dpi_widget_capacity_and_watchdog_recovery() {
-    let logical_w: f64 = 217.0;
-    let logical_h: f64 = 46.0;
-    let dpi_scale: f64 = 1.5; // 150% High DPI
-    let physical_w = (logical_w * dpi_scale).round() as i32; // 326
-    let physical_h = (logical_h * dpi_scale).round() as i32; // 69
-    assert_eq!(physical_w, 326);
-    assert_eq!(physical_h, 69);
+fn high_dpi_dimensions_drive_capacity_and_watchdog_redocking() {
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].width = 217.0.into();
+    theme.surfaces[0].height = 46.0.into();
+    let frame = positioning::widget_frame(&theme, None, ThemeRuntime::default(), 1.5);
+    let (width, height) = (frame.width, frame.height);
+    assert_eq!((width, height), (326, 69));
 
     let taskbar = RECT {
         left: 0,
@@ -476,87 +472,124 @@ fn test_high_dpi_widget_capacity_and_watchdog_recovery() {
         right: 1920,
         bottom: 1080,
     };
-    // Available slot is only 260px wide
     let slot = RECT {
         left: 1000,
         top: 1032,
         right: 1260,
         bottom: 1080,
     };
-
-    // With physical width (326px), capacity is NOT sufficient
     assert!(!positioning::is_taskbar_capacity_sufficient(
-        taskbar,
-        slot,
-        physical_w,
-        physical_h,
+        taskbar, slot, width, height
     ));
-
-    // Watchdog check: free_space = 260. If evaluated against logical_w (217 + 20 = 237),
-    // it would erroneously re-dock (260 >= 237).
-    // With physical_w (326 + 20 = 346), it correctly refuses to re-dock:
-    let free_space = slot.right - slot.left;
-    let can_redock = free_space >= physical_w + 20;
-    assert!(!can_redock, "Watchdog must not re-dock into undersized slot on high DPI");
-
-    // Only when free_space expands to at least physical_w + 20 (346px) can it re-dock:
-    let wide_slot_space = 350;
-    assert!(wide_slot_space >= physical_w + 20);
+    assert!(!positioning::can_redock(260, width));
+    assert!(!positioning::can_redock(345, width));
+    assert!(positioning::can_redock(346, width));
+    assert!(positioning::can_redock(350, width));
 }
 
 #[test]
-fn test_multi_monitor_auto_eject_resolution() {
-    let displays = vec![
+fn floating_card_padding_is_excluded_from_docking_capacity() {
+    let theme = ThemeDocument::starter();
+    let docked = positioning::widget_frame(&theme, None, ThemeRuntime::default(), 1.5);
+    let floating = positioning::widget_frame(
+        &theme,
+        None,
+        ThemeRuntime::default().with_nest(SurfaceNest::Floating),
+        1.5,
+    );
+    assert_eq!(floating.width, docked.width + 30);
+    assert_eq!(floating.content_width, docked.width);
+    assert_eq!(floating.height, docked.height);
+    let content = floating.content_rect(POINT { x: 985, y: 900 });
+    assert_eq!(content.left, 1000);
+    assert_eq!(content.right, 1000 + docked.width);
+    assert!(positioning::can_redock(docked.width + 20, docked.width));
+    assert!(!positioning::can_redock(docked.width + 20, floating.width));
+}
+
+#[test]
+fn floating_monitor_resolution_handles_boundaries_fallbacks_and_dpi() {
+    let displays = [
         native_interop::DisplayMonitor {
             handle: HMONITOR::default(),
-            rect: RECT { left: 0, top: 0, right: 1920, bottom: 1080 },
+            rect: RECT {
+                left: -1920,
+                top: -1080,
+                right: 0,
+                bottom: 0,
+            },
+            primary: false,
+        },
+        native_interop::DisplayMonitor {
+            handle: HMONITOR::default(),
+            rect: RECT {
+                left: 0,
+                top: 0,
+                right: 1920,
+                bottom: 1080,
+            },
             primary: true,
         },
         native_interop::DisplayMonitor {
             handle: HMONITOR::default(),
-            rect: RECT { left: 1920, top: 0, right: 3840, bottom: 1080 },
+            rect: RECT {
+                left: 1920,
+                top: 0,
+                right: 3840,
+                bottom: 1080,
+            },
             primary: false,
         },
     ];
-
-    let pt = POINT { x: 2500, y: 100 };
-    let resolved = displays
-        .iter()
-        .enumerate()
-        .find(|(_, d)| {
-            pt.x >= d.rect.left
-                && pt.x < d.rect.right
-                && pt.y >= d.rect.top
-                && pt.y < d.rect.bottom
-        })
-        .map(|(i, d)| (i, *d));
-
-    assert!(resolved.is_some());
-    let (idx, display) = resolved.unwrap();
-    assert_eq!(idx, 1, "Point on secondary monitor must resolve to display index 1");
-    assert_eq!(display.rect.left, 1920);
-
-    let scale = 1.5; // 150% DPI on secondary
-    let rel_x = ((pt.x - display.rect.left) as f64 / scale).round() as i32;
-    let rel_y = ((pt.y - display.rect.top) as f64 / scale).round() as i32;
-    assert_eq!(rel_x, ((2500 - 1920) as f64 / 1.5).round() as i32); // 387
-    assert_eq!(rel_y, (100.0 / 1.5_f64).round() as i32); // 67
+    for (point, expected_index, expected_offset) in [
+        (POINT { x: 2500, y: 100 }, 2, (387, 67)),
+        (POINT { x: 1920, y: 0 }, 2, (0, 0)),
+        (POINT { x: -1800, y: -930 }, 0, (80, 100)),
+        (POINT { x: 0, y: 0 }, 1, (0, 0)),
+    ] {
+        let (index, monitor) = positioning::monitor_for_point(&displays, point);
+        assert_eq!(index, expected_index);
+        let offset = positioning::logical_monitor_offset(point, monitor.rect, 1.5);
+        assert_eq!((offset.x, offset.y), expected_offset);
+    }
+    let outside = POINT { x: 9000, y: 9000 };
+    assert_eq!(positioning::monitor_for_point(&displays, outside).0, 1);
+    assert_eq!(positioning::monitor_for_point(&displays[..1], outside).0, 0);
+    let (index, fallback) = positioning::monitor_for_point(&[], outside);
+    assert_eq!(index, 0);
+    assert_eq!(
+        (
+            fallback.rect.left,
+            fallback.rect.top,
+            fallback.rect.right,
+            fallback.rect.bottom
+        ),
+        (0, 0, 1920, 1080)
+    );
 }
 
 #[test]
-fn test_rebar_stretching_to_tray_is_not_treated_as_collision() {
-    // Model the condition where ReBarWindow32.right extends all the way to TrayNotifyWnd.left.
-    // In this scenario, rect.right >= tray_left - 10, meaning it is just the layout container
-    // band, NOT an actual running application button collision.
-    let tray_left = 1614;
-    let rebar_right = 1614; // Directly adjacent
-    let is_container_stretch = rebar_right >= tray_left - 10;
-    assert!(is_container_stretch, "ReBar spanning to tray must be identified as container stretch");
-
-    // When an actual app button is detected far from the tray (e.g. at 1200px):
-    let actual_app_right = 1200;
-    let is_actual_app = actual_app_right < tray_left - 10;
-    assert!(is_actual_app, "Real app button boundary before tray must be retained");
+fn tasklist_boundary_ignores_stretched_containers_and_uses_real_app_edges() {
+    let rect = |right| RECT {
+        left: 0,
+        top: 0,
+        right,
+        bottom: 48,
+    };
+    assert_eq!(positioning::tasklist_boundary(1614, []), None);
+    assert_eq!(positioning::tasklist_boundary(1614, [rect(1614)]), None);
+    assert_eq!(positioning::tasklist_boundary(1614, [rect(1700)]), None);
+    assert_eq!(positioning::tasklist_boundary(1614, [rect(1604)]), None);
+    assert_eq!(
+        positioning::tasklist_boundary(1614, [rect(1603)]),
+        Some(1603)
+    );
+    assert_eq!(
+        positioning::tasklist_boundary(1614, [rect(1614), rect(1200)]),
+        Some(1200)
+    );
+    assert_eq!(
+        positioning::tasklist_boundary(1614, [rect(1100), rect(1200)]),
+        Some(1100)
+    );
 }
-
-

@@ -1901,7 +1901,7 @@ fn mouse_action_object_context(
         .surfaces
         .get(surface_index)
         .ok_or_else(|| format!("Surface {surface_index} does not exist"))?;
-    let (width, height) = resolve_surface_size(theme, surface_index, data, runtime);
+    let (width, height) = resolve_surface_content_size(theme, surface_index, data, runtime);
     let canvas = Canvas {
         width,
         width_expression: Some(surface.width.clone()),
@@ -2059,7 +2059,7 @@ pub fn execute_mouse_actions(
                 let surface = &effective.surfaces[target_surface_index];
                 let object_id = object.id.clone();
                 let (width, height) =
-                    resolve_surface_size(&effective, target_surface_index, data, runtime);
+                    resolve_surface_content_size(&effective, target_surface_index, data, runtime);
                 let canvas = Canvas {
                     width,
                     width_expression: Some(surface.width.clone()),
