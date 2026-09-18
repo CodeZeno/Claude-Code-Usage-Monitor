@@ -269,10 +269,14 @@ struct AppState {
     github_copilot_state: CellState,
     github_copilot_percent: Option<f64>,
     github_copilot_text: String,
+    vercel_ai_gateway_state: CellState,
+    vercel_ai_gateway_percent: Option<f64>,
+    vercel_ai_gateway_text: String,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     github_copilot_plan: poller::GithubCopilotPlan,
 
     data: Option<AppUsageData>,
@@ -756,6 +760,12 @@ fn quota_item_section(
 fn format_quota_number(value: f64) -> String {
     if (value - value.round()).abs() < 0.000_001 {
         format!("{value:.0}")
+    } else if value != 0.0 && value.abs() < 0.01 {
+        let precise = format!("{value:.8}");
+        precise
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     } else {
         format!("{value:.2}")
     }
@@ -1088,9 +1098,11 @@ fn apply_provider_poll_update(
                 poll_quota_item_state(provider, outcome, GITHUB_COPILOT_MONTHLY_ITEM_ID);
         }
         QuotaFamilyId::VercelAiGateway => {
-            // UI-specific Vercel state is added in the next integration
-            // stage. The successful family is still merged below so the
-            // generic quota model and snapshot path already stay aligned.
+            state.vercel_ai_gateway_state = poll_quota_item_state(
+                provider,
+                outcome,
+                crate::vercel_ai_gateway::VERCEL_AI_GATEWAY_SPEND_ITEM_ID,
+            );
         }
     }
     merge_successful_provider(&mut state.data, provider, outcome);
@@ -1974,6 +1986,7 @@ const IDM_MODEL_CODEX: u16 = 61;
 #[cfg(feature = "antigravity")]
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
 const IDM_MODEL_GITHUB_COPILOT: u16 = 63;
+const IDM_MODEL_VERCEL_AI_GATEWAY: u16 = 64;
 // 70 is `tray_icon::IDM_TOGGLE_WIDGET`, not redefined here — it shares the
 // same `WM_COMMAND` id space as every constant in this block, so it must be
 // treated as already taken (71 is skipped too, to leave no ambiguity next
@@ -2295,6 +2308,8 @@ struct SettingsFile {
     #[serde(default)]
     show_github_copilot: bool,
     #[serde(default)]
+    show_vercel_ai_gateway: bool,
+    #[serde(default)]
     github_copilot_plan: poller::GithubCopilotPlan,
     #[serde(default, deserialize_with = "deserialize_display_basis")]
     display_basis: DisplayBasis,
@@ -2340,6 +2355,7 @@ impl Default for SettingsFile {
             show_codex: false,
             show_antigravity: false,
             show_github_copilot: false,
+            show_vercel_ai_gateway: false,
             github_copilot_plan: poller::GithubCopilotPlan::Unknown,
             display_basis: DisplayBasis::default(),
             reset_display_mode: ResetDisplayMode::default(),
@@ -2489,6 +2505,7 @@ fn load_settings() -> SettingsFile {
         && !settings.show_codex
         && !settings.show_antigravity
         && !settings.show_github_copilot
+        && !settings.show_vercel_ai_gateway
     {
         settings.show_claude_code = true;
     }
@@ -2535,6 +2552,7 @@ fn save_state_settings() {
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
             show_github_copilot: s.show_github_copilot,
+            show_vercel_ai_gateway: s.show_vercel_ai_gateway,
             github_copilot_plan: s.github_copilot_plan,
             display_basis: s.display_basis,
             reset_display_mode: s.reset_display_mode,
@@ -3252,6 +3270,19 @@ fn refresh_usage_texts(state: &mut AppState) {
     );
     state.github_copilot_percent = github_copilot.bar_percent;
     state.github_copilot_text = github_copilot.text;
+
+    let vercel_item = data
+        .and_then(|data| data.family(QuotaFamilyId::VercelAiGateway))
+        .and_then(|family| family.item(crate::vercel_ai_gateway::VERCEL_AI_GATEWAY_SPEND_ITEM_ID));
+    let vercel = render_generic_quota_item_with_reset_mode(
+        state.vercel_ai_gateway_state,
+        vercel_item,
+        basis,
+        reset_display_mode,
+        strings,
+    );
+    state.vercel_ai_gateway_percent = vercel.bar_percent;
+    state.vercel_ai_gateway_text = vercel.text;
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -4077,8 +4108,9 @@ fn needs_weekly_row(state: &AppState) -> bool {
         (state.show_claude_code, true),
         (state.show_codex, true),
         (state.show_antigravity, true),
-        // GitHub Copilot has a monthly quota row, not a weekly one.
+        // GitHub Copilot and Vercel AI Gateway do not use the weekly row.
         (state.show_github_copilot, false),
+        (state.show_vercel_ai_gateway, false),
     ])
 }
 
@@ -4088,6 +4120,7 @@ fn needs_monthly_row(state: &AppState) -> bool {
         (state.show_codex, false),
         (state.show_antigravity, false),
         (state.show_github_copilot, true),
+        (state.show_vercel_ai_gateway, true),
     ])
 }
 
@@ -4526,10 +4559,27 @@ fn active_family_count(
     show_antigravity: bool,
     show_github_copilot: bool,
 ) -> i32 {
+    active_family_count_with_vercel(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        false,
+    )
+}
+
+fn active_family_count_with_vercel(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
+) -> i32 {
     (show_claude_code as i32
         + show_codex as i32
         + show_antigravity as i32
-        + show_github_copilot as i32)
+        + show_github_copilot as i32
+        + show_vercel_ai_gateway as i32)
         .max(1)
 }
 
@@ -4715,11 +4765,12 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
 }
 
 fn active_family_count_for_state(state: &AppState) -> i32 {
-    active_family_count(
+    active_family_count_with_vercel(
         state.show_claude_code,
         state.show_codex,
         state.show_antigravity,
         state.show_github_copilot,
+        state.show_vercel_ai_gateway,
     )
 }
 
@@ -4729,11 +4780,12 @@ fn total_widget_width() -> i32 {
         state
             .as_ref()
             .map(|s| {
-                active_family_count(
+                active_family_count_with_vercel(
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                 )
             })
             .unwrap_or(1)
@@ -4760,6 +4812,11 @@ fn antigravity_accent_color() -> Color {
 
 fn github_copilot_accent_color() -> Color {
     Color::from_hex("#8250DF")
+}
+
+fn vercel_ai_gateway_accent_color() -> Color {
+    // Neutral identification accent chosen for visibility across all themes.
+    Color::from_hex("#8B949E")
 }
 
 /// The popup's canonical color source (AUM-WINDOW-UI-01B). Both draw paths —
@@ -4960,11 +5017,12 @@ pub fn run() {
 
         // Create as a top-level layered popup, anchored above the taskbar.
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_family_count(
+        let initial_model_count = active_family_count_with_vercel(
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
             settings.show_github_copilot,
+            settings.show_vercel_ai_gateway,
         );
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -5060,10 +5118,14 @@ pub fn run() {
                 github_copilot_state: CellState::Loading,
                 github_copilot_percent: None,
                 github_copilot_text: String::new(),
+                vercel_ai_gateway_state: CellState::Loading,
+                vercel_ai_gateway_percent: None,
+                vercel_ai_gateway_text: String::new(),
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
                 show_github_copilot: settings.show_github_copilot,
+                show_vercel_ai_gateway: settings.show_vercel_ai_gateway,
                 github_copilot_plan: settings.github_copilot_plan,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -6113,7 +6175,14 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_claude_code, show_codex, show_antigravity, show_github_copilot, github_copilot_plan) = {
+    let (
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        show_vercel_ai_gateway,
+        github_copilot_plan,
+    ) = {
         let state = lock_state();
         state
             .as_ref()
@@ -6123,6 +6192,7 @@ fn do_poll(send_hwnd: SendHwnd) {
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                     s.github_copilot_plan,
                 )
             })
@@ -6131,16 +6201,18 @@ fn do_poll(send_hwnd: SendHwnd) {
                 false,
                 false,
                 false,
+                false,
                 poller::GithubCopilotPlan::Unknown,
             ))
     };
 
-    let report = poller::poll_report_with_github_copilot_updates(
+    let report = poller::poll_report_with_github_copilot_and_vercel_updates(
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
         github_copilot_plan,
+        show_vercel_ai_gateway,
         |provider, outcome| {
             {
                 let mut state = lock_state();
