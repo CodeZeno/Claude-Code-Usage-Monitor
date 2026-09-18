@@ -23,6 +23,7 @@ pub mod antigravity_statusline;
 pub mod localization;
 pub mod models;
 pub mod poller;
+pub mod vercel_ai_gateway;
 
 pub mod dispatcher;
 pub mod quota_health;
