@@ -138,7 +138,9 @@ fn provider_auth_action(family: QuotaFamilyId, state: CellState) -> Option<AuthA
     match family {
         QuotaFamilyId::Claude => Some(AuthAction::ClaudeLogin),
         QuotaFamilyId::Codex => Some(AuthAction::CodexLogin),
-        QuotaFamilyId::Antigravity | QuotaFamilyId::GithubCopilot => None,
+        QuotaFamilyId::Antigravity
+        | QuotaFamilyId::GithubCopilot
+        | QuotaFamilyId::VercelAiGateway => None,
     }
 }
 
@@ -1048,6 +1050,11 @@ fn merge_successful_providers(data: &mut Option<AppUsageData>, report: &poller::
     merge_successful_provider(data, QuotaFamilyId::Codex, &report.codex);
     merge_successful_provider(data, QuotaFamilyId::Antigravity, &report.antigravity);
     merge_successful_provider(data, QuotaFamilyId::GithubCopilot, &report.github_copilot);
+    merge_successful_provider(
+        data,
+        QuotaFamilyId::VercelAiGateway,
+        &report.vercel_ai_gateway,
+    );
 }
 
 fn apply_provider_poll_update(
@@ -1079,6 +1086,11 @@ fn apply_provider_poll_update(
         QuotaFamilyId::GithubCopilot => {
             state.github_copilot_state =
                 poll_quota_item_state(provider, outcome, GITHUB_COPILOT_MONTHLY_ITEM_ID);
+        }
+        QuotaFamilyId::VercelAiGateway => {
+            // UI-specific Vercel state is added in the next integration
+            // stage. The successful family is still merged below so the
+            // generic quota model and snapshot path already stay aligned.
         }
     }
     merge_successful_provider(&mut state.data, provider, outcome);

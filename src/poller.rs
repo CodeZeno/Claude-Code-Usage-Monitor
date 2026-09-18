@@ -146,6 +146,7 @@ impl PollReport {
             (QuotaFamilyId::Codex, self.codex),
             (QuotaFamilyId::Antigravity, self.antigravity),
             (QuotaFamilyId::GithubCopilot, self.github_copilot),
+            (QuotaFamilyId::VercelAiGateway, self.vercel_ai_gateway),
         ] {
             match outcome {
                 ProviderPollOutcome::Success { usage, .. } => {
@@ -425,6 +426,7 @@ pub(crate) fn poll_report_with_github_copilot_and_vercel_updates(
         &mut || crate::vercel_ai_gateway::poll(),
         &mut SystemTime::now,
     );
+    on_provider_complete(QuotaFamilyId::VercelAiGateway, &report.vercel_ai_gateway);
 
     report
 }
@@ -2478,6 +2480,7 @@ mod tests {
                 QuotaFamilyId::Codex => "codex_update",
                 QuotaFamilyId::Antigravity => "antigravity_update",
                 QuotaFamilyId::GithubCopilot => "github_copilot_update",
+                QuotaFamilyId::VercelAiGateway => "vercel_ai_gateway_update",
             });
         };
 

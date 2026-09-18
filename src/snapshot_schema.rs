@@ -98,7 +98,7 @@ pub(crate) fn snapshot_from_poll_report(
         provider_snapshot_from_outcome(&report.github_copilot)?,
     );
     providers.insert(
-        "vercel_ai_gateway",
+        QuotaFamilyId::VercelAiGateway.stable_id(),
         provider_snapshot_from_outcome(&report.vercel_ai_gateway)?,
     );
 
