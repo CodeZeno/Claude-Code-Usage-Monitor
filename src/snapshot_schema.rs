@@ -787,6 +787,7 @@ mod tests {
             codex,
             antigravity: ProviderPollOutcome::Disabled,
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         }
     }
 
