@@ -170,6 +170,7 @@ enum Page {
     Studio,
     ContextMenus,
     Assets,
+    Diagnostics,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -655,6 +656,7 @@ fn preview_countdown_delay(remaining: Duration) -> Duration {
 
 struct StudioApp {
     owner: isize,
+    diagnostics: studio_diagnostics::DiagnosticsView,
     page: Page,
     settings: SettingsFile,
     synced_poll_interval_ms: u32,
@@ -713,6 +715,7 @@ struct StudioApp {
 mod studio_assets;
 mod studio_context_menus;
 mod studio_core;
+mod studio_diagnostics;
 mod studio_settings;
 mod studio_theme_workspace;
 

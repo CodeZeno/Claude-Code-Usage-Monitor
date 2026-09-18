@@ -1,5 +1,5 @@
 use super::*;
-use crate::accounts::{file_signature, fingerprint, AccountProfile, AccountSettings};
+use crate::accounts::{fingerprint, AccountProfile, AccountSettings};
 use crate::models::AccountUsage;
 use std::path::PathBuf;
 
@@ -16,10 +16,7 @@ impl Target {
             return String::new();
         }
         match &self.path {
-            Ok(Some(path)) if self.provider == ProviderId::Claude => {
-                claude::account_watch_signature(path)
-            }
-            Ok(Some(path)) => file_signature(path),
+            Ok(Some(path)) => account_source_signature(self.provider, path),
             Ok(None) => fingerprint(&format!(
                 "{:?}",
                 credential_watch_snapshot(CredentialWatchMode::ActiveSource(self.provider))
@@ -140,6 +137,16 @@ where
                     })
                 };
                 let mut result = Err(paused_error.unwrap_or(PollError::RequestFailed));
+                diagnose::log(format!(
+                    "{} account {} polling source={:?} paused={paused_error:?}",
+                    target.provider.descriptor().display_name,
+                    target
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.name.as_str())
+                        .unwrap_or("default"),
+                    target.path
+                ));
                 for _ in 0..if paused_error.is_some() { 0 } else { 2 } {
                     result = match &target.path {
                         Err(_) => Err(PollError::NoCredentials),
@@ -166,6 +173,20 @@ where
     let mut data = AppUsageData::default();
     let mut first_error = None;
     for (_, target, signature, result) in results {
+        if let Ok(usage) = &result {
+            diagnose::log(format!(
+                "{} account {} usage received: session={} weekly={} stale={}",
+                target.provider.descriptor().display_name,
+                target
+                    .profile
+                    .as_ref()
+                    .map(|profile| profile.name.as_str())
+                    .unwrap_or("default"),
+                usage.session.percentage,
+                usage.weekly.percentage,
+                usage.stale
+            ));
+        }
         if let Err(error) = &result {
             crate::diagnose::log(format!(
                 "{} account {} usage poll failed: {error:?}",
@@ -242,6 +263,7 @@ pub(super) fn carry_accounts(fresh: &mut AppUsageData, previous: &AppUsageData) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accounts::file_signature;
     use crate::accounts::ProviderAccounts;
     use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -38,7 +38,7 @@ impl StudioApp {
                             changed = true;
                         }
                         if ui.button(language.text("Refresh now")).clicked() {
-                            self.post_owner(WM_APP_REFRESH_NOW);
+                            self.request_refresh();
                         }
                     },
                 );

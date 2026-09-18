@@ -51,6 +51,13 @@ impl StudioApp {
         owner: isize,
         initial_page: Page,
     ) -> Self {
+        let diagnostic_error = crate::diagnose::init_append().err();
+        crate::diagnose::log(format!("dashboard started owner={owner}"));
+        if let Err(error) =
+            studio_diagnostics::send_owner_message(owner, native_interop::WM_APP_ENABLE_DIAGNOSTICS)
+        {
+            crate::diagnose::log(error);
+        }
         let settings = app_settings::load_settings();
         let language = localization::resolve_language(
             settings.language.as_deref().and_then(LanguageId::from_code),
@@ -105,6 +112,7 @@ impl StudioApp {
             .and_then(|interval| Instant::now().checked_add(clock_refresh_delay(interval)));
         Self {
             owner,
+            diagnostics: studio_diagnostics::DiagnosticsView::new(diagnostic_error),
             page: initial_page,
             synced_poll_interval_ms: settings.poll_interval_ms,
             poll_interval_editor_generation: 0,
@@ -174,15 +182,16 @@ impl StudioApp {
         }
     }
 
-    pub(super) fn post_owner(&self, message: u32) {
-        if self.owner != 0 {
-            unsafe {
-                let _ = PostMessageW(
-                    Some(HWND(self.owner as *mut _)),
-                    message,
-                    WPARAM(0),
-                    LPARAM(0),
-                );
+    pub(super) fn request_refresh(&mut self) {
+        crate::diagnose::log("Refresh now clicked in dashboard");
+        match studio_diagnostics::send_owner_message(self.owner, WM_APP_REFRESH_NOW) {
+            Ok(()) => {
+                crate::diagnose::log("refresh request delivered to monitor message queue");
+                self.settings_error = None;
+            }
+            Err(error) => {
+                crate::diagnose::log(&error);
+                self.settings_error = Some(error);
             }
         }
     }
@@ -792,6 +801,11 @@ impl StudioApp {
             || self.usage_poll_ok != poll_ok
             || self.usage_has_error != has_error;
         if changed {
+            crate::diagnose::log(format!(
+                "dashboard loaded usage cache: updated={} accounts={} poll_ok={poll_ok}",
+                cache.updated_unix,
+                cache.data.accounts.len()
+            ));
             self.usage = Some(cache.data);
             self.usage_poll_ok = poll_ok;
             self.usage_has_error = has_error;
@@ -872,6 +886,13 @@ impl StudioApp {
                                 language.text("Context Menus"),
                             );
                             nav(ui, &mut self.page, Page::Assets, language.text("Assets"));
+                            ui.separator();
+                            nav(
+                                ui,
+                                &mut self.page,
+                                Page::Diagnostics,
+                                language.text("Diagnostics"),
+                            );
                             ui.allocate_ui_with_layout(
                                 ui.available_size(),
                                 egui::Layout::bottom_up(egui::Align::Min),
@@ -917,6 +938,7 @@ impl StudioApp {
                         Page::Studio => self.studio_page(ui),
                         Page::ContextMenus => self.context_menus_page(ui),
                         Page::Assets => self.assets_page(ui),
+                        Page::Diagnostics => self.diagnostics_page(ui),
                     }
                 },
             );

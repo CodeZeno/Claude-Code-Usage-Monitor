@@ -39,6 +39,7 @@ pub const WM_APP_QUIT: u32 = WM_APP + 7;
 pub const WM_APP_OPEN_DASHBOARD: u32 = WM_APP + 8;
 pub const WM_APP_TRAY_DISPATCH: u32 = WM_APP + 9;
 pub const WM_APP_TASKBAR_COLLISION: u32 = WM_APP + 10;
+pub const WM_APP_ENABLE_DIAGNOSTICS: u32 = WM_APP + 11;
 
 pub fn is_taskbar_horizontal(rect: RECT) -> bool {
     (rect.right - rect.left) >= (rect.bottom - rect.top)

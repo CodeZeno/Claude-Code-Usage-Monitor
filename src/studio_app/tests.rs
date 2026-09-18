@@ -345,6 +345,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
     let history_snapshot = theme.clone();
     StudioApp {
         owner: 0,
+        diagnostics: studio_diagnostics::DiagnosticsView::new(None),
         page: Page::Studio,
         settings: SettingsFile::default(),
         synced_poll_interval_ms: SettingsFile::default().poll_interval_ms,
@@ -399,6 +400,48 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         context_menu_action_helper: None,
         delete_context_menu_confirmation: None,
     }
+}
+
+#[test]
+fn diagnostics_navigation_and_page_show_the_running_version() {
+    let context = egui::Context::default();
+    egui_extras::install_image_loaders(&context);
+    configure_style(&context, LanguageId::English);
+    let mut app = app_with_surfaces(vec![root("main")]);
+    app.page = Page::Diagnostics;
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1100.0, 850.0),
+            )),
+            ..Default::default()
+        },
+        |ui| app.shell(ui),
+    );
+    fn collect_text(shape: &egui::epaint::Shape, text: &mut String) {
+        match shape {
+            egui::epaint::Shape::Text(shape) => {
+                text.push_str(&shape.galley.job.text);
+                text.push('\n');
+            }
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect_text(shape, text);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut text = String::new();
+    for shape in &output.shapes {
+        collect_text(&shape.shape, &mut text);
+    }
+    output.textures_delta.clear();
+    assert!(text.find("Assets").unwrap() < text.find("Diagnostics").unwrap());
+    assert!(text.contains(&format!("Usage Monitor v{}", env!("CARGO_PKG_VERSION"))));
+    assert!(text.contains("Monitor disconnected"));
+    assert!(text.contains("Refresh now"));
 }
 
 #[test]

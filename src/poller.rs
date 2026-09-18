@@ -43,6 +43,14 @@ pub struct PollFailure {
     pub error: PollError,
 }
 
+/// Polling and cache readers must agree on all files an account can read.
+pub fn account_source_signature(provider: ProviderId, path: &std::path::Path) -> String {
+    match provider {
+        ProviderId::Claude => claude::account_watch_signature(path),
+        _ => crate::accounts::file_signature(path),
+    }
+}
+
 pub fn poll(
     enabled_providers: ProviderSet,
     settings: &crate::accounts::AccountSettings,

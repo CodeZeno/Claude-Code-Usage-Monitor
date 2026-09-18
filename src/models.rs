@@ -243,7 +243,8 @@ impl AppUsageData {
                 Some(path) => {
                     expected.as_ref().is_none_or(|expected| {
                         crate::accounts::source_key(expected) != crate::accounts::source_key(path)
-                    }) || crate::accounts::file_signature(path) != account.source_signature
+                    }) || crate::poller::account_source_signature(account.provider, path)
+                        != account.source_signature
                 }
                 None => crate::accounts::environment_directory(account.provider).is_some(),
             };
@@ -310,6 +311,34 @@ impl<'de> Deserialize<'de> for AppUsageData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_claude_cache_keeps_poll_results_until_source_changes() {
+        let provider = ProviderId::Claude;
+        let path = crate::accounts::default_credential_path(provider).unwrap();
+        // Fingerprints only: no tokens are decrypted, used, or changed.
+        let signature = crate::poller::account_source_signature(provider, &path);
+        for error in [None, Some(crate::poller::PollError::HttpStatus(429))] {
+            let mut data = AppUsageData::default();
+            data.accounts.push(AccountUsage {
+                provider,
+                profile: crate::accounts::AccountProfile::default(),
+                source_signature: signature.clone(),
+                source_path: Some(path.clone()),
+                usage: error.is_none().then(UsageData::default),
+                error,
+                selected: true,
+            });
+            let json = serde_json::to_string(&data).unwrap();
+            let mut cached: AppUsageData = serde_json::from_str(&json).unwrap();
+            cached.invalidate_changed_credentials();
+            assert_eq!(cached.accounts, data.accounts);
+            cached.accounts[0].source_signature.push_str("changed");
+            cached.invalidate_changed_credentials();
+            assert!(cached.accounts[0].usage.is_none());
+            assert!(cached.accounts[0].error.is_none());
+        }
+    }
 
     #[test]
     fn usage_cache_preserves_idle_window_presence_and_reads_legacy_sections() {
