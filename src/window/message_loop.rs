@@ -184,6 +184,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
             diagnose::log("monitor diagnostics connected to dashboard");
             LRESULT(0)
         }
+        WM_APP_DISABLE_DIAGNOSTICS => {
+            diagnose::disable();
+            LRESULT(0)
+        }
         WM_APP_OPEN_DASHBOARD => {
             crate::dashboard::show(hwnd);
             LRESULT(0)

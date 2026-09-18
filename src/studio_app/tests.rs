@@ -345,7 +345,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
     let history_snapshot = theme.clone();
     StudioApp {
         owner: 0,
-        diagnostics: studio_diagnostics::DiagnosticsView::new(None),
+        diagnostics: studio_diagnostics::DiagnosticsView::new(),
         page: Page::Studio,
         settings: SettingsFile::default(),
         synced_poll_interval_ms: SettingsFile::default().poll_interval_ms,
@@ -403,7 +403,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
 }
 
 #[test]
-fn diagnostics_navigation_and_page_show_the_running_version() {
+fn diagnostics_page_has_logging_controls_and_menu_version() {
     let context = egui::Context::default();
     egui_extras::install_image_loaders(&context);
     configure_style(&context, LanguageId::English);
@@ -439,9 +439,21 @@ fn diagnostics_navigation_and_page_show_the_running_version() {
     }
     output.textures_delta.clear();
     assert!(text.find("Assets").unwrap() < text.find("Diagnostics").unwrap());
-    assert!(text.contains(&format!("Usage Monitor v{}", env!("CARGO_PKG_VERSION"))));
-    assert!(text.contains("Monitor disconnected"));
-    assert!(text.contains("Refresh now"));
+    assert!(text.contains(&format!("v{}", env!("CARGO_PKG_VERSION"))));
+    assert!(text.contains("Logging"));
+    assert!(text.contains("Write diagnostic events to"));
+    assert!(text.contains("Disabled"));
+    assert!(text.contains("Refresh usage"));
+    assert!(text.contains("Follow latest event"));
+    assert!(text.contains("Copy log"));
+    assert!(!text.contains("Monitor disconnected"));
+    assert!(!text.contains("Dashboard process"));
+    assert!(!text.contains("Record diagnostics"));
+    assert!(!text.contains("Pause output"));
+    assert!(
+        !crate::diagnose::is_enabled(),
+        "visiting the page must not start recording"
+    );
 }
 
 #[test]

@@ -30,7 +30,6 @@ fn language() -> crate::localization::LanguageId {
 }
 
 pub fn show(owner: HWND) {
-    let _ = crate::diagnose::init_append();
     crate::diagnose::log("dashboard requested from monitor");
     if focus_existing() {
         return;

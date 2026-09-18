@@ -1,15 +1,60 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 struct DiagnoseState {
-    file: Mutex<File>,
+    file: Mutex<Option<File>>,
+    enabled: AtomicBool,
 }
 
-static DIAGNOSE_STATE: OnceLock<DiagnoseState> = OnceLock::new();
-static INIT_LOCK: Mutex<()> = Mutex::new(());
+impl DiagnoseState {
+    const fn new() -> Self {
+        Self {
+            file: Mutex::new(None),
+            enabled: AtomicBool::new(false),
+        }
+    }
+
+    fn enable(&self, path: &std::path::Path, append: bool) -> Result<bool, String> {
+        let mut file = self.file.lock().map_err(|error| error.to_string())?;
+        if file.is_some() {
+            return Ok(false);
+        }
+        *file = Some(open_log(path, append).map_err(|error| {
+            format!(
+                "Unable to open diagnostic log file {}: {error}",
+                path.display()
+            )
+        })?);
+        self.enabled.store(true, Ordering::Release);
+        Ok(true)
+    }
+
+    fn disable(&self) {
+        let file = self.file.lock();
+        self.enabled.store(false, Ordering::Release);
+        if let Ok(mut file) = file {
+            *file = None;
+        }
+    }
+
+    fn write(&self, line: &[u8]) {
+        if !self.enabled.load(Ordering::Acquire) {
+            return;
+        }
+        if let Ok(mut guard) = self.file.lock() {
+            if let Some(file) = guard.as_mut() {
+                let _ = file.write_all(line);
+                let _ = file.flush();
+            }
+        }
+    }
+}
+
+static DIAGNOSE_STATE: DiagnoseState = DiagnoseState::new();
 
 pub fn log_path() -> PathBuf {
     std::env::temp_dir().join("claude-code-usage-monitor.log")
@@ -43,17 +88,10 @@ pub fn init_append() -> Result<PathBuf, String> {
 }
 
 fn init_file(append: bool) -> Result<PathBuf, String> {
-    let _guard = INIT_LOCK.lock().map_err(|error| error.to_string())?;
     let path = log_path();
-    if is_enabled() {
+    if !DIAGNOSE_STATE.enable(&path, append)? {
         return Ok(path);
     }
-    let file = open_log(&path, append)
-        .map_err(|e| format!("Unable to open diagnostic log file {}: {e}", path.display()))?;
-
-    let _ = DIAGNOSE_STATE.set(DiagnoseState {
-        file: Mutex::new(file),
-    });
 
     log(if append {
         "diagnostic logging enabled (append)"
@@ -78,13 +116,18 @@ fn open_log(path: &std::path::Path, append: bool) -> std::io::Result<File> {
 }
 
 pub fn is_enabled() -> bool {
-    DIAGNOSE_STATE.get().is_some()
+    DIAGNOSE_STATE.enabled.load(Ordering::Acquire)
+}
+
+pub fn disable() {
+    log("diagnostic recording disabled");
+    DIAGNOSE_STATE.disable();
 }
 
 pub fn log(message: impl AsRef<str>) {
-    let Some(state) = DIAGNOSE_STATE.get() else {
+    if !is_enabled() {
         return;
-    };
+    }
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -96,19 +139,28 @@ pub fn log(message: impl AsRef<str>) {
         std::process::id(),
         message.as_ref()
     );
-    if let Ok(mut file) = state.file.lock() {
-        let _ = file.write_all(line.as_bytes());
-        let _ = file.flush();
-    }
+    DIAGNOSE_STATE.write(line.as_bytes());
 }
 
 pub fn log_error(context: &str, error: impl std::fmt::Display) {
-    log(format!("{context}: {error}"));
+    log_lazy(|| format!("{context}: {error}"));
+}
+
+pub fn log_lazy(message: impl FnOnce() -> String) {
+    if is_enabled() {
+        log(message());
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_logging_skips_formatting() {
+        assert!(!is_enabled());
+        log_lazy(|| panic!("disabled logging must not format messages"));
+    }
 
     #[test]
     fn log_tail_tracks_appends_and_truncation_without_partial_utf8_lines() {
@@ -144,6 +196,26 @@ mod tests {
         );
         drop(dashboard);
         drop(monitor);
+        let state = DiagnoseState::new();
+        assert!(!state.enabled.load(Ordering::Acquire));
+        state.enable(&path, true).unwrap();
+        state.write(b"recording on\n");
+        state.disable();
+        assert!(!state.enabled.load(Ordering::Acquire));
+        assert!(
+            state.file.lock().unwrap().is_none(),
+            "off must close the file"
+        );
+        let stopped = read_tail(&path, 1024).unwrap();
+        state.write(b"must not be recorded\n");
+        assert_eq!(read_tail(&path, 1024).unwrap(), stopped);
+        state.enable(&path, true).unwrap();
+        state.write(b"recording resumed\n");
+        state.disable();
+        assert_eq!(
+            read_tail(&path, 1024).unwrap(),
+            format!("{stopped}recording resumed\n")
+        );
         std::fs::remove_file(path).unwrap();
     }
 }

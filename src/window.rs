@@ -32,8 +32,9 @@ use crate::models::AppUsageData;
 use crate::native_interop::{
     self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL,
     TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE,
-    WM_APP_ENABLE_DIAGNOSTICS, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW,
-    WM_APP_SETTINGS_UPDATED, WM_APP_TASKBAR_COLLISION, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
+    WM_APP_DISABLE_DIAGNOSTICS, WM_APP_ENABLE_DIAGNOSTICS, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT,
+    WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED, WM_APP_TASKBAR_COLLISION, WM_APP_TRAY,
+    WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::providers::{ProviderId, ProviderSet};
@@ -2284,9 +2285,7 @@ fn do_poll_once(hwnd: HWND) {
             .unwrap_or_default()
     };
 
-    diagnose::log(format!(
-        "poll started providers={enabled_providers:?} force={force}"
-    ));
+    diagnose::log_lazy(|| format!("poll started providers={enabled_providers:?} force={force}"));
     match poller::poll(enabled_providers, &accounts, previous.as_ref(), force) {
         Ok(data) => {
             let mut state = lock_state();
@@ -2338,11 +2337,13 @@ fn do_poll_once(hwnd: HWND) {
             }
             drop(state);
             match app_settings::save_usage_cache(&cache_data, true) {
-                Ok(()) => diagnose::log(format!(
-                    "usage cache saved: accounts={} elapsed_ms={}",
-                    cache_data.accounts.len(),
-                    poll_started.elapsed().as_millis()
-                )),
+                Ok(()) => diagnose::log_lazy(|| {
+                    format!(
+                        "usage cache saved: accounts={} elapsed_ms={}",
+                        cache_data.accounts.len(),
+                        poll_started.elapsed().as_millis()
+                    )
+                }),
                 Err(error) => diagnose::log_error("unable to save usage cache", error),
             }
             if !notifications.is_empty() {
@@ -2365,10 +2366,12 @@ fn do_poll_once(hwnd: HWND) {
             }
         }
         Err(failure) => {
-            diagnose::log(format!(
-                "poll failed: {failure:?} elapsed_ms={}",
-                poll_started.elapsed().as_millis()
-            ));
+            diagnose::log_lazy(|| {
+                format!(
+                    "poll failed: {failure:?} elapsed_ms={}",
+                    poll_started.elapsed().as_millis()
+                )
+            });
             if lock_state()
                 .as_ref()
                 .is_some_and(|s| s.providers != enabled_providers || s.accounts != accounts)

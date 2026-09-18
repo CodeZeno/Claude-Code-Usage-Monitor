@@ -51,13 +51,7 @@ impl StudioApp {
         owner: isize,
         initial_page: Page,
     ) -> Self {
-        let diagnostic_error = crate::diagnose::init_append().err();
-        crate::diagnose::log(format!("dashboard started owner={owner}"));
-        if let Err(error) =
-            studio_diagnostics::send_owner_message(owner, native_interop::WM_APP_ENABLE_DIAGNOSTICS)
-        {
-            crate::diagnose::log(error);
-        }
+        crate::diagnose::log_lazy(|| format!("dashboard started owner={owner}"));
         let settings = app_settings::load_settings();
         let language = localization::resolve_language(
             settings.language.as_deref().and_then(LanguageId::from_code),
@@ -112,7 +106,7 @@ impl StudioApp {
             .and_then(|interval| Instant::now().checked_add(clock_refresh_delay(interval)));
         Self {
             owner,
-            diagnostics: studio_diagnostics::DiagnosticsView::new(diagnostic_error),
+            diagnostics: studio_diagnostics::DiagnosticsView::new(),
             page: initial_page,
             synced_poll_interval_ms: settings.poll_interval_ms,
             poll_interval_editor_generation: 0,
@@ -801,11 +795,13 @@ impl StudioApp {
             || self.usage_poll_ok != poll_ok
             || self.usage_has_error != has_error;
         if changed {
-            crate::diagnose::log(format!(
-                "dashboard loaded usage cache: updated={} accounts={} poll_ok={poll_ok}",
-                cache.updated_unix,
-                cache.data.accounts.len()
-            ));
+            crate::diagnose::log_lazy(|| {
+                format!(
+                    "dashboard loaded usage cache: updated={} accounts={} poll_ok={poll_ok}",
+                    cache.updated_unix,
+                    cache.data.accounts.len()
+                )
+            });
             self.usage = Some(cache.data);
             self.usage_poll_ok = poll_ok;
             self.usage_has_error = has_error;
@@ -863,7 +859,7 @@ impl StudioApp {
                             left: 8,
                             right: 8,
                             top: 20,
-                            bottom: 0,
+                            bottom: 4,
                         })
                         .show(ui, |ui| {
                             ui.set_width(DEFAULT_MENU_WIDTH - 16.0);
@@ -897,7 +893,31 @@ impl StudioApp {
                                 ui.available_size(),
                                 egui::Layout::bottom_up(egui::Align::Min),
                                 |ui| {
-                                    crate::ui::components::navigation::github_link(ui, GITHUB_URL);
+                                    ui.allocate_ui_with_layout(
+                                        egui::vec2(
+                                            ui.available_width(),
+                                            crate::ui::components::navigation::ITEM_HEIGHT,
+                                        ),
+                                        egui::Layout::left_to_right(egui::Align::Max),
+                                        |ui| {
+                                            crate::ui::components::navigation::github_link(
+                                                ui, GITHUB_URL,
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Max),
+                                                |ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(format!(
+                                                            "v{}",
+                                                            env!("CARGO_PKG_VERSION")
+                                                        ))
+                                                        .size(16.0)
+                                                        .color(muted()),
+                                                    );
+                                                },
+                                            );
+                                        },
+                                    );
                                 },
                             );
                         });

@@ -137,16 +137,18 @@ where
                     })
                 };
                 let mut result = Err(paused_error.unwrap_or(PollError::RequestFailed));
-                diagnose::log(format!(
-                    "{} account {} polling source={:?} paused={paused_error:?}",
-                    target.provider.descriptor().display_name,
-                    target
-                        .profile
-                        .as_ref()
-                        .map(|profile| profile.name.as_str())
-                        .unwrap_or("default"),
-                    target.path
-                ));
+                diagnose::log_lazy(|| {
+                    format!(
+                        "{} account {} polling source={:?} paused={paused_error:?}",
+                        target.provider.descriptor().display_name,
+                        target
+                            .profile
+                            .as_ref()
+                            .map(|profile| profile.name.as_str())
+                            .unwrap_or("default"),
+                        target.path
+                    )
+                });
                 for _ in 0..if paused_error.is_some() { 0 } else { 2 } {
                     result = match &target.path {
                         Err(_) => Err(PollError::NoCredentials),
@@ -174,29 +176,33 @@ where
     let mut first_error = None;
     for (_, target, signature, result) in results {
         if let Ok(usage) = &result {
-            diagnose::log(format!(
-                "{} account {} usage received: session={} weekly={} stale={}",
-                target.provider.descriptor().display_name,
-                target
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.name.as_str())
-                    .unwrap_or("default"),
-                usage.session.percentage,
-                usage.weekly.percentage,
-                usage.stale
-            ));
+            diagnose::log_lazy(|| {
+                format!(
+                    "{} account {} usage received: session={} weekly={} stale={}",
+                    target.provider.descriptor().display_name,
+                    target
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.name.as_str())
+                        .unwrap_or("default"),
+                    usage.session.percentage,
+                    usage.weekly.percentage,
+                    usage.stale
+                )
+            });
         }
         if let Err(error) = &result {
-            crate::diagnose::log(format!(
-                "{} account {} usage poll failed: {error:?}",
-                target.provider.descriptor().display_name,
-                target
-                    .profile
-                    .as_ref()
-                    .map(|profile| profile.name.as_str())
-                    .unwrap_or("default")
-            ));
+            crate::diagnose::log_lazy(|| {
+                format!(
+                    "{} account {} usage poll failed: {error:?}",
+                    target.provider.descriptor().display_name,
+                    target
+                        .profile
+                        .as_ref()
+                        .map(|profile| profile.name.as_str())
+                        .unwrap_or("default")
+                )
+            });
             first_error.get_or_insert(PollFailure {
                 provider: target.provider,
                 error: *error,

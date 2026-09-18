@@ -44,13 +44,17 @@ pub(crate) fn settings_section(ui: &mut egui::Ui, title: &str, body: impl FnOnce
     ui.add_space(8.0);
     ui.label(egui::RichText::new(title).size(25.0).strong());
     ui.add_space(10.0);
+    settings_group(ui, body);
+    ui.add_space(18.0);
+}
+
+pub(crate) fn settings_group(ui: &mut egui::Ui, body: impl FnOnce(&mut egui::Ui)) {
     egui::Frame::new()
         .fill(section_surface())
         .stroke(egui::Stroke::new(1.0, section_border()))
         .corner_radius(12)
         .inner_margin(egui::Margin::symmetric(20, 8))
         .show(ui, body);
-    ui.add_space(18.0);
 }
 
 pub(crate) fn setting_row(
@@ -59,9 +63,19 @@ pub(crate) fn setting_row(
     detail: &str,
     control: impl FnOnce(&mut egui::Ui),
 ) {
+    setting_row_with_control_width(ui, title, detail, 360.0, control);
+}
+
+pub(crate) fn setting_row_with_control_width(
+    ui: &mut egui::Ui,
+    title: &str,
+    detail: &str,
+    control_width: f32,
+    control: impl FnOnce(&mut egui::Ui),
+) {
     let row_width = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(egui::vec2(row_width, 62.0), egui::Sense::hover());
-    let control_width = row_width.min(360.0);
+    let control_width = row_width.min(control_width);
     let control_rect = egui::Rect::from_min_max(
         egui::pos2(row_rect.right() - control_width, row_rect.top()),
         row_rect.max,
