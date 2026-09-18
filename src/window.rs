@@ -4944,6 +4944,13 @@ pub fn run() {
     }
     diagnose::log("window::run started");
 
+    #[cfg(feature = "diagnose")]
+    if diagnose::is_enabled() {
+        std::panic::set_hook(Box::new(|panic_info| {
+            diagnose::log(format!("panic: {panic_info}"));
+        }));
+    }
+
     // Initializes COM (STA) on this, the UI thread, for the Virtual Desktop
     // scope feature. Safe to call even when `winrt_initialized` already set
     // up the same apartment type. Every `virtual_desktop` call happens on
@@ -6901,6 +6908,22 @@ unsafe extern "system" fn wnd_proc(
         WM_DISPLAYCHANGE | WM_DPICHANGED_MSG | WM_SETTINGCHANGE => {
             if msg == WM_DPICHANGED_MSG {
                 let new_dpi = (wparam.0 & 0xFFFF) as u32;
+                let dragging = {
+                    let state = lock_state();
+                    state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                };
+
+                // Crossing monitors can generate WM_DPICHANGED while the
+                // popup is still under mouse capture. Keep one DPI/layout
+                // basis for the whole live drag; the destination monitor's
+                // DPI is applied once, after the drop completes.
+                if dragging {
+                    diagnose::log(format!(
+                        "WM_DPICHANGED deferred during drag new_dpi={new_dpi}"
+                    ));
+                    return LRESULT(0);
+                }
+
                 CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
             }
             if msg == WM_SETTINGCHANGE {
@@ -7302,6 +7325,17 @@ unsafe extern "system" fn wnd_proc(
                 }
                 drop(state);
                 save_state_settings();
+
+                // A cross-monitor DPI transition was intentionally deferred
+                // during live dragging. Now that capture is released and the
+                // final monitor is known, resolve its DPI and rebuild the
+                // popup exactly once.
+                diagnose::log(format!(
+                    "header drag completed x={clamped_x} y={clamped_y}; applying destination DPI"
+                ));
+                refresh_dpi();
+                position_at_taskbar();
+                render_layered();
             }
             LRESULT(0)
         }
