@@ -5,7 +5,7 @@
 
 ![Screenshot](.github/animation.gif)
 
-A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex, Google Antigravity, and GitHub Copilot usage display.
+A lightweight Windows taskbar widget for people already using Claude Code, with optional Codex, Google Antigravity, GitHub Copilot, and Vercel AI Gateway usage display.
 
 It sits in your taskbar and shows your configured providers' available quota windows without needing to open the terminal or provider site.
 
@@ -15,6 +15,7 @@ It sits in your taskbar and shows your configured providers' available quota win
 - A **7d** bar for your current 7-day window
 - Optional Codex usage bars alongside Claude Code
 - Optional Antigravity quota items captured through its official statusline integration
+- Optional Vercel AI Gateway spend versus configured budget
 - A live countdown until each limit resets
 - A small native widget that lives directly in the Windows taskbar
 - A single provider-independent system tray icon for toggling the widget and opening settings
@@ -30,6 +31,8 @@ Codex support is optional. To show Codex usage, install and sign in to the Codex
 
 Antigravity support is optional too. Enable it from the **Models** menu and use **Help > Antigravity Setup...** for the statusline bridge command.
 
+Vercel AI Gateway support is optional. Install and sign in to the Vercel CLI, set the Windows user environment variable `AI_GATEWAY_API_KEY`, then enable **Vercel AI Gateway** from the **Models** menu. The key is read transiently and is not written to settings, snapshots, or logs.
+
 It works best if you want a simple "how close am I to the limit?" display that is always visible.
 
 ## Requirements
@@ -39,6 +42,7 @@ It works best if you want a simple "how close am I to the limit?" display that i
 - Optional: Codex CLI installed and authenticated, if you want Codex usage
 - Optional: Google Antigravity installed and authenticated, if you want Antigravity usage
 - Optional: GitHub CLI (`gh`) installed and authenticated, if you want GitHub Copilot AI Credits usage
+- Optional: Vercel CLI installed and authenticated plus `AI_GATEWAY_API_KEY` set, if you want Vercel AI Gateway spend/budget usage
 
 If you use Claude Code through WSL, that is supported too. The monitor can read your Claude Code credentials from Windows or from your WSL environment.
 
@@ -76,6 +80,7 @@ Use the right-click **Models** menu to choose what the widget displays:
 - **Codex** can be enabled alongside Claude or shown by itself
 - **Antigravity** can be enabled alongside the other providers or shown by itself as its own model column
 - **GitHub Copilot** can be enabled as a monthly AI Credits column; when the plan allowance is unknown, it shows observed usage only
+- **Vercel AI Gateway** can be enabled as a spend/budget column. The app uses Vercel's reported refresh period and does not invent an exact reset timestamp when none is provided
 
 When multiple models are shown, each model has its own usage bar and matching usage text color.
 

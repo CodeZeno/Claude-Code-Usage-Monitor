@@ -138,7 +138,9 @@ fn provider_auth_action(family: QuotaFamilyId, state: CellState) -> Option<AuthA
     match family {
         QuotaFamilyId::Claude => Some(AuthAction::ClaudeLogin),
         QuotaFamilyId::Codex => Some(AuthAction::CodexLogin),
-        QuotaFamilyId::Antigravity | QuotaFamilyId::GithubCopilot => None,
+        QuotaFamilyId::Antigravity
+        | QuotaFamilyId::GithubCopilot
+        | QuotaFamilyId::VercelAiGateway => None,
     }
 }
 
@@ -267,10 +269,14 @@ struct AppState {
     github_copilot_state: CellState,
     github_copilot_percent: Option<f64>,
     github_copilot_text: String,
+    vercel_ai_gateway_state: CellState,
+    vercel_ai_gateway_percent: Option<f64>,
+    vercel_ai_gateway_text: String,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     github_copilot_plan: poller::GithubCopilotPlan,
 
     data: Option<AppUsageData>,
@@ -754,6 +760,12 @@ fn quota_item_section(
 fn format_quota_number(value: f64) -> String {
     if (value - value.round()).abs() < 0.000_001 {
         format!("{value:.0}")
+    } else if value != 0.0 && value.abs() < 0.01 {
+        let precise = format!("{value:.8}");
+        precise
+            .trim_end_matches('0')
+            .trim_end_matches('.')
+            .to_string()
     } else {
         format!("{value:.2}")
     }
@@ -1048,6 +1060,11 @@ fn merge_successful_providers(data: &mut Option<AppUsageData>, report: &poller::
     merge_successful_provider(data, QuotaFamilyId::Codex, &report.codex);
     merge_successful_provider(data, QuotaFamilyId::Antigravity, &report.antigravity);
     merge_successful_provider(data, QuotaFamilyId::GithubCopilot, &report.github_copilot);
+    merge_successful_provider(
+        data,
+        QuotaFamilyId::VercelAiGateway,
+        &report.vercel_ai_gateway,
+    );
 }
 
 fn apply_provider_poll_update(
@@ -1079,6 +1096,13 @@ fn apply_provider_poll_update(
         QuotaFamilyId::GithubCopilot => {
             state.github_copilot_state =
                 poll_quota_item_state(provider, outcome, GITHUB_COPILOT_MONTHLY_ITEM_ID);
+        }
+        QuotaFamilyId::VercelAiGateway => {
+            state.vercel_ai_gateway_state = poll_quota_item_state(
+                provider,
+                outcome,
+                crate::vercel_ai_gateway::VERCEL_AI_GATEWAY_SPEND_ITEM_ID,
+            );
         }
     }
     merge_successful_provider(&mut state.data, provider, outcome);
@@ -1962,6 +1986,7 @@ const IDM_MODEL_CODEX: u16 = 61;
 #[cfg(feature = "antigravity")]
 const IDM_MODEL_ANTIGRAVITY: u16 = 62;
 const IDM_MODEL_GITHUB_COPILOT: u16 = 63;
+const IDM_MODEL_VERCEL_AI_GATEWAY: u16 = 64;
 // 70 is `tray_icon::IDM_TOGGLE_WIDGET`, not redefined here — it shares the
 // same `WM_COMMAND` id space as every constant in this block, so it must be
 // treated as already taken (71 is skipped too, to leave no ambiguity next
@@ -2283,6 +2308,8 @@ struct SettingsFile {
     #[serde(default)]
     show_github_copilot: bool,
     #[serde(default)]
+    show_vercel_ai_gateway: bool,
+    #[serde(default)]
     github_copilot_plan: poller::GithubCopilotPlan,
     #[serde(default, deserialize_with = "deserialize_display_basis")]
     display_basis: DisplayBasis,
@@ -2328,6 +2355,7 @@ impl Default for SettingsFile {
             show_codex: false,
             show_antigravity: false,
             show_github_copilot: false,
+            show_vercel_ai_gateway: false,
             github_copilot_plan: poller::GithubCopilotPlan::Unknown,
             display_basis: DisplayBasis::default(),
             reset_display_mode: ResetDisplayMode::default(),
@@ -2477,6 +2505,7 @@ fn load_settings() -> SettingsFile {
         && !settings.show_codex
         && !settings.show_antigravity
         && !settings.show_github_copilot
+        && !settings.show_vercel_ai_gateway
     {
         settings.show_claude_code = true;
     }
@@ -2523,6 +2552,7 @@ fn save_state_settings() {
             show_codex: s.show_codex,
             show_antigravity: s.show_antigravity,
             show_github_copilot: s.show_github_copilot,
+            show_vercel_ai_gateway: s.show_vercel_ai_gateway,
             github_copilot_plan: s.github_copilot_plan,
             display_basis: s.display_basis,
             reset_display_mode: s.reset_display_mode,
@@ -3240,6 +3270,19 @@ fn refresh_usage_texts(state: &mut AppState) {
     );
     state.github_copilot_percent = github_copilot.bar_percent;
     state.github_copilot_text = github_copilot.text;
+
+    let vercel_item = data
+        .and_then(|data| data.family(QuotaFamilyId::VercelAiGateway))
+        .and_then(|family| family.item(crate::vercel_ai_gateway::VERCEL_AI_GATEWAY_SPEND_ITEM_ID));
+    let vercel = render_generic_quota_item_with_reset_mode(
+        state.vercel_ai_gateway_state,
+        vercel_item,
+        basis,
+        reset_display_mode,
+        strings,
+    );
+    state.vercel_ai_gateway_percent = vercel.bar_percent;
+    state.vercel_ai_gateway_text = vercel.text;
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
@@ -4065,8 +4108,9 @@ fn needs_weekly_row(state: &AppState) -> bool {
         (state.show_claude_code, true),
         (state.show_codex, true),
         (state.show_antigravity, true),
-        // GitHub Copilot has a monthly quota row, not a weekly one.
+        // GitHub Copilot and Vercel AI Gateway do not use the weekly row.
         (state.show_github_copilot, false),
+        (state.show_vercel_ai_gateway, false),
     ])
 }
 
@@ -4076,6 +4120,7 @@ fn needs_monthly_row(state: &AppState) -> bool {
         (state.show_codex, false),
         (state.show_antigravity, false),
         (state.show_github_copilot, true),
+        (state.show_vercel_ai_gateway, true),
     ])
 }
 
@@ -4514,10 +4559,27 @@ fn active_family_count(
     show_antigravity: bool,
     show_github_copilot: bool,
 ) -> i32 {
+    active_family_count_with_vercel(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        false,
+    )
+}
+
+fn active_family_count_with_vercel(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
+) -> i32 {
     (show_claude_code as i32
         + show_codex as i32
         + show_antigravity as i32
-        + show_github_copilot as i32)
+        + show_github_copilot as i32
+        + show_vercel_ai_gateway as i32)
         .max(1)
 }
 
@@ -4703,11 +4765,12 @@ fn total_widget_width_for_state(state: &AppState) -> i32 {
 }
 
 fn active_family_count_for_state(state: &AppState) -> i32 {
-    active_family_count(
+    active_family_count_with_vercel(
         state.show_claude_code,
         state.show_codex,
         state.show_antigravity,
         state.show_github_copilot,
+        state.show_vercel_ai_gateway,
     )
 }
 
@@ -4717,11 +4780,12 @@ fn total_widget_width() -> i32 {
         state
             .as_ref()
             .map(|s| {
-                active_family_count(
+                active_family_count_with_vercel(
                     s.show_claude_code,
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                 )
             })
             .unwrap_or(1)
@@ -4748,6 +4812,11 @@ fn antigravity_accent_color() -> Color {
 
 fn github_copilot_accent_color() -> Color {
     Color::from_hex("#8250DF")
+}
+
+fn vercel_ai_gateway_accent_color() -> Color {
+    // Neutral identification accent chosen for visibility across all themes.
+    Color::from_hex("#8B949E")
 }
 
 /// The popup's canonical color source (AUM-WINDOW-UI-01B). Both draw paths —
@@ -4875,6 +4944,13 @@ pub fn run() {
     }
     diagnose::log("window::run started");
 
+    #[cfg(feature = "diagnose")]
+    if diagnose::is_enabled() {
+        std::panic::set_hook(Box::new(|panic_info| {
+            diagnose::log(format!("panic: {panic_info}"));
+        }));
+    }
+
     // Initializes COM (STA) on this, the UI thread, for the Virtual Desktop
     // scope feature. Safe to call even when `winrt_initialized` already set
     // up the same apartment type. Every `virtual_desktop` call happens on
@@ -4948,11 +5024,12 @@ pub fn run() {
 
         // Create as a top-level layered popup, anchored above the taskbar.
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_family_count(
+        let initial_model_count = active_family_count_with_vercel(
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
             settings.show_github_copilot,
+            settings.show_vercel_ai_gateway,
         );
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE,
@@ -5048,10 +5125,14 @@ pub fn run() {
                 github_copilot_state: CellState::Loading,
                 github_copilot_percent: None,
                 github_copilot_text: String::new(),
+                vercel_ai_gateway_state: CellState::Loading,
+                vercel_ai_gateway_percent: None,
+                vercel_ai_gateway_text: String::new(),
                 show_claude_code: settings.show_claude_code,
                 show_codex: settings.show_codex,
                 show_antigravity: settings.show_antigravity,
                 show_github_copilot: settings.show_github_copilot,
+                show_vercel_ai_gateway: settings.show_vercel_ai_gateway,
                 github_copilot_plan: settings.github_copilot_plan,
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -5234,10 +5315,13 @@ fn render_layered() {
         antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
+        vercel_ai_gateway_percent,
+        vercel_ai_gateway_text,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
         height,
         hovered_auth_cta_rect,
     ) = {
@@ -5280,10 +5364,13 @@ fn render_layered() {
                 s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
+                s.vercel_ai_gateway_percent,
+                s.vercel_ai_gateway_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
                 s.show_github_copilot,
+                s.show_vercel_ai_gateway,
                 widget_height_for_state(s),
                 s.hovered_auth_cta_rect,
             ),
@@ -5399,10 +5486,13 @@ fn render_layered() {
             &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
+            vercel_ai_gateway_percent,
+            &vercel_ai_gateway_text,
             show_claude_code,
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             &codex_accent,
             &antigravity_accent,
             popup_layout,
@@ -5509,10 +5599,13 @@ fn paint_content(
     antigravity_extra_items: &[AntigravityItemDisplay],
     github_copilot_percent: Option<f64>,
     github_copilot_text: &str,
+    vercel_ai_gateway_percent: Option<f64>,
+    vercel_ai_gateway_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
     popup_layout: PopupLayout,
@@ -5710,6 +5803,7 @@ fn paint_content(
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             popup_layout == PopupLayout::Compact,
             weekly_remaining_text,
             codex_weekly_remaining_text,
@@ -5734,6 +5828,7 @@ fn paint_content(
             .unwrap_or(antigravity_weekly_text);
 
         let github_copilot_accent = github_copilot_accent_color();
+        let vercel_ai_gateway_accent = vercel_ai_gateway_accent_color();
         let mut weekly_cells = Vec::new();
         if show_claude_code {
             weekly_cells.push(RowCell {
@@ -5775,6 +5870,16 @@ fn paint_content(
                 auth_action: None,
             });
         }
+        if show_vercel_ai_gateway {
+            weekly_cells.push(RowCell {
+                percent: None,
+                text: strings.not_available,
+                accent: &vercel_ai_gateway_accent,
+                provider_text_color: vercel_ai_gateway_accent,
+                is_warning: false,
+                auth_action: None,
+            });
+        }
 
         if let Some(weekly_row_y) = layout.weekly_row_y {
             draw_row(
@@ -5803,21 +5908,24 @@ fn paint_content(
         // provider's column blank for this block rather than showing stale
         // text.
         if let Some(secondary_y) = layout.weekly_secondary_y {
-            let (claude_col_x, codex_col_x, antigravity_col_x) = provider_column_x_positions(
-                width,
-                content_x,
-                show_claude_code,
-                show_codex,
-                show_antigravity,
-                show_github_copilot,
-            );
-            let pace_column_width = provider_column_width_for_client(
-                width,
-                active_family_count(
+            let (claude_col_x, codex_col_x, antigravity_col_x) =
+                provider_column_x_positions_with_vercel(
+                    width,
+                    content_x,
                     show_claude_code,
                     show_codex,
                     show_antigravity,
                     show_github_copilot,
+                    show_vercel_ai_gateway,
+                );
+            let pace_column_width = provider_column_width_for_client(
+                width,
+                active_family_count_with_vercel(
+                    show_claude_code,
+                    show_codex,
+                    show_antigravity,
+                    show_github_copilot,
+                    show_vercel_ai_gateway,
                 ),
             );
 
@@ -5905,6 +6013,16 @@ fn paint_content(
                     auth_action: None,
                 });
             }
+            if show_vercel_ai_gateway {
+                session_cells.push(RowCell {
+                    percent: None,
+                    text: strings.not_available,
+                    accent: &vercel_ai_gateway_accent,
+                    provider_text_color: vercel_ai_gateway_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
             draw_row(
                 hdc,
                 width,
@@ -5953,14 +6071,26 @@ fn paint_content(
                     auth_action: None,
                 });
             }
-            monthly_cells.push(RowCell {
-                percent: github_copilot_percent,
-                text: github_copilot_text,
-                accent: &github_copilot_accent,
-                provider_text_color: github_copilot_accent,
-                is_warning: false,
-                auth_action: None,
-            });
+            if show_github_copilot {
+                monthly_cells.push(RowCell {
+                    percent: github_copilot_percent,
+                    text: github_copilot_text,
+                    accent: &github_copilot_accent,
+                    provider_text_color: github_copilot_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
+            if show_vercel_ai_gateway {
+                monthly_cells.push(RowCell {
+                    percent: vercel_ai_gateway_percent,
+                    text: vercel_ai_gateway_text,
+                    accent: &vercel_ai_gateway_accent,
+                    provider_text_color: vercel_ai_gateway_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
             draw_row(
                 hdc,
                 width,
@@ -6065,11 +6195,12 @@ fn paint_content(
         // already leave between columns, so it never overlaps a column's
         // text or bar.
         if show_column_dividers {
-            let active_families = active_family_count(
+            let active_families = active_family_count_with_vercel(
                 show_claude_code,
                 show_codex,
                 show_antigravity,
                 show_github_copilot,
+                show_vercel_ai_gateway,
             );
             let divider_column_width = provider_column_width_for_client(width, active_families);
             let column_divider_w = sc(1).max(1);
@@ -6101,7 +6232,14 @@ fn paint_content(
 
 fn do_poll(send_hwnd: SendHwnd) {
     let hwnd = send_hwnd.to_hwnd();
-    let (show_claude_code, show_codex, show_antigravity, show_github_copilot, github_copilot_plan) = {
+    let (
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        show_vercel_ai_gateway,
+        github_copilot_plan,
+    ) = {
         let state = lock_state();
         state
             .as_ref()
@@ -6111,6 +6249,7 @@ fn do_poll(send_hwnd: SendHwnd) {
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                     s.github_copilot_plan,
                 )
             })
@@ -6119,16 +6258,18 @@ fn do_poll(send_hwnd: SendHwnd) {
                 false,
                 false,
                 false,
+                false,
                 poller::GithubCopilotPlan::Unknown,
             ))
     };
 
-    let report = poller::poll_report_with_github_copilot_updates(
+    let report = poller::poll_report_with_github_copilot_and_vercel_updates(
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
         github_copilot_plan,
+        show_vercel_ai_gateway,
         |provider, outcome| {
             {
                 let mut state = lock_state();
@@ -6767,6 +6908,22 @@ unsafe extern "system" fn wnd_proc(
         WM_DISPLAYCHANGE | WM_DPICHANGED_MSG | WM_SETTINGCHANGE => {
             if msg == WM_DPICHANGED_MSG {
                 let new_dpi = (wparam.0 & 0xFFFF) as u32;
+                let dragging = {
+                    let state = lock_state();
+                    state.as_ref().map(|s| s.dragging).unwrap_or(false)
+                };
+
+                // Crossing monitors can generate WM_DPICHANGED while the
+                // popup is still under mouse capture. Keep one DPI/layout
+                // basis for the whole live drag; the destination monitor's
+                // DPI is applied once, after the drop completes.
+                if dragging {
+                    diagnose::log(format!(
+                        "WM_DPICHANGED deferred during drag new_dpi={new_dpi}"
+                    ));
+                    return LRESULT(0);
+                }
+
                 CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
             }
             if msg == WM_SETTINGCHANGE {
@@ -7168,6 +7325,17 @@ unsafe extern "system" fn wnd_proc(
                 }
                 drop(state);
                 save_state_settings();
+
+                // A cross-monitor DPI transition was intentionally deferred
+                // during live dragging. Now that capture is released and the
+                // final monitor is known, resolve its DPI and rebuild the
+                // popup exactly once.
+                diagnose::log(format!(
+                    "header drag completed x={clamped_x} y={clamped_y}; applying destination DPI"
+                ));
+                refresh_dpi();
+                position_at_taskbar();
+                render_layered();
             }
             LRESULT(0)
         }
@@ -7207,6 +7375,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                             s.force_notify_auth_error = true;
                         }
@@ -7433,7 +7602,10 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_GITHUB_COPILOT => {
+                IDM_MODEL_CLAUDE_CODE
+                | IDM_MODEL_CODEX
+                | IDM_MODEL_GITHUB_COPILOT
+                | IDM_MODEL_VERCEL_AI_GATEWAY => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -7442,6 +7614,7 @@ unsafe extern "system" fn wnd_proc(
                                     if s.show_codex
                                         || s.show_antigravity
                                         || s.show_github_copilot
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_claude_code
                                     {
                                         s.show_claude_code = !s.show_claude_code;
@@ -7451,15 +7624,27 @@ unsafe extern "system" fn wnd_proc(
                                     if s.show_claude_code
                                         || s.show_antigravity
                                         || s.show_github_copilot
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_codex
                                     {
                                         s.show_codex = !s.show_codex;
+                                    }
+                                }
+                                IDM_MODEL_VERCEL_AI_GATEWAY => {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_antigravity
+                                        || s.show_github_copilot
+                                        || !s.show_vercel_ai_gateway
+                                    {
+                                        s.show_vercel_ai_gateway = !s.show_vercel_ai_gateway;
                                     }
                                 }
                                 IDM_MODEL_GITHUB_COPILOT => {
                                     if s.show_claude_code
                                         || s.show_codex
                                         || s.show_antigravity
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_github_copilot
                                     {
                                         s.show_github_copilot = !s.show_github_copilot;
@@ -7478,6 +7663,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                         }
                     }
@@ -7498,6 +7684,7 @@ unsafe extern "system" fn wnd_proc(
                             if s.show_claude_code
                                 || s.show_codex
                                 || s.show_github_copilot
+                                || s.show_vercel_ai_gateway
                                 || !s.show_antigravity
                             {
                                 s.show_antigravity = !s.show_antigravity;
@@ -7509,6 +7696,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                         }
                     }
@@ -7634,6 +7822,7 @@ fn show_context_menu(hwnd: HWND) {
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             github_copilot_plan,
             display_basis,
             reset_display_mode,
@@ -7656,6 +7845,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                     s.github_copilot_plan,
                     s.display_basis,
                     s.reset_display_mode,
@@ -7673,6 +7863,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -7898,6 +8089,19 @@ fn show_context_menu(hwnd: HWND) {
             github_copilot_flags,
             IDM_MODEL_GITHUB_COPILOT as usize,
             PCWSTR::from_raw(github_copilot_model.as_ptr()),
+        );
+
+        let vercel_ai_gateway_model = native_interop::wide_str("Vercel AI Gateway");
+        let vercel_ai_gateway_flags = if show_vercel_ai_gateway {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            displayed_ai_menu,
+            vercel_ai_gateway_flags,
+            IDM_MODEL_VERCEL_AI_GATEWAY as usize,
+            PCWSTR::from_raw(vercel_ai_gateway_model.as_ptr()),
         );
 
         let displayed_ai_label = native_interop::wide_str(strings.displayed_ai);
@@ -8578,10 +8782,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
+        vercel_ai_gateway_percent,
+        vercel_ai_gateway_text,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
         hovered_auth_cta_rect,
     ) = {
         let state = lock_state();
@@ -8621,10 +8828,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
+                s.vercel_ai_gateway_percent,
+                s.vercel_ai_gateway_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
                 s.show_github_copilot,
+                s.show_vercel_ai_gateway,
                 s.hovered_auth_cta_rect,
             ),
             None => return,
@@ -8699,10 +8909,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
+            vercel_ai_gateway_percent,
+            &vercel_ai_gateway_text,
             show_claude_code,
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             &codex_accent,
             &antigravity_accent,
             popup_layout,
@@ -8747,17 +8960,19 @@ fn draw_provider_header_row(
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     show_weekly_remaining: bool,
     claude_weekly_remaining: Option<&str>,
     codex_weekly_remaining: Option<&str>,
     antigravity_weekly_remaining: Option<&str>,
     codex_banked_reset_text: &str,
 ) {
-    let active_models = active_family_count(
+    let active_models = active_family_count_with_vercel(
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
     );
     let column_width = provider_column_width_for_client(client_width, active_models);
     let dpi = CURRENT_DPI.load(Ordering::Relaxed);
@@ -8771,7 +8986,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_codex && !show_antigravity && !show_github_copilot,
+                !show_codex && !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, strings.claude_code_model);
             if show_weekly_remaining {
@@ -8780,7 +8995,10 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    !show_codex && !show_antigravity,
+                    !show_codex
+                        && !show_antigravity
+                        && !show_github_copilot
+                        && !show_vercel_ai_gateway,
                     strings.claude_code_model,
                     claude_weekly_remaining,
                 );
@@ -8794,7 +9012,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_antigravity && !show_github_copilot,
+                !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, &codex_header);
             if show_weekly_remaining {
@@ -8803,7 +9021,7 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    !show_antigravity,
+                    !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
                     &codex_header,
                     codex_weekly_remaining,
                 );
@@ -8816,7 +9034,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_github_copilot,
+                !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, strings.antigravity_model);
             if show_weekly_remaining {
@@ -8825,7 +9043,7 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    true,
+                    !show_github_copilot && !show_vercel_ai_gateway,
                     strings.antigravity_model,
                     antigravity_weekly_remaining,
                 );
@@ -8833,9 +9051,20 @@ fn draw_provider_header_row(
             model_x += column_width + sc(MODEL_RIGHT_MARGIN);
         }
         if show_github_copilot {
+            let header_width = header_column_width_avoiding_help(
+                model_x,
+                column_width,
+                client_width,
+                dpi,
+                !show_vercel_ai_gateway,
+            );
+            draw_header_label(hdc, model_x, y, header_width, "GitHub Copilot");
+            model_x += column_width + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_vercel_ai_gateway {
             let header_width =
                 header_column_width_avoiding_help(model_x, column_width, client_width, dpi, true);
-            draw_header_label(hdc, model_x, y, header_width, "GitHub Copilot");
+            draw_header_label(hdc, model_x, y, header_width, "Vercel AI Gateway");
         }
     }
 }
@@ -8961,11 +9190,32 @@ fn provider_column_x_positions(
     show_antigravity: bool,
     show_github_copilot: bool,
 ) -> (i32, i32, i32) {
-    let active_families = active_family_count(
+    provider_column_x_positions_with_vercel(
+        client_width,
+        content_x,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        false,
+    )
+}
+
+fn provider_column_x_positions_with_vercel(
+    client_width: i32,
+    content_x: i32,
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
+) -> (i32, i32, i32) {
+    let active_families = active_family_count_with_vercel(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        show_vercel_ai_gateway,
     );
     let column_width = provider_column_width_for_client(client_width, active_families);
 
@@ -12184,6 +12434,7 @@ mod tests {
             IDM_MODEL_CLAUDE_CODE,
             IDM_MODEL_CODEX,
             IDM_MODEL_GITHUB_COPILOT,
+            IDM_MODEL_VERCEL_AI_GATEWAY,
             IDM_DISPLAY_BASIS_USED,
             IDM_DISPLAY_BASIS_REMAINING,
             IDM_DISPLAY_DENSITY_COMPACT,
@@ -12230,6 +12481,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn vercel_ai_gateway_model_menu_entry_matches_the_registered_quota_family() {
+        assert_eq!(IDM_MODEL_VERCEL_AI_GATEWAY, 64);
+        assert_eq!(
+            QuotaFamilyId::VercelAiGateway.stable_id(),
+            "vercel_ai_gateway"
+        );
+        assert_eq!(
+            QuotaFamilyId::VercelAiGateway.display_name(),
+            "Vercel AI Gateway"
+        );
+    }
+
+    #[test]
+    fn vercel_ai_gateway_expands_provider_count_and_preserves_micro_spend_precision() {
+        assert_eq!(
+            active_family_count_with_vercel(true, true, true, true, true),
+            5
+        );
+        assert_eq!(format_quota_number(0.00001638), "0.00001638");
     }
 
     #[cfg(feature = "antigravity")]
@@ -14806,6 +15079,7 @@ mod tests {
             },
             antigravity: poller::ProviderPollOutcome::Disabled,
             github_copilot: poller::ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: poller::ProviderPollOutcome::Disabled,
         };
 
         merge_successful_providers(&mut cached, &report);

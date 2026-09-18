@@ -1,6 +1,6 @@
 # Quota Rules
 
-`Quota rules revision: 2026-09-18-01`
+`Quota rules revision: 2026-09-18-02`
 `Last verified: 2026-09-18`
 
 This is the specification of record for how this app interprets and labels
@@ -153,6 +153,30 @@ Security and retention rules:
   GitHub authentication state. Authentication failures are surfaced as an
   unavailable/not-configured state.
 
+### Vercel AI Gateway
+
+| Field | Value |
+|---|---|
+| Display name | Vercel AI Gateway |
+| Stable family ID | `vercel_ai_gateway` |
+| Internal adapter | `vercel_ai_gateway::poll` and the Vercel GUI polling path |
+| Source | Authenticated Vercel CLI key metadata plus the official Vercel AI Gateway Quotas API |
+| Quota scope | Independent spend budget for the configured AI Gateway API key; not a model rate limit |
+| Quota items | `spend_budget`: `currentSpend` used against `limitAmount`, unit `USD`; label follows Vercel's reported refresh period |
+| Fallback behavior | None. The app does not guess another key or another quota source |
+| Unavailable conditions | Missing/blank `AI_GATEWAY_API_KEY`, Vercel CLI/key-match failure, Quotas API failure, inactive/archived quota, invalid spend/limit, or unsupported refresh period |
+| Minimum fetchable unit | One aggregate spend/budget item for the uniquely matched AI Gateway API key |
+| Display caveats | The API provides a refresh period but this integration does not receive an exact reset timestamp, so the app does not fabricate one. Very small non-zero spend is preserved instead of being rounded to `0.00` |
+| Last verified | 2026-09-18 ? RAW Dev GUI displayed `0.00001638 / 1 USD`; 5-provider display and cross-monitor drag were verified |
+| Rule revision | 2026-09-18-02 |
+
+Credential rules:
+
+- `AI_GATEWAY_API_KEY` is read transiently from the process environment.
+- It is not persisted to settings, snapshots, or logs.
+- Vercel CLI metadata is used only to identify the uniquely matching key.
+- Public/commercial distribution remains a separate release-policy gate.
+
 ## 4. Conditions for Adding a Future Provider
 
 A new provider may be added only when all of the following hold:
@@ -185,6 +209,7 @@ column that misrepresents what is actually being measured.
 
 | Revision | Date | Change |
 |---|---|---|
+| 2026-09-18-02 | 2026-09-18 | Adds Vercel AI Gateway as an independent spend/budget quota family using the official Quotas API, transient `AI_GATEWAY_API_KEY`, no fabricated exact reset timestamp, micro-spend precision, and RAW Dev GUI/cross-monitor verification. |
 | 2026-09-18-01 | 2026-09-18 | `GITHUB-COPILOT-FREE-RECHECK-01`: live Copilot Free recheck returned success with empty `usageItems`; treat as zero observed usage while keeping Free as `Unknown` / usage-only because no authoritative numeric Free limit is established. |
 | 2026-09-16-03 | 2026-09-16 | `ANTIGRAVITY-SETUP-UX-01`: adds a Help-menu "Antigravity Setup..." dialog (setup command, disable command, last-observed time — clipboard-copies the setup command on click) and, as a prerequisite fix, replaces Antigravity's fixed session/weekly display slots with a dynamic per-cache-item bar list (`gemini-weekly` keeps its own weekly slot with pace guidance; every other item, including unrecognized future keys, gets its own always-visible bar, never hidden in a details-only view) — the prior routing-switch commit had left these bars permanently showing "not available" regardless of real cache content, since `UsageData::from_quota_items` never sets the fixed session/weekly availability flags the display code checked. |
 | 2026-09-16-02 | 2026-09-16 | `ANTIGRAVITY-ROUTING-SWITCH-01`: switches `poll_antigravity` from the legacy Google Cloud Code HTTP/OAuth path onto the official statusLine cache exclusively, and removes the legacy path's code entirely (credential read, Windows Credential Manager access, HTTP fetch/summary-parsing functions, and their dedicated `CredentialWatchMode::Antigravity` variant). Decides against a fixed cache-age TTL (measured update cadence is activity-driven and irregular); freshness is instead judged per quota item against that item's own `reset_time`, with items past their reset marked `Stale` (never shown as current, never assumed `0`) and independent per key. A family with no current item is `Stale` at the family level. Cache missing/malformed/unsupported-schema all map to the existing `Unavailable` status, never `0%`, with no legacy fallback. |

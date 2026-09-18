@@ -8,6 +8,7 @@ pub enum QuotaFamilyId {
     Codex,
     Antigravity,
     GithubCopilot,
+    VercelAiGateway,
 }
 
 impl QuotaFamilyId {
@@ -17,6 +18,7 @@ impl QuotaFamilyId {
             Self::Codex => "codex",
             Self::Antigravity => "antigravity",
             Self::GithubCopilot => "github_copilot",
+            Self::VercelAiGateway => "vercel_ai_gateway",
         }
     }
 
@@ -26,6 +28,7 @@ impl QuotaFamilyId {
             Self::Codex => "Codex",
             Self::Antigravity => "Antigravity",
             Self::GithubCopilot => "GitHub Copilot",
+            Self::VercelAiGateway => "Vercel AI Gateway",
         }
     }
 }
