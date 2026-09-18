@@ -5308,10 +5308,13 @@ fn render_layered() {
         antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
+        vercel_ai_gateway_percent,
+        vercel_ai_gateway_text,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
         height,
         hovered_auth_cta_rect,
     ) = {
@@ -5354,10 +5357,13 @@ fn render_layered() {
                 s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
+                s.vercel_ai_gateway_percent,
+                s.vercel_ai_gateway_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
                 s.show_github_copilot,
+                s.show_vercel_ai_gateway,
                 widget_height_for_state(s),
                 s.hovered_auth_cta_rect,
             ),
@@ -5473,10 +5479,13 @@ fn render_layered() {
             &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
+            vercel_ai_gateway_percent,
+            &vercel_ai_gateway_text,
             show_claude_code,
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             &codex_accent,
             &antigravity_accent,
             popup_layout,
@@ -5583,10 +5592,13 @@ fn paint_content(
     antigravity_extra_items: &[AntigravityItemDisplay],
     github_copilot_percent: Option<f64>,
     github_copilot_text: &str,
+    vercel_ai_gateway_percent: Option<f64>,
+    vercel_ai_gateway_text: &str,
     show_claude_code: bool,
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     codex_accent: &Color,
     antigravity_accent: &Color,
     popup_layout: PopupLayout,
@@ -5784,6 +5796,7 @@ fn paint_content(
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             popup_layout == PopupLayout::Compact,
             weekly_remaining_text,
             codex_weekly_remaining_text,
@@ -5808,6 +5821,7 @@ fn paint_content(
             .unwrap_or(antigravity_weekly_text);
 
         let github_copilot_accent = github_copilot_accent_color();
+        let vercel_ai_gateway_accent = vercel_ai_gateway_accent_color();
         let mut weekly_cells = Vec::new();
         if show_claude_code {
             weekly_cells.push(RowCell {
@@ -5849,6 +5863,16 @@ fn paint_content(
                 auth_action: None,
             });
         }
+        if show_vercel_ai_gateway {
+            weekly_cells.push(RowCell {
+                percent: None,
+                text: strings.not_available,
+                accent: &vercel_ai_gateway_accent,
+                provider_text_color: vercel_ai_gateway_accent,
+                is_warning: false,
+                auth_action: None,
+            });
+        }
 
         if let Some(weekly_row_y) = layout.weekly_row_y {
             draw_row(
@@ -5877,21 +5901,24 @@ fn paint_content(
         // provider's column blank for this block rather than showing stale
         // text.
         if let Some(secondary_y) = layout.weekly_secondary_y {
-            let (claude_col_x, codex_col_x, antigravity_col_x) = provider_column_x_positions(
-                width,
-                content_x,
-                show_claude_code,
-                show_codex,
-                show_antigravity,
-                show_github_copilot,
-            );
-            let pace_column_width = provider_column_width_for_client(
-                width,
-                active_family_count(
+            let (claude_col_x, codex_col_x, antigravity_col_x) =
+                provider_column_x_positions_with_vercel(
+                    width,
+                    content_x,
                     show_claude_code,
                     show_codex,
                     show_antigravity,
                     show_github_copilot,
+                    show_vercel_ai_gateway,
+                );
+            let pace_column_width = provider_column_width_for_client(
+                width,
+                active_family_count_with_vercel(
+                    show_claude_code,
+                    show_codex,
+                    show_antigravity,
+                    show_github_copilot,
+                    show_vercel_ai_gateway,
                 ),
             );
 
@@ -5979,6 +6006,16 @@ fn paint_content(
                     auth_action: None,
                 });
             }
+            if show_vercel_ai_gateway {
+                session_cells.push(RowCell {
+                    percent: None,
+                    text: strings.not_available,
+                    accent: &vercel_ai_gateway_accent,
+                    provider_text_color: vercel_ai_gateway_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
             draw_row(
                 hdc,
                 width,
@@ -6027,14 +6064,26 @@ fn paint_content(
                     auth_action: None,
                 });
             }
-            monthly_cells.push(RowCell {
-                percent: github_copilot_percent,
-                text: github_copilot_text,
-                accent: &github_copilot_accent,
-                provider_text_color: github_copilot_accent,
-                is_warning: false,
-                auth_action: None,
-            });
+            if show_github_copilot {
+                monthly_cells.push(RowCell {
+                    percent: github_copilot_percent,
+                    text: github_copilot_text,
+                    accent: &github_copilot_accent,
+                    provider_text_color: github_copilot_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
+            if show_vercel_ai_gateway {
+                monthly_cells.push(RowCell {
+                    percent: vercel_ai_gateway_percent,
+                    text: vercel_ai_gateway_text,
+                    accent: &vercel_ai_gateway_accent,
+                    provider_text_color: vercel_ai_gateway_accent,
+                    is_warning: false,
+                    auth_action: None,
+                });
+            }
             draw_row(
                 hdc,
                 width,
@@ -6139,11 +6188,12 @@ fn paint_content(
         // already leave between columns, so it never overlaps a column's
         // text or bar.
         if show_column_dividers {
-            let active_families = active_family_count(
+            let active_families = active_family_count_with_vercel(
                 show_claude_code,
                 show_codex,
                 show_antigravity,
                 show_github_copilot,
+                show_vercel_ai_gateway,
             );
             let divider_column_width = provider_column_width_for_client(width, active_families);
             let column_divider_w = sc(1).max(1);
@@ -7291,6 +7341,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                             s.force_notify_auth_error = true;
                         }
@@ -7517,7 +7568,10 @@ unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(hwnd, TIMER_POLL, new_interval, None);
                 }
-                IDM_MODEL_CLAUDE_CODE | IDM_MODEL_CODEX | IDM_MODEL_GITHUB_COPILOT => {
+                IDM_MODEL_CLAUDE_CODE
+                | IDM_MODEL_CODEX
+                | IDM_MODEL_GITHUB_COPILOT
+                | IDM_MODEL_VERCEL_AI_GATEWAY => {
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -7526,6 +7580,7 @@ unsafe extern "system" fn wnd_proc(
                                     if s.show_codex
                                         || s.show_antigravity
                                         || s.show_github_copilot
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_claude_code
                                     {
                                         s.show_claude_code = !s.show_claude_code;
@@ -7535,15 +7590,27 @@ unsafe extern "system" fn wnd_proc(
                                     if s.show_claude_code
                                         || s.show_antigravity
                                         || s.show_github_copilot
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_codex
                                     {
                                         s.show_codex = !s.show_codex;
+                                    }
+                                }
+                                IDM_MODEL_VERCEL_AI_GATEWAY => {
+                                    if s.show_claude_code
+                                        || s.show_codex
+                                        || s.show_antigravity
+                                        || s.show_github_copilot
+                                        || !s.show_vercel_ai_gateway
+                                    {
+                                        s.show_vercel_ai_gateway = !s.show_vercel_ai_gateway;
                                     }
                                 }
                                 IDM_MODEL_GITHUB_COPILOT => {
                                     if s.show_claude_code
                                         || s.show_codex
                                         || s.show_antigravity
+                                        || s.show_vercel_ai_gateway
                                         || !s.show_github_copilot
                                     {
                                         s.show_github_copilot = !s.show_github_copilot;
@@ -7562,6 +7629,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                         }
                     }
@@ -7582,6 +7650,7 @@ unsafe extern "system" fn wnd_proc(
                             if s.show_claude_code
                                 || s.show_codex
                                 || s.show_github_copilot
+                                || s.show_vercel_ai_gateway
                                 || !s.show_antigravity
                             {
                                 s.show_antigravity = !s.show_antigravity;
@@ -7593,6 +7662,7 @@ unsafe extern "system" fn wnd_proc(
                             s.antigravity_session_state = CellState::Loading;
                             s.antigravity_weekly_state = CellState::Loading;
                             s.github_copilot_state = CellState::Loading;
+                            s.vercel_ai_gateway_state = CellState::Loading;
                             refresh_usage_texts(s);
                         }
                     }
@@ -7718,6 +7788,7 @@ fn show_context_menu(hwnd: HWND) {
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             github_copilot_plan,
             display_basis,
             reset_display_mode,
@@ -7740,6 +7811,7 @@ fn show_context_menu(hwnd: HWND) {
                     s.show_codex,
                     s.show_antigravity,
                     s.show_github_copilot,
+                    s.show_vercel_ai_gateway,
                     s.github_copilot_plan,
                     s.display_basis,
                     s.reset_display_mode,
@@ -7757,6 +7829,7 @@ fn show_context_menu(hwnd: HWND) {
                     true,
                     false,
                     true,
+                    false,
                     false,
                     false,
                     false,
@@ -7982,6 +8055,19 @@ fn show_context_menu(hwnd: HWND) {
             github_copilot_flags,
             IDM_MODEL_GITHUB_COPILOT as usize,
             PCWSTR::from_raw(github_copilot_model.as_ptr()),
+        );
+
+        let vercel_ai_gateway_model = native_interop::wide_str("Vercel AI Gateway");
+        let vercel_ai_gateway_flags = if show_vercel_ai_gateway {
+            MF_CHECKED
+        } else {
+            MENU_ITEM_FLAGS(0)
+        };
+        let _ = AppendMenuW(
+            displayed_ai_menu,
+            vercel_ai_gateway_flags,
+            IDM_MODEL_VERCEL_AI_GATEWAY as usize,
+            PCWSTR::from_raw(vercel_ai_gateway_model.as_ptr()),
         );
 
         let displayed_ai_label = native_interop::wide_str(strings.displayed_ai);
@@ -8662,10 +8748,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
         antigravity_extra_items,
         github_copilot_percent,
         github_copilot_text,
+        vercel_ai_gateway_percent,
+        vercel_ai_gateway_text,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
         hovered_auth_cta_rect,
     ) = {
         let state = lock_state();
@@ -8705,10 +8794,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
                 s.antigravity_extra_items.clone(),
                 s.github_copilot_percent,
                 s.github_copilot_text.clone(),
+                s.vercel_ai_gateway_percent,
+                s.vercel_ai_gateway_text.clone(),
                 s.show_claude_code,
                 s.show_codex,
                 s.show_antigravity,
                 s.show_github_copilot,
+                s.show_vercel_ai_gateway,
                 s.hovered_auth_cta_rect,
             ),
             None => return,
@@ -8783,10 +8875,13 @@ fn paint(hdc: HDC, hwnd: HWND) {
             &antigravity_extra_items,
             github_copilot_percent,
             &github_copilot_text,
+            vercel_ai_gateway_percent,
+            &vercel_ai_gateway_text,
             show_claude_code,
             show_codex,
             show_antigravity,
             show_github_copilot,
+            show_vercel_ai_gateway,
             &codex_accent,
             &antigravity_accent,
             popup_layout,
@@ -8831,17 +8926,19 @@ fn draw_provider_header_row(
     show_codex: bool,
     show_antigravity: bool,
     show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
     show_weekly_remaining: bool,
     claude_weekly_remaining: Option<&str>,
     codex_weekly_remaining: Option<&str>,
     antigravity_weekly_remaining: Option<&str>,
     codex_banked_reset_text: &str,
 ) {
-    let active_models = active_family_count(
+    let active_models = active_family_count_with_vercel(
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        show_vercel_ai_gateway,
     );
     let column_width = provider_column_width_for_client(client_width, active_models);
     let dpi = CURRENT_DPI.load(Ordering::Relaxed);
@@ -8855,7 +8952,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_codex && !show_antigravity && !show_github_copilot,
+                !show_codex && !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, strings.claude_code_model);
             if show_weekly_remaining {
@@ -8864,7 +8961,10 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    !show_codex && !show_antigravity,
+                    !show_codex
+                        && !show_antigravity
+                        && !show_github_copilot
+                        && !show_vercel_ai_gateway,
                     strings.claude_code_model,
                     claude_weekly_remaining,
                 );
@@ -8878,7 +8978,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_antigravity && !show_github_copilot,
+                !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, &codex_header);
             if show_weekly_remaining {
@@ -8887,7 +8987,7 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    !show_antigravity,
+                    !show_antigravity && !show_github_copilot && !show_vercel_ai_gateway,
                     &codex_header,
                     codex_weekly_remaining,
                 );
@@ -8900,7 +9000,7 @@ fn draw_provider_header_row(
                 column_width,
                 client_width,
                 dpi,
-                !show_github_copilot,
+                !show_github_copilot && !show_vercel_ai_gateway,
             );
             draw_header_label(hdc, model_x, y, header_width, strings.antigravity_model);
             if show_weekly_remaining {
@@ -8909,7 +9009,7 @@ fn draw_provider_header_row(
                     model_x,
                     y,
                     header_width,
-                    true,
+                    !show_github_copilot && !show_vercel_ai_gateway,
                     strings.antigravity_model,
                     antigravity_weekly_remaining,
                 );
@@ -8917,9 +9017,20 @@ fn draw_provider_header_row(
             model_x += column_width + sc(MODEL_RIGHT_MARGIN);
         }
         if show_github_copilot {
+            let header_width = header_column_width_avoiding_help(
+                model_x,
+                column_width,
+                client_width,
+                dpi,
+                !show_vercel_ai_gateway,
+            );
+            draw_header_label(hdc, model_x, y, header_width, "GitHub Copilot");
+            model_x += column_width + sc(MODEL_RIGHT_MARGIN);
+        }
+        if show_vercel_ai_gateway {
             let header_width =
                 header_column_width_avoiding_help(model_x, column_width, client_width, dpi, true);
-            draw_header_label(hdc, model_x, y, header_width, "GitHub Copilot");
+            draw_header_label(hdc, model_x, y, header_width, "Vercel AI Gateway");
         }
     }
 }
@@ -9045,11 +9156,32 @@ fn provider_column_x_positions(
     show_antigravity: bool,
     show_github_copilot: bool,
 ) -> (i32, i32, i32) {
-    let active_families = active_family_count(
+    provider_column_x_positions_with_vercel(
+        client_width,
+        content_x,
         show_claude_code,
         show_codex,
         show_antigravity,
         show_github_copilot,
+        false,
+    )
+}
+
+fn provider_column_x_positions_with_vercel(
+    client_width: i32,
+    content_x: i32,
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_github_copilot: bool,
+    show_vercel_ai_gateway: bool,
+) -> (i32, i32, i32) {
+    let active_families = active_family_count_with_vercel(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        show_vercel_ai_gateway,
     );
     let column_width = provider_column_width_for_client(client_width, active_families);
 
@@ -12268,6 +12400,7 @@ mod tests {
             IDM_MODEL_CLAUDE_CODE,
             IDM_MODEL_CODEX,
             IDM_MODEL_GITHUB_COPILOT,
+            IDM_MODEL_VERCEL_AI_GATEWAY,
             IDM_DISPLAY_BASIS_USED,
             IDM_DISPLAY_BASIS_REMAINING,
             IDM_DISPLAY_DENSITY_COMPACT,
@@ -12314,6 +12447,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn vercel_ai_gateway_model_menu_entry_matches_the_registered_quota_family() {
+        assert_eq!(IDM_MODEL_VERCEL_AI_GATEWAY, 64);
+        assert_eq!(
+            QuotaFamilyId::VercelAiGateway.stable_id(),
+            "vercel_ai_gateway"
+        );
+        assert_eq!(
+            QuotaFamilyId::VercelAiGateway.display_name(),
+            "Vercel AI Gateway"
+        );
+    }
+
+    #[test]
+    fn vercel_ai_gateway_expands_provider_count_and_preserves_micro_spend_precision() {
+        assert_eq!(
+            active_family_count_with_vercel(true, true, true, true, true),
+            5
+        );
+        assert_eq!(format_quota_number(0.00001638), "0.00001638");
     }
 
     #[cfg(feature = "antigravity")]
