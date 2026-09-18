@@ -245,45 +245,21 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
     let taskbar = taskbars.iter().find(|taskbar| unsafe {
         MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
     });
-    let reference = match theme.placement.reference.region {
-        ReferenceRegion::Monitor => display.rect,
-        ReferenceRegion::Taskbar => taskbar.map(|taskbar| taskbar.rect).unwrap_or(display.rect),
-        ReferenceRegion::SystemTray => taskbar
-            .and_then(|taskbar| {
-                native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd")
-                    .and_then(native_interop::get_window_rect_safe)
-                    .or(Some(taskbar.rect))
-            })
-            .unwrap_or(display.rect),
-    };
     let width = scaled_theme_dimension(theme.canvas.width.max(1), scale);
     let height = scaled_theme_dimension(theme.canvas.height.max(1), scale);
-    let reference_width = reference.right - reference.left;
-    let reference_height = reference.bottom - reference.top;
-    let surface_horizontal = theme
-        .placement
-        .surface_horizontal
-        .unwrap_or(theme.placement.horizontal);
-    let surface_vertical = theme
-        .placement
-        .surface_vertical
-        .unwrap_or(theme.placement.vertical);
-    let x = aligned_origin(
-        reference.left,
-        reference_width,
+    let tray = taskbar
+        .and_then(|tb| native_interop::find_child_window(tb.hwnd, "TrayNotifyWnd"))
+        .and_then(native_interop::get_window_rect_safe);
+    let rect = surface_screen_rect(
+        &theme.placement,
         width,
-        horizontal_anchor_factor(theme.placement.horizontal),
-        horizontal_anchor_factor(surface_horizontal),
-        (theme.placement.offset_x as f64 * scale).round() as i32,
-    );
-    let y = aligned_origin(
-        reference.top,
-        reference_height,
         height,
-        vertical_anchor_factor(theme.placement.vertical),
-        vertical_anchor_factor(surface_vertical),
-        (theme.placement.offset_y as f64 * scale).round() as i32,
+        scale,
+        display.rect,
+        taskbar.map(|tb| tb.rect),
+        tray,
     );
+    let (x, y) = (rect.left, rect.top);
     let nest = theme
         .placement
         .nest
@@ -296,7 +272,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                     return;
                 };
                 native_interop::embed_as_child(hwnd, taskbar.hwnd);
-                ensure_tray_event_hook_for_taskbar(taskbar.hwnd);
+                ensure_tray_event_hook_for_taskbar(hwnd, taskbar.hwnd);
                 let mut point = [POINT { x, y }];
                 MapWindowPoints(None, Some(taskbar.hwnd), &mut point);
                 let _ = SetWindowPos(
@@ -526,32 +502,50 @@ pub(super) fn compute_anchor_y(anchor_top: i32, anchor_height: i32, widget_heigh
     (anchor_bottom - widget_height).max(anchor_top)
 }
 
-pub(super) fn ensure_tray_event_hook_for_taskbar(taskbar_hwnd: HWND) {
-    let tray_notify = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd");
-    let hook_needed = {
+/// Only the primary window owns the watchdog's docking state. Mirrors may
+/// share its shell thread, but must never replace its target taskbar.
+pub(super) fn record_primary_taskbar(
+    state: &mut AppState,
+    surface: HWND,
+    taskbar: HWND,
+    tray: Option<HWND>,
+) -> bool {
+    if surface != state.hwnd.to_hwnd() {
+        return false;
+    }
+    state.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar));
+    state.tray_notify_hwnd = tray.map(SendHwnd::from_hwnd);
+    state.embedded = true;
+    true
+}
+
+pub(super) fn ensure_tray_event_hook_for_taskbar(surface: HWND, taskbar: HWND) {
+    let tray = native_interop::find_child_window(taskbar, "TrayNotifyWnd");
+    let (old_hook, needed) = {
         let mut state = lock_state();
-        if let Some(s) = state.as_mut() {
-            s.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar_hwnd));
-            s.tray_notify_hwnd = tray_notify.map(SendHwnd::from_hwnd);
-            s.embedded = true;
-            s.win_event_hook.is_none()
-        } else {
-            false
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let changed = state.taskbar_hwnd.map(SendHwnd::to_hwnd) != Some(taskbar);
+        if !record_primary_taskbar(state, surface, taskbar, tray) {
+            return;
         }
+        let old = if changed {
+            state.win_event_hook.take()
+        } else {
+            None
+        };
+        (old, state.win_event_hook.is_none())
     };
-    if hook_needed {
-        if let Some(tray) = tray_notify {
-            let thread_id = native_interop::get_window_thread_id(tray);
-            let hook = native_interop::set_tray_event_hook(thread_id, on_tray_location_changed);
-            let mut state = lock_state();
-            if let Some(s) = state.as_mut() {
-                s.win_event_hook = hook.map(SendWinEventHook::from_hook);
-            }
-            diagnose::log(if hook.is_some() {
-                "tray event hook installed successfully"
-            } else {
-                "tray event hook could not be installed"
-            });
+    if let Some(hook) = old_hook {
+        native_interop::unhook_win_event(hook.to_hook());
+    }
+    if needed {
+        // Secondary taskbars need events even when they have no TrayNotifyWnd.
+        let thread = native_interop::get_window_thread_id(taskbar);
+        let hook = native_interop::set_tray_event_hook(thread, on_tray_location_changed);
+        if let Some(state) = lock_state().as_mut() {
+            state.win_event_hook = hook.map(SendWinEventHook::from_hook);
         }
     }
 }
@@ -727,8 +721,164 @@ pub(super) fn widget_frame(
     }
 }
 
-pub(super) fn can_redock(free_space: i32, physical_width: i32) -> bool {
-    free_space >= physical_width.saturating_add(20)
+pub(super) fn overlaps_taskbar_apps(taskbar: RECT, slot: RECT, widget: RECT) -> bool {
+    // Auto-hide can change cross-axis bounds without any app collision.
+    if native_interop::is_taskbar_horizontal(taskbar) {
+        widget.left < slot.left
+    } else {
+        widget.top < slot.top
+    }
+}
+
+pub(super) fn dock_rect_fits(taskbar: RECT, slot: RECT, widget: RECT, margin: i32) -> bool {
+    let horizontal = native_interop::is_taskbar_horizontal(taskbar);
+    widget.left
+        >= slot
+            .left
+            .saturating_add(if horizontal { margin } else { 0 })
+        && widget.top >= slot.top.saturating_add(if horizontal { 0 } else { margin })
+        && widget.right <= slot.right
+        && widget.bottom <= slot.bottom
+}
+
+pub(super) fn monitor_index_for_handle(
+    displays: &[native_interop::DisplayMonitor],
+    handle: HMONITOR,
+) -> Option<usize> {
+    displays.iter().position(|display| display.handle == handle)
+}
+
+pub(super) fn override_primary_placement(
+    theme: &mut ThemeDocument,
+    placement: theme_engine::Placement,
+) {
+    theme.placement = placement.clone();
+    if let Some(surface) = theme.surfaces.first_mut() {
+        surface.placement = placement;
+    }
+}
+
+pub(super) fn floating_placement(display: usize) -> theme_engine::Placement {
+    theme_engine::Placement {
+        reference: theme_engine::ReferenceTarget {
+            region: ReferenceRegion::Monitor,
+            display,
+        },
+        nest: SurfaceNest::Floating,
+        horizontal: HorizontalAnchor::Left,
+        vertical: VerticalAnchor::Top,
+        surface_horizontal: Some(HorizontalAnchor::Left),
+        surface_vertical: Some(VerticalAnchor::Top),
+        ..Default::default()
+    }
+}
+
+pub(super) fn dock_placement(
+    display: usize,
+    offset: i32,
+    scale: f64,
+    horizontal: bool,
+) -> theme_engine::Placement {
+    let offset = legacy_offset_to_theme_offset(offset, scale);
+    theme_engine::Placement {
+        reference: theme_engine::ReferenceTarget {
+            region: ReferenceRegion::SystemTray,
+            display,
+        },
+        nest: SurfaceNest::Taskbar,
+        horizontal: HorizontalAnchor::Left,
+        vertical: if horizontal {
+            VerticalAnchor::Bottom
+        } else {
+            VerticalAnchor::Top
+        },
+        surface_horizontal: Some(if horizontal {
+            HorizontalAnchor::Right
+        } else {
+            HorizontalAnchor::Left
+        }),
+        surface_vertical: Some(VerticalAnchor::Bottom),
+        offset_x: if horizontal { offset } else { 0 },
+        offset_y: if horizontal { 0 } else { offset },
+        ..Default::default()
+    }
+}
+
+pub(super) fn clamped_floating_offset(
+    point: POINT,
+    monitor: RECT,
+    frame: &WidgetFrame,
+    scale: f64,
+) -> POINT {
+    let offset = logical_monitor_offset(point, monitor, scale);
+    // Clamp in logical coordinates too, so rounding at fractional DPI cannot
+    // put the right or bottom edge back outside the monitor.
+    POINT {
+        x: offset.x.clamp(
+            0,
+            (((monitor.right - monitor.left - frame.width).max(0) as f64) / scale).floor() as i32,
+        ),
+        y: offset.y.clamp(
+            0,
+            (((monitor.bottom - monitor.top - frame.height).max(0) as f64) / scale).floor() as i32,
+        ),
+    }
+}
+
+pub(super) fn system_tray_reference(taskbar: RECT, tray: Option<RECT>) -> RECT {
+    tray.unwrap_or_else(|| {
+        if native_interop::is_taskbar_horizontal(taskbar) {
+            RECT {
+                left: taskbar.right,
+                ..taskbar
+            }
+        } else {
+            RECT {
+                top: taskbar.bottom,
+                ..taskbar
+            }
+        }
+    })
+}
+
+pub(super) fn surface_screen_rect(
+    placement: &theme_engine::Placement,
+    width: i32,
+    height: i32,
+    scale: f64,
+    monitor: RECT,
+    taskbar: Option<RECT>,
+    tray: Option<RECT>,
+) -> RECT {
+    let reference = match placement.reference.region {
+        ReferenceRegion::Monitor => monitor,
+        ReferenceRegion::Taskbar => taskbar.unwrap_or(monitor),
+        ReferenceRegion::SystemTray => taskbar
+            .map(|tb| system_tray_reference(tb, tray))
+            .unwrap_or(monitor),
+    };
+    let x = aligned_origin(
+        reference.left,
+        reference.right - reference.left,
+        width,
+        horizontal_anchor_factor(placement.horizontal),
+        horizontal_anchor_factor(placement.surface_horizontal.unwrap_or(placement.horizontal)),
+        (placement.offset_x as f64 * scale).round() as i32,
+    );
+    let y = aligned_origin(
+        reference.top,
+        reference.bottom - reference.top,
+        height,
+        vertical_anchor_factor(placement.vertical),
+        vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
+        (placement.offset_y as f64 * scale).round() as i32,
+    );
+    RECT {
+        left: x,
+        top: y,
+        right: x + width,
+        bottom: y + height,
+    }
 }
 
 pub(super) fn auto_eject_origin(widget: RECT, taskbar: RECT, monitor: RECT) -> POINT {
@@ -822,44 +972,65 @@ pub(super) fn is_taskbar_capacity_sufficient(
 
     if taskbar_w >= taskbar_h {
         // Horizontal taskbar
-        slot_w >= widget_width && taskbar_h >= widget_height.min(24)
+        slot_w >= widget_width && taskbar_h >= widget_height
     } else {
         // Vertical taskbar: widget doesn't fit inside narrow vertical bar
         taskbar_w >= widget_width && slot_h >= widget_height
     }
 }
 
-pub(super) fn taskbar_tasklist_right_edge(taskbar_hwnd: HWND) -> Option<i32> {
-    let taskbar_rect = native_interop::get_taskbar_rect(taskbar_hwnd)?;
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
-    tasklist_boundary(
-        tray_left,
+pub(super) fn taskbar_free_dock_slot(taskbar_hwnd: HWND, taskbar_rect: RECT) -> RECT {
+    let tray = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
+        .and_then(native_interop::get_window_rect_safe);
+    let reference = system_tray_reference(taskbar_rect, tray);
+    let horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
+    let tray_start = if horizontal {
+        reference.left
+    } else {
+        reference.top
+    };
+    let app_end = tasklist_boundary(
+        tray_start,
         ["ReBarWindow32", "MSTaskListWClass"]
             .into_iter()
             .filter_map(|class| {
                 native_interop::find_child_window(taskbar_hwnd, class)
                     .and_then(native_interop::get_window_rect_safe)
+                    .map(|rect| {
+                        if horizontal {
+                            rect
+                        } else {
+                            RECT {
+                                right: rect.bottom,
+                                ..rect
+                            }
+                        }
+                    })
             }),
-    )
+    );
+    free_dock_slot(taskbar_rect, tray, app_end)
 }
 
-pub(super) fn taskbar_free_dock_slot(taskbar_hwnd: HWND, taskbar_rect: RECT) -> RECT {
-    let tray_left = tray_left_for_taskbar(taskbar_hwnd, taskbar_rect);
+pub(super) fn free_dock_slot(taskbar_rect: RECT, tray: Option<RECT>, app_end: Option<i32>) -> RECT {
+    let reference = system_tray_reference(taskbar_rect, tray);
     let is_horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
     if is_horizontal {
-        let app_right = taskbar_tasklist_right_edge(taskbar_hwnd).unwrap_or(taskbar_rect.left);
         RECT {
-            left: app_right.max(taskbar_rect.left),
+            left: app_end
+                .unwrap_or(taskbar_rect.left)
+                .clamp(taskbar_rect.left, taskbar_rect.right),
             top: taskbar_rect.top,
-            right: tray_left.min(taskbar_rect.right),
+            right: reference.left.clamp(taskbar_rect.left, taskbar_rect.right),
             bottom: taskbar_rect.bottom,
         }
     } else {
         RECT {
             left: taskbar_rect.left,
-            top: taskbar_rect.top,
+            top: app_end
+                .unwrap_or(taskbar_rect.top)
+                .clamp(taskbar_rect.top, taskbar_rect.bottom),
             right: taskbar_rect.right,
-            bottom: tray_left.min(taskbar_rect.bottom),
+            bottom: reference.top.clamp(taskbar_rect.top, taskbar_rect.bottom),
         }
     }
 }

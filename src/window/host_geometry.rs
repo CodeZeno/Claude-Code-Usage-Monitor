@@ -64,6 +64,15 @@ pub(super) fn theme_runtime_for_surface(
     runtime_with_geometry(theme, surface_index, runtime, &geometry)
 }
 
+pub(super) fn taskbar_is_horizontal(display_index: usize) -> bool {
+    THEME_HOST_GEOMETRY
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(display_index)
+        .and_then(|host| host.taskbar)
+        .is_none_or(native_interop::is_taskbar_horizontal)
+}
+
 fn runtime_with_geometry(
     theme: &ThemeDocument,
     surface_index: usize,

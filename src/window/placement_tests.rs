@@ -481,10 +481,10 @@ fn high_dpi_dimensions_drive_capacity_and_watchdog_redocking() {
     assert!(!positioning::is_taskbar_capacity_sufficient(
         taskbar, slot, width, height
     ));
-    assert!(!positioning::can_redock(260, width));
-    assert!(!positioning::can_redock(345, width));
-    assert!(positioning::can_redock(346, width));
-    assert!(positioning::can_redock(350, width));
+    assert!(!can_redock_at_tray(260, width));
+    assert!(!can_redock_at_tray(345, width));
+    assert!(can_redock_at_tray(346, width));
+    assert!(can_redock_at_tray(350, width));
 }
 
 #[test]
@@ -503,8 +503,8 @@ fn floating_card_padding_is_excluded_from_docking_capacity() {
     let content = floating.content_rect(POINT { x: 985, y: 900 });
     assert_eq!(content.left, 1000);
     assert_eq!(content.right, 1000 + docked.width);
-    assert!(positioning::can_redock(docked.width + 20, docked.width));
-    assert!(!positioning::can_redock(docked.width + 20, floating.width));
+    assert!(can_redock_at_tray(docked.width + 20, docked.width));
+    assert!(!can_redock_at_tray(docked.width + 20, floating.width));
 }
 
 #[test]
@@ -592,4 +592,25 @@ fn tasklist_boundary_ignores_stretched_containers_and_uses_real_app_edges() {
         positioning::tasklist_boundary(1614, [rect(1100), rect(1200)]),
         Some(1100)
     );
+}
+
+// Exercise the actual restored-rectangle check with a tray-adjacent widget.
+fn can_redock_at_tray(free_space: i32, width: i32) -> bool {
+    let taskbar = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 96,
+    };
+    let slot = RECT {
+        right: free_space,
+        ..taskbar
+    };
+    let widget = RECT {
+        left: free_space - width,
+        right: free_space,
+        bottom: 69,
+        ..taskbar
+    };
+    positioning::dock_rect_fits(taskbar, slot, widget, 20)
 }

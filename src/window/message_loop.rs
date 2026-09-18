@@ -461,20 +461,32 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 });
 
                 if let Some((target_idx, taskbar, free_dock_slot)) = target_dock {
-                    let tray_offset = (free_dock_slot.right - widget_rect.right).max(0);
+                    let displays = native_interop::find_monitors();
+                    let handle =
+                        unsafe { MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) };
+                    let Some(monitor_index) =
+                        positioning::monitor_index_for_handle(&displays, handle)
+                    else {
+                        render_layered();
+                        return LRESULT(0);
+                    };
+                    let tray_offset = if native_interop::is_taskbar_horizontal(taskbar.rect) {
+                        (free_dock_slot.right - widget_rect.right).max(0)
+                    } else {
+                        (free_dock_slot.bottom - widget_rect.bottom).max(0)
+                    };
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             s.embedded = true;
                             s.is_snapped = false;
-                            s.taskbar_hwnd = Some(SendHwnd::from_hwnd(taskbar.hwnd));
                             s.taskbar_index = target_idx;
                             s.auto_ejected = false;
                             s.auto_ejected_origin = None;
                             s.tray_offset = tray_offset;
                             s.placement_override = Some(PlacementOverride {
                                 nest: "taskbar".into(),
-                                monitor_index: target_idx,
+                                monitor_index,
                                 screen_x: 0,
                                 screen_y: 0,
                                 tray_offset,
@@ -559,7 +571,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 return LRESULT(0);
             }
 
-            if action == 1 && !s.auto_ejected {
+            if action == 1 && !s.auto_ejected && s.embedded {
                 s.auto_ejected = true;
                 let widget_rect = native_interop::get_window_rect_safe(hwnd).unwrap_or_default();
                 let frame = widget_frame_for_state(s, Some(SurfaceNest::Floating));

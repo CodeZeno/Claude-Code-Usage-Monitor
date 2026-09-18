@@ -121,6 +121,7 @@ struct AppState {
     is_snapped: bool,
     placement_override: Option<PlacementOverride>,
     floating_card_opacity: Option<u8>,
+    window_state_timer_active: bool,
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
@@ -420,17 +421,19 @@ fn spawn_taskbar_watchdog() {
             let Some(state) = state.as_ref() else {
                 continue;
             };
-            let shell_hosted = state.active_theme.as_ref().is_some_and(|theme| {
-                theme.surfaces.iter().any(|surface| {
-                    matches!(
-                        surface
-                            .placement
-                            .nest
-                            .resolve(surface.placement.reference.region),
-                        SurfaceNest::Taskbar | SurfaceNest::Desktop
-                    )
-                })
-            });
+            let shell_hosted = theme_with_placement(state, false)
+                .as_ref()
+                .is_some_and(|theme| {
+                    theme.surfaces.iter().any(|surface| {
+                        matches!(
+                            surface
+                                .placement
+                                .nest
+                                .resolve(surface.placement.reference.region),
+                            SurfaceNest::Taskbar | SurfaceNest::Desktop
+                        )
+                    })
+                });
             if !shell_hosted {
                 continue;
             }
@@ -504,15 +507,11 @@ fn spawn_taskbar_watchdog() {
                         taskbar_hwnd,
                         native_interop::get_window_rect_safe(widget_hwnd),
                     ) {
-                        if let Some(app_right) = positioning::taskbar_tasklist_right_edge(tb) {
-                            if app_right > widget_rect.left {
-                                Some((widget_hwnd, 1usize))
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        }
+                        native_interop::get_taskbar_rect(tb).and_then(|taskbar_rect| {
+                            let slot = positioning::taskbar_free_dock_slot(tb, taskbar_rect);
+                            positioning::overlaps_taskbar_apps(taskbar_rect, slot, widget_rect)
+                                .then_some((widget_hwnd, 1usize))
+                        })
                     } else {
                         None
                     }
@@ -523,17 +522,11 @@ fn spawn_taskbar_watchdog() {
                         taskbar_hwnd,
                         taskbar_hwnd.and_then(native_interop::get_window_rect_safe),
                     ) {
-                        let tray_left = tray_left_for_taskbar(tb, taskbar_rect);
-                        let app_right = positioning::taskbar_tasklist_right_edge(tb)
-                            .unwrap_or(taskbar_rect.left);
-                        let free_space = tray_left - app_right;
-                        let widget_width =
-                            widget_frame_for_state(s, Some(SurfaceNest::Taskbar)).width;
-                        if positioning::can_redock(free_space, widget_width) {
-                            Some((widget_hwnd, 0usize))
-                        } else {
-                            None
-                        }
+                        let slot = positioning::taskbar_free_dock_slot(tb, taskbar_rect);
+                        restored_dock_rect(s, tb, taskbar_rect).and_then(|rect| {
+                            positioning::dock_rect_fits(taskbar_rect, slot, rect, 20)
+                                .then_some((widget_hwnd, 0usize))
+                        })
                     } else {
                         None
                     }
@@ -617,108 +610,111 @@ fn poll_display_state(
 }
 
 fn effective_theme_from_state(state: &AppState) -> Option<ThemeDocument> {
-    let mut result = state.active_theme.as_ref().map(|theme| {
+    theme_with_placement(state, state.auto_ejected)
+}
+
+fn theme_with_placement(state: &AppState, auto_ejected: bool) -> Option<ThemeDocument> {
+    let mut theme = state.active_theme.as_ref().map(|theme| {
         theme_engine::apply_mouse_action_overrides(theme, &state.mouse_action_overrides)
     })?;
-
-    if state.auto_ejected {
-        if let Some(pt) = state.auto_ejected_origin {
-            let displays = native_interop::find_monitors();
-            let (monitor_idx, display) = positioning::monitor_for_point(&displays, pt);
-
-            result.placement.horizontal = HorizontalAnchor::Left;
-            result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-            result.placement.vertical = VerticalAnchor::Top;
-            result.placement.surface_vertical = Some(VerticalAnchor::Top);
-            result.placement.reference.region = ReferenceRegion::Monitor;
-            result.placement.reference.display = monitor_idx;
-            result.placement.nest = SurfaceNest::Floating;
-
-            if let Some(surface) = result.surfaces.get_mut(0) {
-                surface.placement.horizontal = HorizontalAnchor::Left;
-                surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-                surface.placement.vertical = VerticalAnchor::Top;
-                surface.placement.surface_vertical = Some(VerticalAnchor::Top);
-                surface.placement.reference.region = ReferenceRegion::Monitor;
-                surface.placement.reference.display = monitor_idx;
-                surface.placement.nest = SurfaceNest::Floating;
-            }
-
-            let scale = theme_surface_scale(&result, 0);
-            let POINT { x: rel_x, y: rel_y } =
-                positioning::logical_monitor_offset(pt, display.rect, scale);
-
-            result.placement.offset_x = rel_x;
-            result.placement.offset_y = rel_y;
-
-            if let Some(surface) = result.surfaces.get_mut(0) {
-                surface.placement.offset_x = rel_x;
-                surface.placement.offset_y = rel_y;
-            }
-        }
-    } else if let Some(ref override_val) = state.placement_override {
-        if override_val.nest == "floating" {
-            let displays = native_interop::find_monitors();
-            let monitor_index = override_val
-                .monitor_index
-                .min(displays.len().saturating_sub(1));
-            let selected_display = displays
-                .get(monitor_index)
-                .copied()
-                .or_else(|| displays.first().copied());
-            if let Some(display) = selected_display {
-                result.placement.horizontal = HorizontalAnchor::Left;
-                result.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-                result.placement.vertical = VerticalAnchor::Top;
-                result.placement.surface_vertical = Some(VerticalAnchor::Top);
-                result.placement.reference.region = ReferenceRegion::Monitor;
-                result.placement.reference.display = monitor_index;
-                result.placement.nest = SurfaceNest::Floating;
-
-                if let Some(surface) = result.surfaces.get_mut(0) {
-                    surface.placement.horizontal = HorizontalAnchor::Left;
-                    surface.placement.surface_horizontal = Some(HorizontalAnchor::Left);
-                    surface.placement.vertical = VerticalAnchor::Top;
-                    surface.placement.surface_vertical = Some(VerticalAnchor::Top);
-                    surface.placement.reference.region = ReferenceRegion::Monitor;
-                    surface.placement.reference.display = monitor_index;
-                    surface.placement.nest = SurfaceNest::Floating;
-                }
-
-                let scale = theme_surface_scale(&result, 0);
-                let POINT { x: rel_x, y: rel_y } = positioning::logical_monitor_offset(
+    let floating = if auto_ejected {
+        state.auto_ejected_origin.map(|point| (None, point))
+    } else {
+        state
+            .placement_override
+            .as_ref()
+            .filter(|p| p.nest == "floating")
+            .map(|p| {
+                (
+                    Some(p.monitor_index),
                     POINT {
-                        x: override_val.screen_x,
-                        y: override_val.screen_y,
+                        x: p.screen_x,
+                        y: p.screen_y,
                     },
-                    display.rect,
-                    scale,
-                );
-
-                result.placement.offset_x = rel_x;
-                result.placement.offset_y = rel_y;
-                if let Some(surface) = result.surfaces.get_mut(0) {
-                    surface.placement.offset_x = rel_x;
-                    surface.placement.offset_y = rel_y;
-                }
-            }
-        } else if override_val.nest == "taskbar" {
-            result.placement.reference.display = override_val.monitor_index;
-            if let Some(surface) = result.surfaces.get_mut(0) {
-                surface.placement.reference.display = override_val.monitor_index;
-            }
-            let scale = theme_surface_scale(&result, 0);
-            let theme_offset = legacy_offset_to_theme_offset(override_val.tray_offset, scale);
-            result.placement.nest = SurfaceNest::Taskbar;
-            result.placement.offset_x = theme_offset;
-            if let Some(surface) = result.surfaces.get_mut(0) {
-                surface.placement.nest = SurfaceNest::Taskbar;
-                surface.placement.offset_x = theme_offset;
-            }
-        }
+                )
+            })
+    };
+    if let Some((saved_monitor, point)) = floating {
+        let displays = native_interop::find_monitors();
+        let selected = saved_monitor
+            .and_then(|index| displays.get(index).copied().map(|d| (index, d)))
+            .unwrap_or_else(|| positioning::monitor_for_point(&displays, point));
+        apply_floating_position(&mut theme, state, selected.0, selected.1, point);
+    } else if let Some(p) = state
+        .placement_override
+        .as_ref()
+        .filter(|p| p.nest == "taskbar")
+    {
+        let displays = native_interop::find_monitors();
+        let index = if p.monitor_index < displays.len() {
+            p.monitor_index
+        } else {
+            0
+        };
+        let horizontal = taskbar_is_horizontal(index);
+        let placement =
+            positioning::dock_placement(index, p.tray_offset, display_scale(index), horizontal);
+        positioning::override_primary_placement(&mut theme, placement);
     }
+    Some(theme)
+}
 
-    Some(result)
+fn apply_floating_position(
+    theme: &mut ThemeDocument,
+    state: &AppState,
+    index: usize,
+    display: native_interop::DisplayMonitor,
+    point: POINT,
+) {
+    let mut placement = positioning::floating_placement(index);
+    positioning::override_primary_placement(theme, placement.clone());
+    let scale = monitor_scale(display);
+    let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
+    let frame = positioning::widget_frame(theme, state.data.as_ref(), runtime, scale);
+    let offset = positioning::clamped_floating_offset(point, display.rect, &frame, scale);
+    placement.offset_x = offset.x;
+    placement.offset_y = offset.y;
+    positioning::override_primary_placement(theme, placement);
+}
+
+/// Resolve the actual rectangle that will be restored, including authored
+/// placement or a saved drag offset. The watchdog must test this same target.
+fn restored_dock_rect(state: &AppState, taskbar: HWND, taskbar_rect: RECT) -> Option<RECT> {
+    let theme = theme_with_placement(state, false)?;
+    let surface = theme.surfaces.first()?;
+    if surface
+        .placement
+        .nest
+        .resolve(surface.placement.reference.region)
+        != SurfaceNest::Taskbar
+    {
+        return None;
+    }
+    let displays = native_interop::find_monitors();
+    let display = displays
+        .get(surface.placement.reference.display)
+        .or_else(|| displays.first())?;
+    if unsafe { MonitorFromWindow(taskbar, MONITOR_DEFAULTTOPRIMARY) } != display.handle {
+        return None;
+    }
+    let runtime = theme_runtime_for_surface(&theme, 0, theme_runtime_from_state(state));
+    let scale = monitor_scale(*display);
+    let frame = positioning::widget_frame(&theme, state.data.as_ref(), runtime, scale);
+    let offsets = theme_engine::resolve_surface_placement(&theme, 0, state.data.as_ref(), runtime);
+    let mut placement = surface.placement.clone();
+    placement.offset_x = offsets.offset_x;
+    placement.offset_y = offsets.offset_y;
+    let tray = native_interop::find_child_window(taskbar, "TrayNotifyWnd")
+        .and_then(native_interop::get_window_rect_safe);
+    Some(positioning::surface_screen_rect(
+        &placement,
+        frame.width,
+        frame.height,
+        scale,
+        display.rect,
+        Some(taskbar_rect),
+        tray,
+    ))
 }
 
 fn theme_has_floating_surface(theme: &ThemeDocument) -> bool {
@@ -731,17 +727,31 @@ fn theme_has_floating_surface(theme: &ThemeDocument) -> bool {
     })
 }
 
+fn window_state_timer_required(state: &AppState) -> bool {
+    state.custom_theme_enabled
+        && effective_theme_from_state(state)
+            .as_ref()
+            .is_some_and(theme_has_floating_surface)
+}
+
 fn sync_window_state_timer(hwnd: HWND) {
-    let required = {
-        let state = lock_state();
-        state.as_ref().is_some_and(|state| {
-            state.custom_theme_enabled
-                && state
-                    .active_theme
-                    .as_ref()
-                    .is_some_and(theme_has_floating_surface)
-        })
-    };
+    let required = lock_state()
+        .as_ref()
+        .is_some_and(window_state_timer_required);
+    set_window_state_timer(hwnd, required);
+}
+
+fn set_window_state_timer(hwnd: HWND, required: bool) {
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if required == state.window_state_timer_active {
+            return;
+        }
+        state.window_state_timer_active = required;
+    }
     unsafe {
         if required {
             SetTimer(
@@ -963,16 +973,6 @@ fn taskbar_created_message() -> u32 {
         let name = native_interop::wide_str("TaskbarCreated");
         RegisterWindowMessageW(PCWSTR::from_raw(name.as_ptr()))
     })
-}
-
-fn tray_left_for_taskbar(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut tray_left = taskbar_rect.right;
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
-    tray_left
 }
 
 fn now_unix_secs() -> u64 {
@@ -1992,6 +1992,7 @@ pub fn run() {
                 is_snapped: false,
                 placement_override: settings.placement_override.clone(),
                 floating_card_opacity: settings.floating_card_opacity,
+                window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
                 active_theme_path,
@@ -2017,15 +2018,6 @@ pub fn run() {
         // Register the persistent application tray icon.
         if !no_poll {
             sync_tray_icon(hwnd);
-        }
-
-        // Ensure tray event hook is active so tray movements are tracked immediately.
-        let taskbars = native_interop::find_taskbars();
-        if let Some(taskbar) = taskbars
-            .get(settings.taskbar_index)
-            .or_else(|| taskbars.first())
-        {
-            ensure_tray_event_hook_for_taskbar(taskbar.hwnd);
         }
 
         // Theme surfaces decide whether their windows render.
@@ -2115,6 +2107,7 @@ fn render_layered() {
     // install Classic in memory when a selected theme cannot be loaded.
     let theme = active_theme.unwrap_or_else(ThemeDocument::starter);
     let hwnd = hwnd_val.to_hwnd();
+    set_window_state_timer(hwnd, theme_has_floating_surface(&theme));
     let target_count = theme.surfaces.len();
     for surface_index in 0..target_count {
         let regular_hwnd = if surface_index == 0 {
@@ -2773,3 +2766,6 @@ mod poll_display_state_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod placement_regression_tests;

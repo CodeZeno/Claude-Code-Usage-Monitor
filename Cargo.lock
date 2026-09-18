@@ -258,7 +258,7 @@ dependencies = [
 
 [[package]]
 name = "claude-code-usage-monitor"
-version = "2.12.31"
+version = "2.12.32"
 dependencies = [
  "dirs",
  "eframe",
