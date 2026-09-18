@@ -187,7 +187,7 @@ pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
 /// it as an independent topmost popup.
 pub fn embed_as_child(hwnd: HWND, parent: HWND) {
     unsafe {
-        let current_parent = GetParent(hwnd).ok();
+        let current_parent = GetParent(hwnd).ok().filter(|h| !h.is_invalid());
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
         let _ = SetWindowLongW(
             hwnd,
@@ -202,6 +202,13 @@ pub fn embed_as_child(hwnd: HWND, parent: HWND) {
 
         if current_parent != Some(parent) {
             let _ = SetParent(hwnd, Some(parent));
+            // In Windows 11 DWM, reparenting a layered window into a host window (like Shell_TrayWnd)
+            // places its visual at the bottom of the visual hierarchy behind taskbar visuals.
+            // Toggling WS_EX_LAYERED rebinds the DWM visual at the top of the new parent's visual hierarchy,
+            // strictly on parent change so routine renders remain 100% flicker-free.
+            let ex = GetWindowLongW(hwnd, GWL_EXSTYLE);
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_LAYERED.0 as i32));
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED.0 as i32);
         }
         let _ = SetWindowPos(
             hwnd,

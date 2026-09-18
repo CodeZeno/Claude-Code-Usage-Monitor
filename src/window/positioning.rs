@@ -298,7 +298,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                     point[0].y,
                     width,
                     height,
-                    SWP_NOACTIVATE,
+                    SWP_NOACTIVATE | SWP_SHOWWINDOW,
                 );
             }
             SurfaceNest::Desktop => {
