@@ -1525,7 +1525,10 @@ fn apply_custom_theme(
     }
     unsafe {
         native_interop::make_popup(hwnd, false);
-        reset_layered_window(hwnd);
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if (ex_style & WS_EX_LAYERED.0 as i32) == 0 {
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        }
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_NOTOPMOST),

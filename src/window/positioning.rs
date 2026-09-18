@@ -115,14 +115,6 @@ pub(super) fn position_at_taskbar() {
     }
 }
 
-pub(super) fn reset_layered_window(hwnd: HWND) {
-    unsafe {
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style & !(WS_EX_LAYERED.0 as i32));
-        let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
-    }
-}
-
 pub(super) fn render_desktop_custom_window(hwnd: HWND, rendered: &theme_engine::RenderedTheme) {
     if let Err(error) = crate::desktop_compositor::present(hwnd, rendered) {
         diagnose::log(format!(
@@ -145,10 +137,10 @@ pub(super) fn render_custom_window(
     let width = rendered.width as i32;
     let height = rendered.height as i32;
     unsafe {
-        // SetLayeredWindowAttributes and UpdateLayeredWindow cannot be used on
-        // the same layered-style lifetime. Reset it in case this surface was
-        // previously hosted on the desktop.
-        reset_layered_window(hwnd);
+        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
+        if (ex_style & WS_EX_LAYERED.0 as i32) == 0 {
+            let _ = SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED.0 as i32);
+        }
         // UpdateLayeredWindow expects a screen-compatible destination DC. A
         // window DC happened to work for taskbar-hosted children, but desktop
         // WorkerW/DefView composition can discard the resulting surface.
@@ -610,7 +602,7 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
         return;
     }
 
-    let (is_tray, our_hwnd, tray_hwnd) = {
+    let (is_tray, our_hwnd) = {
         let state = lock_state();
         let Some(s) = state.as_ref() else {
             return;
@@ -622,51 +614,24 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
         let tray = s.tray_notify_hwnd.map(|h| h.to_hwnd());
         let taskbar = s.taskbar_hwnd.map(|h| h.to_hwnd());
         let is_tray = is_tray_event_source(hwnd, tray, taskbar, &our_hwnds);
-        (is_tray, s.hwnd.to_hwnd(), tray)
+        (is_tray, s.hwnd.to_hwnd())
     };
 
     if !is_tray {
         return;
     }
 
-    // Schedule a trailing-edge timer so that after animations complete or multi-step
-    // layout passes settle, the widget reliably snaps to the final tray position.
-    const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 120;
+    // Debounce tray location events: shell layout passes (e.g. icon addition,
+    // modification like G-Helper NIM_MODIFY, or animation) fire multiple intermediate
+    // events. Resetting a short trailing timer ensures we wait for the final settled
+    // geometry before updating the position, avoiding transient jumps and jitter.
+    const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 80;
     let _ = SetTimer(
         Some(our_hwnd),
         TIMER_TRAY_REPOSITION,
         TRAY_REPOSITION_TRAILING_DELAY_MS,
         None,
     );
-
-    // Also perform an immediate reposition if the tray rect has actually changed,
-    // providing an instant visual response without waiting for the trailing timer.
-    static LAST_TRAY_RECT: Mutex<Option<RECT>> = Mutex::new(None);
-    static LAST_IMMEDIATE_REPOSITION: Mutex<Option<std::time::Instant>> = Mutex::new(None);
-
-    let current_rect = tray_hwnd.and_then(native_interop::get_window_rect_safe);
-    let should_reposition_now = {
-        let mut last_rect = LAST_TRAY_RECT.lock().unwrap_or_else(|e| e.into_inner());
-        let mut last_time = LAST_IMMEDIATE_REPOSITION.lock().unwrap_or_else(|e| e.into_inner());
-        let now = std::time::Instant::now();
-        let changed = rect_changed(*last_rect, current_rect);
-        let time_ok = last_time
-            .map(|t| now.duration_since(t).as_millis() > 60)
-            .unwrap_or(true);
-        if changed && time_ok {
-            *last_rect = current_rect;
-            *last_time = Some(now);
-            true
-        } else {
-            false
-        }
-    };
-
-    if should_reposition_now {
-        refresh_theme_host_geometry();
-        position_at_taskbar();
-        render_layered();
-    }
 }
 
 pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {
