@@ -282,6 +282,7 @@ mod tests {
             },
             antigravity: ProviderPollOutcome::Disabled,
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
 
         let snapshot = build_snapshot(report, generated_at);

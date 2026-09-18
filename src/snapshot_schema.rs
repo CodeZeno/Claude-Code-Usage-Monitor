@@ -97,6 +97,10 @@ pub(crate) fn snapshot_from_poll_report(
         QuotaFamilyId::GithubCopilot.stable_id(),
         provider_snapshot_from_outcome(&report.github_copilot)?,
     );
+    providers.insert(
+        "vercel_ai_gateway",
+        provider_snapshot_from_outcome(&report.vercel_ai_gateway)?,
+    );
 
     Ok(SnapshotV1::new(
         machine_id.as_str().to_string(),
@@ -141,6 +145,7 @@ fn provider_source(source: ProviderPollSource) -> ProviderSource {
         ProviderPollSource::ChatgptWhamUsage => ProviderSource::ChatgptWhamUsage,
         ProviderPollSource::AntigravityQuotaUsage => ProviderSource::AntigravityQuotaUsage,
         ProviderPollSource::GithubBillingApi => ProviderSource::GithubBillingApi,
+        ProviderPollSource::VercelAiGatewayQuotasApi => ProviderSource::VercelAiGatewayQuotasApi,
     }
 }
 
@@ -193,6 +198,7 @@ fn earliest_attempted_at(report: &PollReport) -> Option<SystemTime> {
         attempted_at(&report.codex),
         attempted_at(&report.antigravity),
         attempted_at(&report.github_copilot),
+        attempted_at(&report.vercel_ai_gateway),
     ]
     .into_iter()
     .flatten()
@@ -320,6 +326,7 @@ impl Providers {
                 "codex" => Some(ProviderSource::ChatgptWhamUsage),
                 "antigravity" => Some(ProviderSource::AntigravityQuotaUsage),
                 "github_copilot" => Some(ProviderSource::GithubBillingApi),
+                "vercel_ai_gateway" => Some(ProviderSource::VercelAiGatewayQuotasApi),
                 _ => provider.source,
             };
             provider.validate(expected_source)?;
@@ -493,6 +500,7 @@ pub enum ProviderSource {
     ChatgptWhamUsage,
     AntigravityQuotaUsage,
     GithubBillingApi,
+    VercelAiGatewayQuotasApi,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1704,6 +1712,7 @@ mod tests {
                 poll_usage(Some((1.0, None)), None),
             ),
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
 
         let snapshot =
@@ -1738,6 +1747,7 @@ mod tests {
                 PollError::RequestFailed,
             ),
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
         let error_value = converted_value(&error_report);
         let unavailable = &error_value["providers"]["antigravity"];
@@ -1752,6 +1762,7 @@ mod tests {
             codex: ProviderPollOutcome::Disabled,
             antigravity: ProviderPollOutcome::Disabled,
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
         let disabled_value = converted_value(&disabled_report);
         let disabled = &disabled_value["providers"]["antigravity"];
@@ -1777,6 +1788,7 @@ mod tests {
                 poll_usage(Some((50.0, None)), Some((60.0, None))),
             ),
             github_copilot: ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
 
         let snapshot =
@@ -1849,6 +1861,7 @@ mod tests {
             codex: ProviderPollOutcome::Disabled,
             antigravity: ProviderPollOutcome::Disabled,
             github_copilot: success_outcome(ProviderPollSource::GithubBillingApi, usage),
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
         let value = converted_value(&report);
         let copilot = &value["providers"]["github_copilot"];
@@ -1908,6 +1921,7 @@ mod tests {
                     resets_at: None,
                 }]),
             ),
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
         let new_json = serde_json::to_string(
             &snapshot_from_poll_report(&machine_id(), &report, at_millis(1_725_000_000_200))

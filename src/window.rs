@@ -14806,6 +14806,7 @@ mod tests {
             },
             antigravity: poller::ProviderPollOutcome::Disabled,
             github_copilot: poller::ProviderPollOutcome::Disabled,
+            vercel_ai_gateway: ProviderPollOutcome::Disabled,
         };
 
         merge_successful_providers(&mut cached, &report);

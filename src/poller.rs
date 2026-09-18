@@ -107,6 +107,7 @@ pub(crate) enum ProviderPollSource {
     ChatgptWhamUsage,
     AntigravityQuotaUsage,
     GithubBillingApi,
+    VercelAiGatewayQuotasApi,
 }
 
 #[derive(Clone, Debug)]
@@ -131,6 +132,7 @@ pub(crate) struct PollReport {
     pub(crate) codex: ProviderPollOutcome,
     pub(crate) antigravity: ProviderPollOutcome,
     pub(crate) github_copilot: ProviderPollOutcome,
+    pub(crate) vercel_ai_gateway: ProviderPollOutcome,
 }
 
 impl PollReport {
@@ -392,6 +394,41 @@ pub(crate) fn poll_report_with_github_copilot_updates(
     report
 }
 
+/// Extended GUI polling path for Vercel AI Gateway.
+///
+/// The existing GitHub-Copilot-only entry point remains unchanged for
+/// compatibility. Vercel is opt-in and disabled unless the caller explicitly
+/// requests it. Authentication is delegated to the existing
+/// `AI_GATEWAY_API_KEY` + Vercel CLI environment; no credential is returned
+/// in PollReport.
+pub(crate) fn poll_report_with_github_copilot_and_vercel_updates(
+    show_claude_code: bool,
+    show_codex: bool,
+    show_antigravity: bool,
+    show_github_copilot: bool,
+    github_copilot_plan: GithubCopilotPlan,
+    show_vercel_ai_gateway: bool,
+    mut on_provider_complete: impl FnMut(QuotaFamilyId, &ProviderPollOutcome),
+) -> PollReport {
+    let mut report = poll_report_with_github_copilot_updates(
+        show_claude_code,
+        show_codex,
+        show_antigravity,
+        show_github_copilot,
+        github_copilot_plan,
+        |provider, outcome| on_provider_complete(provider, outcome),
+    );
+
+    report.vercel_ai_gateway = poll_provider(
+        show_vercel_ai_gateway,
+        ProviderPollSource::VercelAiGatewayQuotasApi,
+        &mut || crate::vercel_ai_gateway::poll(),
+        &mut SystemTime::now,
+    );
+
+    report
+}
+
 fn poll_with(
     show_claude_code: bool,
     show_codex: bool,
@@ -520,6 +557,7 @@ fn poll_report_with_clock_and_updates(
         codex,
         antigravity,
         github_copilot: ProviderPollOutcome::Disabled,
+        vercel_ai_gateway: ProviderPollOutcome::Disabled,
     }
 }
 
