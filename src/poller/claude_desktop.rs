@@ -68,17 +68,17 @@ pub(super) fn read_token(config_path: &Path) -> Option<DesktopToken> {
 
     for (name, cache) in &caches {
         let Some(plaintext) = decrypt_os_crypt_value(cache, &key) else {
-            diagnose::log(&format!("unable to decrypt Claude desktop {name}"));
+            diagnose::log(format!("unable to decrypt Claude desktop {name}"));
             continue;
         };
         let Ok(plaintext) = String::from_utf8(plaintext) else {
-            diagnose::log(&format!("Claude desktop {name} was not valid UTF-8"));
+            diagnose::log(format!("Claude desktop {name} was not valid UTF-8"));
             continue;
         };
         if let Some(token) = select_token(&plaintext) {
             return Some(token);
         }
-        diagnose::log(&format!(
+        diagnose::log(format!(
             "Claude desktop {name} held no usable inference token"
         ));
     }

@@ -117,13 +117,40 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
 /// The desktop app's token, but only for a profile that points at the default
 /// CLI credentials path.
 fn desktop_credentials_for_default_path(path: &Path) -> Option<Credentials> {
-    let default = crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)?;
-    if crate::accounts::source_key(path) != crate::accounts::source_key(&default) {
-        return None;
-    }
-    let credentials = read_desktop_app_credentials(&claude_desktop::config_path()?)?;
+    let credentials = read_desktop_app_credentials(&desktop_fallback_path(path)?)?;
     diagnose::log("default profile fell back to the Claude desktop app token cache");
     Some(credentials)
+}
+
+fn desktop_fallback_path(path: &Path) -> Option<PathBuf> {
+    let default = crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)?;
+    let explicit = std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty());
+    desktop_fallback_allowed(path, &default, explicit)
+        .then(claude_desktop::config_path)
+        .flatten()
+}
+
+fn desktop_fallback_allowed(path: &Path, default: &Path, explicit_directory: bool) -> bool {
+    // default_credential_path also honors CLAUDE_CONFIG_DIR. That is an
+    // explicit account selection, not permission to use the desktop login.
+    !explicit_directory && crate::accounts::source_key(path) == crate::accounts::source_key(default)
+}
+
+pub(super) fn account_watch_signature(path: &Path) -> String {
+    account_watch_signature_with_desktop(path, desktop_fallback_path(path).as_deref())
+}
+
+fn account_watch_signature_with_desktop(path: &Path, desktop: Option<&Path>) -> String {
+    let signature = crate::accounts::file_signature(path);
+    match desktop {
+        // A default-path profile may read either file. Watch both so a desktop
+        // login/rotation resumes a paused account and invalidates stale usage.
+        Some(desktop) => crate::accounts::fingerprint(&format!(
+            "{signature}|{}",
+            claude_desktop::watch_signature(desktop)
+        )),
+        None => signature,
+    }
 }
 
 pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
@@ -863,6 +890,70 @@ mod tests {
         // where the desktop app does have a usable token.
         let path = std::env::temp_dir().join("claude-custom-export.json");
         assert!(desktop_credentials_for_default_path(&path).is_none());
+    }
+
+    #[test]
+    fn an_environment_selected_directory_never_uses_the_desktop_login() {
+        let native = Path::new("C:/claude-fallback-test/.claude/.credentials.json");
+        let custom = Path::new("C:/claude-fallback-test/work/.credentials.json");
+        assert!(desktop_fallback_allowed(native, native, false));
+        assert!(!desktop_fallback_allowed(custom, native, false));
+        // The environment-selected path is also returned as the "default".
+        assert!(!desktop_fallback_allowed(custom, custom, true));
+        assert!(!desktop_fallback_allowed(native, native, true));
+    }
+
+    #[test]
+    fn default_profile_watches_desktop_login_and_rotation_without_window_state_noise() {
+        let directory = std::env::temp_dir().join(format!(
+            "claude-desktop-watch-test-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&directory).unwrap();
+        let native = directory.join(".credentials.json");
+        let desktop = directory.join("config.json");
+        // A tokenless CLI file remains unchanged throughout desktop login.
+        std::fs::write(&native, r#"{"claudeAiOauth":{"accessToken":""}}"#).unwrap();
+        let pinned = account_watch_signature_with_desktop(&native, None);
+        assert_eq!(pinned, crate::accounts::file_signature(&native));
+        let missing = account_watch_signature_with_desktop(&native, Some(&desktop));
+        std::fs::write(
+            &desktop,
+            r#"{"oauth:tokenCache":"legacy","oauth:tokenCacheV2":"first","window":1}"#,
+        )
+        .unwrap();
+        let logged_in = account_watch_signature_with_desktop(&native, Some(&desktop));
+        assert_ne!(missing, logged_in);
+        std::fs::write(
+            &desktop,
+            r#"{"oauth:tokenCache":"legacy","oauth:tokenCacheV2":"first","window":2}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            logged_in,
+            account_watch_signature_with_desktop(&native, Some(&desktop))
+        );
+        std::fs::write(
+            &desktop,
+            r#"{"oauth:tokenCache":"legacy","oauth:tokenCacheV2":"rotated","window":2}"#,
+        )
+        .unwrap();
+        assert_ne!(
+            logged_in,
+            account_watch_signature_with_desktop(&native, Some(&desktop))
+        );
+        assert_eq!(pinned, account_watch_signature_with_desktop(&native, None));
+        std::fs::remove_file(&desktop).unwrap();
+        assert_eq!(
+            missing,
+            account_watch_signature_with_desktop(&native, Some(&desktop))
+        );
+        std::fs::remove_file(&native).unwrap();
+        std::fs::remove_dir(directory).unwrap();
     }
 
     #[test]

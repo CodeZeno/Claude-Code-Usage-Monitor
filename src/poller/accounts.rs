@@ -16,6 +16,9 @@ impl Target {
             return String::new();
         }
         match &self.path {
+            Ok(Some(path)) if self.provider == ProviderId::Claude => {
+                claude::account_watch_signature(path)
+            }
             Ok(Some(path)) => file_signature(path),
             Ok(None) => fingerprint(&format!(
                 "{:?}",
