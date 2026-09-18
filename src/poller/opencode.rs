@@ -189,13 +189,14 @@ fn fetch_go_status(
     credentials: &DashboardCredentials,
     url: &str,
 ) -> Result<DashboardUsage, PollError> {
-    let cookie = if credentials
-        .auth_cookie
-        .split(';')
-        .any(|part| part.trim_start().starts_with("auth="))
-    {
+    let cookie = if credentials.auth_cookie.split(';').any(|part| {
+        let part = part.trim_start();
+        part.starts_with("auth=") || part.starts_with("__Host-console_session=")
+    }) {
         credentials.auth_cookie.clone()
     } else {
+        // Bare legacy auth values may contain '=' padding; that alone does
+        // not identify a complete Cookie header.
         format!("auth={}", credentials.auth_cookie)
     };
 
@@ -517,15 +518,40 @@ mod tests {
     fn console_request_sends_workspace_context_and_normalizes_auth_cookie() {
         for (cookie, expected) in [
             ("test-token", "auth=test-token"),
+            ("test-token==", "auth=test-token=="),
             ("auth=test-token; theme=dark", "auth=test-token; theme=dark"),
+            (
+                "__Host-console_session=SessionToken==",
+                "__Host-console_session=SessionToken==",
+            ),
+            (
+                "__Host-console_session=SessionToken; __stripe_mid=StripeValue",
+                "__Host-console_session=SessionToken; __stripe_mid=StripeValue",
+            ),
+            (
+                "theme=dark; __Host-console_session=SessionToken",
+                "theme=dark; __Host-console_session=SessionToken",
+            ),
+            (
+                "auth=; __Host-console_session=SessionToken",
+                "auth=; __Host-console_session=SessionToken",
+            ),
         ] {
             let (result, request) = mock_status_request(200, GO_STATUS_JSON, cookie);
             assert_eq!(result.unwrap().rolling.unwrap().usage_percent, 12.5);
+            let sent_cookie = request
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("cookie")
+                        .then_some(value.trim_start())
+                })
+                .unwrap();
+            assert_eq!(sent_cookie, expected);
             let request = request.to_ascii_lowercase();
             assert!(request.starts_with("get /console/api/go/status http/1.1\r\n"));
             assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
             assert!(request.contains("\r\naccept: application/json\r\n"));
-            assert!(request.contains(&format!("\r\ncookie: {expected}\r\n")));
         }
     }
 
