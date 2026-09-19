@@ -106,6 +106,7 @@ impl StudioApp {
             .and_then(|interval| Instant::now().checked_add(clock_refresh_delay(interval)));
         Self {
             owner,
+            update_status: crate::dashboard::read_update_status(owner),
             diagnostics: studio_diagnostics::DiagnosticsView::new(),
             page: initial_page,
             synced_poll_interval_ms: settings.poll_interval_ms,
@@ -541,6 +542,7 @@ impl StudioApp {
         context: &egui::Context,
     ) {
         match action {
+            PendingUnsavedAction::Update { install } => self.send_update_action(install),
             PendingUnsavedAction::Close => {
                 context.send_viewport_cmd(egui::ViewportCommand::Close);
             }
@@ -815,6 +817,7 @@ impl StudioApp {
         }
         let now = Instant::now();
         self.last_cache_read = now;
+        self.update_status = crate::dashboard::read_update_status(self.owner);
         self.sync_poll_interval(app_settings::load_settings().poll_interval_ms);
         let usage_changed =
             app_settings::load_usage_cache().is_some_and(|cache| self.update_usage_cache(cache));
@@ -839,6 +842,131 @@ impl StudioApp {
                 .map(clock_refresh_delay)
                 .and_then(|delay| now.checked_add(delay));
         }
+    }
+
+    pub(super) fn request_update_action(&mut self) {
+        if self.update_status.is_busy() || self.pending_unsaved_action.is_some() {
+            return;
+        }
+        let install = matches!(
+            self.update_status,
+            crate::dashboard::UpdateStatus::Available(_)
+        );
+        // The usual check can offer to install immediately. Resolve unsaved
+        // edits first so they cannot keep the dashboard executable locked.
+        if self.dirty {
+            self.pending_unsaved_action = Some(PendingUnsavedAction::Update { install });
+        } else {
+            self.send_update_action(install);
+        }
+    }
+
+    fn send_update_action(&mut self, install: bool) {
+        // A refresh click must still check and prompt even if an automatic
+        // check has found a release since the dashboard last read the status.
+        let message = if install {
+            native_interop::WM_APP_UPDATE_ACTION
+        } else {
+            native_interop::WM_APP_CHECK_FOR_UPDATES
+        };
+        match studio_diagnostics::send_owner_message(self.owner, message) {
+            Ok(()) => {
+                self.update_status = if install {
+                    crate::dashboard::UpdateStatus::Applying
+                } else {
+                    crate::dashboard::UpdateStatus::Checking
+                };
+                self.last_cache_read = Instant::now();
+            }
+            Err(error) => self.theme_error = Some(error),
+        }
+    }
+
+    pub(super) fn version_button(&mut self, ui: &mut egui::Ui) -> egui::Response {
+        use crate::dashboard::UpdateStatus;
+        let language = self.language();
+        let (icon, tooltip) = match &self.update_status {
+            UpdateStatus::Available(version) => (
+                LucideIcon::Download,
+                language
+                    .text("Click to update to v{version}")
+                    .replace("{version}", version),
+            ),
+            UpdateStatus::Checking => (
+                LucideIcon::RefreshCw,
+                language.strings().checking_for_updates.to_string(),
+            ),
+            UpdateStatus::Applying => (
+                LucideIcon::Download,
+                language.strings().applying_update.to_string(),
+            ),
+            UpdateStatus::Idle => (
+                LucideIcon::RefreshCw,
+                language.text("Check for updates").to_string(),
+            ),
+        };
+        let response = ui
+            .scope(|ui| {
+                ui.add_enabled_ui(!self.update_status.is_busy(), |ui| {
+                    let icon_id = ui.id().with("version-update-icon");
+                    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+                    let background = ui.painter().add(egui::Shape::Noop);
+                    let button = egui::AtomLayout::new((
+                        egui::RichText::new(&version).size(16.0).color(muted()),
+                        egui::Atom::custom(icon_id, egui::vec2(12.0, 12.0)),
+                    ))
+                    .gap(4.0)
+                    // The footer row is bottom-aligned; centre the contents
+                    // independently so its extra height is not all above them.
+                    .align2(egui::Align2::LEFT_CENTER)
+                    .sense(egui::Sense::click())
+                    .min_size(egui::vec2(0.0, CONTROL_HEIGHT))
+                    .frame(egui::Frame::new().inner_margin(egui::Margin {
+                        left: 5,
+                        right: 5,
+                        top: 2,
+                        bottom: 4,
+                    }))
+                    .show(ui);
+                    if button.response.hovered() || button.response.has_focus() {
+                        ui.painter().set(
+                            background,
+                            egui::Shape::rect_filled(
+                                button.response.rect,
+                                4.0,
+                                crate::ui::theme::menu_hover(),
+                            ),
+                        );
+                    }
+                    button.response.widget_info(|| {
+                        egui::WidgetInfo::labeled(
+                            egui::WidgetType::Button,
+                            ui.is_enabled(),
+                            &version,
+                        )
+                    });
+                    if let Some(rect) = button.rect(icon_id) {
+                        crate::ui::components::icon::paint_centered_icon(
+                            ui,
+                            rect.translate(egui::vec2(0.0, 1.0)),
+                            icon,
+                            12.0,
+                            muted(),
+                        );
+                    }
+                    button.response
+                })
+                .inner
+            })
+            .inner;
+        let response = response
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .on_hover_text(&tooltip)
+            .on_disabled_hover_text(&tooltip);
+        if response.clicked() {
+            self.request_update_action();
+        }
+        response
     }
 
     pub(super) fn shell(&mut self, ui: &mut egui::Ui) {
@@ -900,20 +1028,14 @@ impl StudioApp {
                                         ),
                                         egui::Layout::left_to_right(egui::Align::Max),
                                         |ui| {
+                                            ui.spacing_mut().item_spacing.x = 4.0;
                                             crate::ui::components::navigation::github_link(
                                                 ui, GITHUB_URL,
                                             );
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Max),
                                                 |ui| {
-                                                    ui.label(
-                                                        egui::RichText::new(format!(
-                                                            "v{}",
-                                                            env!("CARGO_PKG_VERSION")
-                                                        ))
-                                                        .size(16.0)
-                                                        .color(muted()),
-                                                    );
+                                                    self.version_button(ui);
                                                 },
                                             );
                                         },

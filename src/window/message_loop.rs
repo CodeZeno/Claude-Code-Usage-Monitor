@@ -196,6 +196,14 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let _ = DestroyWindow(hwnd);
             LRESULT(0)
         }
+        native_interop::WM_APP_UPDATE_ACTION => {
+            perform_update_action(hwnd);
+            LRESULT(0)
+        }
+        native_interop::WM_APP_CHECK_FOR_UPDATES => {
+            begin_update_check(hwnd, true);
+            LRESULT(0)
+        }
         WM_APP_UPDATE_CHECK_COMPLETE => {
             schedule_auto_update_check(hwnd);
             LRESULT(0)
@@ -682,38 +690,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     render_layered();
                     request_poll(hwnd);
                 }
-                IDM_VERSION_ACTION => {
-                    let (install_channel, release) = {
-                        let state = lock_state();
-                        match state.as_ref() {
-                            Some(s) => (
-                                s.install_channel,
-                                match &s.update_status {
-                                    UpdateStatus::Available(release) => Some(release.clone()),
-                                    _ => None,
-                                },
-                            ),
-                            None => (InstallChannel::Portable, None),
-                        }
-                    };
-
-                    match install_channel {
-                        InstallChannel::Winget => {
-                            if release.is_some() {
-                                begin_winget_update(hwnd);
-                            } else {
-                                begin_update_check(hwnd, true);
-                            }
-                        }
-                        InstallChannel::Portable => {
-                            if let Some(release) = release {
-                                begin_update_apply(hwnd, release);
-                            } else {
-                                begin_update_check(hwnd, true);
-                            }
-                        }
-                    }
-                }
+                IDM_VERSION_ACTION => perform_update_action(hwnd),
                 2 => {
                     let hook = {
                         let state = lock_state();

@@ -153,6 +153,46 @@ enum UpdateStatus {
     Available(ReleaseDescriptor),
 }
 
+fn publish_update_status(state: &AppState) {
+    use crate::dashboard::UpdateStatus as DashboardStatus;
+    let status = match &state.update_status {
+        UpdateStatus::Idle | UpdateStatus::UpToDate => DashboardStatus::Idle,
+        UpdateStatus::Checking => DashboardStatus::Checking,
+        UpdateStatus::Applying => DashboardStatus::Applying,
+        UpdateStatus::Available(release) => {
+            DashboardStatus::Available(release.latest_version.clone())
+        }
+    };
+    crate::dashboard::publish_update_status(state.hwnd.to_hwnd(), status);
+}
+
+fn perform_update_action(hwnd: HWND) {
+    let (install_channel, release) = {
+        let state = lock_state();
+        let Some(state) = state.as_ref() else {
+            return;
+        };
+        if matches!(
+            state.update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        ) {
+            return;
+        }
+        (
+            state.install_channel,
+            match &state.update_status {
+                UpdateStatus::Available(release) => Some(release.clone()),
+                _ => None,
+            },
+        )
+    };
+    match (install_channel, release) {
+        (InstallChannel::Portable, Some(release)) => begin_update_apply(hwnd, release),
+        (InstallChannel::Winget, Some(_)) => begin_winget_update(hwnd),
+        (_, None) => begin_update_check(hwnd, true),
+    }
+}
+
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 
 // Menu item IDs for update frequency
@@ -1117,6 +1157,7 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
         }
 
         app_state.update_status = UpdateStatus::Checking;
+        publish_update_status(app_state);
         (app_state.language.strings(), app_state.install_channel)
     };
 
@@ -1130,6 +1171,7 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::UpToDate;
                         s.last_update_check_unix = Some(checked_at);
+                        publish_update_status(s);
                     }
                 }
                 save_state_settings();
@@ -1160,6 +1202,10 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                         InstallChannel::Winget => begin_winget_update(hwnd),
                     }
                 }
+                // Keep the dashboard busy until the install prompt is dismissed.
+                if let Some(state) = lock_state().as_ref() {
+                    publish_update_status(state);
+                }
                 unsafe {
                     let _ = PostMessageW(
                         Some(hwnd),
@@ -1175,6 +1221,7 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::Idle;
                         s.last_update_check_unix = Some(checked_at);
+                        publish_update_status(s);
                     }
                 }
                 save_state_settings();
@@ -1216,6 +1263,7 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
         }
 
         app_state.update_status = UpdateStatus::Applying;
+        publish_update_status(app_state);
         app_state.language.strings()
     };
 
@@ -1230,6 +1278,7 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
                         s.update_status = UpdateStatus::Available(release);
+                        publish_update_status(s);
                     }
                 }
                 let message = format!("{}.\n\n{}", strings.update_failed, error);
@@ -1248,17 +1297,31 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
 }
 
 fn begin_winget_update(hwnd: HWND) {
-    let strings = {
-        let state = lock_state();
-        state.as_ref().map(|s| s.language.strings())
-    }
-    .unwrap_or(LanguageId::English.strings());
+    let (strings, previous_status) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if matches!(
+            state.update_status,
+            UpdateStatus::Checking | UpdateStatus::Applying
+        ) {
+            return;
+        }
+        let previous_status = std::mem::replace(&mut state.update_status, UpdateStatus::Applying);
+        publish_update_status(state);
+        (state.language.strings(), previous_status)
+    };
 
     match updater::begin_winget_update() {
         Ok(()) => unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         },
         Err(error) => {
+            if let Some(state) = lock_state().as_mut() {
+                state.update_status = previous_status;
+                publish_update_status(state);
+            }
             let message = format!("{}.\n\n{}", strings.update_failed, error);
             show_error_message(hwnd, strings.updates, &message);
         }
@@ -2009,6 +2072,9 @@ pub fn run() {
             });
         }
 
+        if let Some(state) = lock_state().as_ref() {
+            publish_update_status(state);
+        }
         if let Err(error) = crate::dashboard::start_request_listener(hwnd) {
             diagnose::log_error("dashboard request listener failed", error);
         }

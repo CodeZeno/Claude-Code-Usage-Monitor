@@ -345,6 +345,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
     let history_snapshot = theme.clone();
     StudioApp {
         owner: 0,
+        update_status: crate::dashboard::UpdateStatus::Idle,
         diagnostics: studio_diagnostics::DiagnosticsView::new(),
         page: Page::Studio,
         settings: SettingsFile::default(),
@@ -785,6 +786,166 @@ fn dirty_theme_defers_new_theme_until_the_user_decides() {
         Some(PendingUnsavedAction::NewTheme)
     );
     assert!(app.new_theme_name.is_none());
+}
+
+#[test]
+fn version_text_and_trailing_icon_share_one_update_button() {
+    fn footer_button(app: &mut StudioApp, ui: &mut egui::Ui) -> egui::Response {
+        ui.allocate_ui_with_layout(
+            egui::vec2(94.0, CONTROL_HEIGHT),
+            egui::Layout::right_to_left(egui::Align::Max),
+            |ui| app.version_button(ui),
+        )
+        .inner
+    }
+    for status in [
+        crate::dashboard::UpdateStatus::Idle,
+        crate::dashboard::UpdateStatus::Available("9.8.7".into()),
+    ] {
+        for click_icon in [false, true] {
+            let context = egui::Context::default();
+            configure_style(&context, LanguageId::English);
+            let mut app = app_with_surfaces(vec![root("alpha")]);
+            app.update_status = status.clone();
+            app.dirty = true;
+            let mut rect = egui::Rect::NOTHING;
+            run_test_ui(&context, egui::RawInput::default(), |ui| {
+                rect = footer_button(&mut app, ui).rect;
+            });
+            let footer_space = DEFAULT_MENU_WIDTH - 16.0 - 36.0 * 98.0 / 96.0 - 4.0;
+            assert!(
+                rect.width() <= footer_space,
+                "version button overflows footer: {rect:?}"
+            );
+            let position = egui::pos2(
+                if click_icon {
+                    rect.right() - 8.0
+                } else {
+                    rect.left() + 12.0
+                },
+                rect.center().y,
+            );
+            // Settle pointer movement, then allow the tooltip to appear.
+            run_test_ui(
+                &context,
+                egui::RawInput {
+                    time: Some(1.0),
+                    events: vec![egui::Event::PointerMoved(position)],
+                    ..Default::default()
+                },
+                |ui| {
+                    footer_button(&mut app, ui);
+                },
+            );
+            run_test_ui(
+                &context,
+                egui::RawInput {
+                    time: Some(2.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    footer_button(&mut app, ui);
+                },
+            );
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    time: Some(3.0),
+                    ..Default::default()
+                },
+                |ui| {
+                    rect = footer_button(&mut app, ui).rect;
+                },
+            );
+            let mut text = String::new();
+            let mut outlined = false;
+            let mut menu_hover_fill = false;
+            for shape in &output.shapes {
+                match &shape.shape {
+                    egui::epaint::Shape::Text(shape) => {
+                        text.push_str(&shape.galley.job.text);
+                        if shape.galley.job.text == format!("v{}", env!("CARGO_PKG_VERSION")) {
+                            let ink_center = shape.pos.y + shape.galley.mesh_bounds.center().y;
+                            assert!((ink_center - rect.center().y).abs() <= 1.0,
+                                "version text is not visually centred: ink={ink_center}, button={rect:?}");
+                        }
+                    }
+                    egui::epaint::Shape::Rect(shape) if shape.rect.contains_rect(rect) => {
+                        outlined |= shape.stroke.width > 0.0;
+                        menu_hover_fill |= shape.fill == crate::ui::theme::menu_hover();
+                    }
+                    _ => {}
+                }
+            }
+            output.textures_delta.clear();
+            let (icon, tooltip) = if matches!(status, crate::dashboard::UpdateStatus::Available(_))
+            {
+                (LucideIcon::Download, "Click to update to v9.8.7")
+            } else {
+                (LucideIcon::RefreshCw, "Check for updates")
+            };
+            assert!(text.contains(icon.unicode()), "missing update icon: {text}");
+            assert!(text.contains(tooltip), "missing update tooltip: {text}");
+            assert!(!outlined, "version button hover should have no border");
+            assert!(
+                menu_hover_fill,
+                "version button should use the menu hover fill"
+            );
+            let input = egui::RawInput {
+                events: vec![
+                    egui::Event::PointerMoved(position),
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: true,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                    egui::Event::PointerButton {
+                        pos: position,
+                        button: egui::PointerButton::Primary,
+                        pressed: false,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+                ..Default::default()
+            };
+            run_test_ui(&context, input, |ui| {
+                footer_button(&mut app, ui);
+            });
+            assert_eq!(
+                app.pending_unsaved_action,
+                Some(PendingUnsavedAction::Update {
+                    install: matches!(status, crate::dashboard::UpdateStatus::Available(_)),
+                }),
+            );
+            assert!(app.theme_error.is_none());
+        }
+    }
+}
+
+#[test]
+fn update_button_ignores_repeated_clicks_while_busy() {
+    for status in [
+        crate::dashboard::UpdateStatus::Checking,
+        crate::dashboard::UpdateStatus::Applying,
+    ] {
+        let mut app = app_with_surfaces(vec![root("alpha")]);
+        app.update_status = status;
+        app.request_update_action();
+        assert!(app.theme_error.is_none());
+        assert!(app.pending_unsaved_action.is_none());
+    }
+}
+
+#[test]
+fn disconnected_update_button_reports_error_without_staying_busy() {
+    let mut app = app_with_surfaces(vec![root("alpha")]);
+    app.request_update_action();
+    assert!(app
+        .theme_error
+        .as_deref()
+        .unwrap()
+        .contains("not connected"));
+    assert!(!app.update_status.is_busy());
 }
 
 #[test]

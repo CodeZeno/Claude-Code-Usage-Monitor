@@ -440,6 +440,7 @@ struct ThemeDeletionConfirmation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum PendingUnsavedAction {
     Close,
+    Update { install: bool },
     ActivateTheme(PathBuf),
     NewTheme,
 }
@@ -656,6 +657,7 @@ fn preview_countdown_delay(remaining: Duration) -> Duration {
 
 struct StudioApp {
     owner: isize,
+    update_status: crate::dashboard::UpdateStatus,
     diagnostics: studio_diagnostics::DiagnosticsView,
     page: Page,
     settings: SettingsFile,

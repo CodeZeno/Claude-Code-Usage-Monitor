@@ -4,6 +4,20 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.12.39] - 2026-09-19
+
+### Added
+
+- Dashboard version button with a refresh icon to check for updates, changing to a download icon and version tooltip when an update is available. Uses the existing update prompts and portable EXE or WinGet installation flow.
+
+### Changed
+
+- Synchronized dashboard update status with the running monitor, disabled the version button while updates are busy, and resolved unsaved theme edits before starting an update action.
+
+### Fixed
+
+- Prevented repeated WinGet update launches while an update is starting.
+
 ## [2.12.38] - 2026-09-19
 
 ### Added
@@ -805,3 +819,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.36]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/b1822e59cbcd3bfc53f1874da6e9ca26fe670bf6...840d5d57df51d0bb316fdcb9b4490f92656791be
 [2.12.37]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/840d5d57df51d0bb316fdcb9b4490f92656791be...68690d86cca38a5cab75803fbd83ca1395c42d4f
 [2.12.38]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.37...v2.12.38
+[2.12.39]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.38...v2.12.39

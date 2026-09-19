@@ -19,6 +19,66 @@ const DASHBOARD_TITLE: &str = "Usage Monitor";
 const DASHBOARD_MUTEX: &str = "Local\\ClaudeCodeUsageMonitorDashboard";
 const DASHBOARD_REQUEST_EVENT: &str = "Local\\ClaudeCodeUsageMonitorOpenDashboard";
 
+/// Display-only snapshot shared with the dashboard process. The monitor keeps
+/// the authoritative release descriptor and chooses the installation channel.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) enum UpdateStatus {
+    #[default]
+    Idle,
+    Checking,
+    Applying,
+    Available(String),
+}
+
+impl UpdateStatus {
+    pub(crate) fn is_busy(&self) -> bool {
+        matches!(self, Self::Checking | Self::Applying)
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct UpdateSnapshot {
+    owner: isize,
+    process_id: u32,
+    status: UpdateStatus,
+}
+
+fn update_status_path() -> std::path::PathBuf {
+    crate::app_settings::app_data_directory().join("update-status.json")
+}
+
+pub(crate) fn publish_update_status(owner: HWND, status: UpdateStatus) {
+    let snapshot = UpdateSnapshot {
+        owner: owner.0 as isize,
+        process_id: std::process::id(),
+        status,
+    };
+    if let Err(error) = crate::app_settings::write_json_atomic(&update_status_path(), &snapshot) {
+        crate::diagnose::log_error("dashboard update status save failed", error);
+    }
+}
+
+pub(crate) fn read_update_status(owner: isize) -> UpdateStatus {
+    let read = || -> Option<UpdateStatus> {
+        if owner == 0 {
+            return None;
+        }
+        let content = std::fs::read(update_status_path()).ok()?;
+        let snapshot: UpdateSnapshot = serde_json::from_slice(&content).ok()?;
+        let mut process_id = 0;
+        unsafe {
+            windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                HWND(owner as *mut _),
+                Some(&mut process_id),
+            );
+        }
+        // Ignore snapshots from a previous monitor or a disconnected dashboard.
+        (snapshot.owner == owner && process_id != 0 && snapshot.process_id == process_id)
+            .then_some(snapshot.status)
+    };
+    read().unwrap_or_default()
+}
+
 fn language() -> crate::localization::LanguageId {
     let settings = crate::app_settings::load_settings();
     crate::localization::resolve_language(
