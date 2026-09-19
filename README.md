@@ -5,6 +5,9 @@
 
 A lightweight, open-source Windows taskbar widget for monitoring Claude Code usage limits and reset times. It can also display usage for Codex, Google Antigravity, OpenCode Go, and Cursor.
 
+See the [user guide](USER_GUIDE.md) for theme customisation and everyday settings,
+or the [changelog](CHANGELOG.md) for version history and notable changes.
+
 ![Claude Code Usage Monitor running in the Windows taskbar](.github/animation.gif)
 
 ## Features
