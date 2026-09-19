@@ -27,3 +27,8 @@ AGENTS.md
 # Local WinGet manifest generation output
 /manifests/
 test_bin/
+
+# Local dev builds and scratch
+/builds/
+/scratch/
+
