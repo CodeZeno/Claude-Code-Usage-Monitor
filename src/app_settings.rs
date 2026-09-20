@@ -87,6 +87,17 @@ pub struct PlacementOverride {
     pub screen_y: i32,
     #[serde(default)]
     pub tray_offset: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floating_host: Option<FloatingHost>,
+}
+
+/// The unpadded, logical host size retained when a taskbar root is undocked.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FloatingHost {
+    pub theme_id: String,
+    pub surface_id: String,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl Default for SettingsFile {

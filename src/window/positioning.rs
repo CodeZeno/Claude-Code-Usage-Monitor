@@ -693,26 +693,6 @@ pub(super) fn widget_frame(
     }
 }
 
-pub(super) fn overlaps_taskbar_apps(taskbar: RECT, slot: RECT, widget: RECT) -> bool {
-    // Auto-hide can change cross-axis bounds without any app collision.
-    if native_interop::is_taskbar_horizontal(taskbar) {
-        widget.left < slot.left
-    } else {
-        widget.top < slot.top
-    }
-}
-
-pub(super) fn dock_rect_fits(taskbar: RECT, slot: RECT, widget: RECT, margin: i32) -> bool {
-    let horizontal = native_interop::is_taskbar_horizontal(taskbar);
-    widget.left
-        >= slot
-            .left
-            .saturating_add(if horizontal { margin } else { 0 })
-        && widget.top >= slot.top.saturating_add(if horizontal { 0 } else { margin })
-        && widget.right <= slot.right
-        && widget.bottom <= slot.bottom
-}
-
 pub(super) fn monitor_index_for_handle(
     displays: &[native_interop::DisplayMonitor],
     handle: HMONITOR,
@@ -920,17 +900,6 @@ pub(super) fn logical_monitor_offset(point: POINT, monitor: RECT, scale: f64) ->
     }
 }
 
-pub(super) fn tasklist_boundary(
-    tray_left: i32,
-    candidates: impl IntoIterator<Item = RECT>,
-) -> Option<i32> {
-    // A container that fills the space up to the tray is not an app boundary.
-    candidates
-        .into_iter()
-        .find(|rect| rect.right < tray_left - 10)
-        .map(|rect| rect.right)
-}
-
 pub(super) fn is_taskbar_capacity_sufficient(
     taskbar_rect: RECT,
     free_dock_slot: RECT,
@@ -951,58 +920,37 @@ pub(super) fn is_taskbar_capacity_sufficient(
     }
 }
 
-pub(super) fn taskbar_free_dock_slot(taskbar_hwnd: HWND, taskbar_rect: RECT) -> RECT {
-    let tray = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
-        .and_then(native_interop::get_window_rect_safe);
-    let reference = system_tray_reference(taskbar_rect, tray);
-    let horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
-    let tray_start = if horizontal {
-        reference.left
+/// Choose a measured gap near the drag, including gaps left of centred apps.
+pub(super) fn taskbar_free_dock_slot(
+    taskbar_hwnd: HWND,
+    taskbar_rect: RECT,
+    widget: RECT,
+) -> Option<RECT> {
+    let mut lane = widget;
+    if native_interop::is_taskbar_horizontal(taskbar_rect) {
+        lane.top = compute_anchor_y(
+            taskbar_rect.top,
+            taskbar_rect.bottom - taskbar_rect.top,
+            widget.bottom - widget.top,
+        );
+        lane.bottom = lane.top + widget.bottom - widget.top;
     } else {
-        reference.top
-    };
-    let app_end = tasklist_boundary(
-        tray_start,
-        ["ReBarWindow32", "MSTaskListWClass"]
-            .into_iter()
-            .filter_map(|class| {
-                native_interop::find_child_window(taskbar_hwnd, class)
-                    .and_then(native_interop::get_window_rect_safe)
-                    .map(|rect| {
-                        if horizontal {
-                            rect
-                        } else {
-                            RECT {
-                                right: rect.bottom,
-                                ..rect
-                            }
-                        }
-                    })
-            }),
-    );
-    free_dock_slot(taskbar_rect, tray, app_end)
-}
-
-pub(super) fn free_dock_slot(taskbar_rect: RECT, tray: Option<RECT>, app_end: Option<i32>) -> RECT {
-    let reference = system_tray_reference(taskbar_rect, tray);
-    let is_horizontal = native_interop::is_taskbar_horizontal(taskbar_rect);
-    if is_horizontal {
-        RECT {
-            left: app_end
-                .unwrap_or(taskbar_rect.left)
-                .clamp(taskbar_rect.left, taskbar_rect.right),
-            top: taskbar_rect.top,
-            right: reference.left.clamp(taskbar_rect.left, taskbar_rect.right),
-            bottom: taskbar_rect.bottom,
-        }
-    } else {
-        RECT {
-            left: taskbar_rect.left,
-            top: app_end
-                .unwrap_or(taskbar_rect.top)
-                .clamp(taskbar_rect.top, taskbar_rect.bottom),
-            right: taskbar_rect.right,
-            bottom: reference.top.clamp(taskbar_rect.top, taskbar_rect.bottom),
-        }
+        lane.left = taskbar_rect.left;
+        lane.right = lane.left + widget.right - widget.left;
     }
+    taskbar_collision::cached(taskbar_hwnd, taskbar_rect)?
+        .free_slots(lane)
+        .into_iter()
+        .filter(|slot| {
+            is_taskbar_capacity_sufficient(
+                taskbar_rect,
+                *slot,
+                widget.right - widget.left,
+                widget.bottom - widget.top,
+            )
+        })
+        .max_by(|a, b| {
+            calculate_rect_overlap_ratio(widget, *a)
+                .total_cmp(&calculate_rect_overlap_ratio(widget, *b))
+        })
 }

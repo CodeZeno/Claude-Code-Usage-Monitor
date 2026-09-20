@@ -4,6 +4,17 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.12.40] - 2026-09-21
+
+### Fixed
+
+- Preserved the taskbar's logical host dimensions when widgets are dragged or automatically undocked, preventing custom themes using `host.height` from expanding to the full screen height. Child layout uses the same dimensions, with floating-card padding kept outside the content.
+- Saved floating host dimensions per theme and root across restarts and repeated drags, and used the destination monitor's DPI when sizing a dropped widget. Re-docking adopts the destination taskbar's dimensions; themes authored as floating retain monitor-based sizing.
+- Retained the last valid taskbar geometry during auto-hide or temporary taskbar removal, with a compact fallback when no taskbar dimensions are available for undocking.
+- Fixed missed automatic undocking on Windows 11 by measuring actual taskbar controls instead of legacy container bounds. Collision and return checks account for widgets on either side of centred buttons, separate button groups and rows, vertical taskbars, monitor offsets, and DPI scaling.
+- Kept taskbar accessibility queries off the UI and Explorer watchdog threads, ignored unavailable or stale measurements, and rechecked queued transitions before moving the widget. Automatic return preserves the original position and waits for clearance from app buttons on both sides.
+- Allowed docking into measured gaps on either side of taskbar buttons and corrected saved offsets for gaps left of centred buttons, preventing the widget from jumping toward the tray after a drop.
+
 ## [2.12.39] - 2026-09-19
 
 ### Added
@@ -820,3 +831,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.37]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/840d5d57df51d0bb316fdcb9b4490f92656791be...68690d86cca38a5cab75803fbd83ca1395c42d4f
 [2.12.38]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.37...v2.12.38
 [2.12.39]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.38...v2.12.39
+[2.12.40]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.39...v2.12.40

@@ -159,6 +159,9 @@ pub struct Canvas {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Placement {
+    /// Runtime-only layout host retained during undocking; never edits the theme.
+    #[serde(skip)]
+    pub host_dimensions: Option<(u32, u32)>,
     #[serde(default)]
     pub reference: ReferenceTarget,
     /// Controls which native shell host owns a root surface. Older themes did
@@ -1293,6 +1296,10 @@ impl ThemeRuntime {
         self.host_width = width.max(1);
         self.host_height = height.max(1);
         self
+    }
+
+    pub fn host_dimensions(self) -> (u32, u32) {
+        (self.host_width, self.host_height)
     }
 
     pub fn provider_count(self) -> usize {
@@ -2590,6 +2597,7 @@ impl Default for Canvas {
 impl Default for Placement {
     fn default() -> Self {
         Self {
+            host_dimensions: None,
             reference: ReferenceTarget::default(),
             nest: SurfaceNest::Taskbar,
             horizontal: HorizontalAnchor::Left,

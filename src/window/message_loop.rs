@@ -319,9 +319,14 @@ pub(super) unsafe extern "system" fn wnd_proc(
 
                     let mut snapped_pos = None;
                     let mut now_snapped = false;
-                    if let Some(taskbar) = target_taskbar {
-                        let free_dock_slot =
-                            positioning::taskbar_free_dock_slot(taskbar.hwnd, taskbar.rect);
+                    if let Some((taskbar, free_dock_slot)) = target_taskbar.and_then(|taskbar| {
+                        positioning::taskbar_free_dock_slot(
+                            taskbar.hwnd,
+                            taskbar.rect,
+                            virtual_rect,
+                        )
+                        .map(|slot| (taskbar, slot))
+                    }) {
                         let capacity_ok = positioning::is_taskbar_capacity_sufficient(
                             taskbar.rect,
                             free_dock_slot,
@@ -439,13 +444,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
 
             if released.dragging {
                 let widget_rect = native_interop::get_window_rect_safe(hwnd).unwrap_or_default();
-                let frames = lock_state().as_ref().map(|s| {
-                    (
-                        widget_frame_for_state(s, None),
-                        widget_frame_for_state(s, Some(SurfaceNest::Floating)),
-                    )
-                });
-                let Some((current_frame, floating_frame)) = frames else {
+                let frame = lock_state()
+                    .as_ref()
+                    .map(|s| widget_frame_for_state(s, None));
+                let Some(current_frame) = frame else {
                     return LRESULT(0);
                 };
                 let widget_rect = current_frame.content_rect(POINT {
@@ -457,7 +459,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
 
                 let taskbars = native_interop::find_taskbars();
                 let target_dock = taskbars.iter().enumerate().find_map(|(idx, tb)| {
-                    let free_dock_slot = positioning::taskbar_free_dock_slot(tb.hwnd, tb.rect);
+                    let free_dock_slot =
+                        positioning::taskbar_free_dock_slot(tb.hwnd, tb.rect, widget_rect)?;
                     let capacity_ok = positioning::is_taskbar_capacity_sufficient(
                         tb.rect,
                         free_dock_slot,
@@ -488,10 +491,19 @@ pub(super) unsafe extern "system" fn wnd_proc(
                         render_layered();
                         return LRESULT(0);
                     };
+                    let tray = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd")
+                        .and_then(native_interop::get_window_rect_safe);
+                    let reference = positioning::system_tray_reference(taskbar.rect, tray);
                     let tray_offset = if native_interop::is_taskbar_horizontal(taskbar.rect) {
-                        (free_dock_slot.right - widget_rect.right).max(0)
+                        let left = widget_rect
+                            .left
+                            .clamp(free_dock_slot.left, free_dock_slot.right - widget_w);
+                        (reference.left - left - widget_w).max(0)
                     } else {
-                        (free_dock_slot.bottom - widget_rect.bottom).max(0)
+                        let top = widget_rect
+                            .top
+                            .clamp(free_dock_slot.top, free_dock_slot.bottom - widget_h);
+                        (reference.top - top - widget_h).max(0)
                     };
                     {
                         let mut state = lock_state();
@@ -501,6 +513,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             s.taskbar_index = target_idx;
                             s.auto_ejected = false;
                             s.auto_ejected_origin = None;
+                            s.auto_ejected_host = None;
                             s.tray_offset = tray_offset;
                             s.placement_override = Some(PlacementOverride {
                                 nest: "taskbar".into(),
@@ -508,6 +521,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 screen_x: 0,
                                 screen_y: 0,
                                 tray_offset,
+                                floating_host: None,
                             });
                         }
                     }
@@ -518,6 +532,12 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 } else {
                     let displays = native_interop::find_monitors();
                     let (monitor_idx, display) = positioning::monitor_for_point(&displays, pt);
+                    let floating_frame = lock_state().as_ref().and_then(|s| {
+                        floating_frame_for_state(s, monitor_idx, monitor_scale(display))
+                    });
+                    let Some(floating_frame) = floating_frame else {
+                        return LRESULT(0);
+                    };
 
                     // Keep the grabbed content in place as the card expands around it.
                     let widget_w = floating_frame.width;
@@ -534,16 +554,19 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
+                            let floating_host = floating_host_for_state(s);
                             s.embedded = false;
                             s.is_snapped = false;
                             s.auto_ejected = false;
                             s.auto_ejected_origin = None;
+                            s.auto_ejected_host = None;
                             s.placement_override = Some(PlacementOverride {
                                 nest: "floating".into(),
                                 monitor_index: monitor_idx,
                                 screen_x: clamped_x,
                                 screen_y: clamped_y,
                                 tray_offset: 0,
+                                floating_host,
                             });
                         }
                     }
@@ -585,11 +608,13 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let Some(s) = state.as_mut() else {
                 return LRESULT(0);
             };
-            if s.dragging {
+            // A queued result can outlive a drag, placement change, or sample.
+            if taskbar_collision_action(s) != Some(action) {
                 return LRESULT(0);
             }
 
             if action == 1 && !s.auto_ejected && s.embedded {
+                s.auto_ejected_host = floating_host_for_state(s);
                 s.auto_ejected = true;
                 let widget_rect = native_interop::get_window_rect_safe(hwnd).unwrap_or_default();
                 let frame = widget_frame_for_state(s, Some(SurfaceNest::Floating));
@@ -659,6 +684,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             } else if action == 0 && s.auto_ejected {
                 s.auto_ejected = false;
                 s.auto_ejected_origin = None;
+                s.auto_ejected_host = None;
                 let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
                 s.is_switching_window_style = true;
                 drop(state);

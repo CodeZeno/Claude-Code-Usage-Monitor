@@ -118,6 +118,7 @@ struct AppState {
     drag_start_client_x: i32,
     auto_ejected: bool,
     auto_ejected_origin: Option<POINT>,
+    auto_ejected_host: Option<app_settings::FloatingHost>,
     is_switching_window_style: bool,
     is_snapped: bool,
     placement_override: Option<PlacementOverride>,
@@ -531,53 +532,9 @@ fn spawn_taskbar_watchdog() {
             }
         }
 
-        let collision_action = {
-            let state = lock_state();
-            if let Some(s) = state.as_ref() {
-                if s.dragging {
-                    None
-                } else if !s.auto_ejected
-                    && s.embedded
-                    && s.placement_override
-                        .as_ref()
-                        .is_none_or(|p| p.nest != "floating")
-                {
-                    let widget_hwnd = s.hwnd.to_hwnd();
-                    let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
-                    if let (Some(tb), Some(widget_rect)) = (
-                        taskbar_hwnd,
-                        native_interop::get_window_rect_safe(widget_hwnd),
-                    ) {
-                        native_interop::get_taskbar_rect(tb).and_then(|taskbar_rect| {
-                            let slot = positioning::taskbar_free_dock_slot(tb, taskbar_rect);
-                            positioning::overlaps_taskbar_apps(taskbar_rect, slot, widget_rect)
-                                .then_some((widget_hwnd, 1usize))
-                        })
-                    } else {
-                        None
-                    }
-                } else if s.auto_ejected {
-                    let widget_hwnd = s.hwnd.to_hwnd();
-                    let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());
-                    if let (Some(tb), Some(taskbar_rect)) = (
-                        taskbar_hwnd,
-                        taskbar_hwnd.and_then(native_interop::get_window_rect_safe),
-                    ) {
-                        let slot = positioning::taskbar_free_dock_slot(tb, taskbar_rect);
-                        restored_dock_rect(s, tb, taskbar_rect).and_then(|rect| {
-                            positioning::dock_rect_fits(taskbar_rect, slot, rect, 20)
-                                .then_some((widget_hwnd, 0usize))
-                        })
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
+        let collision_action = lock_state().as_ref().and_then(|state| {
+            taskbar_collision_action(state).map(|action| (state.hwnd.to_hwnd(), action))
+        });
 
         if let Some((target_hwnd, action)) = collision_action {
             unsafe {
@@ -590,6 +547,30 @@ fn spawn_taskbar_watchdog() {
             }
         }
     });
+}
+
+fn taskbar_collision_action(state: &AppState) -> Option<usize> {
+    if state.dragging || state.pending_drag || state.is_switching_window_style {
+        return None;
+    }
+    let taskbar = state.taskbar_hwnd?.to_hwnd();
+    let bounds = native_interop::get_taskbar_rect(taskbar)?;
+    let occupancy = taskbar_collision::cached(taskbar, bounds)?;
+    if state.auto_ejected {
+        let target = restored_dock_rect(state, taskbar, bounds)?;
+        let margin = (20.0 * CURRENT_DPI.load(Ordering::Relaxed) as f64 / 96.0).round() as i32;
+        occupancy.can_restore(target, margin).then_some(0)
+    } else if state.embedded
+        && state
+            .placement_override
+            .as_ref()
+            .is_none_or(|p| p.nest != "floating")
+    {
+        let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
+        occupancy.overlaps(widget).then_some(1)
+    } else {
+        None
+    }
 }
 
 static STATE: Mutex<Option<AppState>> = Mutex::new(None);
@@ -708,6 +689,16 @@ fn apply_floating_position(
     point: POINT,
 ) {
     let mut placement = positioning::floating_placement(index);
+    let saved_host = if state.auto_ejected {
+        state.auto_ejected_host.as_ref()
+    } else {
+        state
+            .placement_override
+            .as_ref()
+            .and_then(|p| p.floating_host.as_ref())
+    };
+    placement.host_dimensions =
+        floating_host_for_theme(theme, saved_host).map(|host| (host.width, host.height));
     positioning::override_primary_placement(theme, placement.clone());
     let scale = monitor_scale(display);
     let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
@@ -1456,11 +1447,35 @@ fn widget_frame_for_state(state: &AppState, nest: Option<SurfaceNest>) -> positi
         },
         |theme| {
             let runtime = theme_runtime_for_surface(theme, 0, theme_runtime_from_state(state));
-            let runtime = nest.map_or(runtime, |nest| runtime.with_nest(nest));
+            let mut runtime = nest.map_or(runtime, |nest| runtime.with_nest(nest));
+            if nest == Some(SurfaceNest::Floating) {
+                if let Some(host) = floating_host_for_theme(theme, None) {
+                    runtime = runtime.with_host_dimensions(host.width, host.height);
+                }
+            }
             let scale = theme_surface_scale(theme, 0);
             positioning::widget_frame(theme, state.data.as_ref(), runtime, scale)
         },
     )
+}
+
+fn floating_frame_for_state(
+    state: &AppState,
+    display_index: usize,
+    scale: f64,
+) -> Option<positioning::WidgetFrame> {
+    let mut theme = effective_theme_from_state(state)?;
+    let mut placement = positioning::floating_placement(display_index);
+    placement.host_dimensions =
+        floating_host_for_theme(&theme, None).map(|host| (host.width, host.height));
+    positioning::override_primary_placement(&mut theme, placement);
+    let runtime = theme_runtime_for_surface(&theme, 0, theme_runtime_from_state(state));
+    Some(positioning::widget_frame(
+        &theme,
+        state.data.as_ref(),
+        runtime,
+        scale,
+    ))
 }
 
 fn apply_custom_theme(
@@ -2052,6 +2067,7 @@ pub fn run() {
                 drag_start_client_x: 0,
                 auto_ejected: false,
                 auto_ejected_origin: None,
+                auto_ejected_host: None,
                 is_switching_window_style: false,
                 is_snapped: false,
                 placement_override: settings.placement_override.clone(),
@@ -2116,6 +2132,7 @@ pub fn run() {
         // runs on a dedicated thread, NOT a window timer: once explorer destroys
         // the taskbar, our embedded child window stops receiving all messages
         // (WM_TIMER included), so a timer would never fire again.
+        taskbar_collision::spawn_reader();
         spawn_taskbar_watchdog();
 
         // Initial poll
@@ -2713,6 +2730,7 @@ mod message_loop;
 use host_geometry::*;
 use message_loop::wnd_proc;
 mod positioning;
+mod taskbar_collision;
 use positioning::*;
 mod mouse;
 use mouse::*;
