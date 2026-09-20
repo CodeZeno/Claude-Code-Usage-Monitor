@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.12.41] - 2026-09-21
+
+### Fixed
+
+- Reduced widget jitter during tray icon updates and shell animations by waiting 80 ms after the last tray location event before repositioning. ([#107](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/107))
+- Routed watchdog tray geometry changes through the same delay so they cannot trigger an immediate reposition and cancel a pending tray update.
+
 ## [2.12.40] - 2026-09-21
 
 ### Fixed
@@ -832,3 +839,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.38]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.37...v2.12.38
 [2.12.39]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.38...v2.12.39
 [2.12.40]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.39...v2.12.40
+[2.12.41]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.40...v2.12.41

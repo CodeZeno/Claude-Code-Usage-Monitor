@@ -524,8 +524,8 @@ fn spawn_taskbar_watchdog() {
                 unsafe {
                     let _ = PostMessageW(
                         Some(reposition_target),
-                        WM_TIMER,
-                        WPARAM(TIMER_TRAY_REPOSITION),
+                        native_interop::WM_APP_TRAY_REPOSITION,
+                        WPARAM(0),
                         LPARAM(0),
                     );
                 }

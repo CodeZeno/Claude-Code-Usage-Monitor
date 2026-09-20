@@ -43,6 +43,7 @@ pub const WM_APP_ENABLE_DIAGNOSTICS: u32 = WM_APP + 11;
 pub const WM_APP_DISABLE_DIAGNOSTICS: u32 = WM_APP + 12;
 pub const WM_APP_UPDATE_ACTION: u32 = WM_APP + 13;
 pub const WM_APP_CHECK_FOR_UPDATES: u32 = WM_APP + 14;
+pub const WM_APP_TRAY_REPOSITION: u32 = WM_APP + 15;
 
 pub fn is_taskbar_horizontal(rect: RECT) -> bool {
     (rect.right - rect.left) >= (rect.bottom - rect.top)

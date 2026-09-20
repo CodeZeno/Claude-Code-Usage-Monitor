@@ -155,6 +155,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
             }
             LRESULT(0)
         }
+        native_interop::WM_APP_TRAY_REPOSITION => {
+            // Watchdog requests must wait for shell layout to settle too.
+            schedule_tray_reposition(hwnd);
+            LRESULT(0)
+        }
         WM_APP_USAGE_UPDATED => {
             check_theme_change();
             check_language_change();

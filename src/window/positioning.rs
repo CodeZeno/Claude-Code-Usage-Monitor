@@ -624,17 +624,24 @@ pub(super) unsafe extern "system" fn on_tray_location_changed(
         return;
     }
 
+    schedule_tray_reposition(our_hwnd);
+}
+
+/// Called on the window's UI thread by both shell events and watchdog requests.
+pub(super) fn schedule_tray_reposition(hwnd: HWND) {
     // Debounce tray location events: shell layout passes (e.g. icon addition,
     // modification like G-Helper NIM_MODIFY, or animation) fire multiple intermediate
     // events. Resetting a short trailing timer ensures we wait for the final settled
     // geometry before updating the position, avoiding transient jumps and jitter.
     const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 80;
-    let _ = SetTimer(
-        Some(our_hwnd),
-        TIMER_TRAY_REPOSITION,
-        TRAY_REPOSITION_TRAILING_DELAY_MS,
-        None,
-    );
+    unsafe {
+        let _ = SetTimer(
+            Some(hwnd),
+            TIMER_TRAY_REPOSITION,
+            TRAY_REPOSITION_TRAILING_DELAY_MS,
+            None,
+        );
+    }
 }
 
 pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {

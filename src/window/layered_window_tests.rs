@@ -90,6 +90,27 @@ fn take_transitions() -> Vec<bool> {
 }
 
 #[test]
+fn watchdog_tray_requests_leave_a_delayed_reposition_pending() {
+    let window = TestWindow::new(WINDOW_EX_STYLE::default());
+    for already_pending in [false, true] {
+        if already_pending {
+            schedule_tray_reposition(window.0);
+        }
+        unsafe {
+            // Exercise the production message handler without touching Explorer
+            // or waiting on wall-clock timing. Both paths must leave a timer.
+            wnd_proc(
+                window.0,
+                native_interop::WM_APP_TRAY_REPOSITION,
+                WPARAM(0),
+                LPARAM(0),
+            );
+            assert!(KillTimer(Some(window.0), TIMER_TRAY_REPOSITION).is_ok());
+        }
+    }
+}
+
+#[test]
 fn routine_rendering_keeps_the_layered_surface_alive() {
     for ex_style in [WS_EX_LAYERED, WINDOW_EX_STYLE::default()] {
         let window = TestWindow::new(ex_style);
