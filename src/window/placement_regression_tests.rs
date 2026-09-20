@@ -32,6 +32,7 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         drag_start_client_x: 0,
         auto_ejected: false,
         auto_ejected_origin: None,
+        auto_ejected_host: None,
         is_switching_window_style: false,
         is_snapped: false,
         placement_override: Some(placement),
@@ -59,7 +60,49 @@ fn placement(nest: &str) -> PlacementOverride {
         screen_x: 0,
         screen_y: 0,
         tray_offset: 0,
+        floating_host: None,
     }
+}
+
+#[test]
+fn floating_layout_survives_restart_repeated_drags_and_auto_ejection() {
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].height = theme_engine::Expression("host.height".into());
+    let host = app_settings::FloatingHost {
+        theme_id: theme.id.clone(),
+        surface_id: theme.surfaces[0].id.clone(),
+        width: 1920,
+        height: 46,
+    };
+    let mut saved = placement("floating");
+    saved.floating_host = Some(host.clone());
+    let saved = serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+    let mut state = state_for(theme, saved);
+    for _ in 0..3 {
+        let effective = effective_theme_from_state(&state).unwrap();
+        let runtime = theme_runtime_for_surface(&effective, 0, theme_runtime_from_state(&state));
+        assert_eq!(runtime.host_dimensions(), (1920, 46));
+        assert_eq!(
+            widget_frame_for_state(&state, None).height,
+            scaled_theme_dimension(46, theme_surface_scale(&effective, 0))
+        );
+        let recaptured = floating_host_for_state(&state);
+        assert_eq!(recaptured, Some(host.clone()));
+        state.placement_override.as_mut().unwrap().floating_host = recaptured;
+    }
+    state.placement_override = Some(placement("taskbar"));
+    state.auto_ejected_host = Some(host);
+    state.auto_ejected = true;
+    state.auto_ejected_origin = Some(POINT { x: 100, y: 100 });
+    let effective = effective_theme_from_state(&state).unwrap();
+    assert_eq!(
+        effective.surfaces[0].placement.host_dimensions,
+        Some((1920, 46))
+    );
+    assert!(theme_with_placement(&state, false).unwrap().surfaces[0]
+        .placement
+        .host_dimensions
+        .is_none());
 }
 
 #[test]
@@ -247,20 +290,17 @@ fn redocking_waits_until_the_saved_position_has_room_and_hysteresis() {
         left: 1600,
         ..taskbar
     };
-    let slot = positioning::free_dock_slot(taskbar, Some(tray), Some(1100));
+    let occupancy = collision_fixture(taskbar, Some(tray), Some(1100));
     let docked = positioning::dock_placement(0, 300, 1.0, true);
     let target =
         positioning::surface_screen_rect(&docked, 217, 46, 1.0, monitor, Some(taskbar), Some(tray));
     assert_eq!(target.left, 1083);
-    assert!(positioning::overlaps_taskbar_apps(taskbar, slot, target));
-    assert!(!positioning::dock_rect_fits(taskbar, slot, target, 0));
-    assert!(!positioning::dock_rect_fits(taskbar, slot, target, 20));
+    assert!(occupancy.overlaps(target));
+    assert!(!occupancy.can_restore(target, 0));
+    assert!(!occupancy.can_restore(target, 20));
     for (app_end, can_return) in [(1083, false), (1064, false), (1063, true)] {
-        let slot = positioning::free_dock_slot(taskbar, Some(tray), Some(app_end));
-        assert_eq!(
-            positioning::dock_rect_fits(taskbar, slot, target, 20),
-            can_return
-        );
+        let occupancy = collision_fixture(taskbar, Some(tray), Some(app_end));
+        assert_eq!(occupancy.can_restore(target, 20), can_return);
     }
 }
 
@@ -336,10 +376,11 @@ fn vertical_docking_uses_tray_top_and_a_vertical_saved_offset() {
             ..taskbar
         };
         assert_eq!(
-            positioning::free_dock_slot(taskbar, None, None).bottom,
+            collision_fixture(taskbar, None, None).free_slots(taskbar)[0].bottom,
             1080
         );
-        let slot = positioning::free_dock_slot(taskbar, Some(tray), Some(500));
+        let occupancy = collision_fixture(taskbar, Some(tray), Some(500));
+        let slot = occupancy.free_slots(taskbar)[0];
         assert_eq!((slot.top, slot.bottom), (500, 900));
         assert!(positioning::is_taskbar_capacity_sufficient(
             taskbar, slot, 24, 100
@@ -355,10 +396,10 @@ fn vertical_docking_uses_tray_top_and_a_vertical_saved_offset() {
             Some(tray),
         );
         assert_eq!((target.left, target.top, target.bottom), (left, 600, 700));
-        assert!(!positioning::overlaps_taskbar_apps(taskbar, slot, target));
-        assert!(positioning::dock_rect_fits(taskbar, slot, target, 20));
-        let crowded = positioning::free_dock_slot(taskbar, Some(tray), Some(590));
-        assert!(!positioning::dock_rect_fits(taskbar, crowded, target, 20));
+        assert!(!occupancy.overlaps(target));
+        assert!(occupancy.can_restore(target, 20));
+        let crowded = collision_fixture(taskbar, Some(tray), Some(590));
+        assert!(!crowded.can_restore(target, 20));
     }
 }
 
@@ -379,4 +420,29 @@ fn a_taskbar_without_a_tray_anchors_at_its_trailing_edge() {
         positioning::surface_screen_rect(&placement, 217, 46, 1.0, monitor, Some(taskbar), None);
     assert_eq!((rect.left, rect.right), (-227, -10));
     assert_eq!((rect.top, rect.bottom), (1034, 1080));
+}
+
+// Fixture for the traditional leading-apps/trailing-tray arrangement. The
+// production detector also supports independent groups and leading-side gaps.
+fn collision_fixture(
+    bounds: RECT,
+    tray: Option<RECT>,
+    app_end: Option<i32>,
+) -> taskbar_collision::Occupancy {
+    let mut occupied = Vec::new();
+    if let Some(end) = app_end {
+        let mut apps = bounds;
+        if native_interop::is_taskbar_horizontal(bounds) {
+            apps.right = end;
+        } else {
+            apps.bottom = end;
+        }
+        occupied.push(apps);
+    }
+    occupied.extend(tray);
+    taskbar_collision::Occupancy {
+        bounds,
+        occupied,
+        reserved: tray.into_iter().collect(),
+    }
 }

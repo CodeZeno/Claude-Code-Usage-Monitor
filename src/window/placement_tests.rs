@@ -308,6 +308,7 @@ fn test_placement_override_serialization_and_normalization() {
         screen_x: 250,
         screen_y: 120,
         tray_offset: 0,
+        floating_host: None,
     };
     let json = serde_json::to_string(&ov).unwrap();
     assert!(json.contains("\"nest\":\"floating\""));
@@ -315,6 +316,12 @@ fn test_placement_override_serialization_and_normalization() {
 
     let deserialized: app_settings::PlacementOverride = serde_json::from_str(&json).unwrap();
     assert_eq!(ov, deserialized);
+    assert!(serde_json::from_str::<app_settings::PlacementOverride>(
+        r#"{"nest":"floating","monitor_index":0}"#
+    )
+    .unwrap()
+    .floating_host
+    .is_none());
 
     let mut settings = app_settings::SettingsFile::default();
     settings.floating_card_opacity = Some(150);
@@ -568,32 +575,6 @@ fn floating_monitor_resolution_handles_boundaries_fallbacks_and_dpi() {
     );
 }
 
-#[test]
-fn tasklist_boundary_ignores_stretched_containers_and_uses_real_app_edges() {
-    let rect = |right| RECT {
-        left: 0,
-        top: 0,
-        right,
-        bottom: 48,
-    };
-    assert_eq!(positioning::tasklist_boundary(1614, []), None);
-    assert_eq!(positioning::tasklist_boundary(1614, [rect(1614)]), None);
-    assert_eq!(positioning::tasklist_boundary(1614, [rect(1700)]), None);
-    assert_eq!(positioning::tasklist_boundary(1614, [rect(1604)]), None);
-    assert_eq!(
-        positioning::tasklist_boundary(1614, [rect(1603)]),
-        Some(1603)
-    );
-    assert_eq!(
-        positioning::tasklist_boundary(1614, [rect(1614), rect(1200)]),
-        Some(1200)
-    );
-    assert_eq!(
-        positioning::tasklist_boundary(1614, [rect(1100), rect(1200)]),
-        Some(1100)
-    );
-}
-
 // Exercise the actual restored-rectangle check with a tray-adjacent widget.
 fn can_redock_at_tray(free_space: i32, width: i32) -> bool {
     let taskbar = RECT {
@@ -602,9 +583,22 @@ fn can_redock_at_tray(free_space: i32, width: i32) -> bool {
         right: 1920,
         bottom: 96,
     };
-    let slot = RECT {
-        right: free_space,
+    let tray = RECT {
+        left: free_space,
         ..taskbar
+    };
+    // A button at the leading edge supplies the 20px return clearance.
+    let occupancy = taskbar_collision::Occupancy {
+        bounds: taskbar,
+        occupied: vec![
+            RECT {
+                left: -1,
+                right: 0,
+                ..taskbar
+            },
+            tray,
+        ],
+        reserved: vec![tray],
     };
     let widget = RECT {
         left: free_space - width,
@@ -612,5 +606,5 @@ fn can_redock_at_tray(free_space: i32, width: i32) -> bool {
         bottom: 69,
         ..taskbar
     };
-    positioning::dock_rect_fits(taskbar, slot, widget, 20)
+    occupancy.can_restore(widget, 20)
 }
