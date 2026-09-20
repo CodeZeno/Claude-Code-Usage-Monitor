@@ -56,15 +56,44 @@ pub fn poll(
     settings: &crate::accounts::AccountSettings,
     previous: Option<&AppUsageData>,
     force: bool,
+    on_progress: impl FnMut(AppUsageData),
 ) -> Result<AppUsageData, PollFailure> {
     if enabled_providers
         .iter()
         .any(|provider| settings.get(provider).is_some())
     {
-        accounts::poll_accounts(enabled_providers, settings, previous, force)
+        accounts::poll_accounts(enabled_providers, settings, previous, force, on_progress)
     } else {
-        poll_concurrently_with(enabled_providers, poll_provider)
+        poll_concurrently_with_progress(enabled_providers, poll_provider, on_progress)
     }
+}
+
+/// Replace only completed accounts/providers. Pending sources retain their
+/// previous readings; failures use the normal stale-data and account rules.
+pub fn merge_poll_progress(
+    update: AppUsageData,
+    previous: &AppUsageData,
+    settings: &crate::accounts::AccountSettings,
+) -> AppUsageData {
+    let providers = ProviderSet::from_enabled(
+        update
+            .iter()
+            .map(|(provider, _)| provider)
+            .chain(update.accounts.iter().map(|account| account.provider)),
+    );
+    let update = carry_forward_failures(update, previous, providers);
+    let mut merged = previous.clone();
+    for (provider, usage) in update.iter() {
+        merged.insert(provider, usage.clone());
+    }
+    for account in update.accounts {
+        merged
+            .accounts
+            .retain(|old| old.provider != account.provider || old.profile.id != account.profile.id);
+        merged.accounts.push(account);
+    }
+    merged.select_accounts(settings);
+    merged
 }
 
 /// Keep the previous reading for any enabled provider that failed this cycle.
@@ -104,6 +133,7 @@ pub fn carry_forward_failures(
     merged
 }
 
+#[cfg(test)]
 fn poll_with(
     enabled_providers: ProviderSet,
     mut poll_provider: impl FnMut(ProviderId) -> Result<UsageData, PollError>,
@@ -117,6 +147,7 @@ fn poll_with(
 
 const MAX_CONCURRENT_PROVIDER_POLLS: usize = 3;
 
+#[cfg(test)]
 fn poll_concurrently_with<F>(
     enabled_providers: ProviderSet,
     poll_provider: F,
@@ -124,10 +155,18 @@ fn poll_concurrently_with<F>(
 where
     F: Fn(ProviderId) -> Result<UsageData, PollError> + Sync,
 {
+    poll_concurrently_with_progress(enabled_providers, poll_provider, |_| {})
+}
+
+fn poll_concurrently_with_progress<F>(
+    enabled_providers: ProviderSet,
+    poll_provider: F,
+    mut on_progress: impl FnMut(AppUsageData),
+) -> Result<AppUsageData, PollFailure>
+where
+    F: Fn(ProviderId) -> Result<UsageData, PollError> + Sync,
+{
     let providers = enabled_providers.iter().collect::<Vec<_>>();
-    if providers.len() <= 1 {
-        return poll_with(enabled_providers, poll_provider);
-    }
 
     let worker_count = providers.len().min(MAX_CONCURRENT_PROVIDER_POLLS);
     let next_provider = std::sync::atomic::AtomicUsize::new(0);
@@ -149,7 +188,15 @@ where
             });
         }
         drop(sender);
-        receiver.into_iter().collect::<Vec<_>>()
+        receiver
+            .into_iter()
+            .map(|(provider, result)| {
+                if let Ok(usage) = &result {
+                    on_progress(AppUsageData::from_iter([(provider, usage.clone())]));
+                }
+                (provider, result)
+            })
+            .collect::<Vec<_>>()
     });
     results.sort_by_key(|(provider, _)| *provider);
     merge_poll_results(enabled_providers, results)

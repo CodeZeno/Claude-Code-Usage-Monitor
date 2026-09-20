@@ -117,17 +117,23 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
 /// The desktop app's token, but only for a profile that points at the default
 /// CLI credentials path.
 fn desktop_credentials_for_default_path(path: &Path) -> Option<Credentials> {
-    let credentials = read_desktop_app_credentials(&desktop_fallback_path(path)?)?;
+    let credentials = desktop_fallback_paths(path)
+        .iter()
+        .find_map(|path| read_desktop_app_credentials(path))?;
     diagnose::log("default profile fell back to the Claude desktop app token cache");
     Some(credentials)
 }
 
-fn desktop_fallback_path(path: &Path) -> Option<PathBuf> {
-    let default = crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)?;
+fn desktop_fallback_paths(path: &Path) -> Vec<PathBuf> {
+    let Some(default) =
+        crate::accounts::default_credential_path(crate::providers::ProviderId::Claude)
+    else {
+        return Vec::new();
+    };
     let explicit = std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty());
     desktop_fallback_allowed(path, &default, explicit)
-        .then(claude_desktop::config_path)
-        .flatten()
+        .then(claude_desktop::config_paths)
+        .unwrap_or_default()
 }
 
 fn desktop_fallback_allowed(path: &Path, default: &Path, explicit_directory: bool) -> bool {
@@ -137,20 +143,21 @@ fn desktop_fallback_allowed(path: &Path, default: &Path, explicit_directory: boo
 }
 
 pub(super) fn account_watch_signature(path: &Path) -> String {
-    account_watch_signature_with_desktop(path, desktop_fallback_path(path).as_deref())
+    account_watch_signature_with_desktop(path, &desktop_fallback_paths(path))
 }
 
-fn account_watch_signature_with_desktop(path: &Path, desktop: Option<&Path>) -> String {
-    let signature = crate::accounts::file_signature(path);
-    match desktop {
-        // A default-path profile may read either file. Watch both so a desktop
-        // login/rotation resumes a paused account and invalidates stale usage.
-        Some(desktop) => crate::accounts::fingerprint(&format!(
-            "{signature}|{}",
-            claude_desktop::watch_signature(desktop)
-        )),
-        None => signature,
+fn account_watch_signature_with_desktop(path: &Path, desktops: &[PathBuf]) -> String {
+    let mut signature = crate::accounts::file_signature(path);
+    if desktops.is_empty() {
+        return signature;
     }
+    // Default-path accounts can use either installation. Include even missing
+    // caches so a new Store login resumes polling; custom accounts stay pinned.
+    for desktop in desktops {
+        signature.push('|');
+        signature.push_str(&claude_desktop::watch_signature(desktop));
+    }
+    crate::accounts::fingerprint(&signature)
 }
 
 pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollError> {
@@ -576,9 +583,13 @@ fn resolve_windows_claude_path() -> String {
 /// `%APPDATA%\Claude\claude-code\<version>\claude.exe`, which is the only
 /// Claude binary present when the standalone CLI was never installed.
 fn bundled_desktop_claude_path() -> Option<PathBuf> {
-    let versions = dirs::config_dir()?.join("Claude").join("claude-code");
-    let mut candidates: Vec<PathBuf> = std::fs::read_dir(versions)
-        .ok()?
+    let mut candidates: Vec<PathBuf> = claude_desktop::data_directories()
+        .into_iter()
+        .flat_map(|path| {
+            std::fs::read_dir(path.join("claude-code"))
+                .into_iter()
+                .flatten()
+        })
         .flatten()
         .map(|entry| entry.path().join("claude.exe"))
         .filter(|path| path.is_file())
@@ -692,7 +703,13 @@ fn credential_sources_in_order() -> impl Iterator<Item = CredentialSource> {
     let explicit = std::env::var_os("CLAUDE_CONFIG_DIR").is_some_and(|value| !value.is_empty());
     windows_credential_source()
         .into_iter()
-        .chain((!explicit).then(desktop_app_credential_source).flatten())
+        .chain(
+            (!explicit)
+                .then(claude_desktop::config_paths)
+                .into_iter()
+                .flatten()
+                .map(CredentialSource::DesktopApp),
+        )
         .chain(
             std::iter::once_with(move || {
                 if explicit {
@@ -718,10 +735,6 @@ fn windows_credential_source() -> Option<CredentialSource> {
     Some(CredentialSource::Windows(
         dirs::home_dir()?.join(".claude").join(".credentials.json"),
     ))
-}
-
-fn desktop_app_credential_source() -> Option<CredentialSource> {
-    claude_desktop::config_path().map(CredentialSource::DesktopApp)
 }
 
 pub(super) fn native_credential_path() -> Option<PathBuf> {
@@ -944,15 +957,16 @@ mod tests {
         let desktop = directory.join("config.json");
         // A tokenless CLI file remains unchanged throughout desktop login.
         std::fs::write(&native, r#"{"claudeAiOauth":{"accessToken":""}}"#).unwrap();
-        let pinned = account_watch_signature_with_desktop(&native, None);
+        let pinned = account_watch_signature_with_desktop(&native, &[]);
         assert_eq!(pinned, crate::accounts::file_signature(&native));
-        let missing = account_watch_signature_with_desktop(&native, Some(&desktop));
+        let missing = account_watch_signature_with_desktop(&native, std::slice::from_ref(&desktop));
         std::fs::write(
             &desktop,
             r#"{"oauth:tokenCache":"legacy","oauth:tokenCacheV2":"first","window":1}"#,
         )
         .unwrap();
-        let logged_in = account_watch_signature_with_desktop(&native, Some(&desktop));
+        let logged_in =
+            account_watch_signature_with_desktop(&native, std::slice::from_ref(&desktop));
         assert_ne!(missing, logged_in);
         std::fs::write(
             &desktop,
@@ -961,7 +975,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             logged_in,
-            account_watch_signature_with_desktop(&native, Some(&desktop))
+            account_watch_signature_with_desktop(&native, std::slice::from_ref(&desktop))
         );
         std::fs::write(
             &desktop,
@@ -970,16 +984,35 @@ mod tests {
         .unwrap();
         assert_ne!(
             logged_in,
-            account_watch_signature_with_desktop(&native, Some(&desktop))
+            account_watch_signature_with_desktop(&native, std::slice::from_ref(&desktop))
         );
-        assert_eq!(pinned, account_watch_signature_with_desktop(&native, None));
+        assert_eq!(pinned, account_watch_signature_with_desktop(&native, &[]));
         std::fs::remove_file(&desktop).unwrap();
         assert_eq!(
             missing,
-            account_watch_signature_with_desktop(&native, Some(&desktop))
+            account_watch_signature_with_desktop(&native, std::slice::from_ref(&desktop))
         );
         std::fs::remove_file(&native).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn default_profile_watches_both_desktop_installations() {
+        let root = crate::app_settings::app_data_directory();
+        let native = root.join(".credentials.json");
+        let desktops = vec![root.join("regular.json"), root.join("store.json")];
+        std::fs::write(&desktops[0], r#"{"oauth:tokenCacheV2":"regular"}"#).unwrap();
+        let before = account_watch_signature_with_desktop(&native, &desktops);
+        let pinned = account_watch_signature_with_desktop(&native, &[]);
+        std::fs::write(&desktops[1], r#"{"oauth:tokenCacheV2":"store-login"}"#).unwrap();
+        let logged_in = account_watch_signature_with_desktop(&native, &desktops);
+        assert_ne!(before, logged_in);
+        std::fs::write(&desktops[1], r#"{"oauth:tokenCacheV2":"store-rotated"}"#).unwrap();
+        assert_ne!(
+            logged_in,
+            account_watch_signature_with_desktop(&native, &desktops)
+        );
+        assert_eq!(pinned, account_watch_signature_with_desktop(&native, &[]));
     }
 
     #[test]

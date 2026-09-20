@@ -234,11 +234,57 @@ pub struct UsageCache {
     pub data: AppUsageData,
 }
 
+#[cfg(not(test))]
 pub fn app_data_directory() -> PathBuf {
     let root = std::env::var_os("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."));
     root.join("ClaudeCodeUsageMonitor")
+}
+
+/// Test threads get independent settings, themes, menus, and caches. Do not
+/// change APPDATA: provider discovery and parallel tests also read it.
+#[cfg(test)]
+pub fn app_data_directory() -> PathBuf {
+    thread_local! {
+        static DIRECTORY: TestAppData = TestAppData::new();
+    }
+    DIRECTORY.with(|directory| directory.0.clone())
+}
+
+#[cfg(test)]
+struct TestAppData(PathBuf);
+
+#[cfg(test)]
+impl TestAppData {
+    fn new() -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        loop {
+            let path = std::env::temp_dir().join(format!(
+                "ccum-test-{}-{stamp}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            match std::fs::create_dir(&path) {
+                Ok(()) => return Self(path),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => panic!("cannot create test settings directory: {error}"),
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestAppData {
+    fn drop(&mut self) {
+        // Only remove the directory this thread successfully created.
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
 }
 
 pub fn settings_path() -> PathBuf {
@@ -382,6 +428,56 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn application_files_stay_inside_the_test_directory() {
+        let root = app_data_directory();
+        assert!(root.starts_with(std::env::temp_dir()));
+        if let Some(real) = std::env::var_os("APPDATA") {
+            assert!(!root.starts_with(PathBuf::from(real).join("ClaudeCodeUsageMonitor")));
+        }
+        for path in [
+            settings_path(),
+            usage_cache_path(),
+            codex_credits_path(),
+            crate::theme_engine::themes_directory(),
+            crate::theme_engine::assets_directory(),
+            crate::context_menu::context_menus_directory(),
+            crate::theme_engine::ensure_starter_theme().unwrap(),
+            crate::context_menu::ensure_builtin_context_menus().unwrap(),
+        ] {
+            assert!(path.starts_with(&root), "{}", path.display());
+        }
+        save_settings(&SettingsFile::default()).unwrap();
+        assert!(settings_path().is_file());
+    }
+
+    #[test]
+    fn parallel_test_threads_have_independent_settings_and_clean_up() {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let workers: Vec<_> = [7, 11]
+            .into_iter()
+            .map(|minutes| {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    let settings = SettingsFile {
+                        poll_interval_ms: minutes * POLL_1_MIN,
+                        ..Default::default()
+                    };
+                    save_settings(&settings).unwrap();
+                    barrier.wait();
+                    assert_eq!(load_settings().poll_interval_ms, minutes * POLL_1_MIN);
+                    app_data_directory()
+                })
+            })
+            .collect();
+        let paths: Vec<_> = workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect();
+        assert_ne!(paths[0], paths[1]);
+        assert!(paths.iter().all(|path| !path.exists()));
+    }
 
     #[test]
     fn custom_poll_minutes_and_presets_survive_settings_round_trip() {

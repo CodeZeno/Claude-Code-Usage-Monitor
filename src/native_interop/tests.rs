@@ -3,6 +3,19 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::LRESULT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
+#[test]
+fn browser_opener_rejects_non_web_targets_without_launching_them() {
+    for target in [
+        "",
+        "cmd.exe",
+        "file:///C:/Windows/System32/cmd.exe",
+        "ms-settings:",
+        "https://example.com\0cmd.exe",
+    ] {
+        assert!(!open_web_url(None, target));
+    }
+}
+
 #[derive(Debug)]
 struct TransitionObservation {
     message: u32,

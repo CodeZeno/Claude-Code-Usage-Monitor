@@ -1,10 +1,7 @@
 use super::*;
 
 pub fn themes_directory() -> PathBuf {
-    let appdata = std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(appdata)
-        .join("ClaudeCodeUsageMonitor")
-        .join("themes")
+    crate::app_settings::app_data_directory().join("themes")
 }
 
 #[derive(Clone, Debug)]

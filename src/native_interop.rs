@@ -7,6 +7,7 @@ use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO,
 };
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
+use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 // Window style constants
@@ -47,6 +48,27 @@ pub const WM_APP_TRAY_REPOSITION: u32 = WM_APP + 15;
 
 pub fn is_taskbar_horizontal(rect: RECT) -> bool {
     (rect.right - rect.left) >= (rect.bottom - rect.top)
+}
+
+/// Open web links without depending on eframe's optional `links` feature.
+/// Use the same scheme restriction for dashboard and user-authored links.
+pub fn open_web_url(owner: Option<HWND>, url: &str) -> bool {
+    if !crate::context_menu::supported_url(url) || url.contains('\0') {
+        return false;
+    }
+    let operation = wide_str("open");
+    let target = wide_str(url.trim());
+    let result = unsafe {
+        ShellExecuteW(
+            owner,
+            PCWSTR::from_raw(operation.as_ptr()),
+            PCWSTR::from_raw(target.as_ptr()),
+            PCWSTR::null(),
+            PCWSTR::null(),
+            SW_SHOWNORMAL,
+        )
+    };
+    result.0 as isize > 32
 }
 
 static DESKTOP_HOST: Mutex<Option<(isize, isize)>> = Mutex::new(None);

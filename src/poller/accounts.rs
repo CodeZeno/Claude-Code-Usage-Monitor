@@ -31,8 +31,9 @@ pub(super) fn poll_accounts(
     settings: &AccountSettings,
     previous: Option<&AppUsageData>,
     force: bool,
+    on_progress: impl FnMut(AppUsageData),
 ) -> Result<AppUsageData, PollFailure> {
-    poll_accounts_with_history(
+    poll_accounts_with_progress(
         enabled,
         settings,
         previous,
@@ -45,6 +46,7 @@ pub(super) fn poll_accounts(
             },
             None => poll_provider(provider),
         },
+        on_progress,
     )
 }
 
@@ -60,12 +62,27 @@ where
     poll_accounts_with_history(enabled, settings, None, false, poll)
 }
 
+#[cfg(test)]
 fn poll_accounts_with_history<F>(
     enabled: ProviderSet,
     settings: &AccountSettings,
     previous: Option<&AppUsageData>,
     force: bool,
     poll: F,
+) -> Result<AppUsageData, PollFailure>
+where
+    F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
+{
+    poll_accounts_with_progress(enabled, settings, previous, force, poll, |_| {})
+}
+
+fn poll_accounts_with_progress<F>(
+    enabled: ProviderSet,
+    settings: &AccountSettings,
+    previous: Option<&AppUsageData>,
+    force: bool,
+    poll: F,
+    mut on_progress: impl FnMut(AppUsageData),
 ) -> Result<AppUsageData, PollFailure>
 where
     F: Fn(ProviderId, Option<&std::path::Path>) -> Result<UsageData, PollError> + Sync,
@@ -169,7 +186,16 @@ where
             });
         }
         drop(sender);
-        receiver.into_iter().collect::<Vec<_>>()
+        receiver
+            .into_iter()
+            .inspect(|(_, target, signature, result)| {
+                let mut update = AppUsageData::default();
+                append_account_result(&mut update, target, signature, result);
+                if !update.is_empty() || !update.accounts.is_empty() {
+                    on_progress(update);
+                }
+            })
+            .collect::<Vec<_>>()
     });
     results.sort_by_key(|(index, _, _, _)| *index);
     let mut data = AppUsageData::default();
@@ -208,20 +234,7 @@ where
                 error: *error,
             });
         }
-        if let Some(profile) = target.profile {
-            let error = result.as_ref().err().copied();
-            data.accounts.push(AccountUsage {
-                provider: target.provider,
-                profile,
-                source_signature: signature,
-                source_path: target.path.ok().flatten(),
-                usage: result.ok(),
-                error,
-                selected: false,
-            });
-        } else if let Ok(usage) = result {
-            data.insert(target.provider, usage);
-        }
+        append_account_result(&mut data, &target, &signature, &result);
     }
     data.select_accounts(settings);
     // Account failures are data too: publish their status to the dashboard,
@@ -229,6 +242,27 @@ where
     match first_error {
         Some(error) if data.accounts.is_empty() && data.is_empty() => Err(error),
         _ => Ok(data),
+    }
+}
+
+fn append_account_result(
+    data: &mut AppUsageData,
+    target: &Target,
+    signature: &str,
+    result: &Result<UsageData, PollError>,
+) {
+    if let Some(profile) = &target.profile {
+        data.accounts.push(AccountUsage {
+            provider: target.provider,
+            profile: profile.clone(),
+            source_signature: signature.to_string(),
+            source_path: target.path.as_ref().ok().cloned().flatten(),
+            usage: result.as_ref().ok().cloned(),
+            error: result.as_ref().err().copied(),
+            selected: false,
+        });
+    } else if let Ok(usage) = result {
+        data.insert(target.provider, usage.clone());
     }
 }
 
@@ -300,6 +334,117 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ready_accounts_are_published_while_another_provider_is_waiting() {
+        let mut settings = settings();
+        settings.claude.profiles.truncate(1);
+        settings.claude.selected = "personal".into();
+        settings.codex.profiles[0].config_dir = "C:\\account-tests\\codex".into();
+        let (release, wait) = std::sync::mpsc::channel();
+        let wait = std::sync::Mutex::new(wait);
+        let mut visible = AppUsageData::default();
+        let mut order = Vec::new();
+        let final_data = poll_accounts_with_progress(
+            ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]),
+            &settings,
+            None,
+            false,
+            |provider, _| {
+                if provider == ProviderId::Claude {
+                    wait.lock()
+                        .unwrap()
+                        .recv_timeout(Duration::from_secs(5))
+                        .unwrap();
+                }
+                Ok(usage(42.0))
+            },
+            |update| {
+                let provider = update.accounts[0].provider;
+                order.push(provider);
+                visible = merge_poll_progress(update, &visible, &settings);
+                if provider == ProviderId::Codex {
+                    assert!(visible.get(ProviderId::Codex).is_some());
+                    assert!(visible.get(ProviderId::Claude).is_none());
+                    release.send(()).unwrap();
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(order, [ProviderId::Codex, ProviderId::Claude]);
+        for provider in [ProviderId::Claude, ProviderId::Codex] {
+            assert_eq!(visible.get(provider), final_data.get(provider));
+        }
+    }
+
+    #[test]
+    fn partial_account_results_preserve_selection_and_error_rules() {
+        let settings = settings();
+        let previous =
+            poll_accounts_with(ProviderSet::default(), &settings, |_, _| Ok(usage(25.0))).unwrap();
+        let personal = previous
+            .accounts
+            .iter()
+            .find(|account| account.profile.id == "personal")
+            .unwrap()
+            .clone();
+        let work = previous
+            .accounts
+            .iter()
+            .find(|account| account.profile.id == "work")
+            .unwrap()
+            .clone();
+        let delta = |account| {
+            let mut data = AppUsageData::default();
+            data.accounts.push(account);
+            data
+        };
+        // The unselected account finishing first must not replace the selected
+        // account's old reading or display itself as the selected account.
+        let mut refreshed = personal.clone();
+        refreshed.usage = Some(usage(60.0));
+        let merged = merge_poll_progress(delta(refreshed.clone()), &previous, &settings);
+        assert_eq!(
+            merged.get(ProviderId::Claude).unwrap().session.percentage,
+            25.0
+        );
+        assert!(
+            merge_poll_progress(delta(refreshed), &AppUsageData::default(), &settings)
+                .get(ProviderId::Claude)
+                .is_none()
+        );
+        for (error, changed, keeps_reading) in [
+            (PollError::RequestFailed, false, true),
+            (PollError::AuthRequired, false, false),
+            (PollError::RequestFailed, true, false),
+        ] {
+            let mut failed = work.clone();
+            failed.usage = None;
+            failed.error = Some(error);
+            if changed {
+                failed.source_signature.push('x');
+            }
+            let update = merge_poll_progress(delta(failed), &merged, &settings);
+            assert_eq!(update.accounts.len(), 2);
+            assert_eq!(update.get(ProviderId::Claude).is_some(), keeps_reading);
+            if keeps_reading {
+                assert!(update.get(ProviderId::Claude).unwrap().stale);
+            }
+            assert_eq!(
+                update
+                    .accounts
+                    .iter()
+                    .find(|account| account.profile.id == "personal")
+                    .unwrap()
+                    .usage
+                    .as_ref()
+                    .unwrap()
+                    .session
+                    .percentage,
+                60.0
+            );
         }
     }
 

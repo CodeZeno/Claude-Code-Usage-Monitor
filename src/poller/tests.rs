@@ -195,6 +195,57 @@ fn returns_first_error_when_no_enabled_provider_succeeds() {
 }
 
 #[test]
+fn ready_providers_are_published_before_slow_providers_finish() {
+    let (release, wait) = std::sync::mpsc::channel();
+    let wait = std::sync::Mutex::new(wait);
+    let mut published = Vec::new();
+    let data = poll_concurrently_with_progress(
+        ProviderSet::from_enabled([ProviderId::Cursor, ProviderId::OpenCode]),
+        |provider| {
+            if provider == ProviderId::OpenCode {
+                wait.lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
+            }
+            Ok(usage_with_session_percent(42.0))
+        },
+        |update| {
+            let provider = update.iter().next().unwrap().0;
+            published.push(provider);
+            if provider == ProviderId::Cursor {
+                release.send(()).unwrap();
+            }
+        },
+    )
+    .unwrap();
+    assert_eq!(published, [ProviderId::Cursor, ProviderId::OpenCode]);
+    assert_eq!(data.iter().count(), 2);
+}
+
+#[test]
+fn progress_keeps_pending_provider_readings_until_they_finish() {
+    let previous = AppUsageData::from_iter([
+        (ProviderId::Cursor, usage_with_session_percent(10.0)),
+        (ProviderId::OpenCode, usage_with_session_percent(20.0)),
+    ]);
+    let update = AppUsageData::from_iter([(ProviderId::Cursor, usage_with_session_percent(15.0))]);
+    let merged = merge_poll_progress(
+        update,
+        &previous,
+        &crate::accounts::AccountSettings::default(),
+    );
+    assert_eq!(
+        merged.get(ProviderId::Cursor).unwrap().session.percentage,
+        15.0
+    );
+    assert_eq!(
+        merged.get(ProviderId::OpenCode),
+        previous.get(ProviderId::OpenCode)
+    );
+}
+
+#[test]
 fn concurrent_polling_is_bounded_and_preserves_results() {
     use std::sync::atomic::{AtomicUsize, Ordering};
 

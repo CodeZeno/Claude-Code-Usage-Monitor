@@ -64,37 +64,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let timer_id = wparam.0;
             match timer_id {
                 TIMER_POLL => {
-                    let auth_watch = {
-                        let state = lock_state();
-                        state.as_ref().map(|s| {
-                            (
-                                s.auth_error_paused_polling,
-                                s.auth_watch_mode,
-                                s.auth_watch_snapshot.clone(),
-                            )
-                        })
-                    };
-                    match auth_watch {
-                        Some((true, watch_mode, previous_snapshot)) => {
-                            let current_snapshot = poller::credential_watch_snapshot(watch_mode);
-                            if current_snapshot != previous_snapshot {
-                                let mut state = lock_state();
-                                if let Some(s) = state.as_mut() {
-                                    if s.auth_error_paused_polling
-                                        && s.auth_watch_mode == watch_mode
-                                    {
-                                        s.auth_watch_snapshot = current_snapshot;
-                                    }
-                                }
-                                drop(state);
-                                request_poll(hwnd);
-                            }
-                        }
-                        Some((false, _, _)) => {
-                            request_scheduled_poll(hwnd);
-                        }
-                        None => {}
-                    }
+                    // Credential discovery can launch WSL and decrypt local
+                    // caches. The poll worker also handles the paused state.
+                    request_scheduled_poll(hwnd);
                 }
                 TIMER_COUNTDOWN => {
                     render_layered();

@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.12.42] - 2026-09-21
+
+### Fixed
+
+- Published usage as each provider or account responds, allowing faster providers to appear while others refresh credentials or wait on network requests. Pending readings are preserved, and the dashboard receives partial updates too.
+- Moved paused credential checks onto the poll worker so local credential reads and WSL probes cannot block the widget's window procedure. Manual refreshes queued during a check are preserved.
+- Isolated test settings, usage caches, themes, and context menus in temporary directories per test thread, preventing tests from changing the real application data or interfering with each other.
+- Restored the dashboard GitHub link, which stopped opening after the eframe update in `2.8.16`, by using the Windows browser opener shared with widget links.
+- Detected Claude desktop credentials from Microsoft Store installations and preferred tokens carrying both usage-related scopes. Preserved newer token-cache support, credential-change watching, and explicit account selection.
+
 ## [2.12.41] - 2026-09-21
 
 ### Fixed
@@ -840,3 +850,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.39]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.38...v2.12.39
 [2.12.40]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.39...v2.12.40
 [2.12.41]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.40...v2.12.41
+[2.12.42]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.41...v2.12.42

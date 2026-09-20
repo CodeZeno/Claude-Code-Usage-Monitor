@@ -17,7 +17,6 @@ use windows::Win32::UI::HiDpi::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetDoubleClickTime, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
 };
-use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::app_settings::{
@@ -225,23 +224,8 @@ fn language_from_menu_command_id(command: u16) -> Option<LanguageId> {
 }
 
 fn open_web_url(hwnd: HWND, url: &str, failure_message: &'static str) {
-    if !context_menu::supported_url(url) {
-        return;
-    }
-    unsafe {
-        let operation = native_interop::wide_str("open");
-        let url = native_interop::wide_str(url.trim());
-        let result = ShellExecuteW(
-            Some(hwnd),
-            PCWSTR::from_raw(operation.as_ptr()),
-            PCWSTR::from_raw(url.as_ptr()),
-            PCWSTR::null(),
-            PCWSTR::null(),
-            SW_SHOWNORMAL,
-        );
-        if result.0 as isize <= 32 {
-            diagnose::log(failure_message);
-        }
+    if !native_interop::open_web_url(Some(hwnd), url) {
+        diagnose::log(failure_message);
     }
 }
 
@@ -2324,31 +2308,77 @@ fn request_poll_inner(hwnd: HWND, queue_if_busy: bool) {
         return;
     }
     let send_hwnd = SendHwnd::from_hwnd(hwnd);
-    std::thread::spawn(move || poll_worker(send_hwnd));
+    std::thread::spawn(move || poll_worker(send_hwnd, !queue_if_busy));
 }
 
-fn poll_worker(send_hwnd: SendHwnd) {
+/// Run credential watching under the same in-flight guard as usage polling.
+/// Timer ticks cannot pile up workers, and manual refreshes still queue behind
+/// a slow credential scan. Credential changes do not synthesize manual actions.
+fn poll_worker(send_hwnd: SendHwnd, scheduled: bool) {
+    run_poll_worker(&POLL_IN_FLIGHT, &POLL_PENDING, scheduled, |scheduled| {
+        if !scheduled || scheduled_poll_needed() {
+            do_poll_once(send_hwnd.to_hwnd());
+        }
+    });
+}
+
+fn run_poll_worker(
+    in_flight: &AtomicBool,
+    pending: &AtomicBool,
+    mut scheduled: bool,
+    mut poll: impl FnMut(bool),
+) {
     loop {
-        do_poll_once(send_hwnd.to_hwnd());
-        if POLL_PENDING.swap(false, Ordering::AcqRel) {
+        poll(scheduled);
+        // Any queued request is an explicit refresh, not another timer tick.
+        scheduled = false;
+        if pending.swap(false, Ordering::AcqRel) {
             continue;
         }
 
-        POLL_IN_FLIGHT.store(false, Ordering::Release);
-        if !POLL_PENDING.swap(false, Ordering::AcqRel) {
+        in_flight.store(false, Ordering::Release);
+        if !pending.swap(false, Ordering::AcqRel) {
             break;
         }
 
         // A request can arrive between the pending check and releasing the
         // in-flight flag. Reacquire ownership unless that request already
         // started a replacement worker.
-        if POLL_IN_FLIGHT
+        if in_flight
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             break;
         }
     }
+}
+
+fn scheduled_poll_needed() -> bool {
+    let watch = {
+        let state = lock_state();
+        let Some(state) = state.as_ref() else {
+            return false;
+        };
+        if !state.auth_error_paused_polling {
+            return true;
+        }
+        (
+            state.auth_watch_mode,
+            state.auth_watch_snapshot.clone(),
+            state.providers,
+            state.accounts.clone(),
+        )
+    };
+    // No STATE lock is held while reading files, credentials, or WSL.
+    let current = poller::credential_watch_snapshot(watch.0);
+    current != watch.1
+        && lock_state().as_ref().is_some_and(|state| {
+            state.auth_error_paused_polling
+                && state.auth_watch_mode == watch.0
+                && state.auth_watch_snapshot == watch.1
+                && state.providers == watch.2
+                && state.accounts == watch.3
+        })
 }
 
 fn do_poll_once(hwnd: HWND) {
@@ -2369,7 +2399,41 @@ fn do_poll_once(hwnd: HWND) {
     };
 
     diagnose::log_lazy(|| format!("poll started providers={enabled_providers:?} force={force}"));
-    match poller::poll(enabled_providers, &accounts, previous.as_ref(), force) {
+    let result = poller::poll(
+        enabled_providers,
+        &accounts,
+        previous.as_ref(),
+        force,
+        |update| {
+            let cache_data = {
+                let mut state = lock_state();
+                let Some(state) = state.as_mut() else {
+                    return;
+                };
+                // A result from an old provider/account selection must not be shown.
+                if state.providers != enabled_providers || state.accounts != accounts {
+                    return;
+                }
+                let data = poller::merge_poll_progress(
+                    update,
+                    &state.data.clone().unwrap_or_default(),
+                    &accounts,
+                );
+                state.data = Some(data.clone());
+                state.last_poll_ok = true;
+                data
+            };
+            // The dashboard runs separately and follows the same cache as the
+            // widget. Publish before waiting for slower providers to finish.
+            if let Err(error) = app_settings::save_usage_cache(&cache_data, true) {
+                diagnose::log_error("unable to save partial usage cache", error);
+            }
+            unsafe {
+                let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
+            }
+        },
+    );
+    match result {
         Ok(data) => {
             let mut state = lock_state();
             if state
@@ -2877,3 +2941,42 @@ mod poll_display_state_tests {
 
 #[cfg(test)]
 mod placement_regression_tests;
+
+#[cfg(test)]
+mod credential_watch_worker_tests {
+    use super::*;
+
+    #[test]
+    fn a_manual_refresh_queued_during_a_slow_watch_is_not_lost() {
+        let in_flight = AtomicBool::new(true);
+        let pending = AtomicBool::new(false);
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let in_flight = &in_flight;
+            let pending = &pending;
+            let worker = scope.spawn(move || {
+                let mut calls = Vec::new();
+                run_poll_worker(in_flight, pending, true, |scheduled| {
+                    calls.push(scheduled);
+                    if scheduled {
+                        started_tx.send(()).unwrap();
+                        resume_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    }
+                });
+                calls
+            });
+            started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            // A second timer tick cannot acquire the worker while discovery is
+            // blocked, but an explicit refresh can queue for that worker.
+            assert!(in_flight
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err());
+            pending.store(true, Ordering::Release);
+            resume_tx.send(()).unwrap();
+            assert_eq!(worker.join().unwrap(), [true, false]);
+        });
+        assert!(!in_flight.load(Ordering::Acquire));
+        assert!(!pending.load(Ordering::Acquire));
+    }
+}
