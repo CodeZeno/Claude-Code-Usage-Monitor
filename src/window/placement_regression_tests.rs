@@ -21,6 +21,7 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         auth_watch_mode: poller::CredentialWatchMode::ActiveSource(ProviderId::Claude),
         auth_watch_snapshot: Vec::new(),
         last_poll_ok: false,
+        last_poll_failure: None,
         update_status: UpdateStatus::Idle,
         last_update_check_unix: None,
         taskbar_index: 0,

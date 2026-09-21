@@ -37,7 +37,7 @@ pub(super) fn context_menu_label_editor(
                     .max_height(420.0)
                     .show(ui, |ui| {
                         let mut last_group = "";
-                        for value in TEXT_TEMPLATE_VALUES.iter().copied() {
+                        for value in text_template_choices(context, language) {
                             if value.group != last_group {
                                 if !last_group.is_empty() {
                                     ui.add_space(6.0);
@@ -51,10 +51,10 @@ pub(super) fn context_menu_label_editor(
                                 last_group = value.group;
                             }
                             let format = default_text_template_format(value.kind);
-                            let token = text_template_token(value.expression, format);
-                            let sample = text_template_value_sample(value, format, context);
+                            let token = text_template_token(&value.expression, format);
+                            let sample = text_template_value_sample(&value, format, context);
                             if ui
-                                .button(format!("{}  —  {}", language.text(value.label), sample))
+                                .button(format!("{}  —  {}", value.label, sample))
                                 .on_hover_text(&token)
                                 .clicked()
                             {

@@ -90,6 +90,15 @@ Credentials are read without modifying the provider files that contain them. Ope
 
 ## Troubleshooting
 
+Hover over the tray icon for the latest failure reason, or check the account
+status under **Settings > Providers > Accounts**. Missing credentials, expired
+or rejected logins, network failures, HTTP errors, and unexpected usage responses
+have distinct messages. Sign in again using the Claude desktop app or the CLI
+that owns the affected account, then refresh the monitor.
+
+Open **Diagnostics** in the dashboard and enable recording to inspect or copy
+polling errors. Logging is optional; enable it before reproducing the problem.
+
 Run diagnostics with:
 
 ```powershell

@@ -12,6 +12,8 @@ pub enum PollError {
     NoCredentials,
     TokenExpired,
     RequestFailed,
+    NetworkError,
+    UnexpectedResponse,
     /// Preserve the last HTTP failure so account status can explain the result.
     HttpStatus(u16),
 }
@@ -25,7 +27,44 @@ impl PollError {
     }
 
     pub fn is_transient(self) -> bool {
-        matches!(self, Self::RequestFailed | Self::HttpStatus(_)) && !self.is_auth()
+        matches!(
+            self,
+            Self::RequestFailed
+                | Self::NetworkError
+                | Self::UnexpectedResponse
+                | Self::HttpStatus(_)
+        ) && !self.is_auth()
+    }
+
+    pub fn message(self, language: crate::localization::LanguageId) -> String {
+        match self {
+            Self::AuthRequired => language.text("Login rejected; sign in again").into(),
+            Self::TokenExpired => language
+                .text("Login expired and could not be renewed; sign in again")
+                .into(),
+            Self::NoCredentials => language.text("No usable login found; sign in first").into(),
+            Self::RequestFailed => language
+                .text("Usage request failed; retrying at the next refresh")
+                .into(),
+            Self::NetworkError => language
+                .text("Service unreachable; retrying at the next refresh")
+                .into(),
+            Self::UnexpectedResponse => language
+                .text("Unexpected usage response; retrying at the next refresh")
+                .into(),
+            Self::HttpStatus(code) => {
+                let reason = ureq::http::StatusCode::from_u16(code)
+                    .ok()
+                    .and_then(|status| status.canonical_reason())
+                    .unwrap_or("Request failed");
+                let action = if self.is_auth() {
+                    "Sign in again for this account"
+                } else {
+                    "Retrying at the next refresh"
+                };
+                format!("HTTP {code}: {reason}. {}", language.text(action))
+            }
+        }
     }
 }
 
@@ -494,14 +533,14 @@ fn time_until_display_change_from_secs(total_secs: u64) -> Duration {
     Duration::from_secs(total_secs.saturating_sub(current_bucket_start) + 1)
 }
 
-/// Returns true if either section has reached "now" (reset time has passed).
+/// Returns true if a reported usage window has reached its reset time.
 pub fn is_past_reset(data: &UsageData) -> bool {
     if data.stale {
         return false;
     }
     let now = SystemTime::now();
     let past = |s: &UsageSection| matches!(s.resets_at, Some(t) if now.duration_since(t).is_ok());
-    past(&data.session) || past(&data.weekly)
+    data.sections().any(past)
 }
 
 pub fn app_is_past_reset(data: &AppUsageData) -> bool {

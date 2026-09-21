@@ -168,6 +168,7 @@ pub(super) fn fetch_antigravity_usage_from_endpoint(
     let weekly = UsageSection::default();
 
     Ok(UsageData {
+        limits: Vec::new(),
         session,
         weekly,
         weekly_label: None,

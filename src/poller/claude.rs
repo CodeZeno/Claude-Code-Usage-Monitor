@@ -13,6 +13,8 @@ use super::{
 use crate::diagnose;
 use crate::models::{CreditsSection, UsageData};
 
+mod limits;
+
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
 const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku-4-5-20251001"];
@@ -23,6 +25,9 @@ struct UsageResponse {
     five_hour: Option<UsageBucket>,
     seven_day: Option<UsageBucket>,
     spend: Option<SpendResponse>,
+    limits: Option<Vec<serde_json::Value>>,
+    #[serde(flatten)]
+    extra: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// Paid credits that carry the account past its plan limits. Amounts are
@@ -164,7 +169,9 @@ pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollEr
     // Try the dedicated usage endpoint first
     if let Some(data) = try_usage_endpoint(token)? {
         // If reset timers are missing, fill them in from the Messages API
-        if data.session.resets_at.is_none() || data.weekly.resets_at.is_none() {
+        if (data.session.available && data.session.resets_at.is_none())
+            || (data.weekly.available && data.weekly.resets_at.is_none())
+        {
             if let Ok(fallback) = fetch_usage_via_messages(token) {
                 let mut merged = data;
                 merged.session.available |= fallback.session.available;
@@ -219,15 +226,37 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         },
     };
 
-    let response: UsageResponse = match resp.body_mut().read_json() {
+    parse_usage_body(resp.body_mut()).map(Some)
+}
+
+fn parse_usage_body(body: &mut ureq::Body) -> Result<UsageData, PollError> {
+    let response: UsageResponse = match body.read_json() {
         Ok(response) => response,
-        Err(_) => return Ok(None),
+        Err(error) => {
+            diagnose::log_error("unexpected Claude usage response", error);
+            return Err(PollError::UnexpectedResponse);
+        }
     };
-    Ok(Some(usage_from_response(response)))
+    validated_usage_from_response(response)
+}
+
+fn validated_usage_from_response(response: UsageResponse) -> Result<UsageData, PollError> {
+    let data = usage_from_response(response);
+    if !data.sections().any(|section| section.available) {
+        diagnose::log("unexpected Claude usage response: no usable usage limits");
+        return Err(PollError::UnexpectedResponse);
+    }
+    Ok(data)
 }
 
 fn usage_from_response(response: UsageResponse) -> UsageData {
-    let mut data = UsageData::default();
+    let mut data = UsageData {
+        limits: limits::parse(
+            response.limits.as_deref().unwrap_or_default(),
+            &response.extra,
+        ),
+        ..Default::default()
+    };
 
     if let Some(bucket) = &response.five_hour {
         data.session.available = true;
@@ -239,6 +268,18 @@ fn usage_from_response(response: UsageResponse) -> UsageData {
         data.weekly.available = true;
         data.weekly.percentage = bucket.utilization;
         data.weekly.resets_at = parse_iso8601(bucket.resets_at.as_deref());
+    }
+
+    // New-format responses may omit the legacy fields. Scoped quotas never
+    // replace the all-model session or weekly values used by built-in themes.
+    for limit in &data.limits {
+        if limit.scope.is_none() {
+            match limit.kind.as_str() {
+                "session" if !data.session.available => data.session = limit.usage.clone(),
+                "weekly_all" if !data.weekly.available => data.weekly = limit.usage.clone(),
+                _ => {}
+            }
+        }
     }
 
     data.credits = response
@@ -277,7 +318,7 @@ fn classify_usage_failure(error: &ureq::Error) -> UsageEndpointFailure {
 fn usage_request_error(error: &ureq::Error) -> PollError {
     match error {
         ureq::Error::StatusCode(status) => PollError::HttpStatus(*status),
-        _ => PollError::RequestFailed,
+        _ => PollError::NetworkError,
     }
 }
 
@@ -1051,6 +1092,88 @@ mod tests {
         let version = bundled_claude_version(Path::new("Claude/claude-code/current/claude.exe"));
 
         assert_eq!(version, None);
+    }
+
+    #[test]
+    fn malformed_usage_responses_are_distinct_from_network_and_auth_failures() {
+        for json in [
+            "not json",
+            "{}",
+            r#"{"five_hour":{"utilization":"wrong"}}"#,
+            r#"{"limits":[{"kind":"weekly_scoped"}]}"#,
+        ] {
+            let mut body = ureq::Body::builder().data(json.as_bytes().to_vec());
+            assert_eq!(
+                parse_usage_body(&mut body),
+                Err(PollError::UnexpectedResponse)
+            );
+        }
+        assert!(PollError::UnexpectedResponse.is_transient());
+        assert!(!PollError::UnexpectedResponse.is_auth());
+    }
+
+    #[test]
+    fn array_only_usage_fills_standard_windows_without_using_scoped_caps() {
+        let mut body = ureq::Body::builder().data(br#"{"limits":[
+            {"kind":"session","percent":29},
+            {"kind":"weekly_all","percent":26},
+            {"kind":"weekly_scoped","percent":99,"is_active":true,"scope":{"model":{"display_name":"Fable"}}}
+        ]}"#.to_vec());
+        let data = parse_usage_body(&mut body).unwrap();
+        assert_eq!(data.session.percentage, 29.0);
+        assert_eq!(data.weekly.percentage, 26.0);
+        assert_eq!(data.limits.len(), 3);
+        assert!(data.session.available && data.weekly.available);
+        let data = usage_from_json(
+            r#"{"five_hour":{"utilization":10},"seven_day":{"utilization":20},"limits":[{"kind":"session","percent":90},{"kind":"weekly_all","percent":95}]}"#,
+        );
+        assert_eq!(data.session.percentage, 10.0);
+        assert_eq!(data.weekly.percentage, 20.0);
+    }
+
+    #[test]
+    fn scoped_limits_survive_cache_and_reach_custom_theme_bindings() {
+        use crate::providers::ProviderId;
+        use crate::theme_engine::{evaluate, format_template, Canvas, DataContext, ThemeRuntime};
+        let usage = usage_from_json(
+            r#"{"five_hour":{"utilization":29},"seven_day":{"utilization":26},"limits":[{"kind":"weekly_scoped","percent":43,"is_active":true,"scope":{"model":{"id":null,"display_name":"Fable"}}}]}"#,
+        );
+        let data = crate::models::AppUsageData::from_iter([(ProviderId::Claude, usage)]);
+        let json = serde_json::to_string(&data).unwrap();
+        let cached: crate::models::AppUsageData = serde_json::from_str(&json).unwrap();
+        assert_eq!(data, cached);
+        let context = DataContext::from_usage_with_runtime(
+            Some(&cached),
+            &Canvas::default(),
+            ThemeRuntime::default().with_countdown(true),
+        );
+        for key in [
+            "claude.limits.weekly_scoped_fable",
+            "claude.model.fable",
+            "claude.scoped",
+        ] {
+            assert_eq!(
+                evaluate(&format!("{key}.percentage"), &context).unwrap(),
+                43.0
+            );
+            assert_eq!(evaluate(&format!("{key}.display"), &context).unwrap(), 57.0);
+            assert_eq!(
+                format_template(&format!("{{{key}.label}} {{{key}:usage_line}}"), &context),
+                "Fable 43%"
+            );
+            assert_eq!(
+                format_template(&format!("{{{key}.display:usage_badge}}"), &context),
+                "57%"
+            );
+        }
+        assert_eq!(
+            evaluate("claude.headline.percentage", &context).unwrap(),
+            29.0
+        );
+        assert_eq!(
+            evaluate("claude.weekly.percentage", &context).unwrap(),
+            26.0
+        );
     }
 
     fn usage_from_json(json: &str) -> UsageData {

@@ -693,6 +693,7 @@ fn usage_lines_handle_loading_errors_missing_resets_and_language() {
     let usage = AppUsageData::from_iter([(
         ProviderId::Claude,
         crate::models::UsageData {
+            limits: Vec::new(),
             session: crate::models::UsageSection {
                 available: true,
                 percentage: 25.0,
@@ -868,6 +869,7 @@ fn reset_stats_and_duration_formats_are_available_to_every_provider() {
     let usage = crate::models::AppUsageData::from_iter([(
         ProviderId::Claude,
         crate::models::UsageData {
+            limits: Vec::new(),
             session: crate::models::UsageSection {
                 available: true,
                 percentage: 25.0,

@@ -116,6 +116,7 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
     let (weekly, weekly_label) = select_long_window(&usage);
 
     Ok(UsageData {
+        limits: Vec::new(),
         session,
         weekly,
         weekly_label,

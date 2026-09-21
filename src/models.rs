@@ -67,10 +67,34 @@ pub struct UsageData {
     pub monthly: Option<UsageSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits: Option<CreditsSection>,
+    /// Additional API quotas, exposed only through opt-in theme bindings.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub limits: Vec<UsageLimit>,
     /// True when this reading was carried over from an earlier poll because
     /// the provider failed this cycle. The figures are real, just not current.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stale: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct UsageLimit {
+    pub key: String,
+    pub kind: String,
+    pub label: String,
+    pub model: Option<String>,
+    pub model_id: Option<String>,
+    pub scope: Option<serde_json::Value>,
+    pub is_active: bool,
+    pub usage: UsageSection,
+}
+
+impl UsageData {
+    pub fn sections(&self) -> impl Iterator<Item = &UsageSection> {
+        [&self.session, &self.weekly]
+            .into_iter()
+            .chain(self.monthly.iter())
+            .chain(self.limits.iter().map(|limit| &limit.usage))
+    }
 }
 
 /// Codex reports a credit balance with no ceiling, so the denominator has to
@@ -305,6 +329,23 @@ impl<'de> Deserialize<'de> for AppUsageData {
             .collect();
         data.accounts = accounts;
         Ok(data)
+    }
+}
+
+pub fn limit_slug(value: &str) -> String {
+    let mut result = String::new();
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            result.push(ch.to_ascii_lowercase());
+        } else if !result.is_empty() && !result.ends_with('_') {
+            result.push('_');
+        }
+    }
+    let result = result.trim_end_matches('_');
+    if result.is_empty() {
+        "unnamed".to_string()
+    } else {
+        result.to_string()
     }
 }
 

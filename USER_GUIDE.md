@@ -105,3 +105,58 @@ The setting saves automatically. The default theme and Compact Fluent Quad
 support both directions. Custom themes need to support this setting too; a
 theme that always displays consumed usage may stay unchanged. See the
 [theme binding notes](README.md#usage) if you are editing usage expressions.
+
+## Claude extra limits in custom themes
+
+Claude may report extra quotas in its usage API, including model-specific caps.
+These are available to custom themes. Built-in themes and the existing session,
+weekly, and headline bindings retain their current behaviour.
+
+After refreshing Claude usage, open the text editor's **Provider values** list or
+the expression editor's **Variables** panel and look under **Claude Code**.
+The text editor lists each reported quota with its summary, label, usage,
+remaining allowance, and reset formats. Select a value and format, then click
+**Insert value**. The expression editor also lists the exact binding keys. API quotas vary by account and may disappear or change over time.
+
+| Binding | Meaning |
+| --- | --- |
+| `claude.limits.count` | Number of parsed quotas, including standard windows when supplied in `limits[]`. |
+| `claude.limits.weekly_scoped_fable.*` | A specific quota from `limits[]`, using its kind and model name. |
+| `claude.model.fable.*` | Shortcut for a model's weekly quota, when unambiguous. |
+| `claude.scoped.*` | The single scoped quota marked `is_active` by the API. Unavailable if none or multiple are active. |
+| `claude.limits.seven_day_cowork.*` | An older optional top-level quota bucket, when reported. |
+
+The examples are illustrative; only quotas actually returned by the API have
+`available = 1`. No quota is inferred from a model name or subscription plan.
+Model names become lowercase keys with punctuation replaced by underscores:
+`Future Model 2` becomes `future_model_2`. Non-model scopes and colliding names
+have a stable hash suffix; use the exact key shown in the Variables panel.
+The array takes precedence over legacy Opus/Sonnet buckets for the same model.
+If multiple weekly quotas share a model key, use the full `limits` keys instead
+of the ambiguous model shortcut.
+
+Each quota exposes:
+
+- `available`, `percentage` (used), `remaining`, and `display` (follows Usage direction).
+- `is_active`, as supplied by the API; it is not inferred from the highest percentage.
+- `reset.unix`, `reset.seconds`, `reset.minutes`, `reset.hours`, and `reset.days`.
+- Text fields `label`, `kind`, `key`, `model_id`, and `scope` (the scope JSON, or empty).
+
+For a custom Fable bar, use `claude.model.fable.available` as the layer's
+**Render** expression and `claude.model.fable.display` as its progress value.
+A text layer can use:
+
+```text
+{claude.model.fable.label} {claude.model.fable.display:usage_line}
+```
+
+Omit `.display` to always show used usage. The `usage_badge` format is also
+supported. For a specific account, replace `claude` with its account binding,
+for example `accounts.claude.work.model.fable.percentage`. Each account keeps its
+own quotas; changing the default account updates the plain `claude.*` bindings.
+
+Missing quotas have `available = 0`, zero used usage/reset values, and empty
+metadata. Always gate optional layers on `available` so a missing quota is not
+presented as an unused allowance. These bindings validate even before login.
+Cached limits follow the existing stale-data behaviour; check `claude.stale`
+(or the account's `.stale`) when freshness matters.

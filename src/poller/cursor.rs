@@ -227,6 +227,7 @@ fn cursor_usage_from_summary(response: CursorUsageSummaryResponse) -> Option<Usa
             .unwrap_or_default()
     };
     Some(UsageData {
+        limits: Vec::new(),
         session: section(plan.auto_percent_used.or(plan.total_percent_used)),
         weekly: section(plan.api_percent_used),
         weekly_label: Some("API".into()),

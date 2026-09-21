@@ -72,7 +72,10 @@ impl LanguageId {
     pub fn provider_auth_error(self, provider: ProviderId) -> (&'static str, &'static str) {
         let strings = self.strings();
         match provider {
-            ProviderId::Claude => (strings.token_expired_title, strings.token_expired_body),
+            ProviderId::Claude => (
+                strings.token_expired_title,
+                self.text("Sign in again with the Claude desktop app or run 'claude' and use '/login' for your CLI account. Then refresh this monitor."),
+            ),
             ProviderId::Codex => (
                 strings.codex_token_expired_title,
                 strings.codex_token_expired_body,

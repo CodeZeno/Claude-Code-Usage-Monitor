@@ -494,7 +494,14 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
         .strip_suffix(".display")
         .map(|base| (base, "display"))
         .unwrap_or((base, "percentage"));
-    let (provider, window) = base.rsplit_once('.')?;
+    let dynamic = DataContext::limit_field(&format!("{base}.available"))
+        .filter(|(_, field)| *field == "available")
+        .map(|(owner, _)| owner.to_string());
+    let (provider, window) = if let Some(owner) = dynamic.as_deref() {
+        (owner, &base[owner.len() + 1..])
+    } else {
+        base.rsplit_once('.')?
+    };
     let named_account = provider
         .strip_prefix("accounts.")
         .and_then(|path| path.split_once('.'))
@@ -508,10 +515,11 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
             provider,
             "active" | "claude" | "codex" | "antigravity" | "opencode" | "cursor"
         ))
-        || !matches!(
-            window,
-            "session" | "five_hour" | "weekly" | "monthly" | "credits"
-        )
+        || (dynamic.is_none()
+            && !matches!(
+                window,
+                "session" | "five_hour" | "weekly" | "monthly" | "credits"
+            ))
     {
         return None;
     }
@@ -530,6 +538,9 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
             && context.get(&format!("{provider}.available")).unwrap_or(0.0) == 0.0)
     {
         return Some("!".into());
+    }
+    if dynamic.is_some() && context.get(&format!("{base}.available")) == Some(0.0) {
+        return Some("--".into());
     }
     let percentage = context
         .get(&format!("{provider}.{window}.{metric}"))

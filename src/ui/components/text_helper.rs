@@ -59,7 +59,7 @@ pub(crate) struct TextHelperState {
     pub(crate) draft: String,
     original_draft: String,
     pub(crate) value_filter: String,
-    pub(crate) selected_value: &'static str,
+    pub(crate) selected_value: String,
     pub(crate) selected_format: TextTemplateFormat,
 }
 
@@ -69,7 +69,7 @@ impl TextHelperState {
             original_draft: draft.clone(),
             draft,
             value_filter: String::new(),
-            selected_value: "active.session.percentage",
+            selected_value: "active.session.percentage".into(),
             selected_format: TextTemplateFormat::Percentage,
         }
     }

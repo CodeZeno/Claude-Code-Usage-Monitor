@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.13.43] - 2026-09-21
+
+### Added
+
+- Exposed Claude usage API quotas and legacy optional limits to custom themes, including named model bindings, active scoped limits, reset timers, account-specific data, and discovered values under Claude Code in the Theme Studio text and expression editors. Built-in themes and headline values remain unchanged. ([#56](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/56), [#61](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/61))
+
+### Fixed
+
+- Explained login, network, HTTP, and response-format failures in tray tooltips and account status. Logged malformed Claude usage responses without silently invoking the Messages API fallback, and updated sign-in guidance for desktop and CLI users. ([#72](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/72))
+
 ## [2.12.42] - 2026-09-21
 
 ### Fixed
@@ -851,3 +861,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.40]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.39...v2.12.40
 [2.12.41]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.40...v2.12.41
 [2.12.42]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.41...v2.12.42
+[2.13.43]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.42...v2.13.43

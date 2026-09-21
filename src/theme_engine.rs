@@ -1462,6 +1462,7 @@ impl DataContext {
         // What a gauge or a badge should show. `percentage` stays the share
         // that has been spent so warning thresholds keep working, while
         // `display` follows the countdown setting.
+        self.insert_limits(name, usage, countdown);
         let display = |percentage: f64| {
             if countdown {
                 100.0 - percentage
@@ -1623,19 +1624,23 @@ impl DataContext {
 
     pub fn get(&self, name: &str) -> Option<f64> {
         let name = name.to_ascii_lowercase();
-        self.values.get(&name).copied().or_else(|| {
-            let key = Self::account_default_key(&name)?;
-            let value = *Self::account_defaults().values.get(&key)?;
-            Some(
-                if key.ends_with(".display")
-                    && self.values.get("display.countdown").copied().unwrap_or(0.0) != 0.0
-                {
-                    100.0 - value
-                } else {
-                    value
-                },
-            )
-        })
+        self.values
+            .get(&name)
+            .copied()
+            .or_else(|| self.limit_default(&name))
+            .or_else(|| {
+                let key = Self::account_default_key(&name)?;
+                let value = *Self::account_defaults().values.get(&key)?;
+                Some(
+                    if key.ends_with(".display")
+                        && self.values.get("display.countdown").copied().unwrap_or(0.0) != 0.0
+                    {
+                        100.0 - value
+                    } else {
+                        value
+                    },
+                )
+            })
     }
 
     pub fn insert_string(&mut self, name: &str, value: impl Into<String>) {
@@ -1644,13 +1649,17 @@ impl DataContext {
 
     pub fn get_string(&self, name: &str) -> Option<&str> {
         let name = name.to_ascii_lowercase();
-        self.strings.get(&name).map(String::as_str).or_else(|| {
-            let key = Self::account_default_key(&name)?;
-            Self::account_defaults()
-                .strings
-                .get(&key)
-                .map(String::as_str)
-        })
+        self.strings
+            .get(&name)
+            .map(String::as_str)
+            .or_else(|| Self::limit_string_default(&name))
+            .or_else(|| {
+                let key = Self::account_default_key(&name)?;
+                Self::account_defaults()
+                    .strings
+                    .get(&key)
+                    .map(String::as_str)
+            })
     }
 
     // Account IDs are dynamic, but their fields use the same schema as provider
@@ -2648,6 +2657,7 @@ mod theme_expression;
 pub use theme_expression::*;
 
 mod theme_datetime;
+mod theme_limits;
 use theme_datetime::*;
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION

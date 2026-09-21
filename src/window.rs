@@ -105,6 +105,7 @@ struct AppState {
     auth_watch_mode: poller::CredentialWatchMode,
     auth_watch_snapshot: poller::CredentialWatchSnapshot,
     last_poll_ok: bool,
+    last_poll_failure: Option<poller::PollFailure>,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
 
@@ -859,6 +860,15 @@ fn tray_usage_summary_lines(
 fn tray_usage_summary_from_state() -> Option<String> {
     let state = lock_state();
     let state = state.as_ref()?;
+    let errors = tray_error_lines(
+        state.data.as_ref(),
+        state.last_poll_failure,
+        state.providers,
+        state.language,
+    );
+    if !errors.is_empty() {
+        return Some(errors.join("\n"));
+    }
     if !state.last_poll_ok {
         return None;
     }
@@ -869,6 +879,50 @@ fn tray_usage_summary_from_state() -> Option<String> {
         state.usage_countdown,
     );
     (!lines.is_empty()).then(|| lines.join("\n"))
+}
+
+fn tray_error_lines(
+    data: Option<&AppUsageData>,
+    failure: Option<poller::PollFailure>,
+    providers: ProviderSet,
+    language: LanguageId,
+) -> Vec<String> {
+    let mut accounts: Vec<_> = data
+        .into_iter()
+        .flat_map(|data| &data.accounts)
+        .filter(|account| {
+            providers.contains(account.provider)
+                && account.profile.enabled
+                && account.error.is_some()
+        })
+        .collect();
+    // Windows truncates tray tooltips: put the selected account's error first.
+    accounts.sort_by_key(|account| !account.selected);
+    let mut lines: Vec<_> = accounts
+        .into_iter()
+        .map(|account| {
+            format!(
+                "{} ({}): {}",
+                language.text(account.provider.descriptor().display_name),
+                account.profile.name,
+                account.error.unwrap().message(language),
+            )
+        })
+        .collect();
+    if let Some(failure) = failure.filter(|failure| providers.contains(failure.provider)) {
+        if !data.is_some_and(|data| {
+            data.accounts
+                .iter()
+                .any(|account| account.provider == failure.provider && account.error.is_some())
+        }) {
+            lines.push(format!(
+                "{}: {}",
+                language.text(failure.provider.descriptor().display_name),
+                failure.error.message(language)
+            ));
+        }
+    }
+    lines
 }
 
 fn tray_icon_tooltip_from_state() -> String {
@@ -2040,6 +2094,7 @@ pub fn run() {
                 ),
                 auth_watch_snapshot: Vec::new(),
                 last_poll_ok: false,
+                last_poll_failure: None,
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
@@ -2421,6 +2476,7 @@ fn do_poll_once(hwnd: HWND) {
                 );
                 state.data = Some(data.clone());
                 state.last_poll_ok = true;
+                state.last_poll_failure = None;
                 data
             };
             // The dashboard runs separately and follows the same cache as the
@@ -2467,6 +2523,7 @@ fn do_poll_once(hwnd: HWND) {
 
                 s.data = Some(data);
                 s.last_poll_ok = true;
+                s.last_poll_failure = None;
 
                 // Recovered from errors — restore normal poll interval
                 if s.retry_count > 0 {
@@ -2536,7 +2593,10 @@ fn do_poll_once(hwnd: HWND) {
                     let mode = poller::CredentialWatchMode::AllSources(failure.provider);
                     Some((mode, poller::credential_watch_snapshot(mode)))
                 }
-                poller::PollError::RequestFailed | poller::PollError::HttpStatus(_) => None,
+                poller::PollError::RequestFailed
+                | poller::PollError::NetworkError
+                | poller::PollError::UnexpectedResponse
+                | poller::PollError::HttpStatus(_) => None,
             };
             // Distinguish auth-required errors from transient errors.
             let (notify_auth_error, cache_data, cache_poll_ok) = {
@@ -2560,6 +2620,7 @@ fn do_poll_once(hwnd: HWND) {
                         }
                     }
                     s.last_poll_ok = false;
+                    s.last_poll_failure = Some(failure);
                     match auth_watch {
                         Some((watch_mode, watch_snapshot)) => {
                             // Only show the balloon on the first failure so it doesn't spam.
@@ -2660,7 +2721,7 @@ fn schedule_countdown_timer() {
 
     let min_delay = s.data.as_ref().and_then(|data| {
         data.all_usage()
-            .flat_map(|usage| [&usage.session, &usage.weekly])
+            .flat_map(|usage| usage.sections())
             .filter_map(|section| poller::time_until_display_change(section.resets_at))
             .min()
     });
@@ -2843,6 +2904,64 @@ mod tray_usage_summary_tests {
             weekly_label: weekly_label.map(str::to_string),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn tray_errors_distinguish_causes_and_disappear_after_recovery() {
+        use crate::poller::{PollError, PollFailure};
+        let providers = ProviderSet::from_enabled([ProviderId::Claude]);
+        for (error, expected) in [
+            (PollError::TokenExpired, "Login expired"),
+            (PollError::NoCredentials, "No usable login"),
+            (PollError::AuthRequired, "Login rejected"),
+            (PollError::RequestFailed, "Usage request failed"),
+            (PollError::NetworkError, "Service unreachable"),
+            (PollError::UnexpectedResponse, "Unexpected usage response"),
+            (PollError::HttpStatus(429), "HTTP 429"),
+        ] {
+            let failure = PollFailure {
+                provider: ProviderId::Claude,
+                error,
+            };
+            let lines = tray_error_lines(None, Some(failure), providers, LanguageId::English);
+            assert_eq!(lines.len(), 1);
+            assert!(lines[0].contains(expected), "{:?}", lines);
+            assert!(tray_error_lines(
+                None,
+                Some(failure),
+                ProviderSet::from_enabled([ProviderId::Codex]),
+                LanguageId::English
+            )
+            .is_empty());
+        }
+        assert!(tray_error_lines(None, None, providers, LanguageId::English).is_empty());
+        let mut data = AppUsageData::default();
+        for (name, selected) in [("Work", false), ("Personal", true)] {
+            data.accounts.push(crate::models::AccountUsage {
+                provider: ProviderId::Claude,
+                profile: crate::accounts::AccountProfile {
+                    name: name.into(),
+                    enabled: true,
+                    ..Default::default()
+                },
+                source_signature: String::new(),
+                source_path: None,
+                usage: None,
+                error: Some(PollError::TokenExpired),
+                selected,
+            });
+        }
+        let lines = tray_error_lines(Some(&data), None, providers, LanguageId::English);
+        assert!(lines[0].starts_with("Claude Code (Personal): Login expired"));
+        assert!(lines[1].contains("Work"));
+        for account in &mut data.accounts {
+            account.error = None;
+        }
+        assert!(tray_error_lines(Some(&data), None, providers, LanguageId::English).is_empty());
+        let instruction = LanguageId::English
+            .provider_auth_error(ProviderId::Claude)
+            .1;
+        assert!(instruction.contains("desktop app") && instruction.contains("/login"));
     }
 
     #[test]

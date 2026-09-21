@@ -530,7 +530,7 @@ impl StudioApp {
                             ui,
                             egui::vec2(formats_width, panel_height),
                             &context,
-                            editor.selected_value,
+                            &editor.selected_value,
                             &mut editor.selected_format,
                             &mut editor.draft,
                             language,

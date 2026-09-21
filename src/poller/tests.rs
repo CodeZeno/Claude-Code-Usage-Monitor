@@ -2,6 +2,7 @@ use super::*;
 
 fn usage_with_session_percent(percentage: f64) -> UsageData {
     UsageData {
+        limits: Vec::new(),
         session: UsageSection {
             available: true,
             percentage,

@@ -302,28 +302,7 @@ fn account_settings(
 }
 
 fn account_error_message(error: crate::poller::PollError, language: LanguageId) -> String {
-    use crate::poller::PollError;
-    match error {
-        PollError::HttpStatus(code) => {
-            let reason = ureq::http::StatusCode::from_u16(code)
-                .ok()
-                .and_then(|status| status.canonical_reason())
-                .unwrap_or("Request failed");
-            let action = if error.is_auth() {
-                "Sign in again for this account"
-            } else {
-                "Retrying at the next refresh"
-            };
-            format!("HTTP {code}: {reason}. {}", language.text(action))
-        }
-        PollError::AuthRequired | PollError::TokenExpired => {
-            language.text("Sign in again for this account").into()
-        }
-        PollError::NoCredentials => language.text("Credentials missing or invalid").into(),
-        PollError::RequestFailed => language
-            .text("Usage request failed; retrying at the next refresh")
-            .into(),
-    }
+    error.message(language)
 }
 
 #[cfg(test)]

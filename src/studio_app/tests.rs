@@ -302,6 +302,7 @@ fn studio_preview_uses_cached_poll_failure_state_instead_of_stale_values() {
     app.usage = Some(AppUsageData::from_iter([(
         crate::providers::ProviderId::Codex,
         crate::models::UsageData {
+            limits: Vec::new(),
             session: crate::models::UsageSection {
                 available: true,
                 percentage: 7.0,
@@ -717,6 +718,144 @@ fn text_helper_only_marks_real_template_tokens_as_expressions() {
     assert!(template_has_expression(
         "Used {claude.session.percentage:percent}"
     ));
+}
+
+#[test]
+fn reported_limits_are_grouped_with_claude_in_both_editors() {
+    use crate::models::{UsageData, UsageLimit, UsageSection};
+    use crate::providers::ProviderId;
+    let usage = UsageData {
+        limits: vec![UsageLimit {
+            key: "nimbus_quill".into(),
+            kind: "nimbus_quill".into(),
+            label: "nimbus quill".into(),
+            usage: UsageSection {
+                available: true,
+                percentage: 37.0,
+                resets_at: None,
+            },
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let data = AppUsageData::from_iter([(ProviderId::Claude, usage)]);
+    let context = DataContext::from_usage(Some(&data), &Canvas::default());
+    let language = LanguageId::English;
+    let choices = text_template_choices(&context, language);
+    let mut seen_claude = false;
+    let mut left_claude = false;
+    for value in &choices {
+        if value.group == "Claude Code" {
+            assert!(!left_claude, "Claude values must be in one group");
+            seen_claude = true;
+        } else if seen_claude {
+            left_claude = true;
+        }
+    }
+    let shown = choices
+        .iter()
+        .find(|value| value.expression == "claude.limits.nimbus_quill.display")
+        .unwrap();
+    assert_eq!(shown.group, "Claude Code");
+    assert_eq!(shown.label, "Nimbus quill — Shown");
+    let token = text_template_token(&shown.expression, TextTemplateFormat::Percentage);
+    assert_eq!(token, "{claude.limits.nimbus_quill.display:percent}");
+    assert_eq!(theme_engine::format_template(&token, &context), "37%");
+    for choice in choices
+        .iter()
+        .filter(|value| value.expression.starts_with("claude.limits."))
+    {
+        for format in text_template_formats(choice.kind) {
+            assert!(theme_engine::validate_template(
+                &text_template_token(&choice.expression, *format),
+                &context
+            )
+            .is_empty());
+        }
+    }
+    assert!(provider_limit_variables(&context, "claude")
+        .contains(&"claude.limits.nimbus_quill.display"));
+    assert!(!provider_limit_variables(&context, "codex")
+        .contains(&"claude.limits.nimbus_quill.display"));
+
+    // A refresh can remove a quota while its format picker remains open.
+    let empty = DataContext::from_usage(None, &Canvas::default());
+    let missing = text_template_choice(&shown.expression, &empty, language).unwrap();
+    assert_eq!(missing.expression, shown.expression);
+    assert!(matches!(
+        missing.kind,
+        TextTemplateValueKind::DisplayPercentage
+    ));
+}
+
+#[test]
+fn text_picker_renders_reported_quota_labels_and_formats() {
+    let context = egui::Context::default();
+    configure_style(&context, LanguageId::English);
+    let mut data = DataContext::from_usage(None, &Canvas::default());
+    data.insert("claude.limits.nimbus_quill.available", 1.0);
+    data.insert("claude.limits.nimbus_quill.percentage", 37.0);
+    data.insert_string("claude.limits.nimbus_quill.label", "nimbus quill");
+    let mut filter = "nimbus".to_string();
+    let mut selected = "claude.limits.nimbus_quill.percentage".to_string();
+    let mut format = TextTemplateFormat::Percentage;
+    let mut draft = String::new();
+    let mut output = context.run_ui(
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 900.0),
+            )),
+            ..Default::default()
+        },
+        |ui| {
+            ui.horizontal(|ui| {
+                text_template_values_panel(
+                    ui,
+                    egui::vec2(550.0, 800.0),
+                    &data,
+                    &mut filter,
+                    &mut selected,
+                    &mut format,
+                    LanguageId::English,
+                );
+                text_template_formats_panel(
+                    ui,
+                    egui::vec2(400.0, 800.0),
+                    &data,
+                    &selected,
+                    &mut format,
+                    &mut draft,
+                    LanguageId::English,
+                );
+            });
+        },
+    );
+    fn collect(shape: &egui::epaint::Shape, text: &mut String) {
+        match shape {
+            egui::epaint::Shape::Text(shape) => {
+                text.push_str(&shape.galley.job.text);
+                text.push('\n');
+            }
+            egui::epaint::Shape::Vec(shapes) => {
+                for shape in shapes {
+                    collect(shape, text);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut text = String::new();
+    for shape in &output.shapes {
+        collect(&shape.shape, &mut text);
+    }
+    output.textures_delta.clear();
+    assert!(text.contains("Claude Code"));
+    assert!(text.contains("Nimbus quill — Used"));
+    assert!(text.contains("37%"));
+    assert!(text.contains("Insert value"));
+    assert!(!text.contains("Additional usage limits"));
+    assert_eq!(selected, "claude.limits.nimbus_quill.percentage");
 }
 
 #[test]

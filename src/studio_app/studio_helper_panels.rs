@@ -498,6 +498,159 @@ pub(super) fn text_template_value(expression: &str) -> Option<TextTemplateValue>
         .find(|value| value.expression == expression)
 }
 
+pub(super) struct TextTemplateChoice {
+    pub(super) group: &'static str,
+    pub(super) label: String,
+    pub(super) expression: String,
+    pub(super) kind: TextTemplateValueKind,
+}
+
+fn limit_provider(expression: &str) -> Option<(&'static str, &str)> {
+    let path = expression.strip_prefix("accounts.").unwrap_or(expression);
+    let (provider, _) = path.split_once('.')?;
+    if provider == "active" {
+        return Some(("Active provider", "active"));
+    }
+    PROVIDER_DESCRIPTORS
+        .iter()
+        .find(|item| item.key == provider)
+        .map(|item| (item.display_name, item.key))
+}
+
+pub(super) fn provider_limit_variables<'a>(
+    context: &'a DataContext,
+    provider: &str,
+) -> Vec<&'a str> {
+    context
+        .limit_variables()
+        .into_iter()
+        .filter(|name| limit_provider(name).is_some_and(|(_, key)| key == provider))
+        .collect()
+}
+
+// Owned names let the picker follow the API's quota names without leaking
+// strings or limiting selection to the built-in static catalogue.
+pub(super) fn text_template_choice(
+    expression: &str,
+    context: &DataContext,
+    language: LanguageId,
+) -> Option<TextTemplateChoice> {
+    if let Some(value) = text_template_value(expression) {
+        return Some(TextTemplateChoice {
+            group: value.group,
+            label: language.text(value.label).into(),
+            expression: expression.into(),
+            kind: value.kind,
+        });
+    }
+    let (group, _) = limit_provider(expression)?;
+    let (base, label, kind) = [
+        (".percentage", "Used", TextTemplateValueKind::Percentage),
+        (".remaining", "Remaining", TextTemplateValueKind::Percentage),
+        (
+            ".display",
+            "Shown",
+            TextTemplateValueKind::DisplayPercentage,
+        ),
+        (".label", "Label", TextTemplateValueKind::Text),
+        (".available", "Available", TextTemplateValueKind::Number),
+        (".is_active", "Active limit", TextTemplateValueKind::Number),
+        (
+            ".reset.seconds",
+            "Reset countdown",
+            TextTemplateValueKind::Duration,
+        ),
+        (
+            ".reset.unix",
+            "Reset date and time",
+            TextTemplateValueKind::Timestamp,
+        ),
+    ]
+    .into_iter()
+    .find_map(|(suffix, label, kind)| {
+        expression
+            .strip_suffix(suffix)
+            .map(|base| (base, label, kind))
+    })
+    .unwrap_or((expression, "Summary", TextTemplateValueKind::UsageSummary));
+    if !(base.contains(".limits.") || base.contains(".model.") || base.ends_with(".scoped"))
+        || context.get(&format!("{base}.available")).is_none()
+    {
+        return None;
+    }
+    let name = context
+        .get_string(&format!("{base}.label"))
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| base.rsplit('.').next().unwrap_or(base).replace('_', " "));
+    let mut chars = name.chars();
+    let mut name = chars
+        .next()
+        .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
+        .unwrap_or_default();
+    if let Some(account) = base.strip_prefix("accounts.").and_then(|path| {
+        let (provider, rest) = path.split_once('.')?;
+        let (id, _) = rest.split_once('.')?;
+        Some((format!("accounts.{provider}.{id}.name"), id))
+    }) {
+        let account_name = context
+            .get_string(&account.0)
+            .filter(|name| !name.is_empty())
+            .unwrap_or(account.1);
+        name = format!("{account_name}: {name}");
+    }
+    Some(TextTemplateChoice {
+        group,
+        label: format!("{name} — {}", language.text(label)),
+        expression: expression.into(),
+        kind,
+    })
+}
+
+pub(super) fn text_template_choices(
+    context: &DataContext,
+    language: LanguageId,
+) -> Vec<TextTemplateChoice> {
+    let mut result = Vec::new();
+    for (index, value) in TEXT_TEMPLATE_VALUES.iter().enumerate() {
+        result.push(text_template_choice(value.expression, context, language).unwrap());
+        if TEXT_TEMPLATE_VALUES
+            .get(index + 1)
+            .is_some_and(|next| next.group == value.group)
+        {
+            continue;
+        }
+        // List each reported quota once using its canonical binding. Model
+        // aliases remain available in the expression editor.
+        for base in context
+            .limit_variables()
+            .into_iter()
+            .filter(|name| name.contains(".limits."))
+            .filter_map(|name| name.strip_suffix(".available"))
+            .filter(|base| limit_provider(base).is_some_and(|(group, _)| group == value.group))
+        {
+            for suffix in [
+                "",
+                ".label",
+                ".percentage",
+                ".remaining",
+                ".display",
+                ".reset.seconds",
+                ".reset.unix",
+                ".available",
+                ".is_active",
+            ] {
+                if let Some(choice) =
+                    text_template_choice(&format!("{base}{suffix}"), context, language)
+                {
+                    result.push(choice);
+                }
+            }
+        }
+    }
+    result
+}
+
 pub(super) fn text_template_formats(kind: TextTemplateValueKind) -> &'static [TextTemplateFormat] {
     use TextTemplateFormat as Format;
     match kind {
@@ -685,11 +838,11 @@ pub(super) fn append_expression_token(draft: &mut String, token: &str) {
 }
 
 pub(super) fn text_template_value_sample(
-    value: TextTemplateValue,
+    value: &TextTemplateChoice,
     format: TextTemplateFormat,
     context: &DataContext,
 ) -> String {
-    theme_engine::format_template(&text_template_token(value.expression, format), context)
+    theme_engine::format_template(&text_template_token(&value.expression, format), context)
 }
 
 pub(super) fn text_template_values_panel(
@@ -697,7 +850,7 @@ pub(super) fn text_template_values_panel(
     size: egui::Vec2,
     context: &DataContext,
     filter: &mut String,
-    selected_value: &mut &'static str,
+    selected_value: &mut String,
     selected_format: &mut TextTemplateFormat,
     language: LanguageId,
 ) {
@@ -719,14 +872,16 @@ pub(super) fn text_template_values_panel(
             .max_height((size.y - 72.0).max(80.0))
             .show(ui, |ui| {
                 let mut last_group = "";
-                for value in TEXT_TEMPLATE_VALUES.iter().copied().filter(|value| {
-                    needle.is_empty()
-                        || value.label.to_ascii_lowercase().contains(&needle)
-                        || language.text(value.label).to_lowercase().contains(&needle)
-                        || value.group.to_ascii_lowercase().contains(&needle)
-                        || language.text(value.group).to_lowercase().contains(&needle)
-                        || value.expression.to_ascii_lowercase().contains(&needle)
-                }) {
+                for value in text_template_choices(context, language)
+                    .iter()
+                    .filter(|value| {
+                        needle.is_empty()
+                            || value.label.to_ascii_lowercase().contains(&needle)
+                            || value.group.to_ascii_lowercase().contains(&needle)
+                            || language.text(value.group).to_lowercase().contains(&needle)
+                            || value.expression.to_ascii_lowercase().contains(&needle)
+                    })
+                {
                     if value.group != last_group {
                         if !last_group.is_empty() {
                             ui.add_space(6.0);
@@ -742,14 +897,11 @@ pub(super) fn text_template_values_panel(
                     ui.horizontal(|ui| {
                         let is_selected = *selected_value == value.expression;
                         if ui
-                            .add(
-                                egui::Button::selectable(is_selected, language.text(value.label))
-                                    .frame(false),
-                            )
-                            .on_hover_text(value.expression)
+                            .add(egui::Button::selectable(is_selected, &value.label).frame(false))
+                            .on_hover_text(&value.expression)
                             .clicked()
                         {
-                            *selected_value = value.expression;
+                            *selected_value = value.expression.clone();
                             *selected_format = default_text_template_format(value.kind);
                         }
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -776,17 +928,19 @@ pub(super) fn text_template_formats_panel(
     language: LanguageId,
 ) {
     expression_reference_card(ui, size.x, size.y, language.text("Format"), |ui| {
-        let value = text_template_value(selected_value).unwrap_or(TEXT_TEMPLATE_VALUES[0]);
-        ui.label(egui::RichText::new(language.text(value.label)).strong());
+        let value = text_template_choice(selected_value, context, language).unwrap_or_else(|| {
+            text_template_choice(TEXT_TEMPLATE_VALUES[0].expression, context, language).unwrap()
+        });
+        ui.label(egui::RichText::new(&value.label).strong());
         ui.label(
-            egui::RichText::new(value.expression)
+            egui::RichText::new(&value.expression)
                 .small()
                 .family(egui::FontFamily::Monospace)
                 .color(muted()),
         );
         ui.add_space(8.0);
         for format in text_template_formats(value.kind) {
-            let sample = text_template_value_sample(value, *format, context);
+            let sample = text_template_value_sample(&value, *format, context);
             ui.horizontal(|ui| {
                 if ui
                     .add(
@@ -808,7 +962,7 @@ pub(super) fn text_template_formats_panel(
         ui.add_space(8.0);
         ui.separator();
         ui.add_space(8.0);
-        let token = text_template_token(value.expression, *selected_format);
+        let token = text_template_token(&value.expression, *selected_format);
         ui.label(
             egui::RichText::new(&token)
                 .small()
@@ -1196,6 +1350,11 @@ pub(super) fn expression_variables_panel(
                             names.push(format!("{provider}.{window}.reset.{unit}"));
                         }
                     }
+                    names.extend(
+                        provider_limit_variables(context, provider)
+                            .into_iter()
+                            .map(str::to_string),
+                    );
                     let names: Vec<&str> = names.iter().map(String::as_str).collect();
                     expression_variable_group(
                         ui,
@@ -1242,6 +1401,7 @@ pub(super) fn expression_variable_group(
                 let value = context
                     .get(name)
                     .map(format_number_for_ui)
+                    .or_else(|| context.get_string(name).map(str::to_string))
                     .unwrap_or_else(|| "—".into());
                 ui.label(egui::RichText::new(value).color(muted()));
             });
