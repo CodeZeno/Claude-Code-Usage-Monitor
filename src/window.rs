@@ -5737,12 +5737,14 @@ fn paint_content(
             (show_codex, true),
             (show_antigravity, true),
             (show_github_copilot, false),
+            (show_vercel_ai_gateway, false),
         ]);
         let needs_monthly_row = quota_row_visible(&[
             (show_claude_code, false),
             (show_codex, false),
             (show_antigravity, false),
             (show_github_copilot, true),
+            (show_vercel_ai_gateway, true),
         ]);
         let rows = visible_rows_for_quota(
             popup_layout,
