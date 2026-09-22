@@ -121,8 +121,8 @@ mod tests {
         assert_eq!(heights, [ITEM_HEIGHT; 2]);
     }
 
-    /// The GitHub mark font was assembled by hand, so guard the checked-in
-    /// artifact against resolving to a glyph that rasterizes to nothing.
+    /// The navigation link is the only caller that sizes a mark to the full
+    /// item height, so check that path resolves to a real glyph as well.
     #[test]
     fn github_mark_glyph_rasterizes_from_the_lucide_family() {
         let context = egui::Context::default();

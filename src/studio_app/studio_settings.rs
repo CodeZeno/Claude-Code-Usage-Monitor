@@ -63,8 +63,9 @@ impl StudioApp {
                     if index > 0 {
                         setting_separator(ui);
                     }
-                    setting_row(
+                    setting_row_with_mark(
                         ui,
+                        provider_mark_glyph(descriptor.id),
                         language.text(descriptor.display_name),
                         language.text(descriptor.settings_description),
                         |ui| {

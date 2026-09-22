@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.49] - 2026-09-23
+
+### Added
+
+- Brand marks for every provider on the Settings page, shown beside each provider's name in the Providers section.
+
+### Changed
+
+- Replaced the single-glyph GitHub font with `brand-marks.ttf`, a seven-glyph companion font carrying GitHub and provider logos in the Lucide family. The embedded font includes glyph mappings, geometry guidance, and artwork attribution alongside its declaration, with regression tests for distinct codepoints and visible glyphs.
+
 ## [2.14.48] - 2026-09-23
 
 ### Removed
@@ -910,3 +920,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.46]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.45...v2.14.46
 [2.14.47]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.46...v2.14.47
 [2.14.48]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.47...v2.14.48
+[2.14.49]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.48...v2.14.49

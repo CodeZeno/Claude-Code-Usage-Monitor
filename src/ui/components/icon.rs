@@ -5,7 +5,13 @@ use crate::ui::theme::{accent, accent_hover_border};
 use crate::ui::tokens::{CONTROL_CORNER_RADIUS, CONTROL_HEIGHT};
 
 pub(crate) fn icon_text(icon: LucideIcon, size: f32) -> egui::RichText {
-    egui::RichText::new(icon.unicode().to_string())
+    glyph_text(icon.unicode(), size)
+}
+
+/// Renders a bare codepoint from the `lucide` family, which also carries the
+/// brand marks in [`crate::ui::theme`]. Prefer [`icon_text`] for Lucide icons.
+pub(crate) fn glyph_text(glyph: char, size: f32) -> egui::RichText {
+    egui::RichText::new(glyph.to_string())
         .family(egui::FontFamily::Name("lucide".into()))
         .size(size)
 }

@@ -1,9 +1,16 @@
 use eframe::egui;
 
+use crate::ui::components::icon::glyph_text;
 use crate::ui::theme::{muted, section_border, section_surface, setting_separator_color};
 use crate::ui::tokens::{
     CONTROL_HEIGHT, INSPECTOR_CONTROL_MAX_WIDTH, INSPECTOR_LABEL_WIDTH, INSPECTOR_RIGHT_GUTTER,
 };
+
+/// Rendered size of a leading brand mark on a setting row. Slightly larger than
+/// the 16px title so the logo reads as artwork rather than as another glyph.
+const SETTING_MARK_SIZE: f32 = 24.0;
+/// Gap between a leading mark and the title it introduces.
+const SETTING_MARK_GAP: f32 = 12.0;
 
 pub(crate) fn studio_region(
     ui: &mut egui::Ui,
@@ -66,8 +73,31 @@ pub(crate) fn setting_row(
     setting_row_with_control_width(ui, title, detail, 360.0, control);
 }
 
+/// A setting row introduced by a brand mark, such as a provider logo. The mark
+/// is a codepoint in the `lucide` family; see [`crate::ui::theme`].
+pub(crate) fn setting_row_with_mark(
+    ui: &mut egui::Ui,
+    mark: char,
+    title: &str,
+    detail: &str,
+    control: impl FnOnce(&mut egui::Ui),
+) {
+    setting_row_inner(ui, Some(mark), title, detail, 360.0, control);
+}
+
 pub(crate) fn setting_row_with_control_width(
     ui: &mut egui::Ui,
+    title: &str,
+    detail: &str,
+    control_width: f32,
+    control: impl FnOnce(&mut egui::Ui),
+) {
+    setting_row_inner(ui, None, title, detail, control_width, control);
+}
+
+fn setting_row_inner(
+    ui: &mut egui::Ui,
+    mark: Option<char>,
     title: &str,
     detail: &str,
     control_width: f32,
@@ -94,8 +124,25 @@ pub(crate) fn setting_row_with_control_width(
     );
     label_ui.set_clip_rect(label_rect.intersect(ui.clip_rect()));
     label_ui.add_space(8.0);
-    label_ui.label(egui::RichText::new(title).size(16.0).strong());
-    label_ui.label(egui::RichText::new(detail).size(14.0).color(muted()));
+    let text = |ui: &mut egui::Ui| {
+        ui.label(egui::RichText::new(title).size(16.0).strong());
+        ui.label(egui::RichText::new(detail).size(14.0).color(muted()));
+    };
+    match mark {
+        // Centring on the title and detail together, rather than on the row,
+        // keeps the mark aligned with the text whatever the row height is.
+        Some(mark) => {
+            label_ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SETTING_MARK_GAP;
+                // Match the title rather than the body text: at this size a
+                // logo in the dimmer body colour reads as disabled.
+                let color = ui.visuals().strong_text_color();
+                ui.label(glyph_text(mark, SETTING_MARK_SIZE).color(color));
+                ui.vertical(text);
+            });
+        }
+        None => text(&mut label_ui),
+    }
 
     let mut control_ui = ui.new_child(
         egui::UiBuilder::new()
