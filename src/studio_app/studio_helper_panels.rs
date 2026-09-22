@@ -472,6 +472,42 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         kind: TextTemplateValueKind::Duration,
     },
     TextTemplateValue {
+        group: "Grok",
+        label: "Pool summary",
+        expression: "grok.weekly",
+        kind: TextTemplateValueKind::UsageSummary,
+    },
+    TextTemplateValue {
+        group: "Grok",
+        label: "Pool used",
+        expression: "grok.weekly.percentage",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Grok",
+        label: "Pool remaining",
+        expression: "grok.weekly.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Grok",
+        label: "Pool shown",
+        expression: "grok.weekly.display",
+        kind: TextTemplateValueKind::DisplayPercentage,
+    },
+    TextTemplateValue {
+        group: "Grok",
+        label: "Pool reset",
+        expression: "grok.weekly.reset.seconds",
+        kind: TextTemplateValueKind::Duration,
+    },
+    TextTemplateValue {
+        group: "Grok",
+        label: "Pool period label",
+        expression: "grok.weekly.label",
+        kind: TextTemplateValueKind::Text,
+    },
+    TextTemplateValue {
         group: "Labels",
         label: "Session window label",
         expression: "i18n.session_window",

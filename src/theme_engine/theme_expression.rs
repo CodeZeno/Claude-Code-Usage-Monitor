@@ -513,7 +513,7 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     if (!named_account
         && !matches!(
             provider,
-            "active" | "claude" | "codex" | "antigravity" | "opencode" | "cursor"
+            "active" | "claude" | "codex" | "antigravity" | "opencode" | "cursor" | "grok"
         ))
         || (dynamic.is_none()
             && !matches!(

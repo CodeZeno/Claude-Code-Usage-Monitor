@@ -111,7 +111,7 @@ impl DataContext {
             let (owner, field) = name.split_once('.')?;
             if !matches!(
                 owner,
-                "claude" | "codex" | "antigravity" | "opencode" | "cursor" | "active"
+                "claude" | "codex" | "antigravity" | "opencode" | "cursor" | "grok" | "active"
             ) {
                 return None;
             }
