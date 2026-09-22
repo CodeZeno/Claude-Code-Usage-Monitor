@@ -56,7 +56,6 @@ impl StudioApp {
         let language = localization::resolve_language(
             settings.language.as_deref().and_then(LanguageId::from_code),
         );
-        egui_extras::install_image_loaders(&context.egui_ctx);
         configure_style(&context.egui_ctx, language);
         style_native_titlebar(context);
         let classic_theme_path = theme_engine::ensure_starter_theme().ok();

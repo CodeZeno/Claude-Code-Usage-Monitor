@@ -4,6 +4,31 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.45] - 2026-09-23
+
+### Added
+
+- Grok Build usage monitoring from the signed-in CLI session in `%USERPROFILE%\.grok\auth.json`, with a `GROK_HOME` override, provider controls, and translated sign-in guidance. ([#109](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/109))
+- Grok's billing-period pool on the long-window row in both built-in themes, violet gauges and tray icons, on-demand spending once used, and per-product usage bindings under `grok.limits.<product>` in Theme Studio.
+
+### Fixed
+
+- Limited Grok billing credential selection to xAI sign-in scopes, excluding corporate identity-provider tokens and stored API keys.
+- Bounded Grok CLI version detection, supported Windows command and PowerShell shims, and ignored output from failed commands.
+- Rejected overflowing Grok reset timestamps without interrupting background polling.
+- Accepted bare and wrapped numeric strings in Grok credit balances, including proto3 int64 values, while rejecting invalid or non-finite amounts.
+- Retried failed Grok CLI version and path detection on later polls instead of permanently caching fallback values.
+
+## [2.13.44] - 2026-09-22
+
+### Changed
+
+- Rendered the dashboard GitHub link from an icon font glyph instead of an embedded SVG, so it follows the surrounding menu text colour. The mark is a 1 KB single-glyph TrueType font that joins the Lucide icon family as a fallback.
+
+### Removed
+
+- Dropped the `egui_extras` dependency and its `svg` feature, which existed solely to draw the GitHub logo. This removes the resvg, usvg, tiny-skia, and XML/CSS parsing stack and reduces the release executable by roughly 549 KB (7.3%).
+
 ## [2.13.43] - 2026-09-21
 
 ### Added
@@ -862,3 +887,5 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.41]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.40...v2.12.41
 [2.12.42]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.41...v2.12.42
 [2.13.43]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.42...v2.13.43
+[2.13.44]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.43...v2.13.44
+[2.14.45]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.44...v2.14.45

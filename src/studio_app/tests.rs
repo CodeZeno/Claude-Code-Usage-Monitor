@@ -407,7 +407,6 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
 #[test]
 fn diagnostics_page_has_logging_controls_and_menu_version() {
     let context = egui::Context::default();
-    egui_extras::install_image_loaders(&context);
     configure_style(&context, LanguageId::English);
     let mut app = app_with_surfaces(vec![root("main")]);
     app.page = Page::Diagnostics;

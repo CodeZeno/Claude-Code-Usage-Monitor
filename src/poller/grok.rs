@@ -1,3 +1,4 @@
+use std::io::Read;
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,7 +23,8 @@ const GROK_HOME_ENV: &str = "GROK_HOME";
 const GROK_CLIENT_VERSION_ENV: &str = "GROK_CLIENT_VERSION";
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-/// One entry of `auth.json`, keyed by `"{issuer}::{client_id}"`.
+/// One entry of `auth.json`, keyed by `"{issuer}::{client_id}"` or the
+/// legacy `"https://accounts.x.ai/sign-in"` scope.
 #[derive(Clone, Debug, Deserialize)]
 struct GrokAuthEntry {
     #[serde(default)]
@@ -35,15 +37,34 @@ struct GrokAuthEntry {
     expires_at: Option<String>,
 }
 
-/// Cents, tolerating the several shapes proto3 JSON uses for an int64.
+/// Cents as a number or decimal string, optionally wrapped in a `val` field.
 #[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(untagged)]
 enum GrokCents {
     Structured {
-        #[serde(default)]
+        #[serde(default, deserialize_with = "deserialize_cents_value")]
         val: f64,
     },
-    Plain(f64),
+    Plain(#[serde(deserialize_with = "deserialize_cents_value")] f64),
+}
+
+fn deserialize_cents_value<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<f64, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Value {
+        Number(f64),
+        Text(String),
+    }
+    let value = match Value::deserialize(deserializer)? {
+        Value::Number(value) => value,
+        Value::Text(value) => value.parse::<f64>().map_err(serde::de::Error::custom)?,
+    };
+    if !value.is_finite() {
+        return Err(serde::de::Error::custom("cents must be finite"));
+    }
+    Ok(value)
 }
 
 impl GrokCents {
@@ -170,13 +191,21 @@ fn read_grok_session(path: &Path) -> Option<GrokSession> {
     select_grok_session(&content)
 }
 
-/// `auth.json` holds one entry per authentication scope. The CLI itself keeps
-/// the entry expiring last, so the monitor reads the same one.
+/// `auth.json` can also hold corporate OIDC tokens and plain API keys. Only
+/// xAI sign-in scopes belong at the fixed production billing endpoint.
+/// Prefer the latest-expiring usable xAI session.
 fn select_grok_session(content: &str) -> Option<GrokSession> {
     let entries: std::collections::BTreeMap<String, GrokAuthEntry> =
         serde_json::from_str(content).ok()?;
     entries
-        .into_values()
+        .into_iter()
+        .filter(|(scope, _)| {
+            scope == "https://accounts.x.ai/sign-in"
+                || scope
+                    .strip_prefix("https://auth.x.ai::")
+                    .is_some_and(|client| !client.is_empty())
+        })
+        .map(|(_, entry)| entry)
         .filter(|entry| !entry.key.trim().is_empty())
         .max_by_key(|entry| {
             entry
@@ -332,36 +361,64 @@ fn period_end(value: Option<&serde_json::Value>) -> Option<SystemTime> {
             } else {
                 seconds
             };
-            (seconds > 0.0).then(|| UNIX_EPOCH + Duration::from_secs_f64(seconds))
+            if seconds <= 0.0 {
+                return None;
+            }
+            UNIX_EPOCH.checked_add(Duration::try_from_secs_f64(seconds).ok()?)
         }
         _ => None,
     }
 }
 
-/// The proxy expects the version of the CLI that owns the session, so ask the
-/// installed CLI once rather than guessing at every poll.
+/// Cache a detected CLI version, but retry after transient detection failures.
 fn grok_client_version() -> String {
     static VERSION: OnceLock<String> = OnceLock::new();
-    VERSION
-        .get_or_init(|| {
-            non_empty_environment(GROK_CLIENT_VERSION_ENV)
-                .or_else(cli_grok_version)
-                .unwrap_or_else(|| DEFAULT_GROK_CLIENT_VERSION.to_string())
-        })
-        .clone()
+    cached_cli_detection(&VERSION, || {
+        non_empty_environment(GROK_CLIENT_VERSION_ENV).or_else(cli_grok_version)
+    })
+    .unwrap_or_else(|| DEFAULT_GROK_CLIENT_VERSION.to_string())
+}
+
+/// Only successful discovery is stable enough to cache for this process.
+fn cached_cli_detection(
+    cache: &OnceLock<String>,
+    detect: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    cache.get().cloned().or_else(|| {
+        let detected = detect()?;
+        let _ = cache.set(detected.clone());
+        Some(detected)
+    })
 }
 
 fn cli_grok_version() -> Option<String> {
-    let output = Command::new(resolve_windows_grok_path())
-        .arg("version")
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .output()
-        .ok()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let version = first_version(&text)?;
+    let version = read_cli_version(&resolve_windows_grok_path(), Duration::from_secs(5))?;
     diagnose::log(format!("Grok CLI reports version {version}"));
     Some(version)
+}
+
+fn read_cli_version(path: &str, timeout: Duration) -> Option<String> {
+    let start = std::time::Instant::now();
+    let mut child = grok_command(path, &["version"])
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let (sender, receiver) = std::sync::mpsc::channel();
+    // Drain while the process runs so a full pipe cannot block its exit.
+    // Bound both the captured output and the wait, including inherited pipes.
+    std::thread::spawn(move || {
+        let mut output = String::new();
+        let result = stdout.take(64 * 1024).read_to_string(&mut output);
+        let _ = sender.send(result.ok().map(|_| output));
+    });
+    if !wait_for_command(&mut child, timeout) {
+        return None;
+    }
+    let output = receiver
+        .recv_timeout(timeout.saturating_sub(start.elapsed()))
+        .ok()??;
+    first_version(&output)
 }
 
 /// Pick the first `major.minor.patch` token out of arbitrary CLI output.
@@ -384,28 +441,39 @@ fn first_version(text: &str) -> Option<String> {
 /// stored session without spending any of the allowance.
 fn cli_refresh_grok_token() {
     let grok_path = resolve_windows_grok_path();
-    let lowercase = grok_path.to_lowercase();
     diagnose::log(format!(
         "attempting Windows Grok token refresh via {grok_path}"
     ));
 
-    let args: &[&str] = &["models"];
+    let mut child = match grok_command(&grok_path, &["models"]).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            diagnose::log_error("unable to spawn Windows Grok token refresh", error);
+            return;
+        }
+    };
+    wait_for_command(&mut child, Duration::from_secs(30));
+}
+
+fn grok_command(grok_path: &str, args: &[&str]) -> Command {
+    let lowercase = grok_path.to_lowercase();
     let mut command = if lowercase.ends_with(".cmd") || lowercase.ends_with(".bat") {
         let mut command = Command::new("cmd.exe");
-        command.arg("/c").arg(&grok_path).args(args);
+        command.arg("/d").arg("/c").arg(grok_path).args(args);
         command
     } else if lowercase.ends_with(".ps1") {
         let mut command = Command::new("powershell.exe");
         command
             .arg("-NoProfile")
+            .arg("-NonInteractive")
             .arg("-ExecutionPolicy")
             .arg("Bypass")
             .arg("-File")
-            .arg(&grok_path)
+            .arg(grok_path)
             .args(args);
         command
     } else {
-        let mut command = Command::new(&grok_path);
+        let mut command = Command::new(grok_path);
         command.args(args);
         command
     };
@@ -415,19 +483,12 @@ fn cli_refresh_grok_token() {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            diagnose::log_error("unable to spawn Windows Grok token refresh", error);
-            return;
-        }
-    };
-    wait_for_refresh(&mut child);
+    command
 }
 
 fn resolve_windows_grok_path() -> String {
     static PATH: OnceLock<String> = OnceLock::new();
-    PATH.get_or_init(|| {
+    cached_cli_detection(&PATH, || {
         // The official installer drops a real executable in ~/.grok/bin;
         // prefer it over an npm shim that would cost an extra cmd.exe hop.
         for name in ["grok.exe", "grok.cmd", "grok.ps1", "grok"] {
@@ -444,27 +505,32 @@ fn resolve_windows_grok_path() -> String {
                         .map(str::trim)
                         .filter(|path| !path.is_empty())
                     {
-                        return path.to_string();
+                        return Some(path.to_string());
                     }
                 }
             }
         }
-        "grok.cmd".to_string()
+        None
     })
-    .clone()
+    .unwrap_or_else(|| "grok.cmd".to_string())
 }
 
-fn wait_for_refresh(child: &mut std::process::Child) {
+fn wait_for_command(child: &mut std::process::Child, timeout: Duration) -> bool {
     let start = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() > Duration::from_secs(30) => {
+            Ok(Some(status)) => return status.success(),
+            Ok(None) if start.elapsed() >= timeout => {
                 let _ = child.kill();
-                break;
+                let _ = child.wait();
+                return false;
             }
-            Ok(None) => std::thread::sleep(Duration::from_millis(500)),
-            Err(_) => break,
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return false;
+            }
         }
     }
 }
@@ -525,13 +591,37 @@ mod tests {
 
     #[test]
     fn a_bearer_only_entry_is_still_usable() {
-        let session =
-            select_grok_session(r#"{"grok-desktop":{"key":"token","user_id":"u-app"}}"#).unwrap();
+        let session = select_grok_session(
+            r#"{"https://accounts.x.ai/sign-in":{"key":"token","user_id":"u-app"}}"#,
+        )
+        .unwrap();
         assert_eq!(session.access_token, "token");
         // Nothing to renew with, so the CLI must not be asked to sign in.
         assert!(!session.can_refresh);
         assert!(select_grok_session("{}").is_none());
         assert!(select_grok_session("not json").is_none());
+    }
+
+    #[test]
+    fn unrelated_identity_providers_and_api_keys_are_not_billing_sessions() {
+        let unrelated = r#"{
+            "https://idp.example.com::client": {
+                "key": "corporate-token", "expires_at": "2099-01-01T00:00:00Z"
+            },
+            "https://auth.x.ai.example.com::client": {"key": "lookalike-token"},
+            "xai::api_key": {"key": "api-key"}
+        }"#;
+        assert!(select_grok_session(unrelated).is_none());
+        let mut entries: serde_json::Value = serde_json::from_str(unrelated).unwrap();
+        entries["https://auth.x.ai::grok-cli"] = serde_json::json!({
+            "key": "session", "expires_at": "2026-01-01T00:00:00Z"
+        });
+        assert_eq!(
+            select_grok_session(&entries.to_string())
+                .unwrap()
+                .access_token,
+            "session"
+        );
     }
 
     #[test]
@@ -647,14 +737,62 @@ mod tests {
     }
 
     #[test]
-    fn cents_accept_both_wrapped_and_bare_numbers() {
-        let response: GrokBillingResponse = serde_json::from_str(
-            r#"{"config":{"creditUsagePercent":100,"onDemandCap":2000,"onDemandUsed":1000}}"#,
-        )
-        .unwrap();
-        let credits = grok_usage_from_billing(response).unwrap().credits.unwrap();
-        assert_eq!(credits.total, 20.0);
-        assert_eq!(credits.percentage, 50.0);
+    fn cents_accept_wrapped_and_bare_numbers_and_strings() {
+        for (cap, used) in [
+            (serde_json::json!(2000), serde_json::json!(1000)),
+            (serde_json::json!("2000"), serde_json::json!("1000")),
+            (
+                serde_json::json!({"val": 2000}),
+                serde_json::json!({"val": 1000}),
+            ),
+            (
+                serde_json::json!({"val": "2000"}),
+                serde_json::json!({"val": "1000"}),
+            ),
+            (serde_json::json!("2e3"), serde_json::json!({"val": "1e3"})),
+        ] {
+            let response: GrokBillingResponse = serde_json::from_value(serde_json::json!({
+                "config": {
+                    "creditUsagePercent": 100,
+                    "onDemandCap": cap,
+                    "onDemandUsed": used,
+                    "prepaidBalance": used
+                }
+            }))
+            .unwrap();
+            assert_eq!(
+                response
+                    .config
+                    .as_ref()
+                    .unwrap()
+                    .prepaid_balance
+                    .unwrap()
+                    .units(),
+                10.0
+            );
+            let data = grok_usage_from_billing(response).unwrap();
+            assert_eq!(data.weekly.percentage, 100.0);
+            let credits = data.credits.unwrap();
+            assert_eq!(credits.total, 20.0);
+            assert_eq!(credits.remaining, 10.0);
+            assert_eq!(credits.percentage, 50.0);
+        }
+        assert_eq!(
+            serde_json::from_str::<GrokCents>("{}").unwrap().units(),
+            0.0
+        );
+    }
+
+    #[test]
+    fn invalid_cents_strings_are_rejected_instead_of_becoming_credit_values() {
+        for value in ["", "invalid", "NaN", "Infinity", "-Infinity", "1e999"] {
+            for input in [serde_json::json!(value), serde_json::json!({"val": value})] {
+                assert!(
+                    serde_json::from_value::<GrokCents>(input).is_err(),
+                    "{value}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -678,5 +816,81 @@ mod tests {
             Some("2.0.11")
         );
         assert_eq!(first_version("no version here"), None);
+    }
+
+    #[test]
+    fn failed_cli_detection_is_retried_and_success_is_cached() {
+        let cache = OnceLock::new();
+        assert_eq!(cached_cli_detection(&cache, || None), None);
+        assert_eq!(
+            cached_cli_detection(&cache, || Some("1.2.3".into())).as_deref(),
+            Some("1.2.3")
+        );
+        assert_eq!(
+            cached_cli_detection(&cache, || panic!("successful detection must be cached"))
+                .as_deref(),
+            Some("1.2.3")
+        );
+    }
+
+    #[test]
+    fn numeric_period_ends_reject_overflow_without_losing_valid_timestamps() {
+        for value in [serde_json::json!(1e300), serde_json::json!(1e25)] {
+            assert_eq!(period_end(Some(&value)), None);
+        }
+        for value in [
+            serde_json::json!(1_790_000_000),
+            serde_json::json!(1_790_000_000_000u64),
+        ] {
+            assert_eq!(
+                period_end(Some(&value)),
+                Some(UNIX_EPOCH + Duration::from_secs(1_790_000_000))
+            );
+        }
+    }
+
+    #[test]
+    fn version_detection_runs_windows_shims_with_spaces_in_the_path() {
+        let root = crate::app_settings::app_data_directory().join("Grok CLI shims");
+        std::fs::create_dir_all(&root).unwrap();
+        for (extension, script) in [
+            (
+                "cmd",
+                "@echo off\r\nif not \"%~1\"==\"version\" exit /b 1\r\necho grok 1.2.3\r\n",
+            ),
+            (
+                "ps1",
+                "if ($args[0] -ne 'version') { exit 1 }; Write-Output 'grok 1.2.3'",
+            ),
+        ] {
+            let path = root.join(format!("grok.{extension}"));
+            std::fs::write(&path, script).unwrap();
+            assert_eq!(
+                read_cli_version(path.to_str().unwrap(), Duration::from_secs(5)).as_deref(),
+                Some("1.2.3"),
+                "{}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
+    fn version_detection_rejects_failed_commands_and_times_out() {
+        let root = crate::app_settings::app_data_directory();
+        let failed = root.join("failed-version.cmd");
+        std::fs::write(&failed, "@echo grok 1.2.3\r\n@exit /b 1\r\n").unwrap();
+        assert_eq!(
+            read_cli_version(failed.to_str().unwrap(), Duration::from_secs(5)),
+            None
+        );
+
+        let slow = root.join("slow-version.ps1");
+        std::fs::write(&slow, "Start-Sleep -Seconds 30; Write-Output 'grok 1.2.3'").unwrap();
+        let start = std::time::Instant::now();
+        assert_eq!(
+            read_cli_version(slow.to_str().unwrap(), Duration::from_millis(200)),
+            None
+        );
+        assert!(start.elapsed() < Duration::from_secs(5));
     }
 }
