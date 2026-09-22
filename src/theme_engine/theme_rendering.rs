@@ -120,19 +120,40 @@ pub fn render_theme_surface_with_runtime_at_scale(
         && matches!(surface.background, LayerBackground::None)
     {
         let alpha = ((runtime.floating_card_opacity.min(100) as u32 * 255) / 100) as u8;
-        let card_color = Rgba {
-            r: 24,
-            g: 24,
-            b: 32,
-            a: alpha,
+        // Match the card to the system theme: a fixed dark card under
+        // light-mode content destroys contrast when the widget floats.
+        let dark = crate::theme::is_dark_mode();
+        let card_color = if dark {
+            Rgba {
+                r: 24,
+                g: 24,
+                b: 32,
+                a: alpha,
+            }
+        } else {
+            Rgba {
+                r: 243,
+                g: 243,
+                b: 243,
+                a: alpha,
+            }
         };
         let radius = 8.0 * scale;
         fill_rounded(&mut pixels, width, height, card_color, radius);
-        let border_color = Rgba {
-            r: 255,
-            g: 255,
-            b: 255,
-            a: 35,
+        let border_color = if dark {
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 35,
+            }
+        } else {
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 40,
+            }
         };
         stroke_rounded_rectangle(
             &mut pixels,

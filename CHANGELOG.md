@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.46] - 2026-09-23
+
+### Fixed
+
+- Matched the automatic floating card's background and border to the Windows system theme, restoring contrast in light mode for floating and automatically undocked widgets. ([#110](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/110))
+
 ## [2.14.45] - 2026-09-23
 
 ### Added
@@ -889,3 +895,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.13.43]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.42...v2.13.43
 [2.13.44]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.43...v2.13.44
 [2.14.45]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.44...v2.14.45
+[2.14.46]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.45...v2.14.46
