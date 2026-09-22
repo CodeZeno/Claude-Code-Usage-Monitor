@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.50] - 2026-09-23
+
+### Changed
+
+- Switched theme package ZIP compression to the zlib-rs-only Deflate feature, removing the unused Zopfli encoder dependency while retaining Deflate import and export support.
+
 ## [2.14.49] - 2026-09-23
 
 ### Added
@@ -921,3 +927,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.47]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.46...v2.14.47
 [2.14.48]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.47...v2.14.48
 [2.14.49]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.48...v2.14.49
+[2.14.50]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.49...v2.14.50
