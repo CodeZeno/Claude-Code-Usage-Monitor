@@ -14,6 +14,17 @@ use crate::ui::tokens::{CONTROL_CORNER_RADIUS, CONTROL_HEIGHT, DROPDOWN_CORNER_R
 
 const LUCIDE_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/lucide-subset.ttf"));
 const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-fallback.ttf"));
+/// Lucide ships no GitHub icon, so the mark rides along as a one-glyph font
+/// that joins the `lucide` family as a fallback. It was compiled once from
+/// GitHub's published mark and is checked in rather than rebuilt, since the
+/// artifact never changes. Redrawing it means matching Lucide's geometry: a
+/// 1000-unit em with the baseline at zero, the outline fitted to 958 of those
+/// units and centred, mapped at [`GITHUB_MARK_GLYPH`].
+const GITHUB_MARK_FONT_BYTES: &[u8] = include_bytes!("../icons/github-mark.ttf");
+
+/// Private-use codepoint of the GitHub mark. Lucide's own glyphs sit below
+/// U+E800, so this cannot collide with the generated subset.
+pub(crate) const GITHUB_MARK_GLYPH: char = '\u{f000}';
 
 /// Installs the shared fonts, palette, widget visuals, and spacing used by the UI.
 pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
@@ -25,6 +36,10 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
     fonts.font_data.insert(
         "lucide".into(),
         egui::FontData::from_static(LUCIDE_FONT_BYTES).into(),
+    );
+    fonts.font_data.insert(
+        "github-mark".into(),
+        egui::FontData::from_static(GITHUB_MARK_FONT_BYTES).into(),
     );
     let native_menu_font = load_native_menu_font(&mut fonts);
 
@@ -59,7 +74,7 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
     );
     fonts.families.insert(
         egui::FontFamily::Name("lucide".into()),
-        vec!["lucide".into()],
+        vec!["lucide".into(), "github-mark".into()],
     );
     context.set_fonts(fonts);
 
