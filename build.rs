@@ -10,6 +10,7 @@ use winres::{VersionInfo, WindowsResource};
 
 fn main() {
     build_locales();
+    build_themes();
     build_lucide_subset();
     build_ui_fallback_subset();
 
@@ -35,6 +36,27 @@ fn main() {
     res.compile().expect("Failed to compile Windows resources");
 
     println!("cargo:rerun-if-changed=src/app.manifest");
+}
+
+fn build_themes() {
+    let output_dir = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR was not set"));
+    for name in [
+        "classic-usage-widget.json",
+        "compact-fluent-quad.json",
+        "minecraft-codex.json",
+    ] {
+        let path = Path::new("src/themes").join(name);
+        println!("cargo:rerun-if-changed={}", path.display());
+        let source = fs::read(&path)
+            .unwrap_or_else(|error| panic!("Failed to read {}: {error}", path.display()));
+        let theme: serde_json::Value = serde_json::from_slice(&source)
+            .unwrap_or_else(|error| panic!("Invalid theme file {}: {error}", path.display()));
+        let minified = serde_json::to_vec(&theme)
+            .unwrap_or_else(|error| panic!("Failed to minify {}: {error}", path.display()));
+        let output = output_dir.join(name);
+        write_if_changed(&output, &minified)
+            .unwrap_or_else(|error| panic!("Failed to write {}: {error}", output.display()));
+    }
 }
 
 struct LocaleSource {

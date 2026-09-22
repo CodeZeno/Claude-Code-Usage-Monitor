@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.14.46"
+version = "2.14.47"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -62,6 +62,7 @@ heck = "0.5"
 lucide-icons = "1.30"
 oxifont-subset = "0.2.2"
 proc-macro2 = "1"
+serde_json = "1"
 toml = "1.1"
 winres = "0.1"
 

@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.47] - 2026-09-23
+
+### Changed
+
+- Minified the three bundled theme JSON files at build time, reducing embedded theme data by 95,499 bytes (41.9%) while keeping the source files readable for editing. Theme source changes automatically regenerate the bundled copies.
+
 ## [2.14.46] - 2026-09-23
 
 ### Fixed
@@ -896,3 +902,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.13.44]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.43...v2.13.44
 [2.14.45]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.44...v2.14.45
 [2.14.46]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.45...v2.14.46
+[2.14.47]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.46...v2.14.47
