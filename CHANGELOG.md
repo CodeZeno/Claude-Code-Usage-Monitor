@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.48] - 2026-09-23
+
+### Removed
+
+- Removed BMP image imports and image clipboard support while preserving native text copy, cut, and paste. A documented local `egui-winit` patch disables `arboard`'s image dependencies. The image picker and supported-format message now list PNG, JPEG, GIF, and WebP.
+
 ## [2.14.47] - 2026-09-23
 
 ### Changed
@@ -903,3 +909,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.45]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.44...v2.14.45
 [2.14.46]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.45...v2.14.46
 [2.14.47]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.46...v2.14.47
+[2.14.48]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.47...v2.14.48

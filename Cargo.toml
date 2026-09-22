@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.14.47"
+version = "2.14.48"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -22,7 +22,7 @@ ureq = { version = "3.4", default-features = false, features = ["native-tls", "j
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
-image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 eframe = { version = "0.36", default-features = false, features = ["glow"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
@@ -65,6 +65,10 @@ proc-macro2 = "1"
 serde_json = "1"
 toml = "1.1"
 winres = "0.1"
+
+[patch.crates-io]
+# Keep native text copy/paste without arboard's image codecs. See vendor/egui-winit/PATCH.md.
+egui-winit = { path = "vendor/egui-winit" }
 
 [profile.release]
 opt-level = "z"
