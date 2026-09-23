@@ -26,11 +26,11 @@ pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
         CLASSIC_THEME_ID,
-        include_str!("themes/classic-usage-widget.json"),
+        include_str!(concat!(env!("OUT_DIR"), "/classic-usage-widget.json")),
     ),
     (
         COMPACT_FLUENT_QUAD_THEME_ID,
-        include_str!("themes/compact-fluent-quad.json"),
+        include_str!(concat!(env!("OUT_DIR"), "/compact-fluent-quad.json")),
     ),
 ];
 
@@ -39,7 +39,7 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
 /// so users can edit, rename, export, or delete them in Theme Studio.
 const BUNDLED_EDITABLE_THEME_SOURCES: &[(&str, &str)] = &[(
     MINECRAFT_THEME_ID,
-    include_str!("themes/minecraft-codex.json"),
+    include_str!(concat!(env!("OUT_DIR"), "/minecraft-codex.json")),
 )];
 const BUNDLED_EDITABLE_INSTALL_MARKER: &str = ".minecraft-theme-installed";
 

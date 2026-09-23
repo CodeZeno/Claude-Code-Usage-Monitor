@@ -1,5 +1,10 @@
 use super::*;
 
+#[test]
+fn configured_https_transport_does_not_panic() {
+    crate::https_test::assert_tls_handshake(super::build_agent().expect("HTTP agent should build"));
+}
+
 const ABC_DIGEST: &str = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
 fn helper_args() -> Vec<String> {

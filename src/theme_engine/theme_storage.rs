@@ -20,11 +20,7 @@ pub fn assets_directory() -> PathBuf {
 
 pub(super) fn supported_asset_extension(path: &Path) -> Option<String> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
-    matches!(
-        extension.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp"
-    )
-    .then_some(extension)
+    matches!(extension.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp").then_some(extension)
 }
 
 pub(super) fn managed_asset_relative_path(file_name: &str) -> String {
@@ -75,7 +71,7 @@ pub fn import_asset_bytes(file_name: &str, source_bytes: &[u8]) -> Result<Manage
         return Err("The selected image needs a valid file name".into());
     }
     let extension = supported_asset_extension(source_path)
-        .ok_or_else(|| "Supported images are PNG, JPEG, GIF, BMP, and WebP".to_string())?;
+        .ok_or_else(|| "Supported images are PNG, JPEG, GIF, and WebP".to_string())?;
     let image = image::load_from_memory(source_bytes)
         .map_err(|error| format!("Unable to read the selected image: {error}"))?;
     let (width, height) = (image.width(), image.height());

@@ -71,7 +71,8 @@ use crate::ui::components::icon::{
 };
 use crate::ui::components::layout::{
     available_control_width as inspector_control_width, inspector_row as labeled, setting_row,
-    setting_separator, settings_scroll_area, settings_section as section, studio_region,
+    setting_row_with_mark, setting_separator, settings_scroll_area, settings_section as section,
+    studio_region,
 };
 use crate::ui::components::number_field::NumberField;
 use crate::ui::components::searchable_dropdown::searchable_dropdown;
@@ -89,7 +90,7 @@ use crate::ui::components::toggle::Toggle;
 use crate::ui::components::tree_row::{
     paint_background as paint_scene_row_background, selected_style as scene_row_style,
 };
-use crate::ui::theme::{accent, configure_style, menu_surface, muted};
+use crate::ui::theme::{accent, configure_style, menu_surface, muted, provider_mark_glyph};
 use crate::ui::tokens::{
     CANVAS_ZOOM_LEVELS, CONTROL_HEIGHT, DEFAULT_DASHBOARD_HEIGHT, DEFAULT_DASHBOARD_WIDTH,
     DEFAULT_INSPECTOR_WIDTH, DEFAULT_MENU_WIDTH, DEFAULT_SCENE_WIDTH,

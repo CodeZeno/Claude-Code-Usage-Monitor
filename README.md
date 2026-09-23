@@ -3,7 +3,7 @@
 ![Windows](https://img.shields.io/badge/platform-Windows-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A lightweight, open-source Windows taskbar widget for monitoring Claude Code usage limits and reset times. It can also display usage for Codex, Google Antigravity, OpenCode Go, and Cursor.
+A lightweight, open-source Windows taskbar widget for monitoring Claude Code usage limits and reset times. It can also display usage for Codex, Google Antigravity, OpenCode Go, Cursor, and Grok Build.
 
 See the [user guide](USER_GUIDE.md) for theme customisation and everyday settings,
 or the [changelog](CHANGELOG.md) for version history and notable changes.
@@ -14,7 +14,7 @@ or the [changelog](CHANGELOG.md) for version history and notable changes.
 
 - Displays current usage and time remaining until each limit resets
 - Counts usage up from zero or down from the full allowance, whichever you prefer
-- Supports Claude Code, Codex, Google Antigravity, OpenCode Go, and Cursor
+- Supports Claude Code, Codex, Google Antigravity, OpenCode Go, Cursor, and Grok Build
 - Supports multiple accounts for Claude Code and Codex
 - Lives in the Windows taskbar with quick controls in the system tray
 - Supports multiple monitors and Windows startup
@@ -70,6 +70,7 @@ In the default theme, left-click a provider tray icon to show or hide the widget
 | Google Antigravity | Sign in to Antigravity, then enable it in **Providers**. |
 | OpenCode Go | Connect an OpenCode Go account, configure the credentials described below, then enable OpenCode in **Providers**. |
 | Cursor | Sign in to Cursor, then enable it in **Providers**. The local session is detected automatically. |
+| Grok Build | Run `grok login` in the Grok Build CLI, then enable Grok in **Providers**. The signed-in session is detected automatically. |
 
 For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
 
@@ -84,11 +85,13 @@ The workspace ID is part of the OpenCode Go console URL: `https://opencode.ai/co
 
 For Cursor, `CURSOR_SESSION_TOKEN` can override the automatically detected local session.
 
+Grok Build usage comes from the session the CLI stores in `%USERPROFILE%\.grok\auth.json`, read through the same billing endpoint as the CLI's own `/usage` panel. Set `GROK_HOME` if the CLI keeps its home directory elsewhere. Only xAI sign-in entries are used; corporate identity-provider tokens and stored API keys are excluded. A bare `XAI_API_KEY` is not enough: the shared weekly allowance is only readable with a signed-in session. Grok reports one pool per billing period rather than a five-hour window, so the monitor shows it on the long-window row alongside the other providers, leaving the short-window row empty. On-demand spending replaces the pool on that row once any is used, as it already does for Claude Code and Codex.
+
 ## Data and privacy
 
 The monitor reads local sign-in credentials for enabled providers and sends usage requests directly to their official services. It has no backend service, collects no telemetry, and does not upload credentials or project files.
 
-Credentials are read without modifying the provider files that contain them. OpenCode Go credentials saved in a JSON configuration file are plain text and should be protected like a browser session cookie.
+Credentials are read without modifying the provider files that contain them. When Grok Build rejects a stored token, the monitor asks the Grok CLI to refresh its own session rather than rewriting `auth.json` itself. OpenCode Go credentials saved in a JSON configuration file are plain text and should be protected like a browser session cookie.
 
 ## Troubleshooting
 
@@ -108,6 +111,11 @@ claude-code-usage-monitor --diagnose
 ```
 
 The diagnostic log is written to `%TEMP%\claude-code-usage-monitor.log`. Application settings are stored in `%APPDATA%\ClaudeCodeUsageMonitor\settings.json`.
+
+If the app unexpectedly closes because of a Rust panic, it automatically appends
+the panic message, source location, and thread details to the same log, even when
+diagnostic recording is off. Include this log when reporting the crash; copy it
+before starting a new `--diagnose` session, which clears the log.
 
 ## Build from source
 

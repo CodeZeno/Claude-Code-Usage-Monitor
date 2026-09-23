@@ -262,7 +262,7 @@ impl StudioApp {
     pub(super) fn import_asset_from_dialog(&mut self) -> Option<theme_engine::ManagedAsset> {
         let language = self.language();
         let filter = format!(
-            "{}\0*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.webp\0{}\0*.*\0\0",
+            "{}\0*.png;*.jpg;*.jpeg;*.gif;*.webp\0{}\0*.*\0\0",
             language.text("Images"),
             language.text("All files")
         );
