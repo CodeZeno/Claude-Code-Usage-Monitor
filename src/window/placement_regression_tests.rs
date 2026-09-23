@@ -713,6 +713,80 @@ fn floating_taskbar_reference_is_not_clamped_to_tray() {
 }
 
 #[test]
+fn authored_taskbar_placements_keep_their_position_near_the_tray() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    for horizontal in [true, false] {
+        let taskbar = if horizontal {
+            RECT {
+                top: 1032,
+                ..monitor
+            }
+        } else {
+            RECT {
+                right: 60,
+                ..monitor
+            }
+        };
+        let tray = if horizontal {
+            RECT {
+                left: 1600,
+                ..taskbar
+            }
+        } else {
+            RECT {
+                top: 900,
+                ..taskbar
+            }
+        };
+        // Exercise both edge alignment and the same anchors used by drag docking.
+        for edge_aligned in [true, false] {
+            let placement: theme_engine::Placement = serde_json::from_value(serde_json::json!({
+                "reference": { "region": "taskbar", "display": 0 },
+                "nest": "taskbar",
+                "horizontal": if horizontal && edge_aligned { "right" } else { "left" },
+                "vertical": if horizontal || edge_aligned { "bottom" } else { "top" },
+                "surface_horizontal": if horizontal && edge_aligned { "right" } else { "left" },
+                "surface_vertical": if horizontal || edge_aligned { "bottom" } else { "top" },
+                "offset_x": if horizontal && !edge_aligned { 1720 } else { 0 },
+                "offset_y": if !horizontal && !edge_aligned { 980 } else { 0 }
+            }))
+            .unwrap();
+            for tray in [Some(tray), None] {
+                let rect = positioning::surface_screen_rect(
+                    &placement,
+                    if horizontal { 200 } else { 50 },
+                    if horizontal { 46 } else { 100 },
+                    1.0,
+                    monitor,
+                    Some(taskbar),
+                    tray,
+                );
+                if horizontal {
+                    assert_eq!((rect.left, rect.right), (1720, 1920));
+                } else {
+                    assert_eq!((rect.top, rect.bottom), (980, 1080));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn drag_taskbar_clamp_is_not_saved_in_themes() {
+    let dragged = positioning::taskbar_dock_placement(0, 1700, 1.0, true);
+    assert!(dragged.clamp_taskbar_drag);
+    let json = serde_json::to_value(&dragged).unwrap();
+    assert!(json.get("clamp_taskbar_drag").is_none());
+    let loaded: theme_engine::Placement = serde_json::from_value(json).unwrap();
+    assert!(!loaded.clamp_taskbar_drag);
+}
+
+#[test]
 fn smart_anchoring_fractional_dpi_scaling() {
     let monitor = RECT {
         left: 0,
