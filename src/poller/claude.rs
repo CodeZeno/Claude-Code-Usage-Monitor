@@ -17,7 +17,9 @@ mod limits;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
 const MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
-const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-3-haiku-20240307", "claude-haiku-4-5-20251001"];
+// Keep header probes on the low-cost Haiku tier. This API alias follows 4.5
+// snapshots, but still needs updating when the Haiku 4.5 generation retires.
+const MODEL_FALLBACK_CHAIN: &[&str] = &["claude-haiku-4-5"];
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 #[derive(Deserialize)]
