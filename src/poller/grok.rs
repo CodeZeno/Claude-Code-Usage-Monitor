@@ -236,7 +236,7 @@ fn fetch_grok_usage(session: &GrokSession) -> Result<UsageData, PollError> {
         request = request.header("x-userid", &session.user_id);
     }
 
-    let mut response = match request.call() {
+    let mut response = match request.call().and_then(super::check_http_status) {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(code @ (401 | 403))) => {
             diagnose::log(format!(

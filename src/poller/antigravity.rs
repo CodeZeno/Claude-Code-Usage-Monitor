@@ -195,6 +195,7 @@ pub(super) fn fetch_antigravity_project(
         .header("Content-Type", "application/json")
         .header("User-Agent", "antigravity")
         .send_json(&body)
+        .and_then(super::check_http_status)
     {
         Ok(resp) => resp,
         Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
@@ -237,6 +238,7 @@ pub(super) fn fetch_antigravity_model_quota(
         .header("Content-Type", "application/json")
         .header("User-Agent", "antigravity")
         .send_json(&body)
+        .and_then(super::check_http_status)
     {
         Ok(resp) => resp,
         Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
@@ -286,6 +288,7 @@ pub(super) fn fetch_antigravity_quota_summary(
         .header("Content-Type", "application/json")
         .header("User-Agent", "antigravity")
         .send_json(&body)
+        .and_then(super::check_http_status)
     {
         Ok(resp) => resp,
         Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {

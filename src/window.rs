@@ -2639,7 +2639,7 @@ fn do_poll_once(hwnd: HWND) {
                             }
                         }
                         _ => {
-                            // Transient network / credential-missing errors: exponential backoff.
+                            // Transient errors: exponential backoff, respecting server cooldowns.
                             s.auth_error_paused_polling = false;
                             s.auth_watch_mode = poller::CredentialWatchMode::ActiveSource(
                                 s.providers.first().unwrap_or_default(),
@@ -2649,7 +2649,10 @@ fn do_poll_once(hwnd: HWND) {
                             let backoff = RETRY_BASE_MS.saturating_mul(
                                 1u32.checked_shl(s.retry_count - 1).unwrap_or(u32::MAX),
                             );
-                            let retry_ms = backoff.min(s.poll_interval_ms);
+                            let retry_ms = poller::retry_delay_ms(
+                                backoff.min(s.poll_interval_ms),
+                                poll_started,
+                            );
                             unsafe {
                                 let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
                                 SetTimer(Some(hwnd), TIMER_POLL, retry_ms, None);
