@@ -552,7 +552,7 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
             .is_none_or(|p| p.nest != "floating")
     {
         let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
-        occupancy.overlaps(widget).then_some(1)
+        occupancy.overlaps_app_controls(widget).then_some(1)
     } else {
         None
     }
@@ -659,8 +659,17 @@ fn theme_with_placement(state: &AppState, auto_ejected: bool) -> Option<ThemeDoc
             0
         };
         let horizontal = taskbar_is_horizontal(index);
-        let placement =
-            positioning::dock_placement(index, p.tray_offset, display_scale(index), horizontal);
+        let placement = if p.screen_x > 0 || p.screen_y > 0 {
+            let offset = if horizontal { p.screen_x } else { p.screen_y };
+            positioning::taskbar_dock_placement(index, offset, display_scale(index), horizontal)
+        } else {
+            positioning::dock_placement(
+                index,
+                p.tray_offset,
+                display_scale(index),
+                horizontal,
+            )
+        };
         positioning::override_primary_placement(&mut theme, placement);
     }
     Some(theme)
