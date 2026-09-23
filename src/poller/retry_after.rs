@@ -9,6 +9,11 @@ use ureq::SendBody;
 
 use super::HttpResponse;
 
+/// Header probes need fresh responses even while the account is rate limited.
+/// This request extension is local metadata and is never sent to the server.
+#[derive(Clone, Copy)]
+pub(super) struct BypassCooldown;
+
 #[derive(Clone, Copy)]
 struct Cooldown {
     received: Instant,
@@ -66,6 +71,9 @@ impl RetryAfter {
         request: Request<SendBody>,
         send: impl FnOnce(Request<SendBody>) -> Result<HttpResponse, ureq::Error>,
     ) -> Result<HttpResponse, ureq::Error> {
+        if request.extensions().get::<BypassCooldown>().is_some() {
+            return send(request);
+        }
         let key = request_key(&request);
         {
             let now = Instant::now();
@@ -198,6 +206,38 @@ mod tests {
                 .is_ok());
             assert!(state.retry_delay_ms(30_000, started, Instant::now()) > 119_000);
         }
+    }
+
+    #[test]
+    fn bypass_neither_records_nor_obeys_cooldowns() {
+        let state = RetryAfter::default();
+        let started = Instant::now();
+        let probe = || {
+            let mut request = request("first");
+            request.extensions_mut().insert(BypassCooldown);
+            request
+        };
+        for _ in 0..2 {
+            let response = state
+                .handle(probe(), |_| Ok(response(429, Some("7200"))))
+                .unwrap();
+            assert_eq!(response.status(), 429);
+        }
+        assert!(state.cooldowns.lock().unwrap().is_empty());
+        assert_eq!(state.retry_delay_ms(30_000, started, Instant::now()), 30_000);
+
+        // A probe also passes through an existing cooldown for the same key,
+        // without clearing it for ordinary requests.
+        state
+            .handle(request("first"), |_| Ok(response(429, Some("7200"))))
+            .unwrap();
+        assert!(state
+            .handle(probe(), |_| Ok(response(429, Some("7200"))))
+            .is_ok());
+        assert!(matches!(
+            state.handle(request("first"), |_| panic!("sent during cooldown")),
+            Err(ureq::Error::StatusCode(429))
+        ));
     }
 
     #[test]
