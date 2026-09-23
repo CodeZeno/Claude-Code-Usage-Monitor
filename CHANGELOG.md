@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.59] - 2026-09-24
+
+### Changed
+
+- Updated the MIT license copyright notice to Code Zeno Pty Ltd and the year to 2026, matching the executable metadata. ([#120](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/120))
+
 ## [2.14.58] - 2026-09-23
 
 ### Changed
@@ -997,3 +1003,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.56]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.55...v2.14.56
 [2.14.57]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.56...v2.14.57
 [2.14.58]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.57...v2.14.58
+[2.14.59]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.58...v2.14.59
