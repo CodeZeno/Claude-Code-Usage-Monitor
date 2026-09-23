@@ -49,6 +49,12 @@ function Assert-LabVM {
     $snapshots = @(Get-VMSnapshot -VM $vm | Where-Object Name -EQ $Definition.checkpoint)
     if ($snapshots.Count -ne 1) { throw "Expected exactly one checkpoint named $($Definition.checkpoint)." }
     if ([string]$snapshots[0].SnapshotType -ne 'Standard') { throw 'Use a standard checkpoint that preserves the signed-in desktop.' }
+    # SnapshotType classifies user/recovery/replica snapshots, not the VM's
+    # Standard/Production checkpoint setting. Production and powered-off
+    # checkpoints have no desktop memory to resume.
+    if ([string]$snapshots[0].State -notin @('Running', 'Saved', 'Paused')) {
+        throw 'Use a checkpoint with saved desktop memory, captured while the guest is signed in and unlocked.'
+    }
     [pscustomobject]@{ VM = $vm; Checkpoint = $snapshots[0] }
 }
 

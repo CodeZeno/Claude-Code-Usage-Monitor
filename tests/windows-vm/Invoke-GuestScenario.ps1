@@ -127,7 +127,8 @@ public static class CCUMLabDesktop {
         var data = new APPBARDATA(); data.cbSize = (uint)Marshal.SizeOf(data); data.hWnd = FindWindow("Shell_TrayWnd", null);
         if (data.hWnd == IntPtr.Zero) throw new Exception("Explorer taskbar unavailable");
         ulong state = SHAppBarMessage(4, ref data).ToUInt64();
-        if (autoHide) { data.param = new IntPtr((long)(state | 1)); SHAppBarMessage(10, ref data); }
+        data.param = new IntPtr((long)(autoHide ? state | 1UL : state & ~1UL));
+        SHAppBarMessage(10, ref data);
         return SHAppBarMessage(4, ref data).ToUInt64();
     }
     public static WindowInfo[] WindowsForProcess(int pid) {
@@ -162,7 +163,7 @@ public static class CCUMLabDesktop {
         Assert-Check 'alignment preference applied' ((Get-ItemProperty -LiteralPath $key).TaskbarAl -eq $alignment) $alignment
     }
     $state = [CCUMLabDesktop]::TaskbarState($request.taskbar -eq 'auto-hide')
-    if ($request.taskbar -eq 'auto-hide') { Assert-Check 'auto-hide enabled' (($state -band 1) -eq 1) $state }
+    Assert-Check 'expected auto-hide state' ((($state -band 1) -eq 1) -eq ($request.taskbar -eq 'auto-hide')) $state
     @{ taskbar = $request.taskbar; appbarState = $state; screen = [Windows.Forms.SystemInformation]::VirtualScreen.ToString() } |
         ConvertTo-Json | Set-Content -LiteralPath "$evidence\desktop.json" -Encoding UTF8
     $null = New-Item -ItemType Directory -Path (Split-Path -Parent $settingsPath) -Force

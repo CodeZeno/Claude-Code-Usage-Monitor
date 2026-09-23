@@ -296,8 +296,10 @@ access. On each VM:
    }
    ```
 
-Standard checkpoints preserve VM memory, which lets this POC resume the desktop
-session without storing autologon passwords. Production checkpoints are refused.
+Standard checkpoints captured with a running desktop preserve VM memory, which
+lets this POC resume the desktop session without storing autologon passwords.
+The runner requires a checkpoint with running, saved, or paused state; production
+and powered-off checkpoints have no desktop memory and are refused.
 Use exactly one checkpoint with that name per VM. Rebuild/checkpoint updated images
 deliberately instead of letting the baseline change between scenarios.
 

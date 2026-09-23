@@ -61,7 +61,7 @@ try {
     $module = Get-Module Lab
     & $module {
         $script:fakeVM = [pscustomobject]@{ Name = 'CCUM-Win10'; Notes = ''; Id = [guid]::NewGuid() }
-        $script:fakeSnapshots = @([pscustomobject]@{ Name = 'ccum-clean-desktop'; SnapshotType = 'Standard' })
+        $script:fakeSnapshots = @([pscustomobject]@{ Name = 'ccum-clean-desktop'; SnapshotType = 'Standard'; State = 'Running' })
         function script:Get-VM { $script:fakeVM }
         function script:Get-VMSnapshot { param($VM) $script:fakeSnapshots }
     }
@@ -73,9 +73,20 @@ try {
         $target = Assert-LabVM $config.vms[0]
         Require ($target.VM.Name -eq 'CCUM-Win10')
     }
-    & $module { $script:fakeSnapshots[0].SnapshotType = 'Production' }
-    Check 'production checkpoint refused' {
+    & $module { $script:fakeSnapshots[0].SnapshotType = 'Recovery' }
+    Check 'recovery checkpoint refused' {
         Expect-Throw { Assert-LabVM $config.vms[0] } 'standard checkpoint'
+    }
+    & $module { $script:fakeSnapshots[0].SnapshotType = 'Standard'; $script:fakeSnapshots[0].State = 'Off' }
+    Check 'production or powered-off checkpoint without desktop memory refused' {
+        Expect-Throw { Assert-LabVM $config.vms[0] } 'saved desktop memory'
+    }
+    Check 'saved and paused desktop checkpoints accepted' {
+        foreach ($state in 'Saved', 'Paused') {
+            & $module { param($value) $script:fakeSnapshots[0].State = $value } $state
+            $target = Assert-LabVM $config.vms[0]
+            Require ($target.Checkpoint.State -eq $state)
+        }
     }
     & $module { $script:fakeSnapshots = @() }
     Check 'missing checkpoint refused' {
