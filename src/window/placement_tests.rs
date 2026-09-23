@@ -330,33 +330,38 @@ fn test_placement_override_serialization_and_normalization() {
 }
 
 #[test]
-fn snapping_uses_hysteresis_at_both_thresholds() {
-    let slot = RECT {
-        left: 0,
-        top: 0,
-        right: 100,
-        bottom: 50,
-    };
-    for (left, snapped, expected) in [
-        (33, false, true), // 67%: start snapping at the boundary.
-        (34, false, false),
-        (50, false, false),
-        (50, true, true),
-        (55, true, true), // 45%: remain snapped at the boundary.
-        (56, true, false),
-        (100, true, false),
-    ] {
-        let widget = RECT {
-            left,
+fn snapping_uses_hysteresis_at_both_thresholds_across_dpi_scales() {
+    for scale in [1.0, 1.25, 1.5, 2.0, 3.0] {
+        // Multiples of four keep the exact boundary cases representable in
+        // physical pixels, including at fractional DPI scales.
+        let physical = |value: i32| (value as f64 * 4.0 * scale).round() as i32;
+        let slot = RECT {
+            left: 0,
             top: 0,
-            right: left + 100,
-            bottom: 50,
+            right: physical(100),
+            bottom: physical(50),
         };
-        assert_eq!(
-            positioning::should_snap_to_slot(widget, slot, snapped),
-            expected,
-            "left={left}, previously snapped={snapped}"
-        );
+        for (left, snapped, expected) in [
+            (33, false, true), // 67%: start snapping at the boundary.
+            (34, false, false),
+            (50, false, false),
+            (50, true, true),
+            (55, true, true), // 45%: remain snapped at the boundary.
+            (56, true, false),
+            (100, true, false),
+        ] {
+            let widget = RECT {
+                left: physical(left),
+                top: 0,
+                right: physical(left + 100),
+                bottom: physical(50),
+            };
+            assert_eq!(
+                positioning::should_snap_to_slot(widget, slot, snapped),
+                expected,
+                "scale={scale}, left={left}, previously snapped={snapped}"
+            );
+        }
     }
 }
 
