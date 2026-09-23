@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.61] - 2026-09-24
+
+### Fixed
+
+- Statically link the C runtime in Windows MSVC builds, including release CI, so the executable no longer requires a separate Microsoft Visual C++ Redistributable installation. Documented the build configuration and continued use of built-in Windows system libraries. ([#123](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/123))
+
 ## [2.14.60] - 2026-09-24
 
 ### Added
@@ -1015,3 +1021,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.58]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.57...v2.14.58
 [2.14.59]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.58...v2.14.59
 [2.14.60]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.59...v2.14.60
+[2.14.61]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.60...v2.14.61
