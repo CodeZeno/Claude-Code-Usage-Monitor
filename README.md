@@ -39,6 +39,8 @@ winget install CodeZeno.ClaudeCodeUsageMonitor
 
 Alternatively, download `claude-code-usage-monitor.exe` from [GitHub Releases](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases).
 
+See [updater verification](docs/updater.md) for the portable updater's integrity checks and trust boundary.
+
 ## Usage
 
 Start the monitor:

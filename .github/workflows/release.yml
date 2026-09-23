@@ -22,6 +22,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Test updater safeguards
+        run: cargo test --locked updater
+
       - name: Build release binary
         run: cargo build --release
 

@@ -21,6 +21,8 @@ LegalCopyright = "Copyright (C) 2026 Code Zeno Pty Ltd"
 ureq = { version = "3.4", default-features = false, features = ["native-tls", "json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
+sha2 = "0.10"
 dirs = "6"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "bmp", "webp"] }
 eframe = { version = "0.36", default-features = false, features = ["glow"] }
@@ -55,6 +57,9 @@ features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Storage_FileSystem",
 ]
+
+[dev-dependencies]
+tempfile = "3"
 
 [build-dependencies]
 epaint_default_fonts = "0.36"
