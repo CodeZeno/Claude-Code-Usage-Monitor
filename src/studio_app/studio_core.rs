@@ -136,9 +136,7 @@ impl StudioApp {
             scene_width: DEFAULT_SCENE_WIDTH,
             inspector_width: DEFAULT_INSPECTOR_WIDTH,
             hovered_scene_item: None,
-            expression_helper: None,
-            action_helper: None,
-            text_template_helper: None,
+            helper: None,
             preview_mouse_overrides: HashMap::new(),
             preview_hover_target: None,
             preview_pending_click: None,
@@ -158,7 +156,6 @@ impl StudioApp {
             context_menu_path,
             context_menu_dirty: false,
             context_menu_selection: None,
-            context_menu_action_helper: None,
             delete_context_menu_confirmation: None,
         }
     }
@@ -285,9 +282,7 @@ impl StudioApp {
         self.dirty = false;
         self.theme_error = None;
         self.reset_history();
-        self.expression_helper = None;
-        self.action_helper = None;
-        self.text_template_helper = None;
+        self.close_helper(false);
         self.asset_picker = None;
         self.preview_mouse_overrides.clear();
         self.preview_hover_target = None;
@@ -319,7 +314,7 @@ impl StudioApp {
                     self.context_menu_path = Some(path);
                     self.context_menu_dirty = false;
                     self.context_menu_selection = None;
-                    self.context_menu_action_helper = None;
+                    self.close_helper(true);
                 }
                 if imported.imported_assets > 0 {
                     self.asset_thumbnails.clear();
@@ -503,9 +498,7 @@ impl StudioApp {
         self.selection = Selection::Surface(0);
         self.preview_dirty = true;
         self.dirty = true;
-        self.expression_helper = None;
-        self.action_helper = None;
-        self.text_template_helper = None;
+        self.close_helper(false);
         self.asset_picker = None;
         self.preview_mouse_overrides.clear();
         self.preview_hover_target = None;
@@ -524,9 +517,7 @@ impl StudioApp {
         self.selection = Selection::Surface(0);
         self.preview_dirty = true;
         self.dirty = true;
-        self.expression_helper = None;
-        self.action_helper = None;
-        self.text_template_helper = None;
+        self.close_helper(false);
         self.asset_picker = None;
         self.preview_mouse_overrides.clear();
         self.preview_hover_target = None;
@@ -721,9 +712,7 @@ impl StudioApp {
         self.selection = Selection::Surface(0);
         self.preview_dirty = true;
         self.dirty = false;
-        self.expression_helper = None;
-        self.action_helper = None;
-        self.text_template_helper = None;
+        self.close_helper(false);
         self.asset_picker = None;
         self.preview_mouse_overrides.clear();
         self.preview_hover_target = None;
