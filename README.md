@@ -127,6 +127,9 @@ cargo build --release
 
 The executable will be created at `target\release\claude-code-usage-monitor.exe`.
 
+See [dependency security](docs/dependency-security.md) for automated dependency
+updates, CI security checks, and the commands to run those checks locally.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).

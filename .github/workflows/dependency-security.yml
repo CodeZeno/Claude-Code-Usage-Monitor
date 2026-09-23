@@ -1,0 +1,42 @@
+name: Dependency security
+
+on:
+  pull_request:
+  push:
+    branches: ["**"]
+  schedule:
+    # Find newly published advisories even when the lockfile has not changed.
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  dependencies:
+    name: ${{ matrix.tool }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - tool: cargo-audit
+            version: 0.22.2
+            command: cargo audit --file Cargo.lock
+          - tool: cargo-deny
+            version: 0.20.2
+            command: cargo deny --locked check
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+
+      - name: Install ${{ matrix.tool }}
+        run: cargo install --locked ${{ matrix.tool }} --version ${{ matrix.version }}
+
+      - name: Check dependencies
+        run: ${{ matrix.command }}
