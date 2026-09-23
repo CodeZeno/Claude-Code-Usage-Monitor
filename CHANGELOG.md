@@ -4,6 +4,17 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.63] - 2026-09-24
+
+### Added
+
+- Disposable Windows 10 and Windows 11 Hyper-V test harness with VM provisioning, portable launch and update-helper scenarios, pinned public WinGet install and upgrade scenarios, taskbar variants, and evidence collection. Documented setup, checkpoints, execution, and coverage limitations. ([#124](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/124))
+- Local harness checks for configuration, scenario planning, checkpoint safeguards, PowerShell parsing, and desktop bridge compilation.
+
+### Fixed
+
+- Require preserved desktop memory before restoring lab checkpoints, and explicitly set and verify auto-hide state for every taskbar scenario.
+
 ## [2.14.62] - 2026-09-24
 
 ### Added
@@ -1034,3 +1045,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.60]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.59...v2.14.60
 [2.14.61]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.60...v2.14.61
 [2.14.62]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.61...v2.14.62
+[2.14.63]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.62...v2.14.63
