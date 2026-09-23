@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.54] - 2026-09-23
+
+### Fixed
+
+- Require a directory boundary when detecting WinGet installations so portable executables in sibling folders such as `Packages-old` use the portable updater. ([#114](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/114))
+
+### Added
+
+- Regression coverage for WinGet installation paths, upgrade command quoting and restart conditions, and version parsing and numeric precedence under the updater's current SemVer rules.
+
 ## [2.14.53] - 2026-09-23
 
 ### Fixed
@@ -954,3 +964,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.51]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.50...v2.14.51
 [2.14.52]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.51...v2.14.52
 [2.14.53]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.52...v2.14.53
+[2.14.54]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.53...v2.14.54
