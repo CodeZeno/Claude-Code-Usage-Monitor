@@ -89,7 +89,7 @@ Grok Build usage comes from the session the CLI stores in `%USERPROFILE%\.grok\a
 
 ## Data and privacy
 
-The monitor reads local sign-in credentials for enabled providers and sends usage requests directly to their official services. It has no backend service, collects no telemetry, and does not upload credentials or project files.
+The monitor reads local sign-in credentials for enabled providers and sends usage requests directly to their official services. When Antigravity access expires, its refresh token is sent directly to Google's OAuth endpoint to obtain a replacement access token. The monitor has no backend service and collects no telemetry; credentials and project files are not sent to the monitor operator or a separate service.
 
 Credentials are read without modifying the provider files that contain them. When Grok Build rejects a stored token, the monitor asks the Grok CLI to refresh its own session rather than rewriting `auth.json` itself. OpenCode Go credentials saved in a JSON configuration file are plain text and should be protected like a browser session cookie.
 
