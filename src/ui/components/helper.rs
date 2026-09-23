@@ -538,6 +538,7 @@ fn browser(
         .collect();
 
     let search_id = ui.make_persistent_id("helper-search");
+    let mut insert_from_search = false;
     ui.horizontal(|ui| {
         ui.label(icon_text(LucideIcon::Search, 15.0).color(muted()));
         let search = singleline(&mut state.search)
@@ -547,12 +548,17 @@ fn browser(
             .show(ui)
             .response
             .response;
+        // Single-line text edits surrender focus when Enter is pressed.
+        if search.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            insert_from_search = true;
+            state.insert_requested = true;
+            search.request_focus();
+        }
         if search.has_focus() {
-            let (down, up, enter) = ui.input(|input| {
+            let (down, up) = ui.input(|input| {
                 (
                     input.key_pressed(egui::Key::ArrowDown),
                     input.key_pressed(egui::Key::ArrowUp),
-                    input.key_pressed(egui::Key::Enter),
                 )
             });
             let current = visible
@@ -569,9 +575,6 @@ fn browser(
             }
             if next.is_some() {
                 state.scroll_to_selected = true;
-            }
-            if enter {
-                state.insert_requested = true;
             }
         }
     });
@@ -697,9 +700,9 @@ fn browser(
         );
     });
 
-    if std::mem::take(&mut state.focus_editor) {
+    if std::mem::take(&mut state.focus_editor) && !insert_from_search {
         // Hand focus back to the editor so the user can keep typing after an
-        // insertion made from the browser.
+        // insertion made from the browser. Search submissions retain search focus.
         ui.memory_mut(|memory| memory.request_focus(editor_id));
     }
     if let Some(cursor) = state.cursor {
