@@ -127,6 +127,11 @@ cargo build --release
 
 The executable will be created at `target\release\claude-code-usage-monitor.exe`.
 
+Windows MSVC builds statically link the C runtime through `.cargo/config.toml`,
+including release builds in CI. The executable does not require a separate
+Microsoft Visual C++ Redistributable installation; it still uses built-in Windows
+system libraries.
+
 ## License
 
 Licensed under the [MIT License](LICENSE).
