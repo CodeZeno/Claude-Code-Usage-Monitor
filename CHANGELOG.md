@@ -4,6 +4,21 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.0] - 2026-09-24
+
+### Added
+
+- Unified Theme Studio Builder for expressions, text templates, mouse actions, and context-menu actions, with a shared catalogue, search, category and provider filters, provider marks, and in-use indicators. Values and functions can be inserted at the cursor in action expressions. ([#122](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/122))
+
+### Changed
+
+- Updated Builder labels and entry points across all supported locales.
+- Documented SemVer release rules in `AGENTS.md`: minor releases reset the patch number to zero, and major releases reset both minor and patch numbers. This feature release advances from 2.14.64 to 2.15.0.
+
+### Fixed
+
+- Restore the editor cursor after a Builder insertion so subsequent typing follows the inserted value, with regression coverage.
+
 ## [2.14.64] - 2026-09-24
 
 ### Fixed
@@ -1059,3 +1074,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.62]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.61...v2.14.62
 [2.14.63]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.62...v2.14.63
 [2.14.64]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.63...v2.14.64
+[2.15.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.64...v2.15.0
