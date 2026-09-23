@@ -771,6 +771,7 @@ pub(super) fn taskbar_dock_placement(
 ) -> theme_engine::Placement {
     let logical_offset = (screen_offset as f64 / scale).round() as i32;
     theme_engine::Placement {
+        clamp_taskbar_drag: true,
         reference: theme_engine::ReferenceTarget {
             region: ReferenceRegion::Taskbar,
             display,
@@ -863,7 +864,8 @@ pub(super) fn surface_screen_rect(
         vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
         (placement.offset_y as f64 * scale).round() as i32,
     );
-    let (x, y) = if placement.reference.region == ReferenceRegion::Taskbar
+    let (x, y) = if placement.clamp_taskbar_drag
+        && placement.reference.region == ReferenceRegion::Taskbar
         && placement.nest == SurfaceNest::Taskbar
     {
         if let Some(tb) = taskbar {
