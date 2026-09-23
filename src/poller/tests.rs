@@ -56,19 +56,7 @@ fn idle_window_presence_survives_cached_poll_failures() {
 
 #[test]
 fn configured_https_transport_does_not_panic() {
-    let request = std::panic::catch_unwind(|| {
-        // Port 1 should refuse immediately; reaching the connector is enough to
-        // verify that the configured TLS provider was compiled into ureq.
-        let _ = build_agent()
-            .expect("HTTP agent should build")
-            .get("https://127.0.0.1:1")
-            .call();
-    });
-
-    assert!(
-        request.is_ok(),
-        "the configured HTTPS provider must be enabled in ureq"
-    );
+    crate::https_test::assert_tls_handshake(build_agent().expect("HTTP agent should build"));
 }
 
 #[test]

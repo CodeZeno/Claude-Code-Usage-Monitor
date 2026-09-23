@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.51] - 2026-09-23
+
+### Fixed
+
+- Strengthened the polling HTTPS regression test and added updater coverage using a shared local server that checks TLS handshake initiation. The previous closed-port test could pass without exercising the TLS connector. Documented why the `native-tls` feature is required for the configured Windows certificate verification.
+
 ## [2.14.50] - 2026-09-23
 
 ### Changed
@@ -928,3 +934,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.48]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.47...v2.14.48
 [2.14.49]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.48...v2.14.49
 [2.14.50]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.49...v2.14.50
+[2.14.51]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.50...v2.14.51

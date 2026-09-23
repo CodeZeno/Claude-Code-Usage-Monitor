@@ -7,6 +7,8 @@ mod dashboard;
 mod desktop_compositor;
 mod diagnose;
 mod font_catalog;
+#[cfg(test)]
+mod https_test;
 mod localization;
 mod models;
 mod native_interop;

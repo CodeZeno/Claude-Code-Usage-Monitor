@@ -512,3 +512,13 @@ fn show_error_message(title: &str, message: &str) {
 fn wide_str(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn configured_https_transport_does_not_panic() {
+        crate::https_test::assert_tls_handshake(
+            super::build_agent().expect("HTTP agent should build"),
+        );
+    }
+}
