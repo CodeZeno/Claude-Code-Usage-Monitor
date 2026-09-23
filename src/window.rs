@@ -663,12 +663,7 @@ fn theme_with_placement(state: &AppState, auto_ejected: bool) -> Option<ThemeDoc
             let offset = if horizontal { p.screen_x } else { p.screen_y };
             positioning::taskbar_dock_placement(index, offset, display_scale(index), horizontal)
         } else {
-            positioning::dock_placement(
-                index,
-                p.tray_offset,
-                display_scale(index),
-                horizontal,
-            )
+            positioning::dock_placement(index, p.tray_offset, display_scale(index), horizontal)
         };
         positioning::override_primary_placement(&mut theme, placement);
     }

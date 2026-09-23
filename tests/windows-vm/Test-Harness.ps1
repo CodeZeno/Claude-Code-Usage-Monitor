@@ -39,6 +39,11 @@ try {
         Expect-Throw { Get-LabPlan $config @('portable-update') } 'Unknown flow'
         Expect-Throw { Get-LabPlan $config @('portable-launch') @('top') } 'Unknown taskbar'
     }
+    Check 'tray regression excludes hidden taskbars' {
+        $plan = @(Get-LabPlan $config @('portable-taskbar-tray'))
+        Require ($plan.Count -eq 4)
+        Require (@($plan | Where-Object taskbar -EQ 'auto-hide').Count -eq 0)
+    }
     Check 'plan-only needs neither credentials nor binaries' {
         $plan = & "$PSScriptRoot\Invoke-Lab.ps1" -PlanOnly | ConvertFrom-Json
         Require ($plan.Count -eq 6)

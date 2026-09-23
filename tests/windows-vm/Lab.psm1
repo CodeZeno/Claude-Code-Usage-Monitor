@@ -24,7 +24,7 @@ function Get-LabPlan {
         [string[]]$Flows = @('portable-launch'),
         [string[]]$Taskbars = @('baseline', 'auto-hide', 'left', 'center'))
     foreach ($flow in $Flows) {
-        if ($flow -notin @('portable-launch', 'portable-update-helper', 'winget-install', 'winget-upgrade')) { throw "Unknown flow: $flow" }
+        if ($flow -notin @('portable-launch', 'portable-taskbar-tray', 'portable-update-helper', 'winget-install', 'winget-upgrade')) { throw "Unknown flow: $flow" }
     }
     foreach ($taskbar in $Taskbars) {
         if ($taskbar -notin @('baseline', 'auto-hide', 'left', 'center')) { throw "Unknown taskbar: $taskbar" }
@@ -32,6 +32,7 @@ function Get-LabPlan {
     foreach ($vm in $Config.vms) {
         foreach ($flow in ($Flows | Select-Object -Unique)) {
             foreach ($taskbar in ($Taskbars | Select-Object -Unique)) {
+                if ($flow -eq 'portable-taskbar-tray' -and $taskbar -eq 'auto-hide') { continue }
                 if ($vm.os -eq 'windows10' -and $taskbar -in @('left', 'center')) { continue }
                 [pscustomobject]@{ id = "$($vm.name)-$flow-$taskbar"; vm = $vm; flow = $flow; taskbar = $taskbar }
             }

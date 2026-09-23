@@ -4,6 +4,18 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.64] - 2026-09-24
+
+### Fixed
+
+- Keep widgets dropped into free taskbar space anchored independently of tray icon changes, with temporary clamping and restoration when the tray expands. Preserve tray-relative snapping and legacy placement. Exclude notification controls from app-button collision checks to prevent false undocking. ([#125](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/125))
+- Keep partially overlapping app buttons eligible for collision detection, and restrict the taskbar clamp to docked surfaces so floating themes retain their placement.
+
+### Added
+
+- Placement and collision regression tests, plus a Windows VM tray scenario that records real notification-area changes, drag/drop placement, window parenting and screenshots.
+- Ignore local development builds and scratch folders.
+
 ## [2.14.63] - 2026-09-24
 
 ### Added
@@ -1046,3 +1058,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.61]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.60...v2.14.61
 [2.14.62]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.61...v2.14.62
 [2.14.63]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.62...v2.14.63
+[2.14.64]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.63...v2.14.64

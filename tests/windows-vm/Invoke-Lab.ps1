@@ -9,6 +9,7 @@ param(
     [string]$PreviousExe,
     [string]$CandidateVersion,
     [string]$PreviousVersion,
+    [ValidateSet('compact', 'classic')][string]$TrayTheme = 'compact',
     [System.Management.Automation.PSCredential]$Credential,
     [string]$OutputRoot = "$PSScriptRoot\artifacts",
     [ValidateRange(60, 3600)][int]$ScenarioTimeoutSeconds = 600,
@@ -90,13 +91,16 @@ try {
                 Set-Acl -LiteralPath $root -AclObject $acl
             } -ArgumentList $guestRoot, $scenario.vm.guestUser
             Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\Invoke-GuestScenario.ps1" -Destination "$guestRoot\Invoke-GuestScenario.ps1"
+            if ($scenario.flow -eq 'portable-taskbar-tray') {
+                Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\Test-TaskbarTray.ps1" -Destination "$guestRoot\Test-TaskbarTray.ps1"
+            }
             if ($scenario.flow -like 'portable-*') {
                 Copy-Item -ToSession $session -LiteralPath $CandidateExe -Destination "$guestRoot\candidate.exe"
                 if ($scenario.flow -eq 'portable-update-helper') { Copy-Item -ToSession $session -LiteralPath $PreviousExe -Destination "$guestRoot\previous.exe" }
             }
             $request = @{
                 runId = $runId; id = $scenario.id; flow = $scenario.flow; taskbar = $scenario.taskbar; os = $scenario.vm.os
-                candidateVersion = $CandidateVersion; previousVersion = $PreviousVersion
+                candidateVersion = $CandidateVersion; previousVersion = $PreviousVersion; trayTheme = $TrayTheme
                 candidateHash = $(if ($scenario.flow -like 'portable-*') { (Get-FileHash -LiteralPath $CandidateExe).Hash } else { $null })
             } | ConvertTo-Json
             Invoke-Command -Session $session -ScriptBlock {

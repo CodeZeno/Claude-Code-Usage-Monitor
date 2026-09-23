@@ -483,7 +483,7 @@ fn smart_anchoring_remains_stationary_on_tray_change_and_clamps_when_pushed() {
 
     // User placed widget at fixed position x = 1200 on taskbar (width = 200)
     let taskbar_placement = positioning::taskbar_dock_placement(0, 1200, 1.0, true);
-    
+
     // 1. Initial positioning: widget is at 1200..1400, tray is at 1600..1920
     let rect1 = positioning::surface_screen_rect(
         &taskbar_placement,
@@ -680,6 +680,36 @@ fn smart_anchoring_clamp_does_not_panic_when_taskbar_is_crowded_or_tiny() {
     );
     // Must not panic with min > max, clamps safely to taskbar.left (0)
     assert_eq!(rect.left, 0);
+}
+
+#[test]
+fn floating_taskbar_reference_is_not_clamped_to_tray() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+    let mut placement = positioning::taskbar_dock_placement(0, 1700, 1.0, true);
+    placement.nest = SurfaceNest::Floating;
+    let rect = positioning::surface_screen_rect(
+        &placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(tray),
+    );
+    assert_eq!(rect.left, 1700);
 }
 
 #[test]

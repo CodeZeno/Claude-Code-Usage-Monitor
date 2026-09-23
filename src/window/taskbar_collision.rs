@@ -36,7 +36,7 @@ impl Occupancy {
     pub fn is_reserved(&self, item: RECT) -> bool {
         self.reserved
             .iter()
-            .any(|fixed| intersection(item, *fixed).is_some())
+            .any(|fixed| intersection(item, *fixed) == Some(item))
     }
 
     pub fn overlaps_app_controls(&self, widget: RECT) -> bool {
@@ -244,7 +244,7 @@ impl Reader {
                             .CachedClassName()?
                             .to_string()
                             .starts_with("SystemTray.")
-                            || tray_rect.is_some_and(|tray| intersection(rect, tray).is_some());
+                            || tray_rect.is_some_and(|tray| intersection(rect, tray) == Some(rect));
                         if is_tray {
                             reserved.push(rect);
                         }
@@ -544,6 +544,15 @@ mod tests {
         let crowded_app_buttons = rect(0, 0, 1450, 48);
         let sample_crowded = layout(bounds, vec![crowded_app_buttons, expanded_tray]);
         assert!(sample_crowded.overlaps_app_controls(docked_widget));
+    }
+
+    #[test]
+    fn app_button_partly_overlapping_tray_still_collides() {
+        let tray = rect(1600, 0, 1920, 48);
+        let mut sample = layout(rect(0, 0, 1920, 48), vec![rect(1500, 0, 1620, 48), tray]);
+        sample.reserved.push(tray);
+        assert!(sample.overlaps_app_controls(rect(1450, 0, 1550, 48)));
+        assert!(!sample.can_restore(rect(1400, 0, 1490, 48), 20));
     }
 
     #[test]

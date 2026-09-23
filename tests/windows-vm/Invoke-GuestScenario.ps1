@@ -102,7 +102,7 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text;
 public static class CCUMLabDesktop {
-    public class WindowInfo { public long Handle; public int Left, Top, Right, Bottom; public bool Visible; }
+    public class WindowInfo { public long Handle, Parent; public int Left, Top, Right, Bottom; public bool Visible; }
     [StructLayout(LayoutKind.Sequential)] struct RECT { public int Left, Top, Right, Bottom; }
     [StructLayout(LayoutKind.Sequential)] struct APPBARDATA { public uint cbSize; public IntPtr hWnd; public uint callback, edge; public RECT rect; public IntPtr param; }
     delegate bool EnumProc(IntPtr hwnd, IntPtr param);
@@ -111,6 +111,25 @@ public static class CCUMLabDesktop {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr hwnd, out RECT rect);
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hwnd);
+    [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
+    public static WindowInfo Tray() {
+        IntPtr h = FindWindowEx(FindWindow("Shell_TrayWnd", null), IntPtr.Zero, "TrayNotifyWnd", null);
+        RECT r; if (h == IntPtr.Zero || !GetWindowRect(h, out r)) throw new Exception("Tray unavailable");
+        return new WindowInfo { Handle=h.ToInt64(), Left=r.Left, Top=r.Top, Right=r.Right, Bottom=r.Bottom };
+    }
+    public static void Drag(WindowInfo window, int dx) {
+        IntPtr h = new IntPtr(window.Handle), result;
+        int x = window.Left + 15, y = (window.Top + window.Bottom) / 2;
+        SetCursorPos(x, y);
+        if (SendMessageTimeout(h, 0x201, new IntPtr(1), IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero) throw new Exception("Drag down timed out");
+        SetCursorPos(x + dx, Tray().Bottom - (window.Bottom - window.Top) / 2);
+        if (SendMessageTimeout(h, 0x200, new IntPtr(1), IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero) throw new Exception("Drag move timed out");
+        if (SendMessageTimeout(h, 0x202, IntPtr.Zero, IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero) throw new Exception("Drag release timed out");
+        SetCursorPos(10, 10);
+    }
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int count);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr FindWindow(string cls, string title);
     [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
@@ -138,7 +157,7 @@ public static class CCUMLabDesktop {
             var name = new StringBuilder(256); GetClassName(h, name, name.Capacity);
             RECT r;
             if (owner == pid && name.ToString() == "ClaudeCodeUsageMonitor" && seen.Add(h) && GetWindowRect(h, out r))
-                list.Add(new WindowInfo { Handle=h.ToInt64(), Left=r.Left, Top=r.Top, Right=r.Right, Bottom=r.Bottom, Visible=IsWindowVisible(h) });
+                list.Add(new WindowInfo { Handle=h.ToInt64(), Parent=GetParent(h).ToInt64(), Left=r.Left, Top=r.Top, Right=r.Right, Bottom=r.Bottom, Visible=IsWindowVisible(h) });
             return true;
         };
         EnumWindows(delegate(IntPtr h, IntPtr p) { collect(h,p); EnumChildWindows(h, collect, p); return true; }, IntPtr.Zero);
@@ -149,18 +168,25 @@ public static class CCUMLabDesktop {
     Assert-Check 'unlocked input desktop' ([CCUMLabDesktop]::IsDefaultDesktop()) $sessionId
     Assert-Check 'clean app processes' (@(Get-AppProcesses).Count -eq 0) 'baseline must have no running monitor'
     Assert-Check 'clean settings' (-not (Test-Path -LiteralPath $settingsPath)) $settingsPath
-    if ($request.taskbar -in @('left', 'center')) {
-        Assert-Check 'alignment supported' ($request.os -eq 'windows11') $request.os
-        $alignment = if ($request.taskbar -eq 'left') { 0 } else { 1 }
-        $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
-        Set-ItemProperty -LiteralPath $key -Name TaskbarAl -Value $alignment -Type DWord
+    if ($request.taskbar -in @('left', 'center') -or ($request.flow -eq 'portable-taskbar-tray' -and $request.os -eq 'windows10')) {
+        if ($request.taskbar -in @('left', 'center')) {
+            Assert-Check 'alignment supported' ($request.os -eq 'windows11') $request.os
+            $alignment = if ($request.taskbar -eq 'left') { 0 } else { 1 }
+            $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced'
+            Set-ItemProperty -LiteralPath $key -Name TaskbarAl -Value $alignment -Type DWord
+        } else {
+            # Windows 10 reads this on Explorer startup. Make new icons visible.
+            Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Name EnableAutoTray -Value 0 -Type DWord
+        }
         Get-Process explorer | Where-Object SessionId -EQ $sessionId | Stop-Process -Force
         Start-Sleep -Seconds 3
         if (-not @(Get-Process explorer -ErrorAction SilentlyContinue | Where-Object SessionId -EQ $sessionId).Count) {
             Start-Process explorer.exe
         }
         Start-Sleep -Seconds 5
-        Assert-Check 'alignment preference applied' ((Get-ItemProperty -LiteralPath $key).TaskbarAl -eq $alignment) $alignment
+        if ($request.taskbar -in @('left', 'center')) {
+            Assert-Check 'alignment preference applied' ((Get-ItemProperty -LiteralPath $key).TaskbarAl -eq $alignment) $alignment
+        }
     }
     $state = [CCUMLabDesktop]::TaskbarState($request.taskbar -eq 'auto-hide')
     Assert-Check 'expected auto-hide state' ((($state -band 1) -eq 1) -eq ($request.taskbar -eq 'auto-hide')) $state
@@ -168,9 +194,23 @@ public static class CCUMLabDesktop {
         ConvertTo-Json | Set-Content -LiteralPath "$evidence\desktop.json" -Encoding UTF8
     $null = New-Item -ItemType Directory -Path (Split-Path -Parent $settingsPath) -Force
     '{"language":"de","poll_interval_ms":900000}' | Set-Content -LiteralPath $settingsPath -Encoding ASCII
+    if ($request.flow -eq 'portable-taskbar-tray' -and $request.trayTheme -eq 'compact') {
+        # Fit the native 40px Windows 10 bar as well as Windows 11's 48px bar.
+        $themePath = "$Root\tray-fixture.json"
+        @{
+            schema_version=1; id='tray-fixture'; name='Tray regression fixture'
+            surfaces=@(@{
+                id='main'; name='Tray regression'; width='120'; height='32'
+                background=@{type='colour'; colour=@{color='#2080D0FF'}}
+                placement=@{reference=@{region='system_tray'; display=0}; nest='taskbar'; horizontal='left'; vertical='bottom'; surface_horizontal='right'; surface_vertical='bottom'; offset_x=-80}
+            })
+        } | ConvertTo-Json -Depth 8 | Set-Content $themePath -Encoding ASCII
+        @{language='de'; poll_interval_ms=900000; custom_theme_enabled=$true; active_theme_path=$themePath} |
+            ConvertTo-Json | Set-Content $settingsPath -Encoding ASCII
+    }
     $executable = $null
     switch ($request.flow) {
-        { $_ -in 'portable-launch', 'portable-update-helper' } {
+        { $_ -in 'portable-launch', 'portable-taskbar-tray', 'portable-update-helper' } {
             Assert-Check 'candidate transport hash' ((Get-FileHash -LiteralPath "$Root\candidate.exe").Hash -eq $request.candidateHash) $request.candidateHash
             $null = New-Item -ItemType Directory -Path "$Root\App With Spaces"
             $executable = "$Root\App With Spaces\$appName.exe"
@@ -193,6 +233,10 @@ public static class CCUMLabDesktop {
     Assert-App $executable 'initial'
     Assert-Settings
     Copy-Item -LiteralPath "$env:TEMP\claude-code-usage-monitor.log" -Destination "$evidence\initial-diagnostics.log"
+    if ($request.flow -eq 'portable-taskbar-tray') {
+        . "$Root\Test-TaskbarTray.ps1"
+        Test-TaskbarTray
+    }
     if ($request.flow -eq 'portable-update-helper') {
         # Tests the real replacement/relaunch helper, not the release check/download/UI.
         Copy-Item -LiteralPath "$Root\previous.exe" -Destination "$Root\updater-helper.exe"

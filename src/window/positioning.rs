@@ -863,7 +863,9 @@ pub(super) fn surface_screen_rect(
         vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
         (placement.offset_y as f64 * scale).round() as i32,
     );
-    let (x, y) = if placement.reference.region == ReferenceRegion::Taskbar {
+    let (x, y) = if placement.reference.region == ReferenceRegion::Taskbar
+        && placement.nest == SurfaceNest::Taskbar
+    {
         if let Some(tb) = taskbar {
             if native_interop::is_taskbar_horizontal(tb) {
                 let max_x = tray

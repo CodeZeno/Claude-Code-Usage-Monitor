@@ -175,6 +175,7 @@ the test matrix.
 | Flow | What the runner exercises | Inputs |
 | --- | --- | --- |
 | `portable-launch` (default) | Launch from a path with spaces, visible widget, one instance, restart, retained language and poll interval | Candidate EXE |
+| `portable-taskbar-tray` | Drag into free taskbar space, add/remove notification icons, assert real tray growth, no false undocking, stable free-space position and restoration; save geometry samples and screenshots | Candidate EXE; visible taskbar |
 | `portable-update-helper` | Old EXE launches; its real `--apply-update` helper verifies, replaces and relaunches the candidate; candidate SHA-256 and retained settings checked | Previous and newer candidate EXEs |
 | `winget-install` | Public-source installation of a pinned version, package detection, launch, restart, uninstall | Published candidate version |
 | `winget-upgrade` | Public-source installation of a pinned old version, CLI upgrade to a pinned candidate, retained settings, launch and uninstall | Two published versions |
@@ -186,10 +187,21 @@ update action. Unpublished candidates are supported only in portable scenarios.
 Neither result should be reported as full updater end-to-end coverage.
 
 The default taskbar matrix is baseline and auto-hide on both OS versions, plus
-left and centre alignment on Windows 11: six scenarios per flow, 24 for all four.
+left and centre alignment on Windows 11: six scenarios per standard flow.
 `left` means Windows 11 icon alignment, not a Windows 10 taskbar edge.
 Use selected `-Flows` and `-Taskbars` for quick checks.
 Use `-VMNames CCUM-Win10` or `-VMNames CCUM-Win11` to select a single guest.
+
+For tray regressions, use `-Flows portable-taskbar-tray -Taskbars baseline`
+(or `left,center` on Windows 11). This flow requires a visible horizontal taskbar.
+It uses synthetic drag messages against the real widget window procedure and real
+notification icons. By default it uses a 120 x 32 pixel fixture that fits both OS
+taskbars at 100% scaling. Use `-TrayTheme classic` to exercise the default theme on
+Windows 11; that theme is taller than the stock Windows 10 taskbar. A shell that
+keeps every added icon in overflow fails the
+tray-growth precondition; that result is not evidence that positioning is correct.
+Vertical taskbars, DPI changes and insufficient-space clamp cases remain covered
+by Rust tests rather than this desktop scenario.
 
 Assertions inspect process count/path, widget class and visibility, nonempty bounds,
 display intersection (except with auto-hide), hashes/versions where applicable,

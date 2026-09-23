@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.14.63"
+version = "2.14.64"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
