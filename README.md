@@ -114,8 +114,10 @@ The diagnostic log is written to `%TEMP%\claude-code-usage-monitor.log`. Applica
 
 If the app unexpectedly closes because of a Rust panic, it automatically appends
 the panic message, source location, and thread details to the same log, even when
-diagnostic recording is off. Include this log when reporting the crash; copy it
-before starting a new `--diagnose` session, which clears the log.
+diagnostic recording is off. Copy the log before starting a new `--diagnose`
+session, which clears it. Review and redact credentials, account identifiers,
+and personal information before sharing relevant excerpts in a crash report.
+Report suspected vulnerabilities privately using [SECURITY.md](SECURITY.md).
 
 ## Build from source
 
@@ -126,6 +128,13 @@ cargo build --release
 ```
 
 The executable will be created at `target\release\claude-code-usage-monitor.exe`.
+
+## Contributing and community
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, reporting bugs,
+and submitting pull requests, and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+For suspected vulnerabilities or credential exposure, use the private reporting
+instructions in our [security policy](SECURITY.md).
 
 ## License
 
