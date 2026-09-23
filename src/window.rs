@@ -1859,14 +1859,15 @@ pub fn run() {
     }
     diagnose::log("window::run started");
 
-    // Single-instance guard: silently exit if another instance is running.
+    // Single-instance guard: silently exit if another instance is running in this session.
+    // Use the local namespace so other users' desktop/RDP sessions remain independent.
     // Exception: when relaunched after an explorer restart (ENV_RELAUNCH set),
     // wait for the previous instance to release the mutex, then take over.
     let is_relaunch = std::env::var(ENV_RELAUNCH).is_ok();
     let mutex_name = native_interop::wide_str(&if allow_multiple {
-        format!("Global\\ClaudeCodeUsageMonitor-{}", std::process::id())
+        format!("Local\\ClaudeCodeUsageMonitor-{}", std::process::id())
     } else {
-        "Global\\ClaudeCodeUsageMonitor".to_string()
+        "Local\\ClaudeCodeUsageMonitor".to_string()
     });
     let _mutex = unsafe {
         let handle = CreateMutexW(None, true, PCWSTR::from_raw(mutex_name.as_ptr()));
