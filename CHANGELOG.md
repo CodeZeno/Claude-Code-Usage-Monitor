@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.60] - 2026-09-24
+
+### Added
+
+- Contribution guidelines, a code of conduct, a private security reporting policy, and GitHub issue and pull request templates. ([#121](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/121))
+
+### Changed
+
+- Documented safe diagnostic sharing and linked community and security guidance from the README. Issue templates direct suspected vulnerabilities to private reporting.
+
 ## [2.14.59] - 2026-09-24
 
 ### Changed
@@ -1004,3 +1014,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.57]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.56...v2.14.57
 [2.14.58]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.57...v2.14.58
 [2.14.59]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.58...v2.14.59
+[2.14.60]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.59...v2.14.60
