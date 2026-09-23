@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.52] - 2026-09-23
+
+### Fixed
+
+- Automatically append Rust panic messages, source locations, and thread details to the diagnostic log even when recording is disabled, using a separate file handle to avoid the logger's mutex. Documented crash-log collection and preservation before starting a new diagnostic session. ([#112](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/112))
+
 ## [2.14.51] - 2026-09-23
 
 ### Fixed
@@ -935,3 +941,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.49]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.48...v2.14.49
 [2.14.50]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.49...v2.14.50
 [2.14.51]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.50...v2.14.51
+[2.14.52]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.51...v2.14.52

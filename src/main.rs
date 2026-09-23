@@ -25,6 +25,8 @@ mod window;
 mod winsqlite;
 
 fn main() {
+    diagnose::install_panic_hook();
+
     let args: Vec<String> = std::env::args().collect();
     let diagnose_enabled = args.iter().any(|arg| arg == "--diagnose");
     if diagnose_enabled {
