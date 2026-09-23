@@ -107,6 +107,11 @@ claude-code-usage-monitor --diagnose
 
 The diagnostic log is written to `%TEMP%\claude-code-usage-monitor.log`. Application settings are stored in `%APPDATA%\ClaudeCodeUsageMonitor\settings.json`.
 
+If the app unexpectedly closes because of a Rust panic, it automatically appends
+the panic message, source location, and thread details to the same log, even when
+diagnostic recording is off. Include this log when reporting the crash; copy it
+before starting a new `--diagnose` session, which clears the log.
+
 ## Build from source
 
 Install [Rust](https://www.rust-lang.org/tools/install) 1.95 or later, then run:

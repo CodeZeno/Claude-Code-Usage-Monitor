@@ -60,6 +60,37 @@ pub fn log_path() -> PathBuf {
     std::env::temp_dir().join("claude-code-usage-monitor.log")
 }
 
+/// Record panics even when diagnostic recording is disabled.
+pub fn install_panic_hook() {
+    let path = log_path();
+    let previous_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        // Use a separate append handle: the panicking thread may hold the logger's mutex.
+        // Never unwrap I/O errors here, since a second panic would abort the hook itself.
+        if let Ok(mut file) = open_log(&path, true) {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_secs())
+                .unwrap_or(0);
+            let thread = std::thread::current();
+            let payload = info.payload_as_str().unwrap_or("non-string panic payload");
+            let location = info
+                .location()
+                .map(|location| location.to_string())
+                .unwrap_or_else(|| "unknown location".to_owned());
+            let line = format!(
+                "[{timestamp}] [pid {}] PANIC [thread {:?} ({})] at {location}: {payload}\n",
+                std::process::id(),
+                thread.id(),
+                thread.name().unwrap_or("unnamed")
+            );
+            let _ = file.write_all(line.as_bytes());
+            let _ = file.flush();
+        }
+        previous_hook(info);
+    }));
+}
+
 /// Only load the tail: long diagnostic sessions must not freeze the dashboard.
 pub fn read_tail(path: &std::path::Path, max_bytes: u64) -> std::io::Result<String> {
     let mut file = File::open(path)?;
