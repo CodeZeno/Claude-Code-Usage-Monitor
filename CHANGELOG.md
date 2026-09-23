@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.55] - 2026-09-23
+
+### Fixed
+
+- Removed retired Claude 3 Haiku from Messages API usage-header probes, avoiding a guaranteed-failing request. Probes now use the low-cost `claude-haiku-4-5` alias with the existing one-token output limit. ([#115](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/115))
+
 ## [2.14.54] - 2026-09-23
 
 ### Fixed
@@ -965,3 +971,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.52]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.51...v2.14.52
 [2.14.53]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.52...v2.14.53
 [2.14.54]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.53...v2.14.54
+[2.14.55]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.54...v2.14.55
