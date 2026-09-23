@@ -7,6 +7,8 @@ mod dashboard;
 mod desktop_compositor;
 mod diagnose;
 mod font_catalog;
+#[cfg(test)]
+mod https_test;
 mod localization;
 mod models;
 mod native_interop;
@@ -23,6 +25,8 @@ mod window;
 mod winsqlite;
 
 fn main() {
+    diagnose::install_panic_hook();
+
     let args: Vec<String> = std::env::args().collect();
     let diagnose_enabled = args.iter().any(|arg| arg == "--diagnose");
     if diagnose_enabled {

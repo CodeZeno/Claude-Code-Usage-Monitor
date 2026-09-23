@@ -10,21 +10,58 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::localization::LanguageId;
+use crate::providers::ProviderId;
 use crate::ui::tokens::{CONTROL_CORNER_RADIUS, CONTROL_HEIGHT, DROPDOWN_CORNER_RADIUS};
 
 const LUCIDE_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/lucide-subset.ttf"));
 const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/ui-fallback.ttf"));
-/// Lucide ships no GitHub icon, so the mark rides along as a one-glyph font
-/// that joins the `lucide` family as a fallback. It was compiled once from
-/// GitHub's published mark and is checked in rather than rebuilt, since the
-/// artifact never changes. Redrawing it means matching Lucide's geometry: a
-/// 1000-unit em with the baseline at zero, the outline fitted to 958 of those
-/// units and centred, mapped at [`GITHUB_MARK_GLYPH`].
-const GITHUB_MARK_FONT_BYTES: &[u8] = include_bytes!("../icons/github-mark.ttf");
+/// Lucide ships no GitHub or AI-provider logos, so the brand marks ride along
+/// as a companion font that joins the `lucide` family as a fallback. It is
+/// checked in rather than rebuilt, since the artwork only changes when a
+/// provider is added.
+///
+/// Every glyph shares Lucide's geometry, which is what a new mark has to match:
+/// a 1000-unit em with the baseline at zero, ascent 1000 and descent 0, a
+/// full-em advance, and the source artwork's square viewBox scaled to 958 units
+/// and centred on (500, 498). Fitting the viewBox rather than the ink keeps the
+/// padding the artwork was drawn with, so marks stay evenly sized next to each
+/// other. TrueType has no even-odd fill rule, so an SVG drawn that way needs
+/// flattening to clockwise-wound, non-overlapping contours first, or counters
+/// such as the Codex terminal and the OpenCode ring fill in solid.
+///
+/// | Codepoint | Mark        | Source artwork                         |
+/// | --------- | ----------- | -------------------------------------- |
+/// | U+F000    | GitHub      | Simple Icons (CC0-1.0)                 |
+/// | U+F001    | Claude      | Lobe Icons (MIT)                       |
+/// | U+F002    | Codex       | Lobe Icons (MIT)                       |
+/// | U+F003    | Antigravity | Lobe Icons (MIT)                       |
+/// | U+F004    | OpenCode    | Lobe Icons (MIT)                       |
+/// | U+F005    | Cursor      | Lobe Icons (MIT)                       |
+/// | U+F006    | Grok        | Lobe Icons (MIT)                       |
+///
+/// Those licences cover the path data. The logos remain the trademarks of their
+/// owners and identify the provider a setting belongs to.
+const BRAND_MARK_FONT_BYTES: &[u8] = include_bytes!("../icons/brand-marks.ttf");
 
 /// Private-use codepoint of the GitHub mark. Lucide's own glyphs sit below
 /// U+E800, so this cannot collide with the generated subset.
 pub(crate) const GITHUB_MARK_GLYPH: char = '\u{f000}';
+
+/// Private-use codepoint of a provider's brand mark, mapped as documented on
+/// [`BRAND_MARK_FONT_BYTES`]. Adding a provider means drawing its mark into the
+/// font at the next free codepoint and extending this match, which the compiler
+/// asks for. `every_brand_mark_rasterizes_from_the_lucide_family` then checks
+/// that the glyph actually arrived.
+pub(crate) fn provider_mark_glyph(provider: ProviderId) -> char {
+    match provider {
+        ProviderId::Claude => '\u{f001}',
+        ProviderId::Codex => '\u{f002}',
+        ProviderId::Antigravity => '\u{f003}',
+        ProviderId::OpenCode => '\u{f004}',
+        ProviderId::Cursor => '\u{f005}',
+        ProviderId::Grok => '\u{f006}',
+    }
+}
 
 /// Installs the shared fonts, palette, widget visuals, and spacing used by the UI.
 pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
@@ -38,8 +75,8 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
         egui::FontData::from_static(LUCIDE_FONT_BYTES).into(),
     );
     fonts.font_data.insert(
-        "github-mark".into(),
-        egui::FontData::from_static(GITHUB_MARK_FONT_BYTES).into(),
+        "brand-marks".into(),
+        egui::FontData::from_static(BRAND_MARK_FONT_BYTES).into(),
     );
     let native_menu_font = load_native_menu_font(&mut fonts);
 
@@ -74,7 +111,7 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
     );
     fonts.families.insert(
         egui::FontFamily::Name("lucide".into()),
-        vec!["lucide".into(), "github-mark".into()],
+        vec!["lucide".into(), "brand-marks".into()],
     );
     context.set_fonts(fonts);
 
@@ -328,4 +365,59 @@ pub(crate) fn splitter_hover_surface() -> egui::Color32 {
 
 pub(crate) fn splitter_idle() -> egui::Color32 {
     egui::Color32::from_rgb(65, 68, 76)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `brand-marks.ttf` is a checked-in build artifact, so guard it against
+    /// silently losing a mark: a codepoint with no glyph still lays out, it just
+    /// rasterizes to nothing, which would ship an invisible provider row.
+    #[test]
+    fn every_brand_mark_rasterizes_from_the_lucide_family() {
+        let context = egui::Context::default();
+        configure_style(&context, LanguageId::English);
+        let font = egui::FontId::new(24.0, egui::FontFamily::Name("lucide".into()));
+
+        let marks = std::iter::once(("github", GITHUB_MARK_GLYPH)).chain(
+            ProviderId::ALL
+                .into_iter()
+                .map(|provider| (provider.descriptor().key, provider_mark_glyph(provider))),
+        );
+        for (name, mark) in marks {
+            let mut glyph = None;
+            let mut output = context.run_ui(egui::RawInput::default(), |ui| {
+                let galley = ui.ctx().fonts_mut(|fonts| {
+                    fonts.layout_no_wrap(mark.to_string(), font.clone(), menu_text())
+                });
+                glyph = galley.rows[0].glyphs.first().copied();
+            });
+            output.textures_delta.clear();
+
+            let glyph = glyph.unwrap_or_else(|| panic!("the {name} mark produced no glyph"));
+            assert!(
+                glyph.advance_width > 0.0,
+                "the {name} mark has no advance width"
+            );
+            assert!(
+                !glyph.uv_rect.is_nothing(),
+                "the {name} mark rasterized blank"
+            );
+        }
+    }
+
+    /// Two providers sharing a codepoint would quietly draw the same logo.
+    #[test]
+    fn provider_marks_are_distinct() {
+        let mut marks = ProviderId::ALL
+            .into_iter()
+            .map(provider_mark_glyph)
+            .chain(std::iter::once(GITHUB_MARK_GLYPH))
+            .collect::<Vec<_>>();
+        let total = marks.len();
+        marks.sort_unstable();
+        marks.dedup();
+        assert_eq!(marks.len(), total, "two marks share a codepoint");
+    }
 }

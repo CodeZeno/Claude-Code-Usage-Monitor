@@ -1,77 +1,95 @@
 use super::*;
 
 #[test]
-fn parse_version_reads_numeric_components_and_defaults_missing_ones() {
-    for (input, expected) in [
-        ("2.13.44", (2, 13, 44)),
-        ("002.013.044", (2, 13, 44)),
-        ("", (0, 0, 0)),
-        ("2", (2, 0, 0)),
-        ("2.13", (2, 13, 0)),
-        ("2..44", (2, 0, 44)),
-        (".13.", (0, 13, 0)),
-        (
-            "4294967295.4294967295.4294967295",
-            (u32::MAX, u32::MAX, u32::MAX),
-        ),
+fn configured_https_transport_does_not_panic() {
+    crate::https_test::assert_tls_handshake(super::build_agent().expect("HTTP agent should build"));
+}
+
+const ABC_DIGEST: &str = "sha256:ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+fn helper_args() -> Vec<String> {
+    [
+        "helper.exe",
+        "--apply-update",
+        "target.exe",
+        "source.exe",
+        "1234",
+        "3",
+        ABC_DIGEST,
+    ]
+    .map(str::to_owned)
+    .to_vec()
+}
+
+#[test]
+fn helper_requires_integrity_metadata() {
+    let args = helper_args();
+    let (target, source, pid, integrity) = parse_apply_update_args(&args).unwrap();
+    assert_eq!(target, PathBuf::from("target.exe"));
+    assert_eq!(source, PathBuf::from("source.exe"));
+    assert_eq!(pid, 1234);
+    assert_eq!(integrity.digest_arg(), ABC_DIGEST);
+    assert_eq!(integrity.size_arg(), "3");
+    for len in 0..args.len() {
+        assert!(parse_apply_update_args(&args[..len]).is_err());
+    }
+    let mut extra = args;
+    extra.push("unexpected".into());
+    assert!(parse_apply_update_args(&extra).is_err());
+}
+
+#[test]
+fn helper_rejects_invalid_process_size_and_hash_arguments() {
+    for (index, value) in [
+        (4, "0"),
+        (4, "bad"),
+        (5, "0"),
+        (5, "-1"),
+        (5, "104857601"),
+        (6, "sha256:00"),
     ] {
-        assert_eq!(parse_version(input), expected, "version: {input:?}");
+        let mut args = helper_args();
+        args[index] = value.into();
+        assert!(parse_apply_update_args(&args).is_err());
     }
 }
 
 #[test]
-fn parse_version_defaults_invalid_or_overflowing_components_to_zero() {
-    for (input, expected) in [
-        ("invalid", (0, 0, 0)),
-        ("bad.13.44", (0, 13, 44)),
-        ("2.bad.44", (2, 0, 44)),
-        ("2.13.bad", (2, 13, 0)),
-        ("4294967296.13.44", (0, 13, 44)),
-        ("2.4294967296.44", (2, 0, 44)),
-        ("2.13.4294967296", (2, 13, 0)),
-    ] {
-        assert_eq!(parse_version(input), expected, "version: {input:?}");
-    }
+fn corrupt_update_never_replaces_the_installed_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("download.exe");
+    let target = dir.path().join("app.exe");
+    std::fs::write(&source, b"abd").unwrap();
+    std::fs::write(&target, b"original").unwrap();
+    let integrity = AssetIntegrity::new(3, Some(ABC_DIGEST)).unwrap();
+    let error = apply_update(target.clone(), source, 0, &integrity).unwrap_err();
+    assert!(error.contains("SHA-256"));
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    assert!(!backup_path_for(&target).exists());
 }
 
 #[test]
-fn parse_version_ignores_prerelease_suffixes_and_extra_components() {
-    // The updater compares numeric triples, without SemVer prerelease ordering.
-    for input in ["2.13.44-beta.1", "2.13.44-", "2.13.44.99"] {
-        assert_eq!(parse_version(input), (2, 13, 44), "version: {input:?}");
-    }
+fn verified_source_can_replace_the_installed_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("download.exe");
+    let target = dir.path().join("app.exe");
+    std::fs::write(&source, b"abc").unwrap();
+    std::fs::write(&target, b"original").unwrap();
+    let integrity = AssetIntegrity::new(3, Some(ABC_DIGEST)).unwrap();
+    let _guard = open_verified_source(&source, &integrity).unwrap();
+    replace_target_binary(&target, &source).unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"abc");
+    assert!(!backup_path_for(&target).exists());
 }
 
 #[test]
-fn is_version_newer_compares_components_numerically_in_priority_order() {
-    for (newer, older) in [
-        ("3.0.0", "2.99.99"),
-        ("2.14.0", "2.13.99"),
-        ("2.13.45", "2.13.44"),
-        ("10.0.0", "9.0.0"),
-        ("2.10.0", "2.9.0"),
-        ("2.13.10", "2.13.9"),
-        ("2.13.45-beta.1", "2.13.44"),
-    ] {
-        assert!(is_version_newer(newer, older), "{newer} > {older}");
-        assert!(!is_version_newer(older, newer), "{older} < {newer}");
-    }
-}
-
-#[test]
-fn is_version_newer_rejects_equal_numeric_versions() {
-    for (left, right) in [
-        ("2.13.44", "2.13.44"),
-        ("2", "2.0.0"),
-        ("2.13", "2.13.0"),
-        ("2.13.44-beta.1", "2.13.44"),
-        ("2.13.44.99", "2.13.44"),
-        ("invalid", "0.0.0"),
-        ("", "0.0.0"),
-    ] {
-        assert!(!is_version_newer(left, right), "{left:?} == {right:?}");
-        assert!(!is_version_newer(right, left), "{right:?} == {left:?}");
-    }
+fn updater_agent_rejects_plain_http() {
+    let error = build_agent()
+        .unwrap()
+        .get("http://127.0.0.1:1/update.exe")
+        .call()
+        .unwrap_err();
+    assert!(matches!(error, ureq::Error::RequireHttpsOnly(_)));
 }
 
 #[test]

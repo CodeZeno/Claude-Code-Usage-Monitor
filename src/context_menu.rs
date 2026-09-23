@@ -311,6 +311,7 @@ pub fn rendered_label(
         "Antigravity" => language.text("Antigravity"),
         "OpenCode" => language.text("OpenCode"),
         "Cursor" => language.text("Cursor"),
+        "Grok" => language.text("Grok"),
         "Open Dashboard" => language.text("Open Dashboard"),
         "Every minute" => language.text("Every minute"),
         "Every 5 minutes" => language.text("Every 5 minutes"),
@@ -399,6 +400,13 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 "Cursor",
                 Action::ToggleProvider {
                     provider: Provider::Cursor,
+                },
+            ),
+            ContextMenuItem::action(
+                "provider-grok",
+                "Grok",
+                Action::ToggleProvider {
+                    provider: Provider::Grok,
                 },
             ),
         ],
@@ -700,6 +708,9 @@ mod tests {
         assert!(serde_json::to_string(&menu)
             .unwrap()
             .contains("provider-cursor"));
+        assert!(serde_json::to_string(&menu)
+            .unwrap()
+            .contains("provider-grok"));
         assert!(menu.items.iter().any(|item| {
             item.id == "toggle-widget"
                 && matches!(

@@ -4,6 +4,78 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.53] - 2026-09-23
+
+### Fixed
+
+- Verify portable updates against the GitHub release asset's SHA-256 digest and size, limit downloads to 100 MiB, remove failed partial downloads, and recheck and lock the staged file before replacing the installed executable. ([#113](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/113))
+- Select only the exact executable from the configured repository over HTTPS, reject ambiguous or invalid release metadata, and follow stable SemVer precedence without treating build metadata as a newer version.
+
+### Added
+
+- Updater regression tests for release selection, integrity checks, download failures, helper arguments, and Windows file locking, run before release builds. Documented the updater's verification requirements and trust boundary.
+
+## [2.14.52] - 2026-09-23
+
+### Fixed
+
+- Automatically append Rust panic messages, source locations, and thread details to the diagnostic log even when recording is disabled, using a separate file handle to avoid the logger's mutex. Documented crash-log collection and preservation before starting a new diagnostic session. ([#112](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/112))
+
+## [2.14.51] - 2026-09-23
+
+### Fixed
+
+- Strengthened the polling HTTPS regression test and added updater coverage using a shared local server that checks TLS handshake initiation. The previous closed-port test could pass without exercising the TLS connector. Documented why the `native-tls` feature is required for the configured Windows certificate verification.
+
+## [2.14.50] - 2026-09-23
+
+### Changed
+
+- Switched theme package ZIP compression to the zlib-rs-only Deflate feature, removing the unused Zopfli encoder dependency while retaining Deflate import and export support.
+
+## [2.14.49] - 2026-09-23
+
+### Added
+
+- Brand marks for every provider on the Settings page, shown beside each provider's name in the Providers section.
+
+### Changed
+
+- Replaced the single-glyph GitHub font with `brand-marks.ttf`, a seven-glyph companion font carrying GitHub and provider logos in the Lucide family. The embedded font includes glyph mappings, geometry guidance, and artwork attribution alongside its declaration, with regression tests for distinct codepoints and visible glyphs.
+
+## [2.14.48] - 2026-09-23
+
+### Removed
+
+- Removed BMP image imports and image clipboard support while preserving native text copy, cut, and paste. A documented local `egui-winit` patch disables `arboard`'s image dependencies. The image picker and supported-format message now list PNG, JPEG, GIF, and WebP.
+
+## [2.14.47] - 2026-09-23
+
+### Changed
+
+- Minified the three bundled theme JSON files at build time, reducing embedded theme data by 95,499 bytes (41.9%) while keeping the source files readable for editing. Theme source changes automatically regenerate the bundled copies.
+
+## [2.14.46] - 2026-09-23
+
+### Fixed
+
+- Matched the automatic floating card's background and border to the Windows system theme, restoring contrast in light mode for floating and automatically undocked widgets. ([#110](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/110))
+
+## [2.14.45] - 2026-09-23
+
+### Added
+
+- Grok Build usage monitoring from the signed-in CLI session in `%USERPROFILE%\.grok\auth.json`, with a `GROK_HOME` override, provider controls, and translated sign-in guidance. ([#109](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/109))
+- Grok's billing-period pool on the long-window row in both built-in themes, violet gauges and tray icons, on-demand spending once used, and per-product usage bindings under `grok.limits.<product>` in Theme Studio.
+
+### Fixed
+
+- Limited Grok billing credential selection to xAI sign-in scopes, excluding corporate identity-provider tokens and stored API keys.
+- Bounded Grok CLI version detection, supported Windows command and PowerShell shims, and ignored output from failed commands.
+- Rejected overflowing Grok reset timestamps without interrupting background polling.
+- Accepted bare and wrapped numeric strings in Grok credit balances, including proto3 int64 values, while rejecting invalid or non-finite amounts.
+- Retried failed Grok CLI version and path detection on later polls instead of permanently caching fallback values.
+
 ## [2.13.44] - 2026-09-22
 
 ### Changed
@@ -873,3 +945,12 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.12.42]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.41...v2.12.42
 [2.13.43]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.12.42...v2.13.43
 [2.13.44]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.43...v2.13.44
+[2.14.45]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.13.44...v2.14.45
+[2.14.46]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.45...v2.14.46
+[2.14.47]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.46...v2.14.47
+[2.14.48]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.47...v2.14.48
+[2.14.49]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.48...v2.14.49
+[2.14.50]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.49...v2.14.50
+[2.14.51]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.50...v2.14.51
+[2.14.52]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.51...v2.14.52
+[2.14.53]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.52...v2.14.53
