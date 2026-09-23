@@ -13,7 +13,13 @@ env:
   WINGET_PACKAGE_ID: CodeZeno.ClaudeCodeUsageMonitor
 
 jobs:
+  dependency-security:
+    uses: ./.github/workflows/dependency-security.yml
+    permissions:
+      contents: read
+
   build:
+    needs: dependency-security
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -27,7 +33,7 @@ jobs:
         run: cargo test --locked updater
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

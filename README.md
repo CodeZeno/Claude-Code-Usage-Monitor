@@ -139,6 +139,9 @@ including release builds in CI. The executable does not require a separate
 Microsoft Visual C++ Redistributable installation; it still uses built-in Windows
 system libraries.
 
+See [dependency security](docs/dependency-security.md) for automated dependency
+updates, CI security checks, and the commands to run those checks locally.
+
 ## Contributing and community
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, reporting bugs,

@@ -4,6 +4,17 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.62] - 2026-09-24
+
+### Added
+
+- Weekly Dependabot updates for Cargo dependencies and GitHub Actions, with coupled egui crates grouped together. Added daily, pull request, and branch dependency checks using pinned cargo-audit and cargo-deny versions. ([#119](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/119))
+- Dependency security policy covering advisories, licenses, dependency sources, local checks, and vendored dependency maintenance, with a documented temporary exception for the build-time unmaintained `ttf-parser` dependency.
+
+### Changed
+
+- Gate release builds and publishing on dependency security checks and build releases with the committed lockfile.
+
 ## [2.14.61] - 2026-09-24
 
 ### Fixed
@@ -1022,3 +1033,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.59]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.58...v2.14.59
 [2.14.60]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.59...v2.14.60
 [2.14.61]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.60...v2.14.61
+[2.14.62]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.61...v2.14.62
