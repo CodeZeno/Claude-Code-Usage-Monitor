@@ -119,11 +119,16 @@ before starting a new `--diagnose` session, which clears the log.
 
 ## Build from source
 
-Install [Rust](https://www.rust-lang.org/tools/install) 1.95 or later, then run:
+Install [Rust via rustup](https://www.rust-lang.org/tools/install), then run:
 
 ```powershell
 cargo build --release
 ```
+
+The repository pins Rust 1.95.0 in `rust-toolchain.toml`; rustup automatically
+selects this version. CI uses the same version. When upgrading Rust, update
+`rust-toolchain.toml`, `.github/workflows/release.yml`, and the `rust-version`
+in `Cargo.toml` together.
 
 The executable will be created at `target\release\claude-code-usage-monitor.exe`.
 
