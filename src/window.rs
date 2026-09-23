@@ -552,7 +552,7 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
             .is_none_or(|p| p.nest != "floating")
     {
         let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
-        occupancy.overlaps(widget).then_some(1)
+        occupancy.overlaps_app_controls(widget).then_some(1)
     } else {
         None
     }

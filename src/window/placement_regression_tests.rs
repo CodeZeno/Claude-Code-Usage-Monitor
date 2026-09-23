@@ -423,6 +423,47 @@ fn a_taskbar_without_a_tray_anchors_at_its_trailing_edge() {
     assert_eq!((rect.top, rect.bottom), (1034, 1080));
 }
 
+#[test]
+fn tray_movement_does_not_cause_app_collision_when_docked() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+    // 500px of free space between apps and tray (apps end at 1100, tray starts at 1600)
+    let occupancy = collision_fixture(taskbar, Some(tray), Some(1100));
+    let docked = positioning::dock_placement(0, 0, 1.0, true);
+    let target =
+        positioning::surface_screen_rect(&docked, 200, 46, 1.0, monitor, Some(taskbar), Some(tray));
+    assert_eq!((target.left, target.right), (1400, 1600));
+
+    // When docked next to tray, overlaps_app_controls is false
+    assert!(!occupancy.overlaps_app_controls(target));
+
+    // When tray expands left by 50px (tray starts at 1550)
+    let expanded_tray = RECT {
+        left: 1550,
+        ..taskbar
+    };
+    let occupancy_expanded = collision_fixture(taskbar, Some(expanded_tray), Some(1100));
+    // Even before the widget repositions (target is still 1400..1600, overlapping expanded tray 1550..1600),
+    // it does NOT collide with app controls!
+    assert!(!occupancy_expanded.overlaps_app_controls(target));
+
+    // Only when app buttons expand into the widget area (e.g. apps reach 1450)
+    let crowded_occupancy = collision_fixture(taskbar, Some(expanded_tray), Some(1450));
+    assert!(crowded_occupancy.overlaps_app_controls(target));
+}
+
 // Fixture for the traditional leading-apps/trailing-tray arrangement. The
 // production detector also supports independent groups and leading-side gaps.
 fn collision_fixture(
