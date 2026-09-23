@@ -305,8 +305,8 @@ pub(crate) struct HelperScope {
 
 /// Draws the helper and returns what the user asked to do with the draft.
 ///
-/// `status` validates the draft and `preview` renders it for display; both run
-/// after the editor so they always reflect this frame's text. `details` draws
+/// `status` validates once, then again only if the editor changes the draft.
+/// `preview` runs after the editor to reflect this frame's text. `details` draws
 /// entry-specific controls and returns the text to insert for that entry at
 /// the given caret.
 pub(crate) fn show_helper(
@@ -322,6 +322,8 @@ pub(crate) fn show_helper(
     let width = ui.available_width();
     let height = ui.available_height();
     let editor_id = ui.make_persistent_id("helper-editor");
+    let mut validated_draft = state.draft.clone();
+    let mut validation = status(&validated_draft);
 
     egui::Frame::new()
         .fill(helper_surface())
@@ -332,7 +334,7 @@ pub(crate) fn show_helper(
             ui.set_width((width - 28.0).max(1.0));
             ui.set_min_height((height - 28.0).max(1.0));
 
-            let can_apply = status(&state.draft).is_valid();
+            let can_apply = validation.is_valid();
             ui.horizontal_top(|ui| {
                 ui.vertical(|ui| {
                     let text_left = ui
@@ -393,11 +395,14 @@ pub(crate) fn show_helper(
                 }
             }
 
-            let status = status(&state.draft);
+            if validated_draft != state.draft {
+                validated_draft.clone_from(&state.draft);
+                validation = status(&validated_draft);
+            }
             ui.add_space(8.0);
             status_row(
                 ui,
-                &status,
+                &validation,
                 preview.map(|preview| preview(&state.draft)),
                 language,
             );
@@ -405,6 +410,17 @@ pub(crate) fn show_helper(
             ui.add_space(10.0);
             browser(ui, state, &view, language, details, editor_id);
         });
+
+    // The editor or an insertion can change the draft after Apply is drawn.
+    // Never apply a new draft using the previous draft's validation result.
+    if action == HelperAction::Apply {
+        if validated_draft != state.draft {
+            validation = status(&state.draft);
+        }
+        if !validation.is_valid() {
+            action = HelperAction::Continue;
+        }
+    }
 
     action
 }
@@ -1285,6 +1301,72 @@ pub(crate) fn chip(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn helper_validates_once_per_pass_unless_the_editor_changes() {
+        let context = egui::Context::default();
+        crate::ui::theme::configure_style(&context, LanguageId::English);
+        let mut state = HelperState::new("valid".into());
+        let calls = std::cell::RefCell::new(Vec::new());
+        for typed in [false, true] {
+            let mut passes = 0;
+            calls.borrow_mut().clear();
+            let mut output = context.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1200.0, 900.0),
+                    )),
+                    events: if typed {
+                        vec![egui::Event::Text("!".into())]
+                    } else {
+                        vec![]
+                    },
+                    ..Default::default()
+                },
+                |ui| {
+                    passes += 1;
+                    if !typed {
+                        let id = ui.make_persistent_id("helper-editor");
+                        ui.memory_mut(|memory| memory.request_focus(id));
+                    }
+                    show_helper(
+                        ui,
+                        &mut state,
+                        HelperView {
+                            kind_icon: LucideIcon::Braces,
+                            kind: "Expression",
+                            description: "",
+                            hint: "",
+                            code_editor: true,
+                            editor_height: 96.0,
+                            categories: &[],
+                            scopes: &[],
+                            entries: &[],
+                        },
+                        LanguageId::English,
+                        |draft| {
+                            calls.borrow_mut().push(draft.to_string());
+                            if draft.contains('!') {
+                                HelperStatus::Invalid("Invalid draft".into())
+                            } else {
+                                HelperStatus::Valid {
+                                    message: "Valid".into(),
+                                    result: None,
+                                }
+                            }
+                        },
+                        None,
+                        |_, _, _| unreachable!(),
+                    );
+                },
+            );
+            output.textures_delta.clear();
+            assert_eq!(calls.borrow().len(), passes + usize::from(typed));
+            assert_eq!(calls.borrow().last(), Some(&state.draft));
+            assert_eq!(state.draft.contains('!'), typed);
+        }
+    }
 
     fn insert(draft: &str, cursor: usize, text: &str, mode: InsertMode) -> String {
         let mut state = HelperState::new(draft.into());

@@ -348,6 +348,15 @@ pub(super) struct HelperSession {
     pub(super) target: HelperTarget,
     pub(super) editor: HelperState,
     forms: HelperForms,
+    catalogue: Option<HelperCatalogue>,
+}
+
+struct HelperCatalogue {
+    context: DataContext,
+    language: LanguageId,
+    syntax: ValueSyntax,
+    entries: Vec<HelperEntry>,
+    scopes: Vec<HelperScope>,
 }
 
 /// Values chosen in the details pane, kept while the user browses entries.
@@ -389,7 +398,50 @@ impl HelperSession {
             target,
             editor: HelperState::new(draft),
             forms: HelperForms::default(),
+            catalogue: None,
         }
+    }
+
+    fn refresh_catalogue(
+        &mut self,
+        context: &DataContext,
+        language: LanguageId,
+        syntax: ValueSyntax,
+    ) {
+        if let Some(catalogue) = self.catalogue.as_mut().filter(|catalogue| {
+            catalogue.language == language
+                && catalogue.syntax == syntax
+                && catalogue.context.same_catalogue_data(context)
+        }) {
+            // Keep milliseconds and the local/UTC clock live without rebuilding
+            // every provider/account entry and formatting every template.
+            for entry in &mut catalogue.entries {
+                if entry.category == DATE_AND_TIME
+                    && catalogue.context.get(&entry.id).map(f64::to_bits)
+                        != context.get(&entry.id).map(f64::to_bits)
+                {
+                    entry.value = entry_value(context, syntax, &entry.id);
+                    if let Some(value) = context.get(&entry.id) {
+                        catalogue.context.insert(&entry.id, value);
+                    }
+                }
+            }
+            return;
+        }
+        let actions = match self.target {
+            HelperTarget::MouseAction { .. } => MOUSE_ACTIONS,
+            HelperTarget::MenuAction { .. } => MENU_ACTIONS,
+            _ => &[],
+        };
+        let mut entries = action_entries(actions, language);
+        entries.extend(value_entries(context, language, syntax));
+        self.catalogue = Some(HelperCatalogue {
+            context: context.clone(),
+            language,
+            syntax,
+            entries,
+            scopes: helper_scopes(language),
+        });
     }
 
     pub(super) fn expression(selection: Selection, field: ExpressionField, draft: String) -> Self {
@@ -556,6 +608,22 @@ fn exists(context: &DataContext, name: &str) -> bool {
     context.get(name).is_some() || context.get_string(name).is_some()
 }
 
+fn entry_value(context: &DataContext, syntax: ValueSyntax, name: &str) -> Option<String> {
+    match syntax {
+        ValueSyntax::Expression | ValueSyntax::Action => context
+            .get(name)
+            .map(format_number_for_ui)
+            .or_else(|| context.get_string(name).map(str::to_string)),
+        ValueSyntax::Template => {
+            let format = preferred_text_format(value_kind(name, context));
+            Some(theme_engine::format_template(
+                &text_template_token(name, format),
+                context,
+            ))
+        }
+    }
+}
+
 struct EntryList<'a> {
     context: &'a DataContext,
     language: LanguageId,
@@ -585,20 +653,7 @@ impl EntryList<'_> {
         label: String,
         name: &str,
     ) {
-        let value = match self.syntax {
-            ValueSyntax::Expression | ValueSyntax::Action => self
-                .context
-                .get(name)
-                .map(format_number_for_ui)
-                .or_else(|| self.context.get_string(name).map(str::to_string)),
-            ValueSyntax::Template => {
-                let format = preferred_text_format(value_kind(name, self.context));
-                Some(theme_engine::format_template(
-                    &text_template_token(name, format),
-                    self.context,
-                ))
-            }
-        };
+        let value = entry_value(self.context, self.syntax, name);
         self.entries.push(HelperEntry {
             id: name.into(),
             category,
@@ -1471,8 +1526,14 @@ impl StudioApp {
             }
             _ => return HelperAction::Close,
         };
-        let entries = value_entries(&context, language, syntax);
-        let scopes = helper_scopes(language);
+        session.refresh_catalogue(&context, language, syntax);
+        let HelperSession {
+            editor,
+            forms,
+            catalogue,
+            ..
+        } = session;
+        let catalogue = catalogue.as_ref().expect("catalogue was refreshed");
         let preview = |draft: &str| theme_engine::format_template(draft, &context);
         let view = match syntax {
             ValueSyntax::Expression | ValueSyntax::Action => HelperView {
@@ -1485,8 +1546,8 @@ impl StudioApp {
                 code_editor: true,
                 editor_height: 96.0,
                 categories: VALUE_CATEGORIES,
-                scopes: &scopes,
-                entries: &entries,
+                scopes: &catalogue.scopes,
+                entries: &catalogue.entries,
             },
             ValueSyntax::Template => HelperView {
                 kind_icon: LucideIcon::Type,
@@ -1498,11 +1559,10 @@ impl StudioApp {
                 code_editor: false,
                 editor_height: 64.0,
                 categories: VALUE_CATEGORIES,
-                scopes: &scopes,
-                entries: &entries,
+                scopes: &catalogue.scopes,
+                entries: &catalogue.entries,
             },
         };
-        let HelperSession { editor, forms, .. } = session;
         show_helper(
             ui,
             editor,
@@ -1567,10 +1627,14 @@ impl StudioApp {
             .filter(|(id, _)| !id.eq_ignore_ascii_case(&self_id))
             .collect::<Vec<_>>();
         let context = self.expression_context(selection);
-        let mut entries = action_entries(MOUSE_ACTIONS, language);
-        entries.extend(value_entries(&context, language, ValueSyntax::Action));
-        let scopes = helper_scopes(language);
-        let HelperSession { editor, forms, .. } = session;
+        session.refresh_catalogue(&context, language, ValueSyntax::Action);
+        let HelperSession {
+            editor,
+            forms,
+            catalogue,
+            ..
+        } = session;
+        let catalogue = catalogue.as_ref().expect("catalogue was refreshed");
         show_helper(
             ui,
             editor,
@@ -1584,8 +1648,8 @@ impl StudioApp {
                 code_editor: true,
                 editor_height: 96.0,
                 categories: MOUSE_ACTION_CATEGORIES,
-                scopes: &scopes,
-                entries: &entries,
+                scopes: &catalogue.scopes,
+                entries: &catalogue.entries,
             },
             language,
             |draft| {
@@ -1635,10 +1699,14 @@ impl StudioApp {
         let language = self.language();
         let targets = self.layer_targets();
         let context = self.menu_data_context();
-        let mut entries = action_entries(MENU_ACTIONS, language);
-        entries.extend(value_entries(&context, language, ValueSyntax::Action));
-        let scopes = helper_scopes(language);
-        let HelperSession { editor, forms, .. } = session;
+        session.refresh_catalogue(&context, language, ValueSyntax::Action);
+        let HelperSession {
+            editor,
+            forms,
+            catalogue,
+            ..
+        } = session;
+        let catalogue = catalogue.as_ref().expect("catalogue was refreshed");
         show_helper(
             ui,
             editor,
@@ -1652,8 +1720,8 @@ impl StudioApp {
                 code_editor: true,
                 editor_height: 40.0,
                 categories: MENU_ACTION_CATEGORIES,
-                scopes: &scopes,
-                entries: &entries,
+                scopes: &catalogue.scopes,
+                entries: &catalogue.entries,
             },
             language,
             |draft| match parse_context_menu_action_script(draft) {
@@ -1796,5 +1864,128 @@ impl StudioApp {
                 Err(error) => self.theme_error = Some(error),
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    fn assert_fresh(
+        session: &HelperSession,
+        context: &DataContext,
+        language: LanguageId,
+        syntax: ValueSyntax,
+    ) {
+        let cached = &session.catalogue.as_ref().unwrap().entries;
+        let fresh = value_entries(context, language, syntax);
+        assert_eq!(cached.len(), fresh.len());
+        for (cached, fresh) in cached.iter().zip(&fresh) {
+            assert_eq!(
+                (
+                    &cached.id,
+                    &cached.label,
+                    &cached.group,
+                    &cached.code,
+                    &cached.value,
+                    cached.category,
+                    cached.scope
+                ),
+                (
+                    &fresh.id,
+                    &fresh.label,
+                    &fresh.group,
+                    &fresh.code,
+                    &fresh.value,
+                    fresh.category,
+                    fresh.scope
+                ),
+            );
+        }
+    }
+
+    #[test]
+    fn helper_catalogue_reuses_entries_and_keeps_clock_values_live() {
+        for syntax in [
+            ValueSyntax::Expression,
+            ValueSyntax::Template,
+            ValueSyntax::Action,
+        ] {
+            let language = LanguageId::English;
+            let mut data = DataContext::from_usage(None, &Canvas::default());
+            let mut session = HelperSession::context_menu_expression(vec![], String::new());
+            session.refresh_catalogue(&data, language, syntax);
+            let allocation = session.catalogue.as_ref().unwrap().entries.as_ptr();
+            session.refresh_catalogue(&data, language, syntax);
+            assert_eq!(
+                session.catalogue.as_ref().unwrap().entries.as_ptr(),
+                allocation
+            );
+            for (name, value) in [
+                ("time.now.unix", 1_800_000_000.25),
+                ("time.now.milliseconds", 1_800_000_000_250.0),
+                ("time.local.second", 45.0),
+                ("time.utc.minute", 20.0),
+            ] {
+                data.insert(name, value);
+            }
+            session.refresh_catalogue(&data, language, syntax);
+            assert_eq!(
+                session.catalogue.as_ref().unwrap().entries.as_ptr(),
+                allocation
+            );
+            assert_fresh(&session, &data, language, syntax);
+        }
+    }
+
+    #[test]
+    fn helper_catalogue_invalidates_for_data_language_and_syntax() {
+        let mut data = DataContext::from_usage(None, &Canvas::default());
+        let original = data.clone();
+        let mut session = HelperSession::context_menu_expression(vec![], String::new());
+        let language = LanguageId::English;
+        let syntax = ValueSyntax::Template;
+        session.refresh_catalogue(&data, language, syntax);
+        for (name, value) in [
+            ("active.session.percentage", 37.0),
+            ("active.session.reset.seconds", 120.0),
+            ("canvas.width", 640.0),
+            ("claude.limits.new_quota.available", 1.0),
+            ("claude.limits.new_quota.percentage", 42.0),
+        ] {
+            let allocation = session.catalogue.as_ref().unwrap().entries.as_ptr();
+            data.insert(name, value);
+            session.refresh_catalogue(&data, language, syntax);
+            assert_ne!(
+                session.catalogue.as_ref().unwrap().entries.as_ptr(),
+                allocation
+            );
+            assert_fresh(&session, &data, language, syntax);
+        }
+        data.insert_string("claude.limits.new_quota.label", "New quota");
+        data.insert_string("accounts.claude.work.name", "Work account");
+        session.refresh_catalogue(&data, language, syntax);
+        assert_fresh(&session, &data, language, syntax);
+        // Removed accounts/quotas must disappear as well.
+        session.refresh_catalogue(&original, language, syntax);
+        assert_fresh(&session, &original, language, syntax);
+        session.refresh_catalogue(&original, LanguageId::from_code("de").unwrap(), syntax);
+        assert_fresh(
+            &session,
+            &original,
+            LanguageId::from_code("de").unwrap(),
+            syntax,
+        );
+        session.refresh_catalogue(
+            &original,
+            LanguageId::from_code("de").unwrap(),
+            ValueSyntax::Expression,
+        );
+        assert_fresh(
+            &session,
+            &original,
+            LanguageId::from_code("de").unwrap(),
+            ValueSyntax::Expression,
+        );
     }
 }
