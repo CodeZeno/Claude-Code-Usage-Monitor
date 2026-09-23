@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.57] - 2026-09-23
+
+### Fixed
+
+- Respect `Retry-After` seconds and HTTP dates on rate-limit and server-error responses across provider usage requests. Matching requests stay blocked during server cooldowns, including manual refreshes and partial polls, while other accounts can continue refreshing. Failed polls extend their retry timer to honor the server delay. ([#117](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/117))
+
+### Added
+
+- Regression coverage for cooldown parsing, account isolation, expiry, invalid and oversized delays, retry timer limits, and preservation of response headers before HTTP error handling.
+
 ## [2.14.56] - 2026-09-23
 
 ### Fixed
@@ -979,3 +989,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.54]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.53...v2.14.54
 [2.14.55]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.54...v2.14.55
 [2.14.56]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.55...v2.14.56
+[2.14.57]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.56...v2.14.57
