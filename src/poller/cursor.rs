@@ -194,6 +194,7 @@ fn fetch_cursor_usage(cookie: &str) -> Result<UsageData, PollError> {
         .header("Cookie", &cookie_header)
         .header("User-Agent", "Mozilla/5.0")
         .call()
+        .and_then(super::check_http_status)
     {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),

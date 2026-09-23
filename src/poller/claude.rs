@@ -206,6 +206,7 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         .header("Authorization", &format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .call()
+        .and_then(super::check_http_status)
     {
         Ok(resp) => resp,
         Err(error) => match classify_usage_failure(&error) {

@@ -208,6 +208,7 @@ fn fetch_go_status(
         .header("Cookie", &cookie)
         .header("User-Agent", DASHBOARD_USER_AGENT)
         .call()
+        .and_then(super::check_http_status)
     {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),
