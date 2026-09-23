@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.14.58] - 2026-09-23
+
+### Changed
+
+- Pinned local development and release CI to Rust 1.95.0, including rustfmt and Clippy for local development. Documented the toolchain selection and the files to update when upgrading Rust. ([#118](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/118))
+
 ## [2.14.57] - 2026-09-23
 
 ### Fixed
@@ -990,3 +996,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.14.55]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.54...v2.14.55
 [2.14.56]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.55...v2.14.56
 [2.14.57]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.56...v2.14.57
+[2.14.58]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.57...v2.14.58
