@@ -433,7 +433,11 @@ fn is_winget_install_path(path: &Path) -> bool {
     winget_install_roots()
         .into_iter()
         .map(|root| normalize_path(&root))
-        .any(|root| normalized_path.starts_with(&root))
+        .any(|root| {
+            normalized_path
+                .strip_prefix(&root)
+                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with('\\'))
+        })
 }
 
 fn winget_install_roots() -> Vec<PathBuf> {
@@ -512,3 +516,6 @@ fn show_error_message(title: &str, message: &str) {
 fn wide_str(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
 }
+
+#[cfg(test)]
+mod tests;
