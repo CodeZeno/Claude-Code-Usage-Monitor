@@ -1,8 +1,8 @@
 # Text-only clipboard patch
 
-Based on crates.io `egui-winit` 0.36.1, upstream commit
-`4c1f2fae95475a40e524884ebb298bcb1714b08e` from
-<https://github.com/emilk/egui/tree/4c1f2fae95475a40e524884ebb298bcb1714b08e/crates/egui-winit>.
+Based on crates.io `egui-winit` 0.36.2, upstream commit
+`49682f8baa058bf49e011035cfbd6e825f88a5ef` from
+<https://github.com/emilk/egui/tree/49682f8baa058bf49e011035cfbd6e825f88a5ef/crates/egui-winit>.
 The upstream MIT and Apache-2.0 licenses are included.
 
 This application keeps native text copy/cut/paste but disables image clipboard
