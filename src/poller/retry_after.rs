@@ -9,6 +9,10 @@ use ureq::SendBody;
 
 use super::HttpResponse;
 
+// Bound the stored cooldown so a bad header cannot lock out an account until
+// restart, including requests triggered by manual refresh.
+const MAX_RETRY_AFTER: Duration = Duration::from_secs(24 * 60 * 60);
+
 /// Header probes need fresh responses even while the account is rate limited.
 /// This request extension is local metadata and is never sent to the server.
 #[derive(Clone, Copy)]
@@ -57,12 +61,13 @@ fn request_key(request: &Request<SendBody>) -> [u8; 32] {
 
 fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {
     let value = value.trim();
-    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
-        // Saturate enormous valid delays rather than wrapping into a fast retry.
-        return Some(Duration::from_secs(value.parse().unwrap_or(u64::MAX)));
-    }
-    let deadline = httpdate::parse_http_date(value).ok()?;
-    Some(deadline.duration_since(now).unwrap_or_default())
+    let delay = if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        Duration::from_secs(value.parse().unwrap_or(MAX_RETRY_AFTER.as_secs()))
+    } else {
+        let deadline = httpdate::parse_http_date(value).ok()?;
+        deadline.duration_since(now).unwrap_or_default()
+    };
+    Some(delay.min(MAX_RETRY_AFTER))
 }
 
 impl RetryAfter {
@@ -128,9 +133,8 @@ impl RetryAfter {
             .map(|cooldown| cooldown.remaining(now))
             .max()
             .unwrap_or_default();
-        // Round up to avoid retrying just before the server's deadline. Win32
-        // caps SetTimer at USER_TIMER_MAXIMUM; the request guard above keeps
-        // enforcing longer delays across as many timer ticks as necessary.
+        // Round up to avoid retrying just before the capped deadline, and keep
+        // the timer within Win32's USER_TIMER_MAXIMUM (including the fallback).
         let millis = remaining.as_nanos().div_ceil(1_000_000);
         millis.max(fallback_ms as u128).min(0x7fff_ffff) as u32
     }
@@ -183,10 +187,72 @@ mod tests {
         for value in ["", " ", "-1", "+1", "1.5", "tomorrow"] {
             assert_eq!(parse_retry_after(value, now), None);
         }
-        assert_eq!(
-            parse_retry_after("999999999999999999999999999999", now),
-            Some(Duration::from_secs(u64::MAX))
-        );
+    }
+
+    #[test]
+    fn caps_seconds_and_http_dates_at_one_day() {
+        let now = httpdate::parse_http_date("Wed, 23 Sep 2026 00:00:00 GMT").unwrap();
+        for (seconds, date) in [
+            (86_399, "Wed, 23 Sep 2026 23:59:59 GMT"),
+            (86_400, "Thu, 24 Sep 2026 00:00:00 GMT"),
+            (86_401, "Thu, 24 Sep 2026 00:00:01 GMT"),
+        ] {
+            let expected = Some(Duration::from_secs(seconds.min(86_400)));
+            assert_eq!(parse_retry_after(&seconds.to_string(), now), expected);
+            assert_eq!(parse_retry_after(date, now), expected);
+        }
+        for value in [
+            "18446744073709551615",
+            "999999999999999999999999999999",
+            "Fri, 31 Dec 9999 23:59:59 GMT",
+        ] {
+            assert_eq!(parse_retry_after(value, now), Some(MAX_RETRY_AFTER));
+        }
+    }
+
+    #[test]
+    fn oversized_headers_store_bounded_cooldowns_and_requests_resume_after_expiry() {
+        let future = httpdate::fmt_http_date(SystemTime::now() + Duration::from_secs(48 * 60 * 60));
+        for status in [429, 503] {
+            for header in [
+                "18446744073709551615",
+                "999999999999999999999999999999",
+                future.as_str(),
+            ] {
+                let state = RetryAfter::default();
+                let started = Instant::now();
+                state
+                    .handle(request("first"), |_| Ok(response(status, Some(header))))
+                    .unwrap();
+                let key = request_key(&request("first"));
+                let cooldown = state.cooldowns.lock().unwrap()[&key];
+                assert_eq!(cooldown.delay, Duration::from_secs(86_400));
+                assert_eq!(
+                    state.retry_delay_ms(30_000, started, cooldown.received),
+                    86_400_000
+                );
+                assert!(matches!(
+                    state.handle(request("first"), |_| panic!("sent during cooldown")),
+                    Err(ureq::Error::StatusCode(code)) if code == status
+                ));
+
+                // Advance the cooldown's age without sleeping or restarting.
+                {
+                    let mut cooldowns = state.cooldowns.lock().unwrap();
+                    cooldowns.get_mut(&key).unwrap().received =
+                        Instant::now() - Duration::from_secs(86_400);
+                }
+                let mut sent = false;
+                state
+                    .handle(request("first"), |_| {
+                        sent = true;
+                        Ok(response(200, None))
+                    })
+                    .unwrap();
+                assert!(sent, "request must resume after the capped delay");
+                assert!(state.cooldowns.lock().unwrap().is_empty());
+            }
+        }
     }
 
     #[test]
