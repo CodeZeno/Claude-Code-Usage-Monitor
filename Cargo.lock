@@ -252,7 +252,7 @@ dependencies = [
 
 [[package]]
 name = "claude-code-usage-monitor"
-version = "2.15.5"
+version = "2.15.6"
 dependencies = [
  "dirs",
  "eframe",
@@ -1376,9 +1376,9 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lucide-icons"
-version = "1.34.0"
+version = "1.47.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b713eb2e2e80283887f48aaf3d95c68e55dc14e16fa2c209fdb948dc8e52cba"
+checksum = "fb9eb5008050e766d6b27ee7a6fe8184c5e5dab5959cdb3240a9ca22a90dc843"
 
 [[package]]
 name = "memchr"
