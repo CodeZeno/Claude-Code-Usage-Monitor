@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.7] - 2026-09-24
+
+### Changed
+
+- Update sha2 to 0.11.0 and its supporting crates for release-download verification and credential-isolated Retry-After request keys. ([#132](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/132))
+
 ## [2.15.6] - 2026-09-24
 
 ### Changed
@@ -1117,3 +1123,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.3...v2.15.4
 [2.15.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.4...v2.15.5
 [2.15.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.5...v2.15.6
+[2.15.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.6...v2.15.7
