@@ -162,6 +162,9 @@ pub struct Placement {
     /// Runtime-only layout host retained during undocking; never edits the theme.
     #[serde(skip)]
     pub host_dimensions: Option<(u32, u32)>,
+    /// Runtime-only protection for drag anchoring; authored placements stay exact.
+    #[serde(skip)]
+    pub clamp_taskbar_drag: bool,
     #[serde(default)]
     pub reference: ReferenceTarget,
     /// Controls which native shell host owns a root surface. Older themes did
@@ -1736,6 +1739,18 @@ impl DataContext {
         self.values.insert(name.to_ascii_lowercase(), value);
     }
 
+    /// Whether a Builder catalogue can be reused. Clock rows are refreshed
+    /// separately because the fractional Unix timestamp changes every frame.
+    pub(crate) fn same_catalogue_data(&self, other: &Self) -> bool {
+        self.strings == other.strings
+            && self.values.len() == other.values.len()
+            && self.values.iter().all(|(name, value)| {
+                other.values.get(name).is_some_and(|other| {
+                    name.starts_with("time.") || value.to_bits() == other.to_bits()
+                })
+            })
+    }
+
     pub fn get(&self, name: &str) -> Option<f64> {
         let name = name.to_ascii_lowercase();
         self.values
@@ -2721,6 +2736,7 @@ impl Default for Placement {
     fn default() -> Self {
         Self {
             host_dimensions: None,
+            clamp_taskbar_drag: false,
             reference: ReferenceTarget::default(),
             nest: SurfaceNest::Taskbar,
             horizontal: HorizontalAnchor::Left,

@@ -22,7 +22,7 @@ jobs:
     needs: dependency-security
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -36,7 +36,7 @@ jobs:
         run: cargo build --release --locked
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: target/release/claude-code-usage-monitor.exe
           generate_release_notes: true
@@ -65,7 +65,7 @@ jobs:
 
       - name: Install .NET 6 runtime
         if: env.WINGETCREATE_GITHUB_TOKEN != ''
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "6.0.x"
 

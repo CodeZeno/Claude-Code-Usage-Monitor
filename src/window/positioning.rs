@@ -661,6 +661,8 @@ pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {
 }
 
 pub(super) fn should_snap_to_slot(widget: RECT, slot: RECT, was_snapped: bool) -> bool {
+    // Overlap ratios keep snapping DPI independent; a fixed physical-pixel
+    // distance would shrink relative to the widget on high-DPI monitors.
     let threshold = if was_snapped { 0.45 } else { 0.67 };
     calculate_rect_overlap_ratio(widget, slot) >= threshold
 }
@@ -771,6 +773,7 @@ pub(super) fn taskbar_dock_placement(
 ) -> theme_engine::Placement {
     let logical_offset = (screen_offset as f64 / scale).round() as i32;
     theme_engine::Placement {
+        clamp_taskbar_drag: true,
         reference: theme_engine::ReferenceTarget {
             region: ReferenceRegion::Taskbar,
             display,
@@ -863,7 +866,8 @@ pub(super) fn surface_screen_rect(
         vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
         (placement.offset_y as f64 * scale).round() as i32,
     );
-    let (x, y) = if placement.reference.region == ReferenceRegion::Taskbar
+    let (x, y) = if placement.clamp_taskbar_drag
+        && placement.reference.region == ReferenceRegion::Taskbar
         && placement.nest == SurfaceNest::Taskbar
     {
         if let Some(tb) = taskbar {
