@@ -126,33 +126,82 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
         .unwrap_or(DEFAULT_DASHBOARD_HEIGHT);
     let dashboard_icon = eframe::icon_data::from_png_bytes(include_bytes!("icons/16x16.png"))
         .expect("src/icons/16x16.png must be a valid PNG app icon");
+    let glow_error = match run_dashboard(
+        eframe::Renderer::Glow,
+        dashboard_width,
+        dashboard_height,
+        dashboard_icon.clone(),
+        owner,
+        initial_page,
+    ) {
+        Ok(()) => return true,
+        Err(error) => error,
+    };
+    crate::diagnose::log(format!(
+        "dashboard OpenGL initialization failed: {glow_error}"
+    ));
+
+    //If OpenGL fails, we try to load Direct3D as fallback
+    let failure = if matches!(&glow_error, eframe::Error::OpenGL(_)) {
+        match run_dashboard(
+            eframe::Renderer::Wgpu,
+            dashboard_width,
+            dashboard_height,
+            dashboard_icon,
+            owner,
+            initial_page,
+        ) {
+            Ok(()) => return true,
+            Err(error) => {
+                crate::diagnose::log(format!("dashboard Direct3D initialization failed: {error}"));
+                format!("OpenGL: {glow_error}; Direct3D: {error}")
+            }
+        }
+    } else {
+        format!("OpenGL: {glow_error}")
+    };
+    let settings = app_settings::load_settings();
+    let language = localization::resolve_language(
+        settings.language.as_deref().and_then(LanguageId::from_code),
+    );
+    crate::dashboard::report_launch_failure(
+        owner_hwnd,
+        &format!(
+            "{}: {}",
+            language.text("The dashboard could not initialize"),
+            failure
+        ),
+    );
+    true
+}
+
+fn run_dashboard(
+    renderer: eframe::Renderer,
+    width: f32,
+    height: f32,
+    icon: egui::IconData,
+    owner: isize,
+    initial_page: Page,
+) -> eframe::Result {
+    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
+        setup.instance_descriptor.backends = eframe::egui_wgpu::wgpu::Backends::DX12;
+    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Usage Monitor")
-            .with_inner_size([dashboard_width, dashboard_height])
-            .with_icon(dashboard_icon),
-        renderer: eframe::Renderer::Glow,
+            .with_inner_size([width, height])
+            .with_icon(icon),
+        renderer,
+        wgpu_options,
         centered: true,
         ..Default::default()
     };
-    if let Err(error) = eframe::run_native(
+    eframe::run_native(
         "ClaudeCodeUsageMonitor.Studio",
         options,
         Box::new(move |context| Ok(Box::new(StudioApp::new(context, owner, initial_page)))),
-    ) {
-        let settings = app_settings::load_settings();
-        let language = localization::resolve_language(
-            settings.language.as_deref().and_then(LanguageId::from_code),
-        );
-        crate::dashboard::report_launch_failure(
-            owner_hwnd,
-            &format!(
-                "{}: {error}",
-                language.text("The dashboard could not initialize")
-            ),
-        );
-    }
-    true
+    )
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

@@ -28,7 +28,7 @@ sha2 = "0.11"
 httpdate = "1"
 dirs = "7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-eframe = { version = "0.36", default-features = false, features = ["glow"] }
+eframe = { version = "0.36", default-features = false, features = ["glow", "wgpu"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
