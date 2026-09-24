@@ -162,6 +162,9 @@ pub struct Placement {
     /// Runtime-only layout host retained during undocking; never edits the theme.
     #[serde(skip)]
     pub host_dimensions: Option<(u32, u32)>,
+    /// Runtime-only protection for drag anchoring; authored placements stay exact.
+    #[serde(skip)]
+    pub clamp_taskbar_drag: bool,
     #[serde(default)]
     pub reference: ReferenceTarget,
     /// Controls which native shell host owns a root surface. Older themes did
@@ -721,6 +724,120 @@ fn split_action_arguments(source: &str) -> Result<Vec<String>, String> {
     }
     result.push(current.trim().to_string());
     Ok(result)
+}
+
+/// How text inserted into an action value must be written.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ActionValue {
+    /// Directly in an action script.
+    Bare,
+    /// Inside the quoted script of a context menu `layer_actions("…")`, where
+    /// quotes and backslashes are escaped.
+    Quoted,
+}
+
+/// Whether byte offset `caret` in an action script falls in the value of a
+/// `set`, `increase` or `decrease` action, where any expression is accepted.
+/// The script inside a context menu `layer_actions("…")` is searched too.
+pub fn action_value_at(source: &str, caret: usize) -> Option<ActionValue> {
+    let (name, args, index) = action_argument_at(source, caret)?;
+    match name.as_str() {
+        "set" | "increase" | "decrease" => {
+            (index > 0 && index + 1 == args.len()).then_some(ActionValue::Bare)
+        }
+        "layer_actions" => {
+            let argument = args[index].clone();
+            let open = argument.start + source[argument.clone()].find('"')?;
+            let close = source[open + 1..argument.end]
+                .rfind('"')
+                .map_or(argument.end, |offset| open + 1 + offset);
+            if caret <= open || caret > close {
+                return None;
+            }
+            let before = unescape_action_string(&source[open + 1..caret])?;
+            let script = before.clone() + &unescape_action_string(&source[caret..close])?;
+            action_value_at(&script, before.len()).map(|_| ActionValue::Quoted)
+        }
+        _ => None,
+    }
+}
+
+/// The action call around byte offset `caret`: its lowercase name, the byte
+/// ranges of its arguments, and the index of the argument holding the caret.
+fn action_argument_at(
+    source: &str,
+    caret: usize,
+) -> Option<(String, Vec<std::ops::Range<usize>>, usize)> {
+    let mut statement = 0;
+    let mut open = None;
+    let mut args = Vec::new();
+    let mut argument = 0;
+    let mut depth = 0usize;
+    let mut quoted = false;
+    let mut escaped = false;
+    for (index, character) in source.char_indices() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match character {
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            _ if quoted => {}
+            '(' => {
+                if depth == 0 {
+                    open = Some(index);
+                    argument = index + 1;
+                }
+                depth += 1;
+            }
+            ',' if depth == 1 => {
+                args.push(argument..index);
+                argument = index + 1;
+            }
+            ')' if depth == 1 => {
+                args.push(argument..index);
+                depth = 0;
+                if caret <= index {
+                    break;
+                }
+            }
+            ')' => depth = depth.saturating_sub(1),
+            ';' | '\n' | '\r' if depth == 0 => {
+                if caret <= index {
+                    break;
+                }
+                statement = index + 1;
+                open = None;
+                args.clear();
+            }
+            _ => {}
+        }
+    }
+    let open = open.filter(|open| *open >= statement && *open < caret)?;
+    if depth > 0 {
+        args.push(argument..source.len());
+    }
+    let index = args
+        .iter()
+        .position(|range| range.start <= caret && caret <= range.end)?;
+    let name = source[statement..open].trim().to_ascii_lowercase();
+    Some((name, args, index))
+}
+
+/// Reverses the escaping of a quoted action string, or `None` when `source`
+/// ends partway through an escape.
+fn unescape_action_string(source: &str) -> Option<String> {
+    let mut result = String::with_capacity(source.len());
+    let mut characters = source.chars();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            result.push(characters.next()?);
+        } else {
+            result.push(character);
+        }
+    }
+    Some(result)
 }
 
 fn parse_target_property(source: &str) -> Result<(MouseActionTarget, MouseActionProperty), String> {
@@ -1620,6 +1737,18 @@ impl DataContext {
 
     pub fn insert(&mut self, name: &str, value: f64) {
         self.values.insert(name.to_ascii_lowercase(), value);
+    }
+
+    /// Whether a Builder catalogue can be reused. Clock rows are refreshed
+    /// separately because the fractional Unix timestamp changes every frame.
+    pub(crate) fn same_catalogue_data(&self, other: &Self) -> bool {
+        self.strings == other.strings
+            && self.values.len() == other.values.len()
+            && self.values.iter().all(|(name, value)| {
+                other.values.get(name).is_some_and(|other| {
+                    name.starts_with("time.") || value.to_bits() == other.to_bits()
+                })
+            })
     }
 
     pub fn get(&self, name: &str) -> Option<f64> {
@@ -2607,6 +2736,7 @@ impl Default for Placement {
     fn default() -> Self {
         Self {
             host_dimensions: None,
+            clamp_taskbar_drag: false,
             reference: ReferenceTarget::default(),
             nest: SurfaceNest::Taskbar,
             horizontal: HorizontalAnchor::Left,

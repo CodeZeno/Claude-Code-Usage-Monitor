@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability privately
+    url: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/blob/main/SECURITY.md
+    about: Follow the security policy to email a private report. Do not open a public issue.

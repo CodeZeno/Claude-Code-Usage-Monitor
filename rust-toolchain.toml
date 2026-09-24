@@ -1,0 +1,5 @@
+[toolchain]
+# Keep in sync with .github/workflows/release.yml and Cargo.toml's rust-version.
+channel = "1.95.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

@@ -206,6 +206,7 @@ pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollE
         .header("Authorization", &format!("Bearer {token}"))
         .header("anthropic-beta", "oauth-2025-04-20")
         .call()
+        .and_then(super::check_http_status)
     {
         Ok(resp) => resp,
         Err(error) => match classify_usage_failure(&error) {
@@ -351,6 +352,10 @@ fn claude_credits(spend: &SpendResponse, data: &UsageData) -> Option<CreditsSect
 }
 
 pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollError> {
+    fetch_usage_via_messages_at(token, MESSAGES_URL)
+}
+
+fn fetch_usage_via_messages_at(token: &str, url: &str) -> Result<UsageData, PollError> {
     let agent = build_agent()?;
     let mut last_error = PollError::RequestFailed;
 
@@ -362,7 +367,10 @@ pub(super) fn fetch_usage_via_messages(token: &str) -> Result<UsageData, PollErr
         });
 
         let response = match agent
-            .post(MESSAGES_URL)
+            .post(url)
+            // A 429 still carries the usage and reset headers this probe needs.
+            // Keep polling them without recording or obeying a cooldown.
+            .extension(super::retry_after::BypassCooldown)
             .header("Authorization", &format!("Bearer {token}"))
             .header("anthropic-version", "2023-06-01")
             .header("anthropic-beta", "oauth-2025-04-20")
@@ -940,6 +948,89 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    #[test]
+    fn repeated_messages_probes_read_usage_and_resets_during_retry_after() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        use std::net::TcpListener;
+        use std::time::Instant;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let server = std::thread::spawn(move || {
+            for poll in 0..2 {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "probe {poll} never connected");
+                            std::thread::sleep(Duration::from_millis(10));
+                        }
+                        Err(error) => panic!("accept failed: {error}"),
+                    }
+                };
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = BufReader::new(&mut stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                assert!(line.starts_with("POST /v1/messages "));
+                let mut content_length = 0;
+                loop {
+                    line.clear();
+                    assert!(reader.read_line(&mut line).unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            content_length = value.trim().parse::<usize>().unwrap();
+                        }
+                    }
+                }
+                reader.read_exact(&mut vec![0; content_length]).unwrap();
+                let response = format!(
+                    "HTTP/1.1 429 Too Many Requests\r\n\
+                     Retry-After: 7200\r\n\
+                     anthropic-ratelimit-unified-5h-utilization: 1\r\n\
+                     anthropic-ratelimit-unified-7d-utilization: {}\r\n\
+                     anthropic-ratelimit-unified-5h-reset: {}\r\n\
+                     anthropic-ratelimit-unified-7d-reset: {}\r\n\
+                     Content-Length: 2\r\nConnection: close\r\n\r\n{{}}",
+                    if poll == 0 { "0.5" } else { "0.6" },
+                    1_800_000_000 + poll,
+                    1_800_100_000 + poll,
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+        });
+        let url = format!("http://{address}/v1/messages");
+        let readings = [
+            fetch_usage_via_messages_at("fixture-token", &url),
+            fetch_usage_via_messages_at("fixture-token", &url),
+        ];
+        server.join().unwrap();
+        for (poll, result) in readings.into_iter().enumerate() {
+            let data = result.expect("429 headers should remain readable on every poll");
+            assert!(data.session.available && data.weekly.available);
+            assert_eq!(data.session.percentage, 100.0);
+            assert_eq!(data.weekly.percentage, if poll == 0 { 50.0 } else { 60.0 });
+            assert_eq!(
+                data.session.resets_at,
+                unix_to_system_time(Some(1_800_000_000 + poll as i64))
+            );
+            assert_eq!(
+                data.weekly.resets_at,
+                unix_to_system_time(Some(1_800_100_000 + poll as i64))
+            );
+        }
+    }
     #[test]
     fn http_failures_keep_their_status_for_account_display() {
         for status in [401, 403, 429, 500, 503] {

@@ -765,6 +765,38 @@ pub(super) fn dock_placement(
     }
 }
 
+pub(super) fn taskbar_dock_placement(
+    display: usize,
+    screen_offset: i32,
+    scale: f64,
+    horizontal: bool,
+) -> theme_engine::Placement {
+    let logical_offset = (screen_offset as f64 / scale).round() as i32;
+    theme_engine::Placement {
+        clamp_taskbar_drag: true,
+        reference: theme_engine::ReferenceTarget {
+            region: ReferenceRegion::Taskbar,
+            display,
+        },
+        nest: SurfaceNest::Taskbar,
+        horizontal: HorizontalAnchor::Left,
+        vertical: if horizontal {
+            VerticalAnchor::Bottom
+        } else {
+            VerticalAnchor::Top
+        },
+        surface_horizontal: Some(HorizontalAnchor::Left),
+        surface_vertical: Some(if horizontal {
+            VerticalAnchor::Bottom
+        } else {
+            VerticalAnchor::Top
+        }),
+        offset_x: if horizontal { logical_offset } else { 0 },
+        offset_y: if horizontal { 0 } else { logical_offset },
+        ..Default::default()
+    }
+}
+
 pub(super) fn clamped_floating_offset(
     point: POINT,
     monitor: RECT,
@@ -834,6 +866,30 @@ pub(super) fn surface_screen_rect(
         vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
         (placement.offset_y as f64 * scale).round() as i32,
     );
+    let (x, y) = if placement.clamp_taskbar_drag
+        && placement.reference.region == ReferenceRegion::Taskbar
+        && placement.nest == SurfaceNest::Taskbar
+    {
+        if let Some(tb) = taskbar {
+            if native_interop::is_taskbar_horizontal(tb) {
+                let max_x = tray
+                    .map(|t| t.left - width)
+                    .unwrap_or(tb.right - width)
+                    .max(tb.left);
+                (x.clamp(tb.left, max_x), y)
+            } else {
+                let max_y = tray
+                    .map(|t| t.top - height)
+                    .unwrap_or(tb.bottom - height)
+                    .max(tb.top);
+                (x, y.clamp(tb.top, max_y))
+            }
+        } else {
+            (x, y)
+        }
+    } else {
+        (x, y)
+    };
     RECT {
         left: x,
         top: y,

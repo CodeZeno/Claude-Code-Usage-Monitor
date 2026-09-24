@@ -54,15 +54,9 @@ use crate::theme_engine::{
     SurfaceNest, TextAlign, ThemeDocument, ThemeRuntime, VerticalAnchor,
 };
 use crate::theme_package;
-use crate::ui::components::action_helper::show_action_helper;
 use crate::ui::components::anchor_point::{AnchorPoint, AnchorPointPicker};
-use crate::ui::components::card::reference_card as expression_reference_card;
 use crate::ui::components::dropdown::{
     dropdown_selectable_label, dropdown_selectable_value, Dropdown,
-};
-use crate::ui::components::expression_helper::{
-    show_expression_helper, ExpressionHelperAction,
-    ExpressionHelperState as ExpressionHelperEditorState,
 };
 use crate::ui::components::helper_field::helper_preview_field;
 use crate::ui::components::icon::{
@@ -81,10 +75,6 @@ use crate::ui::components::splitter::vertical_splitter as workspace_splitter;
 use crate::ui::components::text_field::{
     name_editor as inspector_name_editor,
     name_editor_with_prefix as inspector_prefixed_name_editor, singleline as singleline_text_edit,
-};
-use crate::ui::components::text_helper::{
-    show_text_helper, TextHelperAction, TextHelperState as TextHelperEditorState,
-    TextTemplateFormat, TextTemplateValueKind,
 };
 use crate::ui::components::toggle::Toggle;
 use crate::ui::components::tree_row::{
@@ -174,85 +164,6 @@ enum Page {
     Diagnostics,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ContextMenuActionKind {
-    OpenDashboard,
-    Refresh,
-    SetUpdateFrequency,
-    ToggleProvider,
-    ToggleStartup,
-    ToggleWidget,
-    SetLanguage,
-    CheckForUpdates,
-    ToggleLayerRender,
-    LayerActions,
-    OpenUrl,
-    Exit,
-}
-
-impl ContextMenuActionKind {
-    const ALL: [Self; 12] = [
-        Self::OpenDashboard,
-        Self::Refresh,
-        Self::SetUpdateFrequency,
-        Self::ToggleProvider,
-        Self::ToggleStartup,
-        Self::ToggleWidget,
-        Self::SetLanguage,
-        Self::CheckForUpdates,
-        Self::ToggleLayerRender,
-        Self::LayerActions,
-        Self::OpenUrl,
-        Self::Exit,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::OpenDashboard => "Open Dashboard",
-            Self::Refresh => "Refresh",
-            Self::SetUpdateFrequency => "Set update frequency",
-            Self::ToggleProvider => "Toggle provider",
-            Self::ToggleStartup => "Toggle Start with Windows",
-            Self::ToggleWidget => "Show widget",
-            Self::SetLanguage => "Set language",
-            Self::CheckForUpdates => "Check for updates",
-            Self::ToggleLayerRender => "Toggle layer Render",
-            Self::LayerActions => "Run layer actions",
-            Self::OpenUrl => "Open URL",
-            Self::Exit => "Exit",
-        }
-    }
-
-    fn default_action(self) -> ContextMenuAction {
-        match self {
-            Self::OpenDashboard => ContextMenuAction::OpenDashboard,
-            Self::Refresh => ContextMenuAction::Refresh,
-            Self::SetUpdateFrequency => ContextMenuAction::SetUpdateFrequency {
-                seconds: POLL_15_MIN_SECONDS,
-            },
-            Self::ToggleProvider => ContextMenuAction::ToggleProvider {
-                provider: ContextMenuProvider::Claude,
-            },
-            Self::ToggleStartup => ContextMenuAction::ToggleStartup,
-            Self::ToggleWidget => ContextMenuAction::ToggleWidget,
-            Self::SetLanguage => ContextMenuAction::SetLanguage {
-                language: "system".into(),
-            },
-            Self::CheckForUpdates => ContextMenuAction::CheckForUpdates,
-            Self::ToggleLayerRender => ContextMenuAction::ToggleLayerRender {
-                target: "main".into(),
-            },
-            Self::LayerActions => ContextMenuAction::LayerActions {
-                actions: "toggle(self, render)".into(),
-            },
-            Self::OpenUrl => ContextMenuAction::OpenUrl {
-                url: "https://".into(),
-            },
-            Self::Exit => ContextMenuAction::Exit,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Selection {
     Surface(usize),
@@ -327,108 +238,6 @@ impl MouseEventField {
             Self::RightClick => MouseEventKind::RightClick,
             Self::MouseEnter => MouseEventKind::MouseEnter,
             Self::MouseLeave => MouseEventKind::MouseLeave,
-        }
-    }
-}
-
-struct ExpressionHelperState {
-    target: ExpressionHelperTarget,
-    field: ExpressionField,
-    editor: ExpressionHelperEditorState,
-}
-
-enum ExpressionHelperTarget {
-    Theme(Selection),
-    ContextMenu(Vec<usize>),
-}
-
-impl ExpressionHelperState {
-    fn new(selection: Selection, field: ExpressionField, draft: String) -> Self {
-        Self {
-            target: ExpressionHelperTarget::Theme(selection),
-            field,
-            editor: ExpressionHelperEditorState::new(draft),
-        }
-    }
-
-    fn for_context_menu(path: Vec<usize>, draft: String) -> Self {
-        Self {
-            target: ExpressionHelperTarget::ContextMenu(path),
-            field: ExpressionField::Render,
-            editor: ExpressionHelperEditorState::new(draft),
-        }
-    }
-}
-
-struct ActionHelperState {
-    selection: Selection,
-    field: MouseEventField,
-    editor: ExpressionHelperEditorState,
-    target: String,
-    property: MouseActionProperty,
-    value: String,
-    url: String,
-    context_menu_reference: String,
-}
-
-impl ActionHelperState {
-    fn new(selection: Selection, field: MouseEventField, draft: String) -> Self {
-        Self {
-            selection,
-            field,
-            editor: ExpressionHelperEditorState::new(draft),
-            target: "self".into(),
-            property: MouseActionProperty::Render,
-            value: "false".into(),
-            url: "https://".into(),
-            context_menu_reference: context_menu::CLASSIC_CONTEXT_MENU_ID.into(),
-        }
-    }
-}
-
-struct TextTemplateHelperState {
-    target: TextTemplateHelperTarget,
-    editor: TextHelperEditorState,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum TextTemplateHelperTarget {
-    Theme(Selection),
-    ContextMenu(Vec<usize>),
-}
-
-impl TextTemplateHelperState {
-    fn for_theme(selection: Selection, draft: String) -> Self {
-        Self {
-            target: TextTemplateHelperTarget::Theme(selection),
-            editor: TextHelperEditorState::new(draft),
-        }
-    }
-
-    fn for_context_menu(path: Vec<usize>, draft: String) -> Self {
-        Self {
-            target: TextTemplateHelperTarget::ContextMenu(path),
-            editor: TextHelperEditorState::new(draft),
-        }
-    }
-}
-
-struct ContextMenuActionHelperState {
-    path: Vec<usize>,
-    editor: ExpressionHelperEditorState,
-    target: String,
-    property: MouseActionProperty,
-    value: String,
-}
-
-impl ContextMenuActionHelperState {
-    fn new(path: Vec<usize>, action: &ContextMenuAction) -> Self {
-        Self {
-            path,
-            editor: ExpressionHelperEditorState::new(context_menu_action_script(action)),
-            target: "self".into(),
-            property: MouseActionProperty::Render,
-            value: "false".into(),
         }
     }
 }
@@ -689,9 +498,7 @@ struct StudioApp {
     scene_width: f32,
     inspector_width: f32,
     hovered_scene_item: Option<Selection>,
-    expression_helper: Option<ExpressionHelperState>,
-    action_helper: Option<ActionHelperState>,
-    text_template_helper: Option<TextTemplateHelperState>,
+    helper: Option<HelperSession>,
     preview_mouse_overrides: HashMap<MouseActionOverrideKey, Expression>,
     preview_hover_target: Option<(usize, String)>,
     preview_pending_click: Option<(Instant, usize, String)>,
@@ -711,7 +518,6 @@ struct StudioApp {
     context_menu_path: Option<PathBuf>,
     context_menu_dirty: bool,
     context_menu_selection: Option<Vec<usize>>,
-    context_menu_action_helper: Option<ContextMenuActionHelperState>,
     delete_context_menu_confirmation: Option<(PathBuf, String)>,
 }
 
@@ -1054,6 +860,8 @@ mod studio_scene_helpers;
 use studio_scene_helpers::*;
 mod studio_helper_panels;
 use studio_helper_panels::*;
+mod studio_helper;
+use studio_helper::*;
 mod studio_context_menu_editor;
 use studio_context_menu_editor::*;
 mod studio_inspectors;
