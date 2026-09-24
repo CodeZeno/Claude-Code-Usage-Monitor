@@ -1,7 +1,10 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::fs;
 use std::hash::{Hash, Hasher};
+use std::path::PathBuf;
+use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
@@ -10,6 +13,8 @@ use crate::diagnose;
 use crate::models::{UsageData, UsageSection};
 
 const ANTIGRAVITY_CREDENTIAL_TARGET: &str = "gemini:antigravity";
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
+const EXPIRY_SKEW: Duration = Duration::from_secs(60);
 const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
     "https://daily-cloudcode-pa.googleapis.com",
     "https://daily-cloudcode-pa.sandbox.googleapis.com",
@@ -23,6 +28,13 @@ struct AntigravityAuthFile {
 
 #[derive(Deserialize)]
 struct AntigravityTokenData {
+    access_token: String,
+    refresh_token: Option<String>,
+    expiry: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RefreshResponse {
     access_token: String,
 }
 
@@ -113,7 +125,206 @@ pub(super) fn poll_antigravity() -> Result<UsageData, PollError> {
         }
     };
 
-    fetch_antigravity_usage(&creds.access_token)
+    poll_with_refresh(&creds, fetch_antigravity_usage, refresh_antigravity_token)
+}
+
+fn poll_with_refresh<F, R>(
+    creds: &AntigravityTokenData,
+    fetch: F,
+    refresh: R,
+) -> Result<UsageData, PollError>
+where
+    F: Fn(&str) -> Result<UsageData, PollError>,
+    R: Fn(&str) -> Result<String, PollError>,
+{
+    let refresh_token = creds
+        .refresh_token
+        .as_deref()
+        .filter(|value| !value.is_empty());
+    let expiring = creds.access_token.is_empty()
+        || parse_iso8601(creds.expiry.as_deref())
+            .is_some_and(|expiry| expiry <= SystemTime::now() + EXPIRY_SKEW);
+    let mut token = creds.access_token.clone();
+    let mut refreshed = false;
+    if expiring {
+        if let Some(secret) = refresh_token {
+            token = refresh(secret)?;
+            refreshed = true;
+        }
+    }
+    if token.is_empty() {
+        return Err(PollError::AuthRequired);
+    }
+    match fetch(&token) {
+        Err(PollError::AuthRequired) if !refreshed => {
+            let Some(refresh_token) = refresh_token else {
+                return Err(PollError::AuthRequired);
+            };
+            let token = refresh(refresh_token)?;
+            fetch(&token)
+        }
+        result => result,
+    }
+}
+
+fn installed_oauth_clients() -> Vec<(String, String)> {
+    let mut paths = Vec::new();
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let local = PathBuf::from(local);
+        paths.push(local.join("Programs/Antigravity/resources/bin/language_server.exe"));
+        paths.push(local.join("agy/bin/agy.exe"));
+    }
+    if let Some(program_files) = std::env::var_os("ProgramFiles") {
+        paths.push(
+            PathBuf::from(program_files).join("Antigravity/resources/bin/language_server.exe"),
+        );
+    }
+    for path in paths {
+        if let Ok(bytes) = fs::read(path) {
+            let clients = oauth_clients_from_binary(&bytes);
+            if !clients.is_empty() {
+                return clients;
+            }
+        }
+    }
+    Vec::new()
+}
+
+fn oauth_clients_from_binary(bytes: &[u8]) -> Vec<(String, String)> {
+    const CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
+    const CLIENT_SECRET_PREFIX: &str = "GOCSPX-";
+    let mut ids = Vec::new();
+    let mut secrets = Vec::new();
+    for run in
+        bytes.split(|byte| !byte.is_ascii_alphanumeric() && !matches!(*byte, b'.' | b'_' | b'-'))
+    {
+        for (suffix_at, _) in run
+            .windows(CLIENT_ID_SUFFIX.len())
+            .enumerate()
+            .filter(|(_, part)| *part == CLIENT_ID_SUFFIX.as_bytes())
+        {
+            for (hyphen, byte) in run[..suffix_at].iter().enumerate() {
+                if *byte != b'-' {
+                    continue;
+                }
+                let mut start = hyphen;
+                while start > 0 && run[start - 1].is_ascii_digit() {
+                    start -= 1;
+                }
+                let client_hash = &run[hyphen + 1..suffix_at];
+                if hyphen - start < 10
+                    || !(20..=80).contains(&client_hash.len())
+                    || !client_hash
+                        .iter()
+                        .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-'))
+                {
+                    continue;
+                }
+                if let Ok(client_id) =
+                    std::str::from_utf8(&run[start..suffix_at + CLIENT_ID_SUFFIX.len()])
+                {
+                    if !ids.iter().any(|existing| existing == client_id) {
+                        ids.push(client_id.to_owned());
+                    }
+                }
+            }
+        }
+        for (start, _) in run
+            .windows(CLIENT_SECRET_PREFIX.len())
+            .enumerate()
+            .filter(|(_, part)| *part == CLIENT_SECRET_PREFIX.as_bytes())
+        {
+            let Some(candidate) = run.get(start..start + 35) else {
+                continue;
+            };
+            if candidate
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(*byte, b'_' | b'-'))
+            {
+                if let Ok(secret) = std::str::from_utf8(candidate) {
+                    if !secrets.iter().any(|existing| existing == secret) {
+                        secrets.push(secret.to_owned());
+                    }
+                }
+            }
+        }
+    }
+    ids.into_iter()
+        .flat_map(|id| {
+            secrets
+                .iter()
+                .cloned()
+                .map(move |secret| (id.clone(), secret))
+        })
+        .collect()
+}
+
+fn refresh_antigravity_token(refresh_token: &str) -> Result<String, PollError> {
+    let agent = build_agent()?;
+    refresh_from_clients(installed_oauth_clients(), |client_id, client_secret| {
+        let form = [
+            ("client_id", client_id),
+            ("client_secret", client_secret),
+            ("refresh_token", refresh_token),
+            ("grant_type", "refresh_token"),
+        ];
+        parse_refresh_response(agent.post(GOOGLE_TOKEN_URL).send_form(form))
+    })
+}
+
+fn refresh_from_clients(
+    clients: Vec<(String, String)>,
+    mut exchange: impl FnMut(&str, &str) -> Result<String, PollError>,
+) -> Result<String, PollError> {
+    for (client_id, client_secret) in clients {
+        match exchange(&client_id, &client_secret) {
+            // A rejected client pairing may not be the one that issued this token.
+            Err(PollError::AuthRequired) => continue,
+            // Network, rate-limit, and server failures must remain retryable.
+            result => return result,
+        }
+    }
+    diagnose::log("Antigravity OAuth refresh failed");
+    Err(PollError::AuthRequired)
+}
+
+fn parse_refresh_response(
+    response: Result<super::HttpResponse, ureq::Error>,
+) -> Result<String, PollError> {
+    let mut response = response.map_err(|error| match error {
+        ureq::Error::StatusCode(401 | 403) => PollError::AuthRequired,
+        ureq::Error::StatusCode(code) => PollError::HttpStatus(code),
+        _ => PollError::NetworkError,
+    })?;
+    match response.status().as_u16() {
+        400 => {
+            #[derive(Deserialize)]
+            struct OAuthError {
+                error: String,
+            }
+            let error: OAuthError = response
+                .body_mut()
+                .read_json()
+                .map_err(|_| PollError::UnexpectedResponse)?;
+            return Err(match error.error.as_str() {
+                "invalid_grant" | "invalid_client" | "unauthorized_client" => {
+                    PollError::AuthRequired
+                }
+                _ => PollError::HttpStatus(400),
+            });
+        }
+        401 | 403 => return Err(PollError::AuthRequired),
+        200..=299 => {}
+        code => return Err(PollError::HttpStatus(code)),
+    }
+    let token: RefreshResponse = response
+        .body_mut()
+        .read_json()
+        .map_err(|_| PollError::UnexpectedResponse)?;
+    if token.access_token.is_empty() {
+        return Err(PollError::UnexpectedResponse);
+    }
+    Ok(token.access_token)
 }
 
 pub(super) fn antigravity_credential_watch_signature() -> String {
@@ -428,7 +639,13 @@ pub(super) fn is_antigravity_display_model(model: &str) -> bool {
 fn read_antigravity_credentials() -> Option<AntigravityTokenData> {
     let content = read_windows_generic_credential(ANTIGRAVITY_CREDENTIAL_TARGET)?;
     let auth: AntigravityAuthFile = serde_json::from_str(&content).ok()?;
-    (!auth.token.access_token.is_empty()).then_some(auth.token)
+    (!auth.token.access_token.is_empty()
+        || auth
+            .token
+            .refresh_token
+            .as_deref()
+            .is_some_and(|value| !value.is_empty()))
+    .then_some(auth.token)
 }
 
 fn read_windows_generic_credential(target: &str) -> Option<String> {
@@ -457,5 +674,212 @@ fn read_windows_generic_credential(target: &str) -> Option<String> {
         let text = String::from_utf8(bytes.to_vec()).ok();
         CredFree(credential as *mut c_void);
         text
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn credentials(expiry: Option<&str>) -> AntigravityTokenData {
+        AntigravityTokenData {
+            access_token: "old".into(),
+            refresh_token: Some("refresh".into()),
+            expiry: expiry.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn valid_token_uses_existing_request() {
+        let calls = Cell::new(0);
+        let result = poll_with_refresh(
+            &credentials(None),
+            |token| {
+                assert_eq!(token, "old");
+                Ok(UsageData::default())
+            },
+            |_| {
+                calls.set(calls.get() + 1);
+                Ok("new".into())
+            },
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls.get(), 0);
+    }
+
+    #[test]
+    fn expired_token_refreshes_before_request() {
+        let calls = Cell::new(0);
+        let result = poll_with_refresh(
+            &credentials(Some("2020-01-01T00:00:00Z")),
+            |token| {
+                calls.set(calls.get() + 1);
+                assert_eq!(token, "new");
+                Ok(UsageData::default())
+            },
+            |_| Ok("new".into()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls.get(), 1);
+    }
+
+    #[test]
+    fn unauthorized_refreshes_and_retries_once() {
+        let calls = Cell::new(0);
+        let result = poll_with_refresh(
+            &credentials(None),
+            |token| {
+                calls.set(calls.get() + 1);
+                if token == "old" {
+                    Err(PollError::AuthRequired)
+                } else {
+                    Ok(UsageData::default())
+                }
+            },
+            |_| Ok("new".into()),
+        );
+        assert!(result.is_ok());
+        assert_eq!(calls.get(), 2);
+    }
+
+    #[test]
+    fn failed_refresh_is_auth_required() {
+        let result = poll_with_refresh(
+            &credentials(None),
+            |_| Err(PollError::AuthRequired),
+            |_| Err(PollError::AuthRequired),
+        );
+        assert!(matches!(result, Err(PollError::AuthRequired)));
+    }
+
+    #[test]
+    fn refresh_responses_distinguish_rejected_credentials_from_retryable_failures() {
+        let response = |status, body: &str| {
+            Ok(ureq::http::Response::builder()
+                .status(status)
+                .body(ureq::Body::builder().data(body.as_bytes().to_vec()))
+                .unwrap())
+        };
+        assert_eq!(
+            parse_refresh_response(response(200, r#"{"access_token":"new"}"#)),
+            Ok("new".into())
+        );
+        for code in [401, 403] {
+            assert_eq!(
+                parse_refresh_response(response(code, "")),
+                Err(PollError::AuthRequired)
+            );
+        }
+        for error in ["invalid_grant", "invalid_client", "unauthorized_client"] {
+            assert_eq!(
+                parse_refresh_response(response(400, &format!(r#"{{"error":"{error}"}}"#))),
+                Err(PollError::AuthRequired)
+            );
+        }
+        for code in [429, 500, 503] {
+            assert_eq!(
+                parse_refresh_response(response(code, "")),
+                Err(PollError::HttpStatus(code))
+            );
+            assert_eq!(
+                parse_refresh_response(Err(ureq::Error::StatusCode(code))),
+                Err(PollError::HttpStatus(code))
+            );
+        }
+        for body in ["not JSON", "{}", r#"{"access_token":""}"#] {
+            assert_eq!(
+                parse_refresh_response(response(200, body)),
+                Err(PollError::UnexpectedResponse)
+            );
+        }
+        assert_eq!(
+            parse_refresh_response(response(400, r#"{"error":"temporarily_unavailable"}"#)),
+            Err(PollError::HttpStatus(400))
+        );
+        assert_eq!(
+            parse_refresh_response(Err(ureq::Error::Io(std::io::Error::from(
+                std::io::ErrorKind::ConnectionRefused
+            )))),
+            Err(PollError::NetworkError)
+        );
+    }
+
+    #[test]
+    fn transient_refresh_failures_stop_client_attempts_and_keep_polling_retryable() {
+        let clients = || {
+            vec![
+                ("first".into(), "secret".into()),
+                ("second".into(), "secret".into()),
+            ]
+        };
+        for error in [
+            PollError::NetworkError,
+            PollError::HttpStatus(429),
+            PollError::HttpStatus(503),
+            PollError::UnexpectedResponse,
+        ] {
+            let attempts = Cell::new(0);
+            let result = poll_with_refresh(
+                &credentials(Some("2020-01-01T00:00:00Z")),
+                |_| panic!("usage must wait for a refreshed token"),
+                |_| {
+                    refresh_from_clients(clients(), |_, _| {
+                        attempts.set(attempts.get() + 1);
+                        Err(error)
+                    })
+                },
+            );
+            assert_eq!(result.unwrap_err(), error);
+            assert!(error.is_transient());
+            assert_eq!(attempts.get(), 1);
+        }
+        assert_eq!(
+            refresh_from_clients(clients(), |id, _| if id == "first" {
+                Err(PollError::AuthRequired)
+            } else {
+                Ok("new".into())
+            }),
+            Ok("new".into())
+        );
+    }
+
+    #[test]
+    fn retry_never_refreshes_twice() {
+        let refreshes = Cell::new(0);
+        let calls = Cell::new(0);
+        let result = poll_with_refresh(
+            &credentials(None),
+            |_| {
+                calls.set(calls.get() + 1);
+                Err(PollError::AuthRequired)
+            },
+            |_| {
+                refreshes.set(refreshes.get() + 1);
+                Ok("new".into())
+            },
+        );
+        assert!(matches!(result, Err(PollError::AuthRequired)));
+        assert_eq!(calls.get(), 2);
+        assert_eq!(refreshes.get(), 1);
+    }
+
+    #[test]
+    fn extracts_oauth_metadata_without_literal_credentials() {
+        let mut bytes =
+            b"123456789012-hash_12345678901234567890.apps.googleusercontent.com".to_vec();
+        bytes.extend_from_slice(b"GOCSPX-");
+        bytes.resize(bytes.len() + 28, b'1');
+        assert_eq!(oauth_clients_from_binary(&bytes).len(), 1);
+    }
+
+    #[test]
+    fn existing_credential_json_remains_supported() {
+        let old: AntigravityAuthFile =
+            serde_json::from_str(r#"{"token":{"access_token":"old"}}"#).unwrap();
+        assert_eq!(old.token.access_token, "old");
+        assert!(old.token.refresh_token.is_none());
+        let current: AntigravityAuthFile = serde_json::from_str(r#"{"token":{"access_token":"old","refresh_token":"refresh","expiry":"2026-01-01T00:00:00Z"}}"#).unwrap();
+        assert_eq!(current.token.refresh_token.as_deref(), Some("refresh"));
     }
 }

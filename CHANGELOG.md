@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.14] - 2026-09-24
+
+### Fixed
+
+- Refresh expired Antigravity OAuth access tokens using metadata from the installed client and retry rejected access once, without rewriting provider credentials. Preserve retryable network, rate-limit, server, and malformed-response failures instead of pausing polling as a login error. Add authentication regression tests. ([#139](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/139))
+
 ## [2.15.13] - 2026-09-24
 
 ### Changed
@@ -1166,3 +1172,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.10...v2.15.11
 [2.15.12]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.11...v2.15.12
 [2.15.13]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.12...v2.15.13
+[2.15.14]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.13...v2.15.14
