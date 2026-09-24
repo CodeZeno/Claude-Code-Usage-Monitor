@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.8] - 2026-09-24
+
+### Fixed
+
+- Keep Claude Messages usage probes reading fresh utilization and reset headers during Retry-After cooldowns, without recording probe cooldowns or bypassing ordinary request protection. Add middleware and repeated HTTP-probe regression tests. ([#133](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/133))
+
 ## [2.15.7] - 2026-09-24
 
 ### Changed
@@ -1124,3 +1130,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.4...v2.15.5
 [2.15.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.5...v2.15.6
 [2.15.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.6...v2.15.7
+[2.15.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.7...v2.15.8
