@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.3] - 2026-09-24
+
+### Changed
+
+- Update ureq to 3.4.2 and ureq-proto to 0.6.4, retaining Windows certificate-store verification, HTTPS restrictions, timeouts, and Retry-After handling. ([#128](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/128))
+
 ## [2.15.2] - 2026-09-24
 
 ### Fixed
@@ -1089,3 +1095,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.14.64...v2.15.0
 [2.15.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.0...v2.15.1
 [2.15.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.1...v2.15.2
+[2.15.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.2...v2.15.3
