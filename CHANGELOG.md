@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.9] - 2026-09-24
+
+### Fixed
+
+- Retain Builder search focus after Enter insertion while preserving the editor caret. Prevent Enter with no matching entries from causing a delayed insertion when results return, with regression coverage for repeated insertion, search typing, and empty results. ([#134](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/134))
+
 ## [2.15.8] - 2026-09-24
 
 ### Fixed
@@ -1131,3 +1137,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.5...v2.15.6
 [2.15.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.6...v2.15.7
 [2.15.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.7...v2.15.8
+[2.15.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.8...v2.15.9
