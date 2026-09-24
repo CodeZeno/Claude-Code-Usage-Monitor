@@ -471,17 +471,29 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     let tray = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd")
                         .and_then(native_interop::get_window_rect_safe);
                     let reference = positioning::system_tray_reference(taskbar.rect, tray);
-                    let tray_offset = if native_interop::is_taskbar_horizontal(taskbar.rect) {
-                        let left = widget_rect
-                            .left
-                            .clamp(free_dock_slot.left, free_dock_slot.right - widget_w);
-                        (reference.left - left - widget_w).max(0)
-                    } else {
-                        let top = widget_rect
-                            .top
-                            .clamp(free_dock_slot.top, free_dock_slot.bottom - widget_h);
-                        (reference.top - top - widget_h).max(0)
-                    };
+                    const TRAY_SNAP_THRESHOLD: i32 = 8;
+                    let (screen_x, screen_y, tray_offset) =
+                        if native_interop::is_taskbar_horizontal(taskbar.rect) {
+                            let left = widget_rect
+                                .left
+                                .clamp(free_dock_slot.left, free_dock_slot.right - widget_w);
+                            let tray_dist = (reference.left - left - widget_w).max(0);
+                            if tray_dist <= TRAY_SNAP_THRESHOLD {
+                                (0, 0, 0)
+                            } else {
+                                ((left - taskbar.rect.left).max(1), 0, tray_dist)
+                            }
+                        } else {
+                            let top = widget_rect
+                                .top
+                                .clamp(free_dock_slot.top, free_dock_slot.bottom - widget_h);
+                            let tray_dist = (reference.top - top - widget_h).max(0);
+                            if tray_dist <= TRAY_SNAP_THRESHOLD {
+                                (0, 0, 0)
+                            } else {
+                                (0, (top - taskbar.rect.top).max(1), tray_dist)
+                            }
+                        };
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -495,8 +507,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             s.placement_override = Some(PlacementOverride {
                                 nest: "taskbar".into(),
                                 monitor_index,
-                                screen_x: 0,
-                                screen_y: 0,
+                                screen_x,
+                                screen_y,
                                 tray_offset,
                                 floating_host: None,
                             });

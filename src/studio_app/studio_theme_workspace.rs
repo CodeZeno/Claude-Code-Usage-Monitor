@@ -129,16 +129,12 @@ impl StudioApp {
         ui.separator();
         ui.add_space(8.0);
 
-        if self.text_template_helper.is_some() {
-            self.text_template_helper_ui(ui);
-            return;
-        }
-        if self.action_helper.is_some() {
-            self.action_helper_ui(ui);
-            return;
-        }
-        if self.expression_helper.is_some() {
-            self.expression_helper_ui(ui);
+        if self
+            .helper
+            .as_ref()
+            .is_some_and(|helper| !helper.target.is_context_menu())
+        {
+            self.helper_ui(ui);
             return;
         }
         if self.asset_picker.is_some() {
@@ -485,393 +481,6 @@ impl StudioApp {
             self.apply_asset_to_selection(picker.target, path);
         } else if !close {
             self.asset_picker = Some(picker);
-        }
-    }
-
-    pub(super) fn text_template_helper_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(mut helper) = self.text_template_helper.take() else {
-            return;
-        };
-        let language = self.language();
-        let context = match &helper.target {
-            TextTemplateHelperTarget::Theme(selection) => self.expression_context(*selection),
-            TextTemplateHelperTarget::ContextMenu(_) => DataContext::from_usage_with_runtime(
-                self.usage.as_ref(),
-                &Canvas::default(),
-                self.selected_theme_runtime(),
-            ),
-        };
-        let action = show_text_helper(
-            ui,
-            &mut helper.editor,
-            language,
-            |draft| theme_engine::validate_template(draft, &context),
-            |draft| theme_engine::format_template(draft, &context),
-            |ui, editor, panel_height| {
-                let panel_gap = ui.spacing().item_spacing.x;
-                let usable_width = (ui.available_width() - panel_gap * 2.0).max(1.0);
-                let values_width = usable_width * 0.45;
-                let formats_width = usable_width * 0.31;
-                let guide_width = (usable_width - values_width - formats_width).max(1.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(ui.available_width(), panel_height),
-                    egui::Layout::left_to_right(egui::Align::Min),
-                    |ui| {
-                        text_template_values_panel(
-                            ui,
-                            egui::vec2(values_width, panel_height),
-                            &context,
-                            &mut editor.value_filter,
-                            &mut editor.selected_value,
-                            &mut editor.selected_format,
-                            language,
-                        );
-                        text_template_formats_panel(
-                            ui,
-                            egui::vec2(formats_width, panel_height),
-                            &context,
-                            &editor.selected_value,
-                            &mut editor.selected_format,
-                            &mut editor.draft,
-                            language,
-                        );
-                        text_template_guide_panel(ui, guide_width, panel_height, language);
-                    },
-                );
-            },
-        );
-
-        match action {
-            TextHelperAction::Close => {}
-            TextHelperAction::Apply => match helper.target {
-                TextTemplateHelperTarget::Theme(selection) => {
-                    let applied = match selection {
-                        Selection::Surface(surface_index) => self
-                            .theme
-                            .surfaces
-                            .get_mut(surface_index)
-                            .is_some_and(|surface| {
-                                set_text_template(&mut surface.content, helper.editor.draft.clone())
-                            }),
-                        Selection::Object(surface_index, object_index) => self
-                            .theme
-                            .surfaces
-                            .get_mut(surface_index)
-                            .and_then(|surface| surface.children.get_mut(object_index))
-                            .is_some_and(|object| {
-                                set_text_template(&mut object.content, helper.editor.draft.clone())
-                            }),
-                    };
-                    if applied {
-                        self.selection = selection;
-                        self.changed();
-                    }
-                }
-                TextTemplateHelperTarget::ContextMenu(path) => {
-                    if let Some(item) = context_menu_item_mut(&mut self.context_menu.items, &path) {
-                        item.label = helper.editor.draft;
-                        self.context_menu_selection = Some(path);
-                        self.context_menu_dirty = true;
-                    }
-                }
-            },
-            TextHelperAction::Continue => self.text_template_helper = Some(helper),
-        }
-    }
-
-    pub(super) fn expression_helper_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(mut helper) = self.expression_helper.take() else {
-            return;
-        };
-        let language = self.language();
-        let context = match &helper.target {
-            ExpressionHelperTarget::ContextMenu(_) => DataContext::from_usage_with_runtime(
-                self.usage.as_ref(),
-                &Canvas::default(),
-                self.selected_theme_runtime(),
-            ),
-            ExpressionHelperTarget::Theme(selection) => self.expression_context(*selection),
-        };
-        let action = show_expression_helper(
-            ui,
-            &mut helper.editor,
-            language,
-            |draft| {
-                theme_engine::evaluate(draft, &context).and_then(|value| {
-                    value
-                        .is_finite()
-                        .then(|| format_expression_result(helper.field, value, language))
-                        .ok_or_else(|| language.text("Expression result is not finite").to_string())
-                })
-            },
-            |ui, editor, panel_height| {
-                let panel_gap = ui.spacing().item_spacing.x;
-                let panel_width = ((ui.available_width() - panel_gap * 2.0) / 3.0).max(1.0);
-                ui.horizontal(|ui| {
-                    expression_variables_panel(
-                        ui,
-                        panel_width,
-                        panel_height,
-                        &context,
-                        &mut editor.variable_filter,
-                        &mut editor.draft,
-                        language,
-                    );
-                    expression_functions_panel(
-                        ui,
-                        panel_width,
-                        panel_height,
-                        &mut editor.function_filter,
-                        &mut editor.draft,
-                        language,
-                    );
-                    expression_operators_panel(
-                        ui,
-                        panel_width,
-                        panel_height,
-                        &mut editor.draft,
-                        language,
-                    );
-                });
-            },
-        );
-
-        match action {
-            ExpressionHelperAction::Close => {}
-            ExpressionHelperAction::Apply => {
-                let expression = Expression(helper.editor.draft);
-                if let ExpressionHelperTarget::ContextMenu(path) = helper.target {
-                    if !self.context_menu.is_builtin() {
-                        if let Some(item) =
-                            context_menu_item_mut(&mut self.context_menu.items, &path)
-                        {
-                            item.render = expression;
-                            self.context_menu_selection = Some(path);
-                            self.context_menu_dirty = true;
-                        }
-                    }
-                    return;
-                }
-                let ExpressionHelperTarget::Theme(selection) = helper.target else {
-                    return;
-                };
-                let applied = match selection {
-                    Selection::Surface(surface_index) => self
-                        .theme
-                        .surfaces
-                        .get_mut(surface_index)
-                        .map(|surface| match helper.field {
-                            ExpressionField::Render => {
-                                surface.render = expression;
-                                true
-                            }
-                            ExpressionField::Visibility => {
-                                surface.visibility = expression;
-                                true
-                            }
-                            ExpressionField::ObjectWidth => {
-                                surface.width = expression;
-                                true
-                            }
-                            ExpressionField::ObjectHeight => {
-                                surface.height = expression;
-                                true
-                            }
-                            ExpressionField::PlacementOffsetX => {
-                                surface.placement.offset_x_expression = Some(expression);
-                                true
-                            }
-                            ExpressionField::PlacementOffsetY => {
-                                surface.placement.offset_y_expression = Some(expression);
-                                true
-                            }
-                            field => set_object_expression(surface, field, expression),
-                        })
-                        .unwrap_or(false),
-                    Selection::Object(surface_index, object_index) => self
-                        .theme
-                        .surfaces
-                        .get_mut(surface_index)
-                        .and_then(|surface| surface.children.get_mut(object_index))
-                        .is_some_and(|object| {
-                            set_object_expression(object, helper.field, expression)
-                        }),
-                };
-                if applied {
-                    self.selection = selection;
-                    self.changed();
-                }
-            }
-            ExpressionHelperAction::Continue => self.expression_helper = Some(helper),
-        }
-    }
-
-    pub(super) fn action_helper_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(mut helper) = self.action_helper.take() else {
-            return;
-        };
-        let language = self.language();
-        let surface_index = match helper.selection {
-            Selection::Surface(surface) | Selection::Object(surface, _) => surface,
-        };
-        let Some(surface) = self.theme.surfaces.get(surface_index) else {
-            return;
-        };
-        let self_id = match helper.selection {
-            Selection::Surface(_) => surface.id.clone(),
-            Selection::Object(_, object) => surface
-                .children
-                .get(object)
-                .map(|object| object.id.clone())
-                .unwrap_or_else(|| surface.id.clone()),
-        };
-        let targets = self
-            .theme
-            .surfaces
-            .iter()
-            .flat_map(|root| {
-                std::iter::once((root.id.clone(), root.name.clone())).chain(
-                    root.children
-                        .iter()
-                        .map(|object| (object.id.clone(), object.name.clone())),
-                )
-            })
-            .collect::<Vec<_>>();
-        let context = self.expression_context(helper.selection);
-        let mut target = helper.target.clone();
-        let mut property = helper.property;
-        let mut value = helper.value.clone();
-        let mut url = helper.url.clone();
-        let context_menus = context_menu::list_context_menus().unwrap_or_default();
-        let mut context_menu_reference = helper.context_menu_reference.clone();
-        let action = show_action_helper(
-            ui,
-            &mut helper.editor,
-            language,
-            "Build safe mouse actions that affect layers at runtime.",
-            |draft| {
-                let errors = theme_engine::validate_mouse_action_script(
-                    draft,
-                    &self.theme,
-                    surface_index,
-                    &self_id,
-                    &context,
-                );
-                if errors.is_empty() {
-                    let count = theme_engine::parse_mouse_actions(draft)?.len();
-                    Ok(format!("{count} {}", language.text("actions")))
-                } else {
-                    Err(errors.join("\n"))
-                }
-            },
-            |ui, editor, panel_height| {
-                action_reference_panels(
-                    ui,
-                    panel_height,
-                    &targets,
-                    &self_id,
-                    &mut target,
-                    &mut property,
-                    &mut value,
-                    &mut url,
-                    &context_menus,
-                    &mut context_menu_reference,
-                    &mut editor.draft,
-                    language,
-                );
-            },
-        );
-
-        match action {
-            ExpressionHelperAction::Close => {}
-            ExpressionHelperAction::Apply => {
-                let draft = helper.editor.draft;
-                let applied = match helper.selection {
-                    Selection::Surface(index) => self.theme.surfaces.get_mut(index),
-                    Selection::Object(surface, object) => self
-                        .theme
-                        .surfaces
-                        .get_mut(surface)
-                        .and_then(|surface| surface.children.get_mut(object)),
-                }
-                .is_some_and(|object| {
-                    let events = object.mouse_events.get_or_insert_with(MouseEvents::default);
-                    *events.handler_mut(helper.field.kind()) = draft;
-                    true
-                });
-                if applied {
-                    self.selection = helper.selection;
-                    self.changed();
-                }
-            }
-            ExpressionHelperAction::Continue => {
-                helper.target = target;
-                helper.property = property;
-                helper.value = value;
-                helper.url = url;
-                helper.context_menu_reference = context_menu_reference;
-                self.action_helper = Some(helper);
-            }
-        }
-    }
-
-    pub(super) fn context_menu_action_helper_ui(&mut self, ui: &mut egui::Ui) {
-        let Some(mut helper) = self.context_menu_action_helper.take() else {
-            return;
-        };
-        let language = self.language();
-        let layer_targets = self
-            .theme
-            .surfaces
-            .iter()
-            .flat_map(|root| {
-                std::iter::once((root.id.clone(), root.name.clone())).chain(
-                    root.children
-                        .iter()
-                        .map(|object| (object.id.clone(), object.name.clone())),
-                )
-            })
-            .collect::<Vec<_>>();
-        let action = show_action_helper(
-            ui,
-            &mut helper.editor,
-            language,
-            "Choose one action for this context menu item.",
-            |draft| {
-                parse_context_menu_action_script(draft)?;
-                Ok(language.text("One menu action").into())
-            },
-            |ui, editor, panel_height| {
-                context_menu_action_reference_panels(
-                    ui,
-                    panel_height,
-                    &layer_targets,
-                    &mut helper.target,
-                    &mut helper.property,
-                    &mut helper.value,
-                    &mut editor.draft,
-                    language,
-                );
-            },
-        );
-
-        match action {
-            ExpressionHelperAction::Close => {}
-            ExpressionHelperAction::Apply => {
-                match parse_context_menu_action_script(&helper.editor.draft) {
-                    Ok(action) => {
-                        if let Some(item) =
-                            context_menu_item_mut(&mut self.context_menu.items, &helper.path)
-                        {
-                            item.kind = ContextMenuItemKind::Action { action };
-                            self.context_menu_selection = Some(helper.path);
-                            self.context_menu_dirty = true;
-                        }
-                    }
-                    Err(error) => self.theme_error = Some(error),
-                }
-            }
-            ExpressionHelperAction::Continue => self.context_menu_action_helper = Some(helper),
         }
     }
 
@@ -1871,6 +1480,7 @@ impl StudioApp {
                         label,
                         value,
                         &expression_context,
+                        language,
                     ) {
                         requested_expression = Some(field);
                     }
@@ -1882,6 +1492,7 @@ impl StudioApp {
                     &mut surface.placement.offset_x,
                     &mut surface.placement.offset_x_expression,
                     &expression_context,
+                    language,
                 ) {
                     requested_expression = Some(ExpressionField::PlacementOffsetX);
                 }
@@ -1892,6 +1503,7 @@ impl StudioApp {
                     &mut surface.placement.offset_y,
                     &mut surface.placement.offset_y_expression,
                     &expression_context,
+                    language,
                 ) {
                     requested_expression = Some(ExpressionField::PlacementOffsetY);
                 }
@@ -1901,6 +1513,7 @@ impl StudioApp {
                     language.text("Rotation"),
                     &mut surface.rotation,
                     &expression_context,
+                    language,
                 ) {
                     requested_expression = Some(ExpressionField::ObjectRotation);
                 }
@@ -1922,7 +1535,7 @@ impl StudioApp {
                 _ => scene_object_expression(&surface, field),
             };
             if let Some(draft) = draft {
-                self.expression_helper = Some(ExpressionHelperState::new(
+                self.helper = Some(HelperSession::expression(
                     Selection::Surface(index),
                     field,
                     draft,
@@ -1935,7 +1548,7 @@ impl StudioApp {
                 .as_ref()
                 .map(|events| events.handler(field.kind()).to_string())
                 .unwrap_or_default();
-            self.action_helper = Some(ActionHelperState::new(
+            self.helper = Some(HelperSession::mouse_action(
                 Selection::Surface(index),
                 field,
                 draft,
@@ -1943,8 +1556,8 @@ impl StudioApp {
         }
         if requested_text_template {
             if let SceneContent::Text { template, .. } = &surface.content {
-                self.text_template_helper = Some(TextTemplateHelperState::for_theme(
-                    Selection::Surface(index),
+                self.helper = Some(HelperSession::text(
+                    TextTemplateHelperTarget::Theme(Selection::Surface(index)),
                     template.clone(),
                 ));
             }
@@ -2098,6 +1711,7 @@ impl StudioApp {
                         label,
                         value,
                         &expression_context,
+                        language,
                     ) {
                         requested_expression = Some(field);
                     }
@@ -2125,6 +1739,7 @@ impl StudioApp {
                         label,
                         value,
                         &expression_context,
+                        language,
                     ) {
                         requested_expression = Some(field);
                     }
@@ -2134,7 +1749,7 @@ impl StudioApp {
 
         if let Some(field) = requested_expression {
             if let Some(draft) = scene_object_expression(&object, field) {
-                self.expression_helper = Some(ExpressionHelperState::new(
+                self.helper = Some(HelperSession::expression(
                     Selection::Object(surface_index, object_index),
                     field,
                     draft,
@@ -2147,7 +1762,7 @@ impl StudioApp {
                 .as_ref()
                 .map(|events| events.handler(field.kind()).to_string())
                 .unwrap_or_default();
-            self.action_helper = Some(ActionHelperState::new(
+            self.helper = Some(HelperSession::mouse_action(
                 Selection::Object(surface_index, object_index),
                 field,
                 draft,
@@ -2155,8 +1770,8 @@ impl StudioApp {
         }
         if requested_text_template {
             if let SceneContent::Text { template, .. } = &object.content {
-                self.text_template_helper = Some(TextTemplateHelperState::for_theme(
-                    Selection::Object(surface_index, object_index),
+                self.helper = Some(HelperSession::text(
+                    TextTemplateHelperTarget::Theme(Selection::Object(surface_index, object_index)),
                     template.clone(),
                 ));
             }

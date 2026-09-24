@@ -309,7 +309,7 @@ mod tests {
             "All files",
             "Theme Studio packages",
             "Images",
-            "Action helper",
+            "Builder",
             "Build safe mouse actions that affect layers at runtime.",
             "Choose one action for this context menu item.",
             "Enter actions...",
