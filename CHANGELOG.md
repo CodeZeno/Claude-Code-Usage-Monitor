@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.11] - 2026-09-24
+
+### Fixed
+
+- Apply tray-avoidance clamping only to runtime taskbar placements created by dragging, preserving exact authored theme positions. Keep the runtime flag out of saved themes and cover horizontal, vertical, floating, and serialized placements. ([#136](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/136))
+
 ## [2.15.10] - 2026-09-24
 
 ### Fixed
@@ -1145,3 +1151,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.7...v2.15.8
 [2.15.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.8...v2.15.9
 [2.15.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.9...v2.15.10
+[2.15.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.10...v2.15.11
