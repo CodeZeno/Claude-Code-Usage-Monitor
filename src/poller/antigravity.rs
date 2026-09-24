@@ -261,29 +261,70 @@ fn oauth_clients_from_binary(bytes: &[u8]) -> Vec<(String, String)> {
 
 fn refresh_antigravity_token(refresh_token: &str) -> Result<String, PollError> {
     let agent = build_agent()?;
-    for (client_id, client_secret) in installed_oauth_clients() {
+    refresh_from_clients(installed_oauth_clients(), |client_id, client_secret| {
         let form = [
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
+            ("client_id", client_id),
+            ("client_secret", client_secret),
             ("refresh_token", refresh_token),
             ("grant_type", "refresh_token"),
         ];
-        let response = agent
-            .post(GOOGLE_TOKEN_URL)
-            .send_form(form)
-            .and_then(super::check_http_status);
-        if let Ok(mut response) = response {
-            if let Ok(RefreshResponse { access_token }) =
-                response.body_mut().read_json::<RefreshResponse>()
-            {
-                if !access_token.is_empty() {
-                    return Ok(access_token);
-                }
-            }
+        parse_refresh_response(agent.post(GOOGLE_TOKEN_URL).send_form(form))
+    })
+}
+
+fn refresh_from_clients(
+    clients: Vec<(String, String)>,
+    mut exchange: impl FnMut(&str, &str) -> Result<String, PollError>,
+) -> Result<String, PollError> {
+    for (client_id, client_secret) in clients {
+        match exchange(&client_id, &client_secret) {
+            // A rejected client pairing may not be the one that issued this token.
+            Err(PollError::AuthRequired) => continue,
+            // Network, rate-limit, and server failures must remain retryable.
+            result => return result,
         }
     }
     diagnose::log("Antigravity OAuth refresh failed");
     Err(PollError::AuthRequired)
+}
+
+fn parse_refresh_response(
+    response: Result<super::HttpResponse, ureq::Error>,
+) -> Result<String, PollError> {
+    let mut response = response.map_err(|error| match error {
+        ureq::Error::StatusCode(401 | 403) => PollError::AuthRequired,
+        ureq::Error::StatusCode(code) => PollError::HttpStatus(code),
+        _ => PollError::NetworkError,
+    })?;
+    match response.status().as_u16() {
+        400 => {
+            #[derive(Deserialize)]
+            struct OAuthError {
+                error: String,
+            }
+            let error: OAuthError = response
+                .body_mut()
+                .read_json()
+                .map_err(|_| PollError::UnexpectedResponse)?;
+            return Err(match error.error.as_str() {
+                "invalid_grant" | "invalid_client" | "unauthorized_client" => {
+                    PollError::AuthRequired
+                }
+                _ => PollError::HttpStatus(400),
+            });
+        }
+        401 | 403 => return Err(PollError::AuthRequired),
+        200..=299 => {}
+        code => return Err(PollError::HttpStatus(code)),
+    }
+    let token: RefreshResponse = response
+        .body_mut()
+        .read_json()
+        .map_err(|_| PollError::UnexpectedResponse)?;
+    if token.access_token.is_empty() {
+        return Err(PollError::UnexpectedResponse);
+    }
+    Ok(token.access_token)
 }
 
 pub(super) fn antigravity_credential_watch_signature() -> String {
@@ -710,6 +751,97 @@ mod auth_tests {
             |_| Err(PollError::AuthRequired),
         );
         assert!(matches!(result, Err(PollError::AuthRequired)));
+    }
+
+    #[test]
+    fn refresh_responses_distinguish_rejected_credentials_from_retryable_failures() {
+        let response = |status, body: &str| {
+            Ok(ureq::http::Response::builder()
+                .status(status)
+                .body(ureq::Body::builder().data(body.as_bytes().to_vec()))
+                .unwrap())
+        };
+        assert_eq!(
+            parse_refresh_response(response(200, r#"{"access_token":"new"}"#)),
+            Ok("new".into())
+        );
+        for code in [401, 403] {
+            assert_eq!(
+                parse_refresh_response(response(code, "")),
+                Err(PollError::AuthRequired)
+            );
+        }
+        for error in ["invalid_grant", "invalid_client", "unauthorized_client"] {
+            assert_eq!(
+                parse_refresh_response(response(400, &format!(r#"{{"error":"{error}"}}"#))),
+                Err(PollError::AuthRequired)
+            );
+        }
+        for code in [429, 500, 503] {
+            assert_eq!(
+                parse_refresh_response(response(code, "")),
+                Err(PollError::HttpStatus(code))
+            );
+            assert_eq!(
+                parse_refresh_response(Err(ureq::Error::StatusCode(code))),
+                Err(PollError::HttpStatus(code))
+            );
+        }
+        for body in ["not JSON", "{}", r#"{"access_token":""}"#] {
+            assert_eq!(
+                parse_refresh_response(response(200, body)),
+                Err(PollError::UnexpectedResponse)
+            );
+        }
+        assert_eq!(
+            parse_refresh_response(response(400, r#"{"error":"temporarily_unavailable"}"#)),
+            Err(PollError::HttpStatus(400))
+        );
+        assert_eq!(
+            parse_refresh_response(Err(ureq::Error::Io(std::io::Error::from(
+                std::io::ErrorKind::ConnectionRefused
+            )))),
+            Err(PollError::NetworkError)
+        );
+    }
+
+    #[test]
+    fn transient_refresh_failures_stop_client_attempts_and_keep_polling_retryable() {
+        let clients = || {
+            vec![
+                ("first".into(), "secret".into()),
+                ("second".into(), "secret".into()),
+            ]
+        };
+        for error in [
+            PollError::NetworkError,
+            PollError::HttpStatus(429),
+            PollError::HttpStatus(503),
+            PollError::UnexpectedResponse,
+        ] {
+            let attempts = Cell::new(0);
+            let result = poll_with_refresh(
+                &credentials(Some("2020-01-01T00:00:00Z")),
+                |_| panic!("usage must wait for a refreshed token"),
+                |_| {
+                    refresh_from_clients(clients(), |_, _| {
+                        attempts.set(attempts.get() + 1);
+                        Err(error)
+                    })
+                },
+            );
+            assert_eq!(result.unwrap_err(), error);
+            assert!(error.is_transient());
+            assert_eq!(attempts.get(), 1);
+        }
+        assert_eq!(
+            refresh_from_clients(clients(), |id, _| if id == "first" {
+                Err(PollError::AuthRequired)
+            } else {
+                Ok("new".into())
+            }),
+            Ok("new".into())
+        );
     }
 
     #[test]
