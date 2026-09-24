@@ -6,7 +6,7 @@ use proc_macro2::{TokenStream, TokenTree};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-use winres::{VersionInfo, WindowsResource};
+use winresource::{VersionInfo, WindowsResource};
 
 fn main() {
     build_locales();
@@ -23,7 +23,7 @@ fn main() {
     res.set_icon("src/icons/icon.ico")
         // Declaring modern Windows compatibility enables WS_EX_LAYERED child
         // windows, which the Windows 11 raised desktop requires.
-        // Keep the manifest in a file so winres asks the resource compiler to
+        // Keep the manifest in a file so winresource asks the resource compiler to
         // embed it verbatim. `set_manifest` wraps every line in spaces, which
         // puts whitespace before the XML declaration and breaks parsers such
         // as wingetcreate's Vestris.ResourceLib.

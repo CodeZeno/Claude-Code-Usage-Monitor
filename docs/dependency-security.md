@@ -22,7 +22,7 @@ The scanners fetch current advisory data on each run. Fix a finding by updating
 or replacing the dependency where possible. Any necessary exception must be
 narrow and document the advisory, applicability, owner, and review date; do not
 disable a category of checks to make CI pass. License exceptions in `deny.toml`
-are limited to the existing bundled fonts and `option-ext`.
+are limited to the existing bundled fonts.
 
 ### Current advisory exception
 

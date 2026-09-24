@@ -44,8 +44,8 @@ pub(super) fn config_paths() -> Vec<PathBuf> {
 
 pub(super) fn data_directories() -> Vec<PathBuf> {
     data_directories_in(
-        dirs::config_dir().as_deref(),
-        dirs::data_local_dir().as_deref(),
+        crate::known_folders::roaming_app_data_dir().as_deref(),
+        crate::known_folders::local_app_data_dir().as_deref(),
     )
 }
 

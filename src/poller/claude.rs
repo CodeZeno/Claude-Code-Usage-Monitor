@@ -784,7 +784,9 @@ fn windows_credential_source() -> Option<CredentialSource> {
             .map(|directory| CredentialSource::Windows(directory.join(".credentials.json")));
     }
     Some(CredentialSource::Windows(
-        dirs::home_dir()?.join(".claude").join(".credentials.json"),
+        crate::known_folders::home_dir()?
+            .join(".claude")
+            .join(".credentials.json"),
     ))
 }
 

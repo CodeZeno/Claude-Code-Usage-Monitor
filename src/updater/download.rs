@@ -3,7 +3,10 @@ use std::io::{self, Read, Seek, Write};
 use std::os::windows::fs::OpenOptionsExt;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
+use windows::Win32::Security::Cryptography::{
+    BCryptCreateHash, BCryptDestroyHash, BCryptFinishHash, BCryptHashData, BCRYPT_HASH_HANDLE,
+    BCRYPT_SHA256_ALG_HANDLE,
+};
 
 // A hard ceiling independent of the server's Content-Length or release metadata.
 pub(super) const MAX_DOWNLOAD_BYTES: u64 = 100 * 1024 * 1024;
@@ -44,6 +47,41 @@ impl AssetIntegrity {
             .map(|byte| format!("{byte:02x}"))
             .collect();
         format!("sha256:{hex}")
+    }
+}
+
+/// Incremental SHA-256 backed by the Windows CNG provider.
+struct Sha256(BCRYPT_HASH_HANDLE);
+
+impl Sha256 {
+    fn new() -> Result<Self, String> {
+        let mut handle = BCRYPT_HASH_HANDLE::default();
+        unsafe { BCryptCreateHash(BCRYPT_SHA256_ALG_HANDLE, &mut handle, None, None, 0) }
+            .ok()
+            .map_err(|e| format!("Unable to start the update SHA-256 check: {e}"))?;
+        Ok(Self(handle))
+    }
+
+    fn update(&mut self, data: &[u8]) -> Result<(), String> {
+        unsafe { BCryptHashData(self.0, data, 0) }
+            .ok()
+            .map_err(|e| format!("Unable to compute the update SHA-256: {e}"))
+    }
+
+    fn finish(self) -> Result<[u8; 32], String> {
+        let mut digest = [0; 32];
+        unsafe { BCryptFinishHash(self.0, &mut digest, 0) }
+            .ok()
+            .map_err(|e| format!("Unable to compute the update SHA-256: {e}"))?;
+        Ok(digest)
+    }
+}
+
+impl Drop for Sha256 {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = BCryptDestroyHash(self.0);
+        }
     }
 }
 
@@ -96,7 +134,7 @@ fn copy_verified(
     mut writer: impl Write,
     integrity: &AssetIntegrity,
 ) -> Result<(), String> {
-    let mut hash = Sha256::new();
+    let mut hash = Sha256::new()?;
     let mut total = 0u64;
     let mut buffer = [0u8; 64 * 1024];
     loop {
@@ -113,7 +151,7 @@ fn copy_verified(
         if total > integrity.size || total > MAX_DOWNLOAD_BYTES {
             return Err("The update exceeds its expected size or the download limit.".into());
         }
-        hash.update(&buffer[..count]);
+        hash.update(&buffer[..count])?;
         writer
             .write_all(&buffer[..count])
             .map_err(|e| format!("Unable to write the downloaded update: {e}"))?;
@@ -121,7 +159,7 @@ fn copy_verified(
     if total != integrity.size {
         return Err("The update size does not match the release metadata.".into());
     }
-    let actual: [u8; 32] = hash.finalize().into();
+    let actual = hash.finish()?;
     if actual != integrity.sha256 {
         return Err("The update SHA-256 does not match the release metadata.".into());
     }

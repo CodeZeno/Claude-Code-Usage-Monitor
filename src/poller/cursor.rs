@@ -133,7 +133,7 @@ fn base64_url_decode(input: &str) -> Option<Vec<u8>> {
 }
 
 fn cursor_state_db_path() -> Option<PathBuf> {
-    let path = dirs::config_dir()?
+    let path = crate::known_folders::roaming_app_data_dir()?
         .join("Cursor")
         .join("User")
         .join("globalStorage")

@@ -4,6 +4,18 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.15] - 2026-09-24
+
+### Changed
+
+- Verify downloaded updates with the Windows CNG SHA-256 provider and key Retry-After cooldowns with a randomly keyed in-memory hash, replacing the `sha2` crate. Add a multi-read digest regression test.
+- Resolve the profile, roaming, and local application data folders through a small Windows known-folder helper that uses the same shell API as before, replacing the `dirs` crate.
+- Embed Windows icon, manifest, and version resources with the maintained `winresource` fork instead of `winres`, removing the duplicate `toml` 0.5 build dependency. Embedded resources are unchanged.
+
+### Removed
+
+- Removed the unused `Win32_UI_Controls` Windows API feature and the `option-ext` license exception. The release executable is 8,704 bytes smaller and the lockfile has 16 fewer packages.
+
 ## [2.15.14] - 2026-09-24
 
 ### Fixed
@@ -1173,3 +1185,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.12]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.11...v2.15.12
 [2.15.13]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.12...v2.15.13
 [2.15.14]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.13...v2.15.14
+[2.15.15]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.14...v2.15.15

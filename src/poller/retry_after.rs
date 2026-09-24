@@ -1,8 +1,8 @@
 use std::collections::HashMap;
+use std::hash::{BuildHasher, Hash, Hasher, RandomState};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime};
 
-use sha2::{Digest, Sha256};
 use ureq::http::Request;
 use ureq::middleware::MiddlewareNext;
 use ureq::SendBody;
@@ -34,7 +34,7 @@ impl Cooldown {
 
 #[derive(Default)]
 struct RetryAfter {
-    cooldowns: Mutex<HashMap<[u8; 32], Cooldown>>,
+    cooldowns: Mutex<HashMap<u64, Cooldown>>,
 }
 
 fn shared() -> &'static RetryAfter {
@@ -44,19 +44,17 @@ fn shared() -> &'static RetryAfter {
 
 // Keep credentials out of stored keys. Include headers to distinguish accounts
 // using the same URL (including cookie and workspace-based authentication).
-fn request_key(request: &Request<SendBody>) -> [u8; 32] {
-    let mut digest = Sha256::new();
-    for value in [request.method().as_str(), &request.uri().to_string()] {
-        digest.update(value.len().to_le_bytes());
-        digest.update(value.as_bytes());
-    }
+// Keys never leave the process, so a randomly keyed SipHash is sufficient.
+fn request_key(request: &Request<SendBody>) -> u64 {
+    static KEYS: OnceLock<RandomState> = OnceLock::new();
+    let mut hasher = KEYS.get_or_init(RandomState::new).build_hasher();
+    request.method().as_str().hash(&mut hasher);
+    request.uri().to_string().hash(&mut hasher);
     for (name, value) in request.headers() {
-        digest.update(name.as_str().len().to_le_bytes());
-        digest.update(name.as_str().as_bytes());
-        digest.update(value.as_bytes().len().to_le_bytes());
-        digest.update(value.as_bytes());
+        name.as_str().hash(&mut hasher);
+        value.as_bytes().hash(&mut hasher);
     }
-    digest.finalize().into()
+    hasher.finish()
 }
 
 fn parse_retry_after(value: &str, now: SystemTime) -> Option<Duration> {

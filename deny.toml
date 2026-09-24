@@ -28,14 +28,10 @@ allow = [
     "Zlib",
 ]
 
-# Limit the existing font and file-level copyleft licenses to these crates.
+# Limit the existing font licenses to this crate.
 [[licenses.exceptions]]
 name = "epaint_default_fonts"
 allow = ["OFL-1.1", "Ubuntu-font-1.0"]
-
-[[licenses.exceptions]]
-name = "option-ext"
-allow = ["MPL-2.0"]
 
 [bans]
 # The GUI/Windows dependency graph currently needs multiple crate versions.

@@ -32,7 +32,7 @@ pub fn source_key(path: &Path) -> String {
 
 pub fn default_credential_path(provider: ProviderId) -> Option<PathBuf> {
     let directory = environment_directory(provider).or_else(|| {
-        dirs::home_dir().map(|home| {
+        crate::known_folders::home_dir().map(|home| {
             home.join(if provider == ProviderId::Claude {
                 ".claude"
             } else {
@@ -200,10 +200,10 @@ fn environment_directory_value(value: Option<std::ffi::OsString>) -> Option<Path
 pub fn expand_path(path: &Path) -> Option<PathBuf> {
     let text = path.to_string_lossy();
     if text == "~" {
-        return dirs::home_dir();
+        return crate::known_folders::home_dir();
     }
     if let Some(tail) = text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\")) {
-        return Some(dirs::home_dir()?.join(tail));
+        return Some(crate::known_folders::home_dir()?.join(tail));
     }
     if path.is_absolute() {
         Some(path.to_path_buf())
@@ -298,7 +298,7 @@ mod tests {
         );
         assert_eq!(
             environment_directory_value(Some("~/.codex-work".into())),
-            dirs::home_dir().map(|home| home.join(".codex-work"))
+            crate::known_folders::home_dir().map(|home| home.join(".codex-work"))
         );
     }
 

@@ -322,7 +322,11 @@ pub(super) fn codex_auth_path() -> Option<PathBuf> {
             crate::accounts::environment_directory(crate::providers::ProviderId::Codex)?;
         return Some(codex_home.join("auth.json"));
     }
-    Some(dirs::home_dir()?.join(".codex").join("auth.json"))
+    Some(
+        crate::known_folders::home_dir()?
+            .join(".codex")
+            .join("auth.json"),
+    )
 }
 
 fn read_codex_credentials_at(auth_path: &Path) -> Option<CodexTokenData> {

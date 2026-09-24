@@ -174,7 +174,11 @@ fn grok_auth_path() -> Option<PathBuf> {
     if let Some(home) = non_empty_environment(GROK_HOME_ENV) {
         return crate::accounts::expand_path(Path::new(&home)).map(|home| home.join("auth.json"));
     }
-    Some(dirs::home_dir()?.join(".grok").join("auth.json"))
+    Some(
+        crate::known_folders::home_dir()?
+            .join(".grok")
+            .join("auth.json"),
+    )
 }
 
 fn read_grok_session(path: &Path) -> Option<GrokSession> {

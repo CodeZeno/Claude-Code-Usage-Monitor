@@ -43,6 +43,17 @@ fn verifies_a_known_sha256_vector() {
 }
 
 #[test]
+fn verifies_a_digest_spanning_multiple_reads() {
+    let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let integrity = AssetIntegrity::new(
+        bytes.len() as u64,
+        Some("sha256:e24bc62381f1224fbbb74688663f8f9743b9680b193edd666835e97b06e730eb"),
+    )
+    .unwrap();
+    copy_verified(&bytes[..], io::sink(), &integrity).unwrap();
+}
+
+#[test]
 fn rejects_corruption_and_truncated_or_empty_streams() {
     assert!(copy_verified(&b"abd"[..], io::sink(), &integrity())
         .unwrap_err()

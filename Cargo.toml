@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.15.14"
+version = "2.15.15"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -8,7 +8,7 @@ description = "Claude Code Usage Monitor"
 homepage = "https://codezeno.com.au"
 repository = "https://github.com/CodeZeno/Claude-Code-Usage-Monitor"
 
-[package.metadata.winres]
+[package.metadata.winresource]
 CompanyName = "Code Zeno Pty Ltd"
 ProductName = "Claude Code Usage Monitor"
 FileDescription = "Claude Code Usage Monitor"
@@ -24,9 +24,7 @@ ureq = { version = "3.4", default-features = false, features = ["native-tls", "j
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
-sha2 = "0.11"
 httpdate = "1"
-dirs = "7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 eframe = { version = "0.36", default-features = false, features = ["glow"] }
 lucide-icons = "1.30"
@@ -48,9 +46,9 @@ features = [
     "Win32_System_Time",
     "Win32_System_Threading",
     "Win32_Security",
+    "Win32_Security_Cryptography",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_HiDpi",
-    "Win32_UI_Controls",
     "Win32_UI_Controls_Dialogs",
     "Win32_Graphics_Dwm",
     "Win32_Graphics_Direct3D",
@@ -72,7 +70,7 @@ oxifont-subset = "0.2.2"
 proc-macro2 = "1"
 serde_json = "1"
 toml = "1.1"
-winres = "0.1"
+winresource = "0.1.31"
 
 [patch.crates-io]
 # Keep native text copy/paste without arboard's image codecs. See vendor/egui-winit/PATCH.md.

@@ -308,7 +308,7 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), String> {
 }
 
 fn updates_dir() -> Result<PathBuf, String> {
-    dirs::data_local_dir()
+    crate::known_folders::local_app_data_dir()
         .map(|dir| dir.join("ClaudeCodeUsageMonitor").join("updates"))
         .or_else(|| {
             Some(
