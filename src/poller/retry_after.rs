@@ -224,7 +224,10 @@ mod tests {
             assert_eq!(response.status(), 429);
         }
         assert!(state.cooldowns.lock().unwrap().is_empty());
-        assert_eq!(state.retry_delay_ms(30_000, started, Instant::now()), 30_000);
+        assert_eq!(
+            state.retry_delay_ms(30_000, started, Instant::now()),
+            30_000
+        );
 
         // A probe also passes through an existing cooldown for the same key,
         // without clearing it for ordinary requests.
