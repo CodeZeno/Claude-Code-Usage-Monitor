@@ -1143,6 +1143,88 @@ fn segmented_progress_reserves_gaps_only_between_segments() {
 }
 
 #[test]
+fn segmented_progress_snaps_segments_and_gaps_to_whole_pixels() {
+    // The classic widget bar is 10 segments of 10 logical px with 1 px gaps.
+    for (scale, segment, gap) in [
+        (1.0, 10, 1),
+        (1.25, 12, 1),
+        (1.5, 14, 2),
+        (1.75, 17, 2),
+        (2.0, 20, 2),
+    ] {
+        let extent = (109.0_f64 * scale).round() as u32;
+        let layout = SegmentLayout::new(extent, 10, scale).unwrap();
+        assert_eq!(
+            (layout.segment, layout.gap),
+            (segment, gap),
+            "scale={scale}"
+        );
+        assert!(layout.extent() <= extent, "scale={scale}");
+
+        let mut runs = Vec::new();
+        for position in 0..extent {
+            let visible = segmented_position_visible(position, extent, 10, scale);
+            match runs.last_mut() {
+                Some((kind, length)) if *kind == visible => *length += 1,
+                _ => runs.push((visible, 1)),
+            }
+        }
+        if runs.last().is_some_and(|(visible, _)| !visible) {
+            runs.pop();
+        }
+        assert_eq!(runs.len(), 19, "scale={scale}");
+        for (index, (visible, length)) in runs.into_iter().enumerate() {
+            assert_eq!(visible, index % 2 == 0, "scale={scale}");
+            assert_eq!(length, if visible { segment } else { gap }, "scale={scale}");
+        }
+    }
+}
+
+#[test]
+fn right_to_left_segments_anchor_at_the_right_edge() {
+    let white = Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    // 164 px at 150%: 10 x 14 px segments with 2 px gaps use 158 px.
+    let mut pixels = vec![0; 164];
+    draw_progress(
+        &mut pixels,
+        164,
+        1,
+        white,
+        0.0,
+        1.0,
+        ProgressDirection::RightToLeft,
+        10,
+        1.5,
+    );
+    assert!(pixels[..6].iter().all(|pixel| *pixel == 0));
+    assert_ne!(pixels[6], 0);
+    assert_ne!(pixels[163], 0);
+    assert_eq!(pixels[163 - 14], 0);
+
+    // Partial fills are measured against the drawn bar, not the box.
+    let mut pixels = vec![0; 164];
+    draw_progress(
+        &mut pixels,
+        164,
+        1,
+        white,
+        0.0,
+        0.5,
+        ProgressDirection::LeftToRight,
+        10,
+        1.5,
+    );
+    // Half of 158 px ends at pixel 78, inside the gap after segment five.
+    assert_ne!(pixels[77], 0);
+    assert!(pixels[78..].iter().all(|pixel| *pixel == 0));
+}
+
+#[test]
 fn segmented_progress_preserves_both_rounded_outer_edges() {
     let mut pixels = vec![0; 34 * 12];
     draw_progress(
