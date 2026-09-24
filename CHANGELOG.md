@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.10] - 2026-09-24
+
+### Fixed
+
+- Cap stored Retry-After cooldowns at 24 hours for numeric and HTTP-date headers, including overflowing values, so malformed server delays cannot block accounts indefinitely. Cover boundary values, bounded timers, and request resumption after expiry. ([#135](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/135))
+
 ## [2.15.9] - 2026-09-24
 
 ### Fixed
@@ -1138,3 +1144,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.6...v2.15.7
 [2.15.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.7...v2.15.8
 [2.15.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.8...v2.15.9
+[2.15.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.9...v2.15.10
