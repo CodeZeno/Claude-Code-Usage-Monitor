@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.12] - 2026-09-24
+
+### Fixed
+
+- Reuse derived Builder catalogue entries while refreshing live clock values, and rebuild for changed usage, accounts, limits, layout, language, or syntax. Avoid duplicate unchanged-draft validation and revalidate changed drafts before Apply, with cache and validation regression tests. ([#137](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/137))
+
 ## [2.15.11] - 2026-09-24
 
 ### Fixed
@@ -1152,3 +1158,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.8...v2.15.9
 [2.15.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.9...v2.15.10
 [2.15.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.10...v2.15.11
+[2.15.12]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.11...v2.15.12
