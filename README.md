@@ -114,18 +114,40 @@ The diagnostic log is written to `%TEMP%\claude-code-usage-monitor.log`. Applica
 
 If the app unexpectedly closes because of a Rust panic, it automatically appends
 the panic message, source location, and thread details to the same log, even when
-diagnostic recording is off. Include this log when reporting the crash; copy it
-before starting a new `--diagnose` session, which clears the log.
+diagnostic recording is off. Copy the log before starting a new `--diagnose`
+session, which clears it. Review and redact credentials, account identifiers,
+and personal information before sharing relevant excerpts in a crash report.
+Report suspected vulnerabilities privately using [SECURITY.md](SECURITY.md).
 
 ## Build from source
 
-Install [Rust](https://www.rust-lang.org/tools/install) 1.95 or later, then run:
+Install [Rust via rustup](https://www.rust-lang.org/tools/install), then run:
 
 ```powershell
 cargo build --release
 ```
 
+The repository pins Rust 1.95.0 in `rust-toolchain.toml`; rustup automatically
+selects this version. CI uses the same version. When upgrading Rust, update
+`rust-toolchain.toml`, `.github/workflows/release.yml`, and the `rust-version`
+in `Cargo.toml` together.
+
 The executable will be created at `target\release\claude-code-usage-monitor.exe`.
+
+Windows MSVC builds statically link the C runtime through `.cargo/config.toml`,
+including release builds in CI. The executable does not require a separate
+Microsoft Visual C++ Redistributable installation; it still uses built-in Windows
+system libraries.
+
+See [dependency security](docs/dependency-security.md) for automated dependency
+updates, CI security checks, and the commands to run those checks locally.
+
+## Contributing and community
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, reporting bugs,
+and submitting pull requests, and follow our [Code of Conduct](CODE_OF_CONDUCT.md).
+For suspected vulnerabilities or credential exposure, use the private reporting
+instructions in our [security policy](SECURITY.md).
 
 ## License
 

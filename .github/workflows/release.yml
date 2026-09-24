@@ -13,23 +13,30 @@ env:
   WINGET_PACKAGE_ID: CodeZeno.ClaudeCodeUsageMonitor
 
 jobs:
+  dependency-security:
+    uses: ./.github/workflows/dependency-security.yml
+    permissions:
+      contents: read
+
   build:
+    needs: dependency-security
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@1.95.0
 
       - name: Test updater safeguards
         run: cargo test --locked updater
 
       - name: Build release binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: target/release/claude-code-usage-monitor.exe
           generate_release_notes: true
@@ -58,7 +65,7 @@ jobs:
 
       - name: Install .NET 6 runtime
         if: env.WINGETCREATE_GITHUB_TOKEN != ''
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: "6.0.x"
 

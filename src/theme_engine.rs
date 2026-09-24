@@ -162,6 +162,9 @@ pub struct Placement {
     /// Runtime-only layout host retained during undocking; never edits the theme.
     #[serde(skip)]
     pub host_dimensions: Option<(u32, u32)>,
+    /// Runtime-only protection for drag anchoring; authored placements stay exact.
+    #[serde(skip)]
+    pub clamp_taskbar_drag: bool,
     #[serde(default)]
     pub reference: ReferenceTarget,
     /// Controls which native shell host owns a root surface. Older themes did
@@ -2733,6 +2736,7 @@ impl Default for Placement {
     fn default() -> Self {
         Self {
             host_dimensions: None,
+            clamp_taskbar_drag: false,
             reference: ReferenceTarget::default(),
             nest: SurfaceNest::Taskbar,
             horizontal: HorizontalAnchor::Left,

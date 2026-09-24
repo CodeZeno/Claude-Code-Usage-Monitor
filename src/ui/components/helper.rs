@@ -554,6 +554,7 @@ fn browser(
         .collect();
 
     let search_id = ui.make_persistent_id("helper-search");
+    let mut insert_from_search = false;
     ui.horizontal(|ui| {
         ui.label(icon_text(LucideIcon::Search, 15.0).color(muted()));
         let search = singleline(&mut state.search)
@@ -563,12 +564,17 @@ fn browser(
             .show(ui)
             .response
             .response;
+        // Single-line text edits surrender focus when Enter is pressed.
+        if search.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+            insert_from_search = true;
+            state.insert_requested = true;
+            search.request_focus();
+        }
         if search.has_focus() {
-            let (down, up, enter) = ui.input(|input| {
+            let (down, up) = ui.input(|input| {
                 (
                     input.key_pressed(egui::Key::ArrowDown),
                     input.key_pressed(egui::Key::ArrowUp),
-                    input.key_pressed(egui::Key::Enter),
                 )
             });
             let current = visible
@@ -585,9 +591,6 @@ fn browser(
             }
             if next.is_some() {
                 state.scroll_to_selected = true;
-            }
-            if enter {
-                state.insert_requested = true;
             }
         }
     });
@@ -713,14 +716,13 @@ fn browser(
         );
     });
 
-    if std::mem::take(&mut state.focus_editor) {
-        // Hand focus back to the editor so the user can keep typing after an
-        // insertion made from the browser.
-        ui.memory_mut(|memory| memory.request_focus(editor_id));
-    }
+    // An Enter press with no visible entry must not insert later when the
+    // search changes and results become available again.
+    state.insert_requested = false;
+    let focus_editor = std::mem::take(&mut state.focus_editor) && !insert_from_search;
     if let Some(cursor) = state.cursor {
         if let Some(mut text_state) = egui::text_edit::TextEditState::load(ui.ctx(), editor_id) {
-            if !ui.memory(|memory| memory.has_focus(editor_id)) {
+            if focus_editor || !ui.memory(|memory| memory.has_focus(editor_id)) {
                 let cursor = egui::text::CCursor::new(cursor);
                 text_state
                     .cursor
@@ -728,6 +730,10 @@ fn browser(
                 text_state.store(ui.ctx(), editor_id);
             }
         }
+    }
+    if focus_editor {
+        // Restore the insertion caret before handing focus back for typing.
+        ui.memory_mut(|memory| memory.request_focus(editor_id));
     }
 }
 
@@ -1373,6 +1379,157 @@ mod tests {
         state.cursor = Some(cursor);
         state.insert(&HelperInsertion::new(text, mode));
         state.draft
+    }
+
+    #[test]
+    fn typing_continues_after_a_browser_insertion() {
+        let context = egui::Context::default();
+        crate::ui::theme::configure_style(&context, LanguageId::English);
+        let mut state = HelperState::new("before  after".into());
+        state.set_cursor(7);
+        let entries = [HelperEntry {
+            id: "value".into(),
+            category: "General",
+            scope: None,
+            group: "General".into(),
+            label: "Value".into(),
+            code: "value".into(),
+            token: "value".into(),
+            value: None,
+        }];
+        for frame in 0..3 {
+            state.insert_requested = frame == 1;
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            if frame == 2 {
+                input.events.push(egui::Event::Text("!".into()));
+            }
+            let mut output = context.run_ui(input, |ui| {
+                show_helper(
+                    ui,
+                    &mut state,
+                    HelperView {
+                        kind_icon: LucideIcon::Type,
+                        kind: "Text",
+                        description: "",
+                        hint: "",
+                        code_editor: false,
+                        editor_height: 64.0,
+                        categories: &[],
+                        scopes: &[],
+                        entries: &entries,
+                    },
+                    LanguageId::English,
+                    |_| HelperStatus::Valid {
+                        message: "Valid".into(),
+                        result: None,
+                    },
+                    None,
+                    |_, _, _| Ok(HelperInsertion::new("value", InsertMode::Inline)),
+                );
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(state.draft, "before value! after");
+    }
+
+    #[test]
+    fn search_enter_retains_focus_and_does_not_queue_empty_results() {
+        let context = egui::Context::default();
+        crate::ui::theme::configure_style(&context, LanguageId::English);
+        let mut state = HelperState::new("before  after".into());
+        state.set_cursor(7);
+        let entries = [HelperEntry {
+            id: "value".into(),
+            category: "General",
+            scope: None,
+            group: "General".into(),
+            label: "Value".into(),
+            code: "value".into(),
+            token: "value".into(),
+            value: None,
+        }];
+        for frame in 0..8 {
+            if frame == 4 {
+                state.search = "no matching entry".into();
+            } else if frame == 7 {
+                state.search.clear();
+            }
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            if matches!(frame, 1..=4 | 6..=7) {
+                input.events.push(egui::Event::Key {
+                    key: egui::Key::Enter,
+                    physical_key: None,
+                    pressed: matches!(frame, 1 | 3 | 6),
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                });
+            }
+            if frame == 2 {
+                input.events.push(egui::Event::Text("val".into()));
+            }
+            let mut output = context.run_ui(input, |ui| {
+                let editor_id = ui.make_persistent_id("test-editor");
+                let search_id = ui.make_persistent_id("helper-search");
+                egui::TextEdit::multiline(&mut state.draft)
+                    .id(editor_id)
+                    .show(ui);
+                browser(
+                    ui,
+                    &mut state,
+                    &HelperView {
+                        kind_icon: LucideIcon::Type,
+                        kind: "Text",
+                        description: "",
+                        hint: "",
+                        code_editor: false,
+                        editor_height: 64.0,
+                        categories: &[],
+                        scopes: &[],
+                        entries: &entries,
+                    },
+                    LanguageId::English,
+                    |_, _, _| Ok(HelperInsertion::new("value", InsertMode::Inline)),
+                    editor_id,
+                );
+                if frame == 0 {
+                    ui.memory_mut(|memory| memory.request_focus(search_id));
+                }
+                assert!(
+                    ui.memory(|memory| memory.has_focus(search_id)),
+                    "search lost focus on frame {frame}; draft {:?}",
+                    state.draft
+                );
+                if frame >= 1 {
+                    let expected = if frame < 3 { 12 } else { 17 };
+                    assert_eq!(state.cursor, Some(expected));
+                    let editor = egui::text_edit::TextEditState::load(ui.ctx(), editor_id).unwrap();
+                    assert_eq!(
+                        editor.cursor.char_range().unwrap().primary.index.0,
+                        expected
+                    );
+                }
+            });
+            output.textures_delta.clear();
+            if frame == 2 {
+                assert_eq!(state.search, "val");
+                assert_eq!(state.draft, "before value after");
+            }
+            if frame >= 3 {
+                assert_eq!(state.draft, "before valuevalue after");
+            }
+        }
     }
 
     #[test]

@@ -1,0 +1,49 @@
+# Policy for the shipped Windows application, including build/dev dependencies.
+# cargo-audit separately checks every package in Cargo.lock on all platforms.
+[graph]
+targets = ["x86_64-pc-windows-msvc"]
+
+[advisories]
+yanked = "deny"
+unmaintained = "all"
+unsound = "all"
+unused-ignored-advisory = "deny"
+# Owner: repository maintainers. Review by 2026-10-23, or on an oxifont update.
+# Build-time only: oxifont processes font bytes bundled by locked dependencies.
+# No patched release exists; migrate/update the subsetter to remove this crate.
+# Keep cargo-audit's warning visible. This does not ignore future vulnerabilities.
+ignore = [
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is unmaintained; required by oxifont-subset/oxifont-parser 0.2.2 for build-time bundled font subsetting. Owner: repository maintainers; review by 2026-10-23. See docs/dependency-security.md." },
+]
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+
+# Limit the existing font and file-level copyleft licenses to these crates.
+[[licenses.exceptions]]
+name = "epaint_default_fonts"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
+
+[[licenses.exceptions]]
+name = "option-ext"
+allow = ["MPL-2.0"]
+
+[bans]
+# The GUI/Windows dependency graph currently needs multiple crate versions.
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

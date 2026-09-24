@@ -119,7 +119,7 @@ fn fetch_codex_usage_at(
         request = request.header("ChatGPT-Account-Id", account_id);
     }
 
-    let mut resp = match request.call() {
+    let mut resp = match request.call().and_then(super::check_http_status) {
         Ok(resp) => resp,
         Err(ureq::Error::StatusCode(code)) if code == 401 || code == 403 => {
             diagnose::log(format!(

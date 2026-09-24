@@ -27,3 +27,11 @@ AGENTS.md
 # Local WinGet manifest generation output
 /manifests/
 test_bin/
+
+# Local Windows VM lab configuration and evidence
+/tests/windows-vm/lab.local.json
+/tests/windows-vm/artifacts/
+
+# Local dev builds and scratch
+/builds/
+/scratch/
