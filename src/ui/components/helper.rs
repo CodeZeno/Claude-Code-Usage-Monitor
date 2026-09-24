@@ -700,14 +700,10 @@ fn browser(
         );
     });
 
-    if std::mem::take(&mut state.focus_editor) && !insert_from_search {
-        // Hand focus back to the editor so the user can keep typing after an
-        // insertion made from the browser. Search submissions retain search focus.
-        ui.memory_mut(|memory| memory.request_focus(editor_id));
-    }
+    let focus_editor = std::mem::take(&mut state.focus_editor) && !insert_from_search;
     if let Some(cursor) = state.cursor {
         if let Some(mut text_state) = egui::text_edit::TextEditState::load(ui.ctx(), editor_id) {
-            if !ui.memory(|memory| memory.has_focus(editor_id)) {
+            if focus_editor || !ui.memory(|memory| memory.has_focus(editor_id)) {
                 let cursor = egui::text::CCursor::new(cursor);
                 text_state
                     .cursor
@@ -715,6 +711,10 @@ fn browser(
                 text_state.store(ui.ctx(), editor_id);
             }
         }
+    }
+    if focus_editor {
+        // Restore the insertion caret before handing focus back for typing.
+        ui.memory_mut(|memory| memory.request_focus(editor_id));
     }
 }
 
@@ -1294,6 +1294,63 @@ mod tests {
         state.cursor = Some(cursor);
         state.insert(&HelperInsertion::new(text, mode));
         state.draft
+    }
+
+    #[test]
+    fn typing_continues_after_a_browser_insertion() {
+        let context = egui::Context::default();
+        crate::ui::theme::configure_style(&context, LanguageId::English);
+        let mut state = HelperState::new("before  after".into());
+        state.set_cursor(7);
+        let entries = [HelperEntry {
+            id: "value".into(),
+            category: "General",
+            scope: None,
+            group: "General".into(),
+            label: "Value".into(),
+            code: "value".into(),
+            token: "value".into(),
+            value: None,
+        }];
+        for frame in 0..3 {
+            state.insert_requested = frame == 1;
+            let mut input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1200.0, 900.0),
+                )),
+                ..Default::default()
+            };
+            if frame == 2 {
+                input.events.push(egui::Event::Text("!".into()));
+            }
+            let mut output = context.run_ui(input, |ui| {
+                show_helper(
+                    ui,
+                    &mut state,
+                    HelperView {
+                        kind_icon: LucideIcon::Type,
+                        kind: "Text",
+                        description: "",
+                        hint: "",
+                        code_editor: false,
+                        editor_height: 64.0,
+                        categories: &[],
+                        scopes: &[],
+                        entries: &entries,
+                    },
+                    LanguageId::English,
+                    |_| HelperStatus::Valid {
+                        message: "Valid".into(),
+                        result: None,
+                    },
+                    None,
+                    |_, _, _| Ok(HelperInsertion::new("value", InsertMode::Inline)),
+                );
+            });
+            output.textures_delta.clear();
+        }
+        assert_eq!(state.draft, "before value! after");
     }
 
     #[test]
