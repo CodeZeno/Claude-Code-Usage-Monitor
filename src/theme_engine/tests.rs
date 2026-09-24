@@ -2560,3 +2560,40 @@ fn the_classic_theme_shows_one_badge_digit_group_in_both_usage_directions() {
         }
     }
 }
+
+#[test]
+fn action_values_are_found_around_the_caret() {
+    // `source` marks the caret with `|`.
+    let at = |source: &str| {
+        let caret = source.find('|').unwrap();
+        action_value_at(&source.replace('|', ""), caret)
+    };
+    assert_eq!(at("set(self, width, |)"), Some(ActionValue::Bare));
+    assert_eq!(at("set(self.width, 1|)"), Some(ActionValue::Bare));
+    assert_eq!(
+        at("increase(\"bar\", x, round(canvas.width|) / 2)"),
+        Some(ActionValue::Bare)
+    );
+    assert_eq!(
+        at("show_dashboard(); decrease(self, y, |"),
+        Some(ActionValue::Bare),
+        "an unfinished action still has a value"
+    );
+    assert_eq!(
+        at("toggle(self, render)\nset(\"a,b\", x, |10)"),
+        Some(ActionValue::Bare),
+        "commas in a quoted layer id are not separators"
+    );
+    assert_eq!(
+        at(r#"layer_actions("set(\"bar\", width, |10)")"#),
+        Some(ActionValue::Quoted)
+    );
+    assert_eq!(at("set(self, |width, 1)"), None, "property, not value");
+    assert_eq!(at("se|t(self, width, 1)"), None);
+    assert_eq!(at("set(self, width, 1)|"), None);
+    assert_eq!(at("set(|self, 1)"), None, "the target is not a value");
+    assert_eq!(at("toggle(self, |render)"), None);
+    assert_eq!(at("open_url(\"https://|\")"), None);
+    assert_eq!(at(r#"layer_actions("toggle(self, |render)")"#), None);
+    assert_eq!(at(r#"layer_actions(|"set(self, x, 1)")"#), None);
+}

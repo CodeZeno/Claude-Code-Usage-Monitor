@@ -1,0 +1,26 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Keep the closely coupled GUI crates together. The local egui-winit
+      # patch still needs manual review; see docs/dependency-security.md.
+      egui:
+        patterns:
+          - eframe
+          - egui*
+          - epaint*
+          - emath
+          - ecolor
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      github-actions:
+        patterns:
+          - "*"

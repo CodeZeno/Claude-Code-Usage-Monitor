@@ -552,7 +552,7 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
             .is_none_or(|p| p.nest != "floating")
     {
         let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
-        occupancy.overlaps(widget).then_some(1)
+        occupancy.overlaps_app_controls(widget).then_some(1)
     } else {
         None
     }
@@ -659,8 +659,12 @@ fn theme_with_placement(state: &AppState, auto_ejected: bool) -> Option<ThemeDoc
             0
         };
         let horizontal = taskbar_is_horizontal(index);
-        let placement =
-            positioning::dock_placement(index, p.tray_offset, display_scale(index), horizontal);
+        let placement = if p.screen_x > 0 || p.screen_y > 0 {
+            let offset = if horizontal { p.screen_x } else { p.screen_y };
+            positioning::taskbar_dock_placement(index, offset, display_scale(index), horizontal)
+        } else {
+            positioning::dock_placement(index, p.tray_offset, display_scale(index), horizontal)
+        };
         positioning::override_primary_placement(&mut theme, placement);
     }
     Some(theme)
@@ -1859,14 +1863,15 @@ pub fn run() {
     }
     diagnose::log("window::run started");
 
-    // Single-instance guard: silently exit if another instance is running.
+    // Single-instance guard: silently exit if another instance is running in this session.
+    // Use the local namespace so other users' desktop/RDP sessions remain independent.
     // Exception: when relaunched after an explorer restart (ENV_RELAUNCH set),
     // wait for the previous instance to release the mutex, then take over.
     let is_relaunch = std::env::var(ENV_RELAUNCH).is_ok();
     let mutex_name = native_interop::wide_str(&if allow_multiple {
-        format!("Global\\ClaudeCodeUsageMonitor-{}", std::process::id())
+        format!("Local\\ClaudeCodeUsageMonitor-{}", std::process::id())
     } else {
-        "Global\\ClaudeCodeUsageMonitor".to_string()
+        "Local\\ClaudeCodeUsageMonitor".to_string()
     });
     let _mutex = unsafe {
         let handle = CreateMutexW(None, true, PCWSTR::from_raw(mutex_name.as_ptr()));

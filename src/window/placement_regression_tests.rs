@@ -423,6 +423,328 @@ fn a_taskbar_without_a_tray_anchors_at_its_trailing_edge() {
     assert_eq!((rect.top, rect.bottom), (1034, 1080));
 }
 
+#[test]
+fn tray_movement_does_not_cause_app_collision_when_docked() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+    // 500px of free space between apps and tray (apps end at 1100, tray starts at 1600)
+    let occupancy = collision_fixture(taskbar, Some(tray), Some(1100));
+    let docked = positioning::dock_placement(0, 0, 1.0, true);
+    let target =
+        positioning::surface_screen_rect(&docked, 200, 46, 1.0, monitor, Some(taskbar), Some(tray));
+    assert_eq!((target.left, target.right), (1400, 1600));
+
+    // When docked next to tray, overlaps_app_controls is false
+    assert!(!occupancy.overlaps_app_controls(target));
+
+    // When tray expands left by 50px (tray starts at 1550)
+    let expanded_tray = RECT {
+        left: 1550,
+        ..taskbar
+    };
+    let occupancy_expanded = collision_fixture(taskbar, Some(expanded_tray), Some(1100));
+    // Even before the widget repositions (target is still 1400..1600, overlapping expanded tray 1550..1600),
+    // it does NOT collide with app controls!
+    assert!(!occupancy_expanded.overlaps_app_controls(target));
+
+    // Only when app buttons expand into the widget area (e.g. apps reach 1450)
+    let crowded_occupancy = collision_fixture(taskbar, Some(expanded_tray), Some(1450));
+    assert!(crowded_occupancy.overlaps_app_controls(target));
+}
+
+#[test]
+fn smart_anchoring_remains_stationary_on_tray_change_and_clamps_when_pushed() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let initial_tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+
+    // User placed widget at fixed position x = 1200 on taskbar (width = 200)
+    let taskbar_placement = positioning::taskbar_dock_placement(0, 1200, 1.0, true);
+
+    // 1. Initial positioning: widget is at 1200..1400, tray is at 1600..1920
+    let rect1 = positioning::surface_screen_rect(
+        &taskbar_placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(initial_tray),
+    );
+    assert_eq!((rect1.left, rect1.right), (1200, 1400));
+
+    // 2. Tray shifts left or right without reaching the widget (e.g. tray is at 1450 or 1700)
+    let shifted_tray = RECT {
+        left: 1450,
+        ..taskbar
+    };
+    let rect2 = positioning::surface_screen_rect(
+        &taskbar_placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(shifted_tray),
+    );
+    // Widget stays completely stationary at 1200!
+    assert_eq!((rect2.left, rect2.right), (1200, 1400));
+
+    // 3. Tray expands so much that it pushes the widget (tray at 1350, max_x = 1150)
+    let encroaching_tray = RECT {
+        left: 1350,
+        ..taskbar
+    };
+    let rect3 = positioning::surface_screen_rect(
+        &taskbar_placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(encroaching_tray),
+    );
+    // Protective clamp shifts widget left to 1150
+    assert_eq!((rect3.left, rect3.right), (1150, 1350));
+
+    // 4. Tray shrinks back to 1600: widget automatically returns to its original 1200 position!
+    let restored_rect = positioning::surface_screen_rect(
+        &taskbar_placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(initial_tray),
+    );
+    assert_eq!((restored_rect.left, restored_rect.right), (1200, 1400));
+}
+
+#[test]
+fn smart_anchoring_tray_snapped_follows_tray_movement() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let initial_tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+
+    // When tray_offset == 0 (snapped to tray), dock_placement anchors to ReferenceRegion::SystemTray
+    let tray_snapped = positioning::dock_placement(0, 0, 1.0, true);
+
+    let rect1 = positioning::surface_screen_rect(
+        &tray_snapped,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(initial_tray),
+    );
+    assert_eq!((rect1.left, rect1.right), (1400, 1600));
+
+    // When tray moves to 1550, snapped widget moves with it to 1350..1550
+    let moved_tray = RECT {
+        left: 1550,
+        ..taskbar
+    };
+    let rect2 = positioning::surface_screen_rect(
+        &tray_snapped,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(moved_tray),
+    );
+    assert_eq!((rect2.left, rect2.right), (1350, 1550));
+}
+
+#[test]
+fn smart_anchoring_vertical_taskbar_anchors_to_top_edge_and_clamps() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let vertical_taskbar = RECT {
+        left: 0,
+        top: 0,
+        right: 60,
+        bottom: 1080,
+    };
+    let tray = RECT {
+        left: 0,
+        top: 900,
+        right: 60,
+        bottom: 1080,
+    };
+
+    // User docked widget at top offset y = 300 on a vertical taskbar
+    let placement = positioning::taskbar_dock_placement(0, 300, 1.0, false);
+    let rect = positioning::surface_screen_rect(
+        &placement,
+        50,
+        100,
+        1.0,
+        monitor,
+        Some(vertical_taskbar),
+        Some(tray),
+    );
+    // Top edge must be precisely at 300, not 200 (shifted by height)
+    assert_eq!(rect.top, 300);
+    assert_eq!(rect.bottom, 400);
+
+    // If tray expands upward to top = 350, clamp keeps widget from overlapping tray (max_y = 350 - 100 = 250)
+    let expanded_tray = RECT {
+        left: 0,
+        top: 350,
+        right: 60,
+        bottom: 1080,
+    };
+    let clamped = positioning::surface_screen_rect(
+        &placement,
+        50,
+        100,
+        1.0,
+        monitor,
+        Some(vertical_taskbar),
+        Some(expanded_tray),
+    );
+    assert_eq!(clamped.top, 250);
+    assert_eq!(clamped.bottom, 350);
+}
+
+#[test]
+fn smart_anchoring_clamp_does_not_panic_when_taskbar_is_crowded_or_tiny() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        left: 0,
+        top: 1032,
+        right: 1920,
+        bottom: 1080,
+    };
+    // Severe crowding: tray is at 100, widget width is 200 -> max_x = -100, which is < taskbar.left (0)
+    let crowded_tray = RECT {
+        left: 100,
+        top: 1032,
+        right: 1920,
+        bottom: 1080,
+    };
+    let placement = positioning::taskbar_dock_placement(0, 500, 1.0, true);
+    let rect = positioning::surface_screen_rect(
+        &placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(crowded_tray),
+    );
+    // Must not panic with min > max, clamps safely to taskbar.left (0)
+    assert_eq!(rect.left, 0);
+}
+
+#[test]
+fn floating_taskbar_reference_is_not_clamped_to_tray() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    };
+    let taskbar = RECT {
+        top: 1032,
+        ..monitor
+    };
+    let tray = RECT {
+        left: 1600,
+        ..taskbar
+    };
+    let mut placement = positioning::taskbar_dock_placement(0, 1700, 1.0, true);
+    placement.nest = SurfaceNest::Floating;
+    let rect = positioning::surface_screen_rect(
+        &placement,
+        200,
+        46,
+        1.0,
+        monitor,
+        Some(taskbar),
+        Some(tray),
+    );
+    assert_eq!(rect.left, 1700);
+}
+
+#[test]
+fn smart_anchoring_fractional_dpi_scaling() {
+    let monitor = RECT {
+        left: 0,
+        top: 0,
+        right: 2560,
+        bottom: 1440,
+    };
+    let taskbar = RECT {
+        left: 0,
+        top: 1392,
+        right: 2560,
+        bottom: 1440,
+    };
+    let tray = RECT {
+        left: 2100,
+        ..taskbar
+    };
+
+    // 1.25x scaling, screen offset = 1000 physical px
+    let placement = positioning::taskbar_dock_placement(0, 1000, 1.25, true);
+    let rect = positioning::surface_screen_rect(
+        &placement,
+        250,
+        46,
+        1.25,
+        monitor,
+        Some(taskbar),
+        Some(tray),
+    );
+    assert_eq!(rect.left, 1000);
+}
+
 // Fixture for the traditional leading-apps/trailing-tray arrangement. The
 // production detector also supports independent groups and leading-side gaps.
 fn collision_fixture(

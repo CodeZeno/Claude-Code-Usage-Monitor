@@ -1,4 +1,7 @@
 use super::*;
+use crate::ui::components::helper::{
+    show_helper, Caret, HelperInsertion, HelperState, HelperStatus, HelperView, InsertMode,
+};
 
 fn run_test_ui(context: &egui::Context, input: egui::RawInput, run_ui: impl FnMut(&mut egui::Ui)) {
     let mut output = context.run_ui(input, run_ui);
@@ -377,9 +380,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         scene_width: DEFAULT_SCENE_WIDTH,
         inspector_width: DEFAULT_INSPECTOR_WIDTH,
         hovered_scene_item: None,
-        expression_helper: None,
-        action_helper: None,
-        text_template_helper: None,
+        helper: None,
         preview_mouse_overrides: HashMap::new(),
         preview_hover_target: None,
         preview_pending_click: None,
@@ -399,7 +400,6 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         context_menu_path: None,
         context_menu_dirty: false,
         context_menu_selection: None,
-        context_menu_action_helper: None,
         delete_context_menu_confirmation: None,
     }
 }
@@ -772,10 +772,6 @@ fn reported_limits_are_grouped_with_claude_in_both_editors() {
             .is_empty());
         }
     }
-    assert!(provider_limit_variables(&context, "claude")
-        .contains(&"claude.limits.nimbus_quill.display"));
-    assert!(!provider_limit_variables(&context, "codex")
-        .contains(&"claude.limits.nimbus_quill.display"));
 
     // A refresh can remove a quota while its format picker remains open.
     let empty = DataContext::from_usage(None, &Canvas::default());
@@ -788,17 +784,32 @@ fn reported_limits_are_grouped_with_claude_in_both_editors() {
 }
 
 #[test]
-fn text_picker_renders_reported_quota_labels_and_formats() {
-    let context = egui::Context::default();
-    configure_style(&context, LanguageId::English);
+fn text_helper_lists_reported_quotas_with_provider_filters() {
+    let language = LanguageId::English;
     let mut data = DataContext::from_usage(None, &Canvas::default());
     data.insert("claude.limits.nimbus_quill.available", 1.0);
     data.insert("claude.limits.nimbus_quill.percentage", 37.0);
     data.insert_string("claude.limits.nimbus_quill.label", "nimbus quill");
-    let mut filter = "nimbus".to_string();
-    let mut selected = "claude.limits.nimbus_quill.percentage".to_string();
-    let mut format = TextTemplateFormat::Percentage;
-    let mut draft = String::new();
+    let entries = value_entries(&data, language, ValueSyntax::Template);
+    let used = entries
+        .iter()
+        .find(|entry| entry.id == "claude.limits.nimbus_quill.percentage")
+        .expect("reported quota is listed");
+    assert_eq!(used.group, "Claude Code · Nimbus quill");
+    assert_eq!(used.label, "Used");
+    assert_eq!(used.value.as_deref(), Some("37%"));
+    assert_eq!(used.scope, Some("claude"));
+    assert_eq!(used.category, "Usage");
+    assert!(entries
+        .iter()
+        .filter(|entry| entry.id.contains(".reset."))
+        .all(|entry| entry.category == "Resets"));
+
+    let context = egui::Context::default();
+    configure_style(&context, language);
+    let mut state = HelperState::new(String::new());
+    state.search = "nimbus".into();
+    let scopes = helper_scopes(language);
     let mut output = context.run_ui(
         egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
@@ -808,26 +819,33 @@ fn text_picker_renders_reported_quota_labels_and_formats() {
             ..Default::default()
         },
         |ui| {
-            ui.horizontal(|ui| {
-                text_template_values_panel(
-                    ui,
-                    egui::vec2(550.0, 800.0),
-                    &data,
-                    &mut filter,
-                    &mut selected,
-                    &mut format,
-                    LanguageId::English,
-                );
-                text_template_formats_panel(
-                    ui,
-                    egui::vec2(400.0, 800.0),
-                    &data,
-                    &selected,
-                    &mut format,
-                    &mut draft,
-                    LanguageId::English,
-                );
-            });
+            show_helper(
+                ui,
+                &mut state,
+                HelperView {
+                    kind_icon: LucideIcon::Type,
+                    kind: "Text",
+                    description: "",
+                    hint: "",
+                    code_editor: false,
+                    editor_height: 64.0,
+                    categories: &[],
+                    scopes: &scopes,
+                    entries: &entries,
+                },
+                language,
+                |_| HelperStatus::Valid {
+                    message: "Template is valid".into(),
+                    result: None,
+                },
+                None,
+                |_, entry, _| {
+                    Ok(HelperInsertion::new(
+                        text_template_token(&entry.id, TextTemplateFormat::Percentage),
+                        InsertMode::Inline,
+                    ))
+                },
+            );
         },
     );
     fn collect(shape: &egui::epaint::Shape, text: &mut String) {
@@ -850,11 +868,150 @@ fn text_picker_renders_reported_quota_labels_and_formats() {
     }
     output.textures_delta.clear();
     assert!(text.contains("Claude Code"));
-    assert!(text.contains("Nimbus quill — Used"));
+    assert!(text.contains("Claude Code · Nimbus quill"));
+    assert!(text.contains("Used"));
     assert!(text.contains("37%"));
-    assert!(text.contains("Insert value"));
-    assert!(!text.contains("Additional usage limits"));
-    assert_eq!(selected, "claude.limits.nimbus_quill.percentage");
+    assert!(text.contains("Insert"));
+    assert!(!text.contains("Codex"));
+    assert!(state
+        .selected
+        .as_deref()
+        .is_some_and(|id| id.contains("nimbus_quill")));
+}
+
+#[test]
+fn expression_and_text_helpers_offer_the_same_values() {
+    let mut data = DataContext::from_usage(None, &Canvas::default());
+    data.insert("claude.limits.nimbus_quill.available", 1.0);
+    data.insert("claude.limits.nimbus_quill.percentage", 37.0);
+    let expression = value_entries(&data, LanguageId::English, ValueSyntax::Expression);
+    let template = value_entries(&data, LanguageId::English, ValueSyntax::Template);
+    for name in [
+        "active.five_hour.percentage",
+        "codex.five_hour.reset.minutes",
+        "claude.weekly.remaining",
+        "claude.weekly.label",
+        "claude.headline.percentage",
+        "opencode.credits.balance",
+        "claude.limits.nimbus_quill.percentage",
+        "claude.limits.nimbus_quill.reset.unix",
+        "time.local.hour",
+        "time.now.unix",
+        "canvas.width",
+        "providers.count",
+        "app.version",
+        "i18n.now",
+        "fn:round",
+        "op:>",
+    ] {
+        for entries in [&expression, &template] {
+            assert!(
+                entries.iter().any(|entry| entry.id == name),
+                "{name} is missing"
+            );
+        }
+    }
+    // Only a text template can show a whole window as a usage summary.
+    assert!(template.iter().any(|entry| entry.id == "claude.session"));
+    assert!(!expression.iter().any(|entry| entry.id == "claude.session"));
+    assert_eq!(
+        template.len(),
+        expression.len()
+            + template
+                .iter()
+                .filter(|entry| !expression.iter().any(|other| other.id == entry.id))
+                .count()
+    );
+    assert!(!expression
+        .iter()
+        .any(|entry| entry.token == "claude.five_hour.percentage"));
+    for entries in [&expression, &template] {
+        let mut ids = entries.iter().map(|entry| &entry.id).collect::<Vec<_>>();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), entries.len(), "entry ids are unique");
+    }
+}
+
+#[test]
+fn values_insert_to_suit_the_field_and_the_caret() {
+    let language = LanguageId::English;
+    let data = DataContext::from_usage(None, &Canvas::default());
+    let entries = value_entries(&data, language, ValueSyntax::Template);
+    let entry = |id: &str| entries.iter().find(|entry| entry.id == id).unwrap();
+    let context = egui::Context::default();
+    // `draft` marks the caret with `|`.
+    let insert = |id: &str, syntax: ValueSyntax, draft: &str| {
+        let index = draft.chars().position(|c| c == '|').unwrap();
+        let draft = draft.replace('|', "");
+        let mut forms = HelperForms::default();
+        let mut result = None;
+        run_test_ui(&context, egui::RawInput::default(), |ui| {
+            result = Some(value_details(
+                ui,
+                entry(id),
+                syntax,
+                Caret::new(&draft, index),
+                &mut forms,
+                &data,
+                language,
+            ));
+        });
+        result
+            .unwrap()
+            .map(|insertion| (insertion.text, insertion.mode))
+    };
+    let template = ValueSyntax::Template;
+    assert_eq!(
+        insert("claude.session.reset.unix", template, "Resets |"),
+        Ok((
+            "{claude.session.reset.unix:datetime_short}".into(),
+            InsertMode::Inline
+        ))
+    );
+    assert_eq!(
+        insert("fn:round", template, "Used |"),
+        Ok(("{round(0):0.##}".into(), InsertMode::Inline))
+    );
+    assert_eq!(
+        insert("fn:round", template, "Used {|a:percent}"),
+        Ok(("round(0)".into(), InsertMode::Spaced))
+    );
+    assert!(insert("op:>", template, "Used |").is_err());
+    assert_eq!(
+        insert("op:>", template, "Used {a |:percent}"),
+        Ok((">".into(), InsertMode::Spaced))
+    );
+    assert_eq!(
+        insert("claude.session.reset.unix", ValueSyntax::Expression, "|"),
+        Ok(("claude.session.reset.unix".into(), InsertMode::Spaced))
+    );
+
+    // Actions take values only where an expression is accepted.
+    let action = ValueSyntax::Action;
+    assert_eq!(
+        insert("canvas.width", action, "set(self, width, |)"),
+        Ok(("canvas.width".into(), InsertMode::Spaced))
+    );
+    assert_eq!(
+        insert(
+            "fn:round",
+            action,
+            "show_dashboard()\nincrease(\"bar\", x, 10 * |)"
+        ),
+        Ok(("round(0)".into(), InsertMode::Spaced))
+    );
+    assert_eq!(
+        insert(
+            "op:*",
+            action,
+            r#"layer_actions("set(\"bar\", width, 10 |)")"#
+        ),
+        Ok(("*".into(), InsertMode::Spaced))
+    );
+    assert!(insert("canvas.width", action, "set(self, |width, 1)").is_err());
+    assert!(insert("canvas.width", action, "show_dashboard()|").is_err());
+    assert!(insert("op:*", action, "|").is_err());
 }
 
 #[test]

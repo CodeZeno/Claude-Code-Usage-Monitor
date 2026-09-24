@@ -1,6 +1,7 @@
 use eframe::egui;
 use lucide_icons::Icon as LucideIcon;
 
+use crate::localization::LanguageId;
 use crate::ui::components::expression_button::expression_button;
 use crate::ui::components::icon::paint_centered_icon;
 use crate::ui::theme::muted;
@@ -18,7 +19,7 @@ pub(crate) fn helper_preview_field(
     preview: &str,
     available_width: f32,
     has_helper_value: bool,
-    helper_name: &str,
+    language: LanguageId,
     horizontal_align: egui::Align,
 ) -> HelperFieldAction {
     let gap = ui.spacing().item_spacing.x;
@@ -27,7 +28,7 @@ pub(crate) fn helper_preview_field(
     let open_response = ui
         .interact(field_rect, id.with("open_helper"), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(format!("Open {helper_name}"));
+        .on_hover_text(language.text("Open in Builder"));
     let visuals = ui.style().interact(&open_response);
     ui.painter().rect_filled(
         field_rect.expand(visuals.expansion),
@@ -100,7 +101,7 @@ pub(crate) fn helper_preview_field(
         false
     };
     let button_open = expression_button(ui, has_helper_value)
-        .on_hover_text(format!("Open {helper_name}"))
+        .on_hover_text(language.text("Open in Builder"))
         .clicked();
     HelperFieldAction {
         open: (open_response.clicked() && !remove) || button_open,

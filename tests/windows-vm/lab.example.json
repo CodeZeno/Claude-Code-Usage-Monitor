@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "vms": [
+    { "name": "CCUM-Win10", "os": "windows10", "checkpoint": "ccum-clean-desktop", "guestUser": "LabUser" },
+    { "name": "CCUM-Win11", "os": "windows11", "checkpoint": "ccum-clean-desktop", "guestUser": "LabUser" }
+  ]
+}

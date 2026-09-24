@@ -33,6 +33,19 @@ impl Occupancy {
             .any(|item| intersection(*item, widget).is_some())
     }
 
+    pub fn is_reserved(&self, item: RECT) -> bool {
+        self.reserved
+            .iter()
+            .any(|fixed| intersection(item, *fixed) == Some(item))
+    }
+
+    pub fn overlaps_app_controls(&self, widget: RECT) -> bool {
+        self.occupied
+            .iter()
+            .filter(|item| !self.is_reserved(**item))
+            .any(|item| intersection(*item, widget).is_some())
+    }
+
     pub fn can_restore(&self, widget: RECT, margin: i32) -> bool {
         if intersection(widget, self.bounds) != Some(widget) {
             return false;
@@ -51,11 +64,7 @@ impl Occupancy {
             && !self.occupied.iter().any(|item| {
                 // Widgets normally touch the tray edge; require clearance from
                 // moving app buttons, not from fixed notification-area controls.
-                !self
-                    .reserved
-                    .iter()
-                    .any(|fixed| intersection(*item, *fixed) == Some(*item))
-                    && intersection(*item, padded).is_some()
+                !self.is_reserved(*item) && intersection(*item, padded).is_some()
             })
     }
 
@@ -210,6 +219,9 @@ impl Reader {
             let root = self.automation.ElementFromHandle(taskbar.hwnd)?;
             let elements =
                 root.FindAllBuildCache(TreeScope_Descendants, &self.condition, &self.request)?;
+            let tray_rect = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd")
+                .and_then(native_interop::get_window_rect_safe)
+                .and_then(|rect| intersection(rect, bounds));
             let mut occupied = Vec::new();
             let mut reserved = Vec::new();
             let count = elements.Length()?;
@@ -228,11 +240,12 @@ impl Reader {
                 found_control = true;
                 if !element.CachedIsOffscreen()?.as_bool() {
                     if let Some(rect) = intersection(element.CachedBoundingRectangle()?, bounds) {
-                        if element
+                        let is_tray = element
                             .CachedClassName()?
                             .to_string()
                             .starts_with("SystemTray.")
-                        {
+                            || tray_rect.is_some_and(|tray| intersection(rect, tray) == Some(rect));
+                        if is_tray {
                             reserved.push(rect);
                         }
                         occupied.push(rect);
@@ -244,10 +257,7 @@ impl Reader {
                 return Ok(None);
             }
             // Reserve the notification area even if some of its icons lack UIA.
-            if let Some(tray) = native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd")
-                .and_then(native_interop::get_window_rect_safe)
-                .and_then(|rect| intersection(rect, bounds))
-            {
+            if let Some(tray) = tray_rect {
                 occupied.push(tray);
                 reserved.push(tray);
             }
@@ -507,6 +517,42 @@ mod tests {
         )
         .is_none());
         assert!(find_sample(&[], hwnd, bounds, now).is_none());
+    }
+
+    #[test]
+    fn tray_expansion_does_not_trigger_app_collision_while_task_buttons_do() {
+        let bounds = rect(0, 0, 1920, 48);
+        let tray = rect(1600, 0, 1920, 48);
+        let app_buttons = rect(0, 0, 1200, 48);
+        let mut sample = layout(bounds, vec![app_buttons, tray]);
+        sample.reserved.push(tray);
+
+        // Widget docked next to the tray in free space [1400..1600]
+        let docked_widget = rect(1400, 0, 1600, 48);
+        assert!(!sample.overlaps_app_controls(docked_widget));
+
+        // When tray expands left to 1570 (e.g. tray icon added), widget before repositioning is [1400..1600]
+        let expanded_tray = rect(1570, 0, 1920, 48);
+        let mut sample_with_expanded_tray = layout(bounds, vec![app_buttons, expanded_tray]);
+        sample_with_expanded_tray.reserved.push(expanded_tray);
+
+        // Blanket overlaps would be true due to tray overlap, but overlaps_app_controls must be false!
+        assert!(sample_with_expanded_tray.overlaps(docked_widget));
+        assert!(!sample_with_expanded_tray.overlaps_app_controls(docked_widget));
+
+        // When taskbar buttons expand into the widget area [1100..1450]
+        let crowded_app_buttons = rect(0, 0, 1450, 48);
+        let sample_crowded = layout(bounds, vec![crowded_app_buttons, expanded_tray]);
+        assert!(sample_crowded.overlaps_app_controls(docked_widget));
+    }
+
+    #[test]
+    fn app_button_partly_overlapping_tray_still_collides() {
+        let tray = rect(1600, 0, 1920, 48);
+        let mut sample = layout(rect(0, 0, 1920, 48), vec![rect(1500, 0, 1620, 48), tray]);
+        sample.reserved.push(tray);
+        assert!(sample.overlaps_app_controls(rect(1450, 0, 1550, 48)));
+        assert!(!sample.can_restore(rect(1400, 0, 1490, 48), 20));
     }
 
     #[test]
