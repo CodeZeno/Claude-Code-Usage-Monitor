@@ -1739,6 +1739,18 @@ impl DataContext {
         self.values.insert(name.to_ascii_lowercase(), value);
     }
 
+    /// Whether a Builder catalogue can be reused. Clock rows are refreshed
+    /// separately because the fractional Unix timestamp changes every frame.
+    pub(crate) fn same_catalogue_data(&self, other: &Self) -> bool {
+        self.strings == other.strings
+            && self.values.len() == other.values.len()
+            && self.values.iter().all(|(name, value)| {
+                other.values.get(name).is_some_and(|other| {
+                    name.starts_with("time.") || value.to_bits() == other.to_bits()
+                })
+            })
+    }
+
     pub fn get(&self, name: &str) -> Option<f64> {
         let name = name.to_ascii_lowercase();
         self.values
