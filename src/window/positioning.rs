@@ -661,6 +661,8 @@ pub(super) fn calculate_rect_overlap_ratio(a: RECT, b: RECT) -> f64 {
 }
 
 pub(super) fn should_snap_to_slot(widget: RECT, slot: RECT, was_snapped: bool) -> bool {
+    // Overlap ratios keep snapping DPI independent; a fixed physical-pixel
+    // distance would shrink relative to the widget on high-DPI monitors.
     let threshold = if was_snapped { 0.45 } else { 0.67 };
     calculate_rect_overlap_ratio(widget, slot) >= threshold
 }

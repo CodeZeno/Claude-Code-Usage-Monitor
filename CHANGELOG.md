@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.13] - 2026-09-24
+
+### Changed
+
+- Expand tray-snapping regression coverage across 100%, 125%, 150%, 200%, and 300% display scaling, checking the existing 67% attach and 45% detach overlap thresholds. Document why overlap ratios keep snapping DPI independent. ([#138](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/138))
+
 ## [2.15.12] - 2026-09-24
 
 ### Fixed
@@ -1159,3 +1165,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.9...v2.15.10
 [2.15.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.10...v2.15.11
 [2.15.12]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.11...v2.15.12
+[2.15.13]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.12...v2.15.13
