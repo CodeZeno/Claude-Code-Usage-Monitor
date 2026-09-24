@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.5] - 2026-09-24
+
+### Changed
+
+- Update dirs to 7.0.0 while preserving the home, roaming configuration, and local data directory lookups used for credentials and updates. ([#130](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/130))
+
 ## [2.15.4] - 2026-09-24
 
 ### Changed
@@ -1103,3 +1109,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.1...v2.15.2
 [2.15.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.2...v2.15.3
 [2.15.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.3...v2.15.4
+[2.15.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.4...v2.15.5
