@@ -51,13 +51,21 @@ impl StudioApp {
         owner: isize,
         initial_page: Page,
     ) -> Self {
+        style_native_titlebar(context);
+        Self::new_with_context(&context.egui_ctx, owner, initial_page)
+    }
+
+    pub(super) fn new_with_context(
+        context: &egui::Context,
+        owner: isize,
+        initial_page: Page,
+    ) -> Self {
         crate::diagnose::log_lazy(|| format!("dashboard started owner={owner}"));
         let settings = app_settings::load_settings();
         let language = localization::resolve_language(
             settings.language.as_deref().and_then(LanguageId::from_code),
         );
-        configure_style(&context.egui_ctx, language);
-        style_native_titlebar(context);
+        configure_style(context, language);
         let classic_theme_path = theme_engine::ensure_starter_theme().ok();
         let configured_path = settings.active_theme_path.as_ref().map(PathBuf::from);
         let configured_theme = configured_path
@@ -117,7 +125,7 @@ impl StudioApp {
             selection: Selection::Surface(0),
             preview: None,
             preview_dirty: true,
-            preview_renderer: PreviewRenderer::new(context.egui_ctx.clone()),
+            preview_renderer: PreviewRenderer::new(context.clone()),
             preview_generation: 0,
             preview_render_key: None,
             usage,

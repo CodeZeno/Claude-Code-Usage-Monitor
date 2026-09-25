@@ -3,6 +3,89 @@ use crate::ui::components::helper::{
     show_helper, Caret, HelperInsertion, HelperState, HelperStatus, HelperView, InsertMode,
 };
 
+#[test]
+fn dashboard_does_not_retry_after_successful_opengl_run() {
+    let mut attempts = Vec::new();
+    run_dashboard_with_fallback(|renderer, _gl_error| {
+        attempts.push(renderer);
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(attempts, [DashboardRenderer::OpenGl]);
+}
+
+#[test]
+fn dashboard_retries_opengl_painter_and_configuration_failures() {
+    for error in [
+        eframe::Error::OpenGL("OpenGL 2.0 unavailable".to_owned().into()),
+        eframe::Error::NoGlutinConfigs(Default::default(), "No GL configuration".into()),
+    ] {
+        let mut error = Some(error);
+        let mut attempts = Vec::new();
+        run_dashboard_with_fallback(|renderer, _gl_error| {
+            attempts.push(renderer);
+            error.take().map_or(Ok(()), Err)
+        })
+        .unwrap();
+        assert_eq!(
+            attempts,
+            [DashboardRenderer::OpenGl, DashboardRenderer::Warp]
+        );
+    }
+}
+
+#[test]
+fn dashboard_does_not_retry_application_errors() {
+    let mut attempts = Vec::new();
+    let error = run_dashboard_with_fallback(|renderer, _gl_error| {
+        attempts.push(renderer);
+        Err(eframe::Error::AppCreation("Application failed".into()))
+    })
+    .unwrap_err();
+    assert_eq!(attempts, [DashboardRenderer::OpenGl]);
+    assert!(error.contains("Application failed"));
+}
+
+#[test]
+fn dashboard_reports_both_failures_without_retrying_again() {
+    let mut attempts = Vec::new();
+    let error = run_dashboard_with_fallback(|renderer, _gl_error| {
+        attempts.push(renderer);
+        match renderer {
+            DashboardRenderer::OpenGl => Err(eframe::Error::OpenGL(
+                "OpenGL unavailable".to_owned().into(),
+            )),
+            DashboardRenderer::Warp => Err(eframe::Error::AppCreation("Fallback failed".into())),
+        }
+    })
+    .unwrap_err();
+    assert_eq!(
+        attempts,
+        [DashboardRenderer::OpenGl, DashboardRenderer::Warp]
+    );
+    assert!(error.contains("OpenGL:"));
+    assert!(error.contains("OpenGL unavailable"));
+    assert!(error.contains("WARP:"));
+    assert!(error.contains("Fallback failed"));
+}
+
+#[test]
+fn warp_launch_receives_the_original_opengl_error() {
+    run_dashboard_with_fallback(|renderer, original_error| match renderer {
+        DashboardRenderer::OpenGl => {
+            assert!(original_error.is_none());
+            Err(eframe::Error::OpenGL(
+                "missing OpenGL driver".to_owned().into(),
+            ))
+        }
+        DashboardRenderer::Warp => {
+            assert!(original_error.unwrap().contains("missing OpenGL driver"));
+            Ok(())
+        }
+    })
+    .unwrap();
+}
+
 fn run_test_ui(context: &egui::Context, input: egui::RawInput, run_ui: impl FnMut(&mut egui::Ui)) {
     let mut output = context.run_ui(input, run_ui);
     output.textures_delta.clear();

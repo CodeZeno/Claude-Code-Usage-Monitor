@@ -94,6 +94,9 @@ try {
             if ($scenario.flow -eq 'portable-taskbar-tray') {
                 Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\Test-TaskbarTray.ps1" -Destination "$guestRoot\Test-TaskbarTray.ps1"
             }
+            if ($scenario.flow -eq 'portable-dashboard-warp') {
+                Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\Test-DashboardWarp.ps1" -Destination "$guestRoot\Test-DashboardWarp.ps1"
+            }
             if ($scenario.flow -like 'portable-*') {
                 Copy-Item -ToSession $session -LiteralPath $CandidateExe -Destination "$guestRoot\candidate.exe"
                 if ($scenario.flow -eq 'portable-update-helper') { Copy-Item -ToSession $session -LiteralPath $PreviousExe -Destination "$guestRoot\previous.exe" }

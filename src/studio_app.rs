@@ -106,8 +106,8 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
         .and_then(|value| value.parse::<isize>().ok())
         .unwrap_or(0);
     let owner_hwnd = HWND(owner as *mut _);
-    let _dashboard_instance = match crate::dashboard::claim_instance() {
-        Ok(Some(instance)) => instance,
+    let mut dashboard_instance = match crate::dashboard::claim_instance() {
+        Ok(Some(instance)) => Some(instance),
         Ok(None) => return true,
         Err(error) => {
             crate::dashboard::report_launch_failure(owner_hwnd, &error);
@@ -126,39 +126,49 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
         .unwrap_or(DEFAULT_DASHBOARD_HEIGHT);
     let dashboard_icon = eframe::icon_data::from_png_bytes(include_bytes!("icons/16x16.png"))
         .expect("src/icons/16x16.png must be a valid PNG app icon");
-    let glow_error = match run_dashboard(
-        eframe::Renderer::Glow,
-        dashboard_width,
-        dashboard_height,
-        dashboard_icon.clone(),
-        owner,
-        initial_page,
-    ) {
-        Ok(()) => return true,
-        Err(error) => error,
-    };
-    crate::diagnose::log(format!(
-        "dashboard OpenGL initialization failed: {glow_error}"
-    ));
-
-    //If OpenGL fails, we try to load Direct3D as fallback
-    let failure = if matches!(&glow_error, eframe::Error::OpenGL(_)) {
-        match run_dashboard(
-            eframe::Renderer::Wgpu,
+    let result = if args.iter().any(|arg| arg == "--dashboard-warp") {
+        warp::run(
             dashboard_width,
             dashboard_height,
             dashboard_icon,
             owner,
             initial_page,
-        ) {
-            Ok(()) => return true,
-            Err(error) => {
-                crate::diagnose::log(format!("dashboard Direct3D initialization failed: {error}"));
-                format!("OpenGL: {glow_error}; Direct3D: {error}")
-            }
-        }
+        )
+        .map_err(|error| match std::env::var("CCUM_DASHBOARD_OPENGL_ERROR") {
+            Ok(gl_error) => format!("OpenGL: {gl_error}; WARP: {error}"),
+            Err(_) => format!("WARP: {error}"),
+        })
     } else {
-        format!("OpenGL: {glow_error}")
+        run_dashboard_with_fallback(|renderer, gl_error| match renderer {
+            DashboardRenderer::OpenGl => run_dashboard(
+                dashboard_width,
+                dashboard_height,
+                dashboard_icon.clone(),
+                owner,
+                initial_page,
+            ),
+            DashboardRenderer::Warp => {
+                // winit cannot create another event loop after eframe has created one.
+                // Release our process slot before starting a fresh WARP dashboard. The
+                // child claims the same guard, so concurrent launch requests still coalesce.
+                if let Some(handle) = dashboard_instance.take() {
+                    unsafe {
+                        let _ = windows::Win32::Foundation::CloseHandle(handle);
+                    }
+                }
+                launch_warp_dashboard(args, gl_error.unwrap_or_default())
+                    .map_err(|error| eframe::Error::AppCreation(error.into()))
+            }
+        })
+    };
+    if let Some(handle) = dashboard_instance.take() {
+        unsafe {
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
+        }
+    }
+    let failure = match result {
+        Ok(()) => return true,
+        Err(failure) => failure,
     };
     let settings = app_settings::load_settings();
     let language = localization::resolve_language(
@@ -175,25 +185,67 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
     true
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DashboardRenderer {
+    OpenGl,
+    Warp,
+}
+
+fn launch_warp_dashboard(args: &[String], gl_error: &str) -> Result<(), String> {
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let mut command = std::process::Command::new(executable);
+    command.args(args.iter().skip(1)).arg("--dashboard-warp");
+    command.env("CCUM_DASHBOARD_OPENGL_ERROR", gl_error);
+    if crate::diagnose::is_enabled() {
+        command.arg("--diagnose-append");
+    }
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn run_dashboard_with_fallback(
+    mut run: impl FnMut(DashboardRenderer, Option<&str>) -> eframe::Result,
+) -> Result<(), String> {
+    let glow_error = match run(DashboardRenderer::OpenGl, None) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
+    };
+    crate::diagnose::log(format!(
+        "dashboard OpenGL initialization failed: {glow_error}"
+    ));
+
+    // Context/configuration failures can occur before the OpenGL painter exists.
+    if matches!(
+        &glow_error,
+        eframe::Error::OpenGL(_) | eframe::Error::Glutin(_) | eframe::Error::NoGlutinConfigs(..)
+    ) {
+        match run(DashboardRenderer::Warp, Some(&glow_error.to_string())) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                crate::diagnose::log(format!("dashboard WARP initialization failed: {error}"));
+                Err(format!("OpenGL: {glow_error}; WARP: {error}"))
+            }
+        }
+    } else {
+        Err(format!("OpenGL: {glow_error}"))
+    }
+}
+
 fn run_dashboard(
-    renderer: eframe::Renderer,
     width: f32,
     height: f32,
     icon: egui::IconData,
     owner: isize,
     initial_page: Page,
 ) -> eframe::Result {
-    let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
-    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut wgpu_options.wgpu_setup {
-        setup.instance_descriptor.backends = eframe::egui_wgpu::wgpu::Backends::DX12;
-    }
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Usage Monitor")
             .with_inner_size([width, height])
             .with_icon(icon),
-        renderer,
-        wgpu_options,
+        renderer: eframe::Renderer::Glow,
         centered: true,
         ..Default::default()
     };
@@ -576,6 +628,7 @@ mod studio_core;
 mod studio_diagnostics;
 mod studio_settings;
 mod studio_theme_workspace;
+mod warp;
 
 fn scene_subtree_ids(objects: &[SceneObject], root_id: &str) -> std::collections::HashSet<String> {
     let mut ids = std::collections::HashSet::from([root_id.to_string()]);
@@ -679,6 +732,15 @@ fn reserved_scene_ids(surface: &SceneObject) -> std::collections::HashSet<String
 
 impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.draw(ui);
+    }
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_window_size();
+    }
+}
+
+impl StudioApp {
+    fn draw(&mut self, ui: &mut egui::Ui) {
         self.handle_dropped_files(ui.ctx());
         if let Some(size) = ui
             .ctx()
@@ -718,7 +780,7 @@ impl eframe::App for StudioApp {
         ui.ctx().request_repaint_after(Duration::from_millis(500));
     }
 
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn save_window_size(&self) {
         // Reload first so a monitor-process settings update made while the
         // dashboard was open is not overwritten by this final size save.
         let mut settings = app_settings::load_settings();
@@ -730,7 +792,7 @@ impl eframe::App for StudioApp {
     }
 }
 
-fn style_native_titlebar(context: &eframe::CreationContext<'_>) {
+fn style_native_titlebar(context: &impl HasWindowHandle) {
     let Ok(window_handle) = context.window_handle() else {
         return;
     };

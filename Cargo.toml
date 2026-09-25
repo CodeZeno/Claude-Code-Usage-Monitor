@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.15.15"
+version = "2.15.16"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -26,9 +26,12 @@ serde_json = "1"
 semver = "1"
 httpdate = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-eframe = { version = "0.36", default-features = false, features = ["glow", "wgpu"] }
+eframe = { version = "0.36", default-features = false, features = ["glow"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
+egui-directx11 = { path = "vendor/egui-directx11" }
+egui-winit = { version = "0.36", default-features = false, features = ["clipboard"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06"] }
 zip = { version = "8.6", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dependencies.windows]

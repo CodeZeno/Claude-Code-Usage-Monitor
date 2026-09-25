@@ -21,6 +21,10 @@ $transcribing = $false
 
 function Assert-Check([string]$Name, [bool]$Condition, $Detail) {
     $script:checks.Add([pscustomobject]@{ name = $Name; passed = $Condition; detail = $Detail })
+    # Keep the last completed assertion available even if a desktop API stalls
+    # and the host must time out the scheduled task before its finally block.
+    @{ name = $Name; passed = $Condition; atUtc = [DateTime]::UtcNow.ToString('o') } |
+        ConvertTo-Json | Set-Content -LiteralPath "$evidence\progress.json" -Encoding UTF8
     if (-not $Condition) { throw "Assertion failed: $Name ($Detail)" }
 }
 function Get-AppProcesses {
@@ -210,7 +214,7 @@ public static class CCUMLabDesktop {
     }
     $executable = $null
     switch ($request.flow) {
-        { $_ -in 'portable-launch', 'portable-taskbar-tray', 'portable-update-helper' } {
+        { $_ -in 'portable-launch', 'portable-dashboard-warp', 'portable-taskbar-tray', 'portable-update-helper' } {
             Assert-Check 'candidate transport hash' ((Get-FileHash -LiteralPath "$Root\candidate.exe").Hash -eq $request.candidateHash) $request.candidateHash
             $null = New-Item -ItemType Directory -Path "$Root\App With Spaces"
             $executable = "$Root\App With Spaces\$appName.exe"
@@ -236,6 +240,10 @@ public static class CCUMLabDesktop {
     if ($request.flow -eq 'portable-taskbar-tray') {
         . "$Root\Test-TaskbarTray.ps1"
         Test-TaskbarTray
+    }
+    if ($request.flow -eq 'portable-dashboard-warp') {
+        . "$Root\Test-DashboardWarp.ps1"
+        Test-DashboardWarp
     }
     if ($request.flow -eq 'portable-update-helper') {
         # Tests the real replacement/relaunch helper, not the release check/download/UI.

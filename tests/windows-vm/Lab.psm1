@@ -24,7 +24,7 @@ function Get-LabPlan {
         [string[]]$Flows = @('portable-launch'),
         [string[]]$Taskbars = @('baseline', 'auto-hide', 'left', 'center'))
     foreach ($flow in $Flows) {
-        if ($flow -notin @('portable-launch', 'portable-taskbar-tray', 'portable-update-helper', 'winget-install', 'winget-upgrade')) { throw "Unknown flow: $flow" }
+        if ($flow -notin @('portable-launch', 'portable-dashboard-warp', 'portable-taskbar-tray', 'portable-update-helper', 'winget-install', 'winget-upgrade')) { throw "Unknown flow: $flow" }
     }
     foreach ($taskbar in $Taskbars) {
         if ($taskbar -notin @('baseline', 'auto-hide', 'left', 'center')) { throw "Unknown taskbar: $taskbar" }

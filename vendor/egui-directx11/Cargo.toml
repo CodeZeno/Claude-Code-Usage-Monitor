@@ -1,0 +1,24 @@
+[package]
+name = "egui-directx11"
+version = "0.13.0+egui-0.35.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+repository = "https://github.com/Nekomaru-PKU/egui-directx11"
+authors = ["Nekomaru <Nekomaru@pku.edu.cn>"]
+
+description = "This crate provides a Direct3D11 renderer for `egui`."
+categories = ["gui", "game-development"]
+keywords = ["gui", "egui", "dx11", "d3d11", "directx11"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
+
+[dependencies]
+log = "0.4.33"
+egui = { version = "0.36", default-features = false }
+windows = { version = "0.62.2", features = [
+    "Win32_Graphics_Dxgi_Common",
+    "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11",
+]}

@@ -4,6 +4,17 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.16] - 2026-09-25
+
+### Fixed
+
+- Keep OpenGL as the primary dashboard renderer and fall back to native Direct3D 11 WARP when OpenGL context, configuration, or painter initialization fails. Use the software renderer supplied with Windows 10 and Windows 11, without an additional graphics runtime. Preserve both errors if fallback also fails. ([#141](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/141))
+- Share dashboard UI and settings between renderers, preserve window ownership and single-instance behavior during fallback, and avoid continuous idle redraws. Add renderer regression tests and Windows 10/11 Hyper-V coverage for automatic fallback, forced WARP, rendering, input, clipboard, resizing, and persisted settings.
+
+### Removed
+
+- Replace the wgpu fallback and its backend/shader-translation dependencies with a small native D3D11 host and vendored painter using precompiled shaders. The tested release executable shrank from 10.24 MB to 7.44 MB, approximately 32 KB above the OpenGL-only build.
+
 ## [2.15.15] - 2026-09-24
 
 ### Changed
@@ -1186,3 +1197,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.13]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.12...v2.15.13
 [2.15.14]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.13...v2.15.14
 [2.15.15]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.14...v2.15.15
+[2.15.16]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.15...v2.15.16
