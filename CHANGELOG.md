@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.19] - 2026-09-25
+
+### Fixed
+
+- Prevent background Claude token refreshes from saving sessions on Claude Code 2.0.63 and later by using `--no-session-persistence`. Check the CLI version on Windows and inside the selected WSL distribution, and preserve the existing `claude -p .` behavior for older versions. Previously saved sessions are left untouched. ([#143](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/143))
+- Capture CLI versions with bounded waits, skip refresh when the version cannot be determined, and log compatibility and refresh failures. Preserve WSL command arguments with `--exec` and reap timed-out refresh processes. Add regression coverage for version parsing, legacy and modern command arguments, failed probes, and timeouts.
+
 ## [2.15.18] - 2026-09-25
 
 ### Fixed
@@ -1217,3 +1224,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.16]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.15...v2.15.16
 [2.15.17]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.16...v2.15.17
 [2.15.18]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.17...v2.15.18
+[2.15.19]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.18...v2.15.19

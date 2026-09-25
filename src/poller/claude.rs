@@ -13,6 +13,7 @@ use super::{
 use crate::diagnose;
 use crate::models::{CreditsSection, UsageData};
 
+mod cli;
 mod limits;
 
 const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
@@ -526,83 +527,28 @@ fn cli_refresh_token(source: &CredentialSource) {
 
 fn cli_refresh_windows_token(directory: &Path) {
     let claude_path = resolve_windows_claude_path();
-    let is_cmd = claude_path.to_lowercase().ends_with(".cmd");
     diagnose::log(format!(
-        "attempting Windows Claude token refresh via {claude_path}"
+        "checking Windows Claude token refresh support via {claude_path}"
     ));
-
-    let args: &[&str] = &["-p", "."];
-    let mut command = if is_cmd {
-        let mut command = Command::new("cmd.exe");
-        command.arg("/c").arg(&claude_path).args(args);
-        command
-    } else {
-        let mut command = Command::new(&claude_path);
-        command.args(args);
-        command
-    };
-    command
-        .env("CLAUDE_CONFIG_DIR", directory)
-        .env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            diagnose::log_error("unable to spawn Windows Claude token refresh", error);
-            return;
-        }
-    };
-    wait_for_refresh(&mut child);
+    cli::refresh(
+        cli::windows_command(&claude_path, directory, &["--version"]),
+        cli::windows_command(&claude_path, directory, cli::REFRESH_ARGS),
+    );
 }
 
 fn cli_refresh_wsl_token(distro: &str) {
     diagnose::log(format!(
-        "attempting WSL Claude token refresh in distro {distro}"
+        "checking WSL Claude token refresh support in distro {distro}"
     ));
-    let mut command = Command::new("wsl.exe");
-    command
-        .arg("-d")
-        .arg(distro)
-        .arg("--")
-        .arg("bash")
-        .arg("-lic")
-        .arg("export CLAUDE_CONFIG_DIR=\"$HOME/.claude\"; if command -v claude >/dev/null 2>&1; then claude -p .; elif [ -x \"$HOME/.local/bin/claude\" ]; then \"$HOME/.local/bin/claude\" -p .; else exit 127; fi")
-        .env_remove("CLAUDECODE")
-        .env_remove("CLAUDE_CODE_ENTRYPOINT")
-        .creation_flags(CREATE_NO_WINDOW)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            diagnose::log_error("unable to spawn WSL Claude token refresh", error);
-            return;
-        }
-    };
-    wait_for_refresh(&mut child);
+    cli::refresh(
+        cli::wsl_command(distro, &["--version"]),
+        cli::wsl_command(distro, cli::REFRESH_ARGS),
+    );
 }
 
 fn resolve_windows_claude_path() -> String {
-    for name in ["claude.cmd", "claude"] {
-        if Command::new(name)
-            .arg("--version")
-            .creation_flags(CREATE_NO_WINDOW)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .is_ok()
-        {
-            return name.to_string();
-        }
-    }
-
+    // Locate the executable first, then capture --version exactly once through
+    // the same command builder and account environment used for refresh.
     for name in ["claude.cmd", "claude"] {
         if let Ok(output) = Command::new("where.exe")
             .arg(name)
@@ -926,21 +872,6 @@ fn run_with_timeout(command: &mut Command, timeout: Duration) -> Option<std::pro
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(100)),
             Err(_) => return None,
-        }
-    }
-}
-
-fn wait_for_refresh(child: &mut std::process::Child) {
-    let start = std::time::Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(_)) => break,
-            Ok(None) if start.elapsed() > Duration::from_secs(30) => {
-                let _ = child.kill();
-                break;
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(500)),
-            Err(_) => break,
         }
     }
 }
