@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.18] - 2026-09-25
+
+### Fixed
+
+- Specify an exact version for the vendored `egui-directx11` dependency so the release passes the dependency policy's wildcard ban. The vendored renderer and runtime behavior are unchanged.
+
+### Added
+
+- Add `tests/Test-Dependencies.ps1` to validate locked Cargo metadata and run the same `cargo audit` and `cargo deny` checks as release CI before local builds. Stop on failures, handle redirected scanner output in Windows PowerShell, and restore the caller's working directory. Document scanner setup, lockfile preparation, and the required pre-build checks.
+
 ## [2.15.17] - 2026-09-25
 
 ### Fixed
@@ -1206,3 +1216,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.15]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.14...v2.15.15
 [2.15.16]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.15...v2.15.16
 [2.15.17]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.16...v2.15.17
+[2.15.18]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.17...v2.15.18

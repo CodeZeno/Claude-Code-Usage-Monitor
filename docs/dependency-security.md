@@ -47,9 +47,22 @@ Use the same scanner versions as `.github/workflows/dependency-security.yml`:
 ```powershell
 cargo install --locked cargo-audit --version 0.22.2
 cargo install --locked cargo-deny --version 0.20.2
-cargo audit --file Cargo.lock
-cargo deny --locked check
+./tests/Test-Dependencies.ps1
 ```
+
+Run `Test-Dependencies.ps1` before each local release build, alongside the existing
+Rust verification. It validates locked Cargo metadata, runs `cargo audit --file
+Cargo.lock`, then `cargo deny --locked check`, and stops on any failure. A failed
+check must be resolved before running `cargo build --release`. The script can be
+called from any working directory and restores that directory when it finishes.
+
+After a version or dependency change, first synchronize the lockfile with
+`cargo metadata --format-version 1 > $null` and review its diff. The checks themselves
+use the existing lockfile and do not update dependencies. Rerun them if manifests,
+the lockfile, vendored dependencies, or dependency policy change. Direct Cargo
+builds do not invoke this script automatically; it is a required release preparation
+step, also recorded in the local agent instructions. Release CI already enforces
+both scanner checks before its build job.
 
 Scanner versions are pinned in the workflow and must be updated there and in
 these commands together; Dependabot's Cargo updates cover application manifests,
