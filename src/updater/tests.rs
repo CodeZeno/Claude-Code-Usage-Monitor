@@ -198,3 +198,93 @@ fn winget_upgrade_command_quotes_each_path_as_a_powershell_literal() {
         );
     }
 }
+
+#[test]
+fn winget_show_args_list_versions_non_interactively() {
+    assert_eq!(
+        WINGET_SHOW_VERSIONS_ARGS.join(" "),
+        "show --id CodeZeno.ClaudeCodeUsageMonitor --exact --versions --source winget --accept-source-agreements --disable-interactivity"
+    );
+}
+
+#[test]
+fn winget_versions_outcome_parses_versions_under_localized_headers() {
+    let stdout = concat!(
+        "Trouvé Claude Code Usage Monitor [CodeZeno.ClaudeCodeUsageMonitor]
+",
+        "Version
+-------
+2.15.14
+2.15.0
+  2.14.55  
+1.3
+",
+    );
+    assert_eq!(
+        winget_versions_outcome(Some(0), stdout),
+        Ok(vec![v("2.15.14"), v("2.15.0"), v("2.14.55")])
+    );
+    assert_eq!(
+        winget_versions_outcome(Some(WINGET_NO_APPLICATIONS_FOUND as i32), ""),
+        Ok(Vec::new())
+    );
+    assert_eq!(
+        winget_versions_outcome(Some(0x8A15_0001_u32 as i32), ""),
+        Err("WinGet could not list available versions (exit code 0x8A150001).".into())
+    );
+    assert!(winget_versions_outcome(Some(1), "2.15.14").is_err());
+    assert!(winget_versions_outcome(None, "2.15.14").is_err());
+}
+
+fn v(version: &str) -> Version {
+    Version::parse(version).unwrap()
+}
+
+fn winget_result(current: &str, released: &str, listed: &[&str]) -> String {
+    let listed = listed.iter().map(|version| v(version)).collect::<Vec<_>>();
+    match winget_update_result(&v(current), &v(released), &listed) {
+        UpdateCheckResult::UpToDate => "up to date".into(),
+        UpdateCheckResult::Pending(released) => format!("pending {released}"),
+        UpdateCheckResult::Available(AvailableUpdate::Winget {
+            version,
+            unlisted_release,
+        }) => format!("winget {version} unlisted {unlisted_release:?}"),
+        UpdateCheckResult::Available(AvailableUpdate::Release(_)) => "release".into(),
+    }
+}
+
+#[test]
+fn winget_offers_the_released_version_once_listed() {
+    assert_eq!(
+        winget_result("2.15.14", "2.15.19", &["2.15.0", "2.15.19", "2.15.14"]),
+        "winget 2.15.19 unlisted None"
+    );
+}
+
+#[test]
+fn winget_offers_the_newest_listed_version_while_the_release_is_unlisted() {
+    assert_eq!(
+        winget_result("2.15.14", "2.15.19", &["2.15.14", "2.15.18", "2.15.17"]),
+        "winget 2.15.18 unlisted Some(\"2.15.19\")"
+    );
+}
+
+#[test]
+fn winget_is_pending_when_nothing_newer_is_listed() {
+    assert_eq!(
+        winget_result("2.15.14", "2.15.19", &["2.15.0", "2.15.14"]),
+        "pending 2.15.19"
+    );
+    assert_eq!(winget_result("2.15.14", "2.15.19", &[]), "pending 2.15.19");
+    assert_eq!(
+        winget_result("2.15.14", "2.15.19", &["2.15.18-beta1"]),
+        "pending 2.15.19"
+    );
+}
+
+#[test]
+#[ignore = "runs winget.exe against the live WinGet source"]
+fn winget_lists_published_versions_from_the_live_source() {
+    let versions = winget_listed_versions().unwrap();
+    assert!(versions.contains(&v("2.15.0")), "{versions:?}");
+}

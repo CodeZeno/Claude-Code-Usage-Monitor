@@ -73,7 +73,7 @@ pub(super) fn release_descriptor(
     }))
 }
 
-fn parse_version(version: &str) -> Result<Version, String> {
+pub(super) fn parse_version(version: &str) -> Result<Version, String> {
     Version::parse(version.strip_prefix('v').unwrap_or(version))
         .map_err(|e| format!("Invalid release version {version:?}: {e}"))
 }
