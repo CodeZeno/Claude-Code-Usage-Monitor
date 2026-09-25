@@ -160,6 +160,7 @@ pub struct Strings {
     pub update_available: &'static str,
     pub update_prompt_now: &'static str,
     pub update_pending_winget: &'static str,
+    pub update_prompt_winget_behind: &'static str,
     pub exit: &'static str,
     pub session_window: &'static str,
     pub weekly_window: &'static str,

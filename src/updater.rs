@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io;
+use std::io::{self, Read};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,17 +18,28 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 // Keep this aligned with the package identifier used in winget-pkgs.
 const WINGET_PACKAGE_ID: &str = "CodeZeno.ClaudeCodeUsageMonitor";
-// `winget show` exit codes for a missing version or package.
-const WINGET_NO_MANIFEST_FOUND: u32 = 0x8A15_0017;
+// `winget show` exit code when the package is not in the source.
 const WINGET_NO_APPLICATIONS_FOUND: u32 = 0x8A15_0014;
 const WINGET_SHOW_TIMEOUT: Duration = Duration::from_secs(60);
+const WINGET_SHOW_VERSIONS_ARGS: [&str; 9] = [
+    "show",
+    "--id",
+    WINGET_PACKAGE_ID,
+    "--exact",
+    "--versions",
+    "--source",
+    "winget",
+    "--accept-source-agreements",
+    "--disable-interactivity",
+];
 
 mod download;
 mod release;
 
 use download::{download_release_asset, open_verified_source, AssetIntegrity};
 pub use release::ReleaseDescriptor;
-use release::{release_descriptor, GitHubRelease};
+use release::{parse_version, release_descriptor, GitHubRelease};
+use semver::Version;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InstallChannel {
@@ -39,9 +50,32 @@ pub enum InstallChannel {
 #[derive(Debug)]
 pub enum UpdateCheckResult {
     UpToDate,
-    Available(ReleaseDescriptor),
-    /// Released on GitHub, but the WinGet source does not list it yet.
+    Available(AvailableUpdate),
+    /// Released on GitHub, but the WinGet source has nothing newer than the current version.
     Pending(String),
+}
+
+#[derive(Clone, Debug)]
+pub enum AvailableUpdate {
+    /// Portable installs download this GitHub release asset.
+    Release(ReleaseDescriptor),
+    /// WinGet installs upgrade to the newest version in the WinGet source,
+    /// which can trail GitHub. `unlisted_release` names the newer GitHub
+    /// release that WinGet does not list yet.
+    Winget {
+        version: String,
+        unlisted_release: Option<String>,
+    },
+}
+
+impl AvailableUpdate {
+    /// The version this update installs.
+    pub fn version(&self) -> &str {
+        match self {
+            Self::Release(release) => &release.latest_version,
+            Self::Winget { version, .. } => version,
+        }
+    }
 }
 
 pub fn handle_cli_mode(args: &[String]) -> Option<i32> {
@@ -99,12 +133,41 @@ pub fn check_for_updates(channel: InstallChannel) -> Result<UpdateCheckResult, S
     let Some(release) = fetch_latest_release()? else {
         return Ok(UpdateCheckResult::UpToDate);
     };
-    // GitHub releases publish before the winget-pkgs manifest PR merges, and
-    // `winget upgrade` finds nothing to install until then.
-    if channel == InstallChannel::Winget && !winget_has_version(&release.latest_version)? {
-        return Ok(UpdateCheckResult::Pending(release.latest_version));
+    match channel {
+        InstallChannel::Portable => Ok(UpdateCheckResult::Available(AvailableUpdate::Release(
+            release,
+        ))),
+        // GitHub releases publish before the winget-pkgs manifest PR merges, so
+        // offer the newest version `winget upgrade` can actually install.
+        InstallChannel::Winget => Ok(winget_update_result(
+            &parse_version(env!("CARGO_PKG_VERSION"))?,
+            &parse_version(&release.latest_version)?,
+            &winget_listed_versions()?,
+        )),
     }
-    Ok(UpdateCheckResult::Available(release))
+}
+
+fn winget_update_result(
+    current: &Version,
+    released: &Version,
+    listed: &[Version],
+) -> UpdateCheckResult {
+    let newest_listed = listed
+        .iter()
+        .filter(|version| version.pre.is_empty())
+        .max_by(|a, b| a.cmp_precedence(b));
+    match newest_listed {
+        Some(listed) if listed.cmp_precedence(current).is_gt() => {
+            UpdateCheckResult::Available(AvailableUpdate::Winget {
+                version: listed.to_string(),
+                unlisted_release: released
+                    .cmp_precedence(listed)
+                    .is_gt()
+                    .then(|| released.to_string()),
+            })
+        }
+        _ => UpdateCheckResult::Pending(released.to_string()),
+    }
 }
 
 pub fn begin_winget_update() -> Result<(), String> {
@@ -331,55 +394,56 @@ fn updates_dir() -> Result<PathBuf, String> {
         .ok_or_else(|| "Unable to resolve a writable local updates directory.".to_string())
 }
 
-fn winget_has_version(version: &str) -> Result<bool, String> {
+fn winget_listed_versions() -> Result<Vec<Version>, String> {
     let mut child = Command::new("winget.exe")
-        .args(winget_show_args(version))
+        .args(WINGET_SHOW_VERSIONS_ARGS)
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|e| format!("Unable to run WinGet: {e}"))?;
 
+    // Drain stdout on another thread so a full pipe cannot stall WinGet.
+    let mut stdout = child.stdout.take().expect("WinGet stdout is piped");
+    let reader = std::thread::spawn(move || {
+        let mut output = Vec::new();
+        stdout.read_to_end(&mut output).map(|_| output)
+    });
+
     let started = std::time::Instant::now();
-    loop {
+    let status = loop {
         match child.try_wait() {
-            Ok(Some(status)) => return winget_show_outcome(status.code()),
+            Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < WINGET_SHOW_TIMEOUT => {
                 std::thread::sleep(Duration::from_millis(250));
             }
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
-                return Err("Timed out waiting for WinGet to check the available version.".into());
+                return Err("Timed out waiting for WinGet to list available versions.".into());
             }
             Err(error) => return Err(format!("Unable to wait for WinGet: {error}")),
         }
-    }
+    };
+    let output = reader
+        .join()
+        .map_err(|_| "Unable to read WinGet output.".to_string())?
+        .map_err(|e| format!("Unable to read WinGet output: {e}"))?;
+    winget_versions_outcome(status.code(), &String::from_utf8_lossy(&output))
 }
 
-fn winget_show_args(version: &str) -> [&str; 10] {
-    [
-        "show",
-        "--id",
-        WINGET_PACKAGE_ID,
-        "--exact",
-        "--version",
-        version,
-        "--source",
-        "winget",
-        "--accept-source-agreements",
-        "--disable-interactivity",
-    ]
-}
-
-fn winget_show_outcome(exit_code: Option<i32>) -> Result<bool, String> {
+fn winget_versions_outcome(exit_code: Option<i32>, stdout: &str) -> Result<Vec<Version>, String> {
     // Windows exit codes are HRESULTs; Rust reports them as signed values.
     match exit_code.map(|code| code as u32) {
-        Some(0) => Ok(true),
-        Some(WINGET_NO_MANIFEST_FOUND | WINGET_NO_APPLICATIONS_FOUND) => Ok(false),
+        // Headers are localized, so keep only the lines that are versions.
+        Some(0) => Ok(stdout
+            .lines()
+            .filter_map(|line| Version::parse(line.trim()).ok())
+            .collect()),
+        Some(WINGET_NO_APPLICATIONS_FOUND) => Ok(Vec::new()),
         Some(code) => Err(format!(
-            "WinGet could not check the available version (exit code 0x{code:08X})."
+            "WinGet could not list available versions (exit code 0x{code:08X})."
         )),
         None => Err("WinGet exited without a status code.".into()),
     }

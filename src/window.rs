@@ -43,7 +43,7 @@ use crate::theme_engine::{
     MouseEventKind, ReferenceRegion, SurfaceNest, ThemeDocument, ThemeRuntime, VerticalAnchor,
 };
 use crate::tray_icon;
-use crate::updater::{self, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
+use crate::updater::{self, AvailableUpdate, InstallChannel, ReleaseDescriptor, UpdateCheckResult};
 
 /// Copyable HWND value used by the watchdog after the UI thread publishes it.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -151,7 +151,7 @@ enum UpdateStatus {
     Checking,
     Applying,
     UpToDate,
-    Available(ReleaseDescriptor),
+    Available(AvailableUpdate),
 }
 
 fn publish_update_status(state: &AppState) {
@@ -160,15 +160,13 @@ fn publish_update_status(state: &AppState) {
         UpdateStatus::Idle | UpdateStatus::UpToDate => DashboardStatus::Idle,
         UpdateStatus::Checking => DashboardStatus::Checking,
         UpdateStatus::Applying => DashboardStatus::Applying,
-        UpdateStatus::Available(release) => {
-            DashboardStatus::Available(release.latest_version.clone())
-        }
+        UpdateStatus::Available(update) => DashboardStatus::Available(update.version().to_owned()),
     };
     crate::dashboard::publish_update_status(state.hwnd.to_hwnd(), status);
 }
 
 fn perform_update_action(hwnd: HWND) {
-    let (install_channel, release) = {
+    let update = {
         let state = lock_state();
         let Some(state) = state.as_ref() else {
             return;
@@ -179,18 +177,14 @@ fn perform_update_action(hwnd: HWND) {
         ) {
             return;
         }
-        (
-            state.install_channel,
-            match &state.update_status {
-                UpdateStatus::Available(release) => Some(release.clone()),
-                _ => None,
-            },
-        )
+        match &state.update_status {
+            UpdateStatus::Available(update) => Some(update.clone()),
+            _ => None,
+        }
     };
-    match (install_channel, release) {
-        (InstallChannel::Portable, Some(release)) => begin_update_apply(hwnd, release),
-        (InstallChannel::Winget, Some(_)) => begin_winget_update(hwnd),
-        (_, None) => begin_update_check(hwnd, true),
+    match update {
+        Some(update) => begin_update_install(hwnd, update),
+        None => begin_update_check(hwnd, true),
     }
 }
 
@@ -1125,10 +1119,24 @@ fn show_error_message(hwnd: HWND, title: &str, message: &str) {
     }
 }
 
-fn show_update_prompt(hwnd: HWND, strings: Strings, release: &ReleaseDescriptor) -> bool {
-    let message = strings
-        .update_prompt_now
-        .replace("{version}", &release.latest_version);
+fn begin_update_install(hwnd: HWND, update: AvailableUpdate) {
+    match update {
+        AvailableUpdate::Release(release) => begin_update_apply(hwnd, release),
+        AvailableUpdate::Winget { .. } => begin_winget_update(hwnd),
+    }
+}
+
+fn show_update_prompt(hwnd: HWND, strings: Strings, update: &AvailableUpdate) -> bool {
+    let message = match update {
+        AvailableUpdate::Winget {
+            unlisted_release: Some(release),
+            ..
+        } => strings
+            .update_prompt_winget_behind
+            .replace("{release}", release),
+        _ => strings.update_prompt_now.to_owned(),
+    }
+    .replace("{version}", update.version());
 
     unsafe {
         let title_wide = native_interop::wide_str(strings.update_available);
@@ -1226,20 +1234,17 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                     );
                 }
             }
-            Ok(UpdateCheckResult::Available(release)) => {
+            Ok(UpdateCheckResult::Available(update)) => {
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
-                        s.update_status = UpdateStatus::Available(release.clone());
+                        s.update_status = UpdateStatus::Available(update.clone());
                         s.last_update_check_unix = Some(checked_at);
                     }
                 }
                 save_state_settings();
-                if interactive && show_update_prompt(hwnd, strings, &release) {
-                    match install_channel {
-                        InstallChannel::Portable => begin_update_apply(hwnd, release),
-                        InstallChannel::Winget => begin_winget_update(hwnd),
-                    }
+                if interactive && show_update_prompt(hwnd, strings, &update) {
+                    begin_update_install(hwnd, update);
                 }
                 // Keep the dashboard busy until the install prompt is dismissed.
                 if let Some(state) = lock_state().as_ref() {
@@ -1316,7 +1321,8 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
-                        s.update_status = UpdateStatus::Available(release);
+                        s.update_status =
+                            UpdateStatus::Available(AvailableUpdate::Release(release));
                         publish_update_status(s);
                     }
                 }
