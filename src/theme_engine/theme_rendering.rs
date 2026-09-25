@@ -1549,64 +1549,103 @@ pub(super) fn draw_progress(
     segments: u16,
     gap: f64,
 ) {
-    let mut fill = vec![0u32; pixels.len()];
-    fill_rounded(&mut fill, width, height, color, radius);
-    let count = segments as u32;
+    let horizontal = matches!(
+        direction,
+        ProgressDirection::LeftToRight | ProgressDirection::RightToLeft
+    );
+    let extent = if horizontal { width } else { height };
+    let layout = SegmentLayout::new(extent, segments as u32, gap);
+    // Segmented bars may end short of the box, so round the bar that is
+    // actually drawn, anchored at the direction's starting edge.
+    let used = layout.map_or(extent, |layout| layout.extent());
+    let start = match direction {
+        ProgressDirection::RightToLeft | ProgressDirection::BottomToTop => extent - used,
+        ProgressDirection::LeftToRight | ProgressDirection::TopToBottom => 0,
+    };
+    let (fill_width, fill_height) = if horizontal {
+        (used, height)
+    } else {
+        (width, used)
+    };
+    let mut fill = vec![0u32; fill_width as usize * fill_height as usize];
+    fill_rounded(&mut fill, fill_width, fill_height, color, radius);
     for y in 0..height {
         for x in 0..width {
-            let progress = match direction {
-                ProgressDirection::LeftToRight => (x + 1) as f64 / width as f64,
-                ProgressDirection::RightToLeft => (width - x) as f64 / width as f64,
-                ProgressDirection::TopToBottom => (y + 1) as f64 / height as f64,
-                ProgressDirection::BottomToTop => (height - y) as f64 / height as f64,
-            };
-            let mut visible = progress <= amount;
-            if visible && count > 1 {
-                let extent = if matches!(
-                    direction,
-                    ProgressDirection::LeftToRight | ProgressDirection::RightToLeft
-                ) {
-                    width
-                } else {
-                    height
-                };
-                let position = if matches!(
-                    direction,
-                    ProgressDirection::LeftToRight | ProgressDirection::RightToLeft
-                ) {
-                    x
-                } else {
-                    y
-                };
-                visible = segmented_position_visible(position, extent, count, gap);
+            let position = if horizontal { x } else { y };
+            if position < start || position >= start + used {
+                continue;
             }
+            let local = position - start;
+            // Distance from the edge where the progress starts filling.
+            let along = match direction {
+                ProgressDirection::LeftToRight | ProgressDirection::TopToBottom => local,
+                ProgressDirection::RightToLeft | ProgressDirection::BottomToTop => used - 1 - local,
+            };
+            let progress = (along + 1) as f64 / used as f64;
+            let visible = progress <= amount && layout.is_none_or(|layout| layout.contains(along));
             if visible {
-                let index = (y * width + x) as usize;
-                blend(&mut pixels[index], fill[index], 1.0);
+                let fill_index = if horizontal {
+                    y * fill_width + local
+                } else {
+                    local * fill_width + x
+                };
+                blend(
+                    &mut pixels[(y * width + x) as usize],
+                    fill[fill_index as usize],
+                    1.0,
+                );
             }
         }
     }
 }
 
-pub(super) fn segmented_position_visible(position: u32, extent: u32, count: u32, gap: f64) -> bool {
-    if count <= 1 || extent <= 1 {
-        return true;
+/// Whole-pixel geometry for a segmented progress bar. Both the segment and
+/// the gap are snapped to physical pixels so every segment and every gap has
+/// the same width at fractional DPI scales. The gap is rounded and the
+/// segment floored, so the bar never exceeds its box and may end a few
+/// pixels short of it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct SegmentLayout {
+    pub(super) count: u32,
+    pub(super) segment: u32,
+    pub(super) gap: u32,
+}
+
+impl SegmentLayout {
+    pub(super) fn new(extent: u32, count: u32, gap: f64) -> Option<Self> {
+        if count <= 1 || extent <= 1 {
+            return None;
+        }
+        // Clamp pathological inputs so every segment keeps at least one
+        // physical pixel when the bar is wide enough.
+        let count = count.min(extent);
+        let gap = if gap.is_finite() {
+            gap.max(0.0).round().min(u32::MAX as f64) as u32
+        } else {
+            0
+        };
+        let gap = gap.min((extent - count) / (count - 1));
+        let segment = (extent - gap * (count - 1)) / count;
+        Some(Self {
+            count,
+            segment,
+            gap,
+        })
     }
 
-    // Gaps exist only between segments. Clamp pathological inputs so every
-    // segment can retain at least one physical pixel when the bar is wide
-    // enough, then sample each pixel at its centre against cumulative bounds.
-    // This keeps both outer edges intact and distributes DPI rounding across
-    // the internal segments and gaps instead of dropping the final pixel.
-    let count = count.min(extent);
-    let gap = if gap.is_finite() { gap.max(0.0) } else { 0.0 };
-    let max_gap = (extent - count) as f64 / (count - 1) as f64;
-    let gap = gap.min(max_gap);
-    let segment_extent = (extent as f64 - gap * (count - 1) as f64) / count as f64;
-    let stride = segment_extent + gap;
-    let pixel_center = position.min(extent - 1) as f64 + 0.5;
-    let segment = ((pixel_center / stride).floor() as u32).min(count - 1);
-    segment == count - 1 || pixel_center - segment as f64 * stride < segment_extent
+    pub(super) fn extent(self) -> u32 {
+        self.segment * self.count + self.gap * (self.count - 1)
+    }
+
+    /// Whether the pixel `along` the bar from its starting edge is inside a segment.
+    pub(super) fn contains(self, along: u32) -> bool {
+        along < self.extent() && along % (self.segment + self.gap) < self.segment
+    }
+}
+
+#[cfg(test)]
+pub(super) fn segmented_position_visible(position: u32, extent: u32, count: u32, gap: f64) -> bool {
+    SegmentLayout::new(extent, count, gap).is_none_or(|layout| layout.contains(position))
 }
 
 pub(super) fn premultiply(color: Rgba) -> u32 {
