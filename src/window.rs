@@ -1197,8 +1197,8 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
     std::thread::spawn(move || {
         let hwnd = send_hwnd.to_hwnd();
         let checked_at = now_unix_secs();
-        match updater::check_for_updates() {
-            Ok(UpdateCheckResult::UpToDate) => {
+        match updater::check_for_updates(install_channel) {
+            Ok(result @ (UpdateCheckResult::UpToDate | UpdateCheckResult::Pending(_))) => {
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
@@ -1209,7 +1209,13 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                 }
                 save_state_settings();
                 if interactive {
-                    show_info_message(hwnd, strings.updates, strings.up_to_date);
+                    let message = match result {
+                        UpdateCheckResult::Pending(version) => {
+                            strings.update_pending_winget.replace("{version}", &version)
+                        }
+                        _ => strings.up_to_date.to_string(),
+                    };
+                    show_info_message(hwnd, strings.updates, &message);
                 }
                 unsafe {
                     let _ = PostMessageW(

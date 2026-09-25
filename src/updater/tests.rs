@@ -198,3 +198,33 @@ fn winget_upgrade_command_quotes_each_path_as_a_powershell_literal() {
         );
     }
 }
+
+#[test]
+fn winget_show_args_query_one_exact_version_non_interactively() {
+    assert_eq!(
+        winget_show_args("2.15.17").join(" "),
+        "show --id CodeZeno.ClaudeCodeUsageMonitor --exact --version 2.15.17 \
+         --source winget --accept-source-agreements --disable-interactivity"
+    );
+}
+
+#[test]
+fn winget_show_outcome_distinguishes_missing_versions_from_failures() {
+    assert_eq!(winget_show_outcome(Some(0)), Ok(true));
+    for missing in [WINGET_NO_MANIFEST_FOUND, WINGET_NO_APPLICATIONS_FOUND] {
+        assert_eq!(winget_show_outcome(Some(missing as i32)), Ok(false));
+    }
+    assert_eq!(
+        winget_show_outcome(Some(0x8A15_0001_u32 as i32)),
+        Err("WinGet could not check the available version (exit code 0x8A150001).".into())
+    );
+    assert!(winget_show_outcome(Some(1)).is_err());
+    assert!(winget_show_outcome(None).is_err());
+}
+
+#[test]
+#[ignore = "runs winget.exe against the live WinGet source"]
+fn winget_has_version_queries_the_live_source() {
+    assert_eq!(winget_has_version("2.15.0"), Ok(true));
+    assert_eq!(winget_has_version("99.0.0"), Ok(false));
+}

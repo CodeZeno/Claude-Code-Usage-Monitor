@@ -36,6 +36,7 @@ applying_update = "กำลังติดตั้งการอัปเด�
 update_to = "อัปเดตเป็น"
 update_available = "มีการอัปเดตใหม่"
 update_prompt_now = "มีเวอร์ชัน {version} ให้ใช้งานแล้ว ต้องการอัปเดตตอนนี้หรือไม่?"
+update_pending_winget = "เวอร์ชัน {version} เผยแพร่แล้ว แต่ยังไม่พร้อมใช้งานใน WinGet โปรดลองอีกครั้งในภายหลัง"
 exit = "ออกจากโปรแกรม"
 session_window = "5h"
 weekly_window = "7d"

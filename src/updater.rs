@@ -18,6 +18,10 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 // Keep this aligned with the package identifier used in winget-pkgs.
 const WINGET_PACKAGE_ID: &str = "CodeZeno.ClaudeCodeUsageMonitor";
+// `winget show` exit codes for a missing version or package.
+const WINGET_NO_MANIFEST_FOUND: u32 = 0x8A15_0017;
+const WINGET_NO_APPLICATIONS_FOUND: u32 = 0x8A15_0014;
+const WINGET_SHOW_TIMEOUT: Duration = Duration::from_secs(60);
 
 mod download;
 mod release;
@@ -36,6 +40,8 @@ pub enum InstallChannel {
 pub enum UpdateCheckResult {
     UpToDate,
     Available(ReleaseDescriptor),
+    /// Released on GitHub, but the WinGet source does not list it yet.
+    Pending(String),
 }
 
 pub fn handle_cli_mode(args: &[String]) -> Option<i32> {
@@ -89,11 +95,16 @@ pub fn current_install_channel() -> InstallChannel {
     }
 }
 
-pub fn check_for_updates() -> Result<UpdateCheckResult, String> {
-    match fetch_latest_release()? {
-        Some(release) => Ok(UpdateCheckResult::Available(release)),
-        None => Ok(UpdateCheckResult::UpToDate),
+pub fn check_for_updates(channel: InstallChannel) -> Result<UpdateCheckResult, String> {
+    let Some(release) = fetch_latest_release()? else {
+        return Ok(UpdateCheckResult::UpToDate);
+    };
+    // GitHub releases publish before the winget-pkgs manifest PR merges, and
+    // `winget upgrade` finds nothing to install until then.
+    if channel == InstallChannel::Winget && !winget_has_version(&release.latest_version)? {
+        return Ok(UpdateCheckResult::Pending(release.latest_version));
     }
+    Ok(UpdateCheckResult::Available(release))
 }
 
 pub fn begin_winget_update() -> Result<(), String> {
@@ -318,6 +329,60 @@ fn updates_dir() -> Result<PathBuf, String> {
             )
         })
         .ok_or_else(|| "Unable to resolve a writable local updates directory.".to_string())
+}
+
+fn winget_has_version(version: &str) -> Result<bool, String> {
+    let mut child = Command::new("winget.exe")
+        .args(winget_show_args(version))
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Unable to run WinGet: {e}"))?;
+
+    let started = std::time::Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => return winget_show_outcome(status.code()),
+            Ok(None) if started.elapsed() < WINGET_SHOW_TIMEOUT => {
+                std::thread::sleep(Duration::from_millis(250));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("Timed out waiting for WinGet to check the available version.".into());
+            }
+            Err(error) => return Err(format!("Unable to wait for WinGet: {error}")),
+        }
+    }
+}
+
+fn winget_show_args(version: &str) -> [&str; 10] {
+    [
+        "show",
+        "--id",
+        WINGET_PACKAGE_ID,
+        "--exact",
+        "--version",
+        version,
+        "--source",
+        "winget",
+        "--accept-source-agreements",
+        "--disable-interactivity",
+    ]
+}
+
+fn winget_show_outcome(exit_code: Option<i32>) -> Result<bool, String> {
+    // Windows exit codes are HRESULTs; Rust reports them as signed values.
+    match exit_code.map(|code| code as u32) {
+        Some(0) => Ok(true),
+        Some(WINGET_NO_MANIFEST_FOUND | WINGET_NO_APPLICATIONS_FOUND) => Ok(false),
+        Some(code) => Err(format!(
+            "WinGet could not check the available version (exit code 0x{code:08X})."
+        )),
+        None => Err("WinGet exited without a status code.".into()),
+    }
 }
 
 fn winget_upgrade_command(pid: u32, target: &str, working_dir: &str) -> String {
