@@ -1625,6 +1625,11 @@ impl SegmentLayout {
             0
         };
         let gap = gap.min((extent - count) / (count - 1));
+        // Without visible gaps this is a continuous bar. Keep its full extent
+        // rather than discarding pixels to equalize indistinguishable segments.
+        if gap == 0 {
+            return None;
+        }
         let segment = (extent - gap * (count - 1)) / count;
         Some(Self {
             count,

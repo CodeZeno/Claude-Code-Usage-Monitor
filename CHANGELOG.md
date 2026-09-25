@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.17] - 2026-09-25
+
+### Fixed
+
+- Render equal whole-pixel segments and gaps at fractional display scales, keeping the drawn bar within its bounds and anchored to its fill direction. Measure partial fills and rounded ends against the drawn extent. ([#142](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/142), [#140](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/140))
+- Preserve the full bar extent when segment gaps round or clamp to zero. Add regression coverage for all four fill directions, partial fills, rounded edges, fractional scales, and extreme layout inputs.
+
 ## [2.15.16] - 2026-09-25
 
 ### Fixed
@@ -1198,3 +1205,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.14]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.13...v2.15.14
 [2.15.15]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.14...v2.15.15
 [2.15.16]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.15...v2.15.16
+[2.15.17]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.16...v2.15.17

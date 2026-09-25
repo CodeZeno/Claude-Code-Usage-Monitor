@@ -1252,6 +1252,144 @@ fn segmented_progress_preserves_both_rounded_outer_edges() {
 }
 
 #[test]
+fn segmented_progress_without_visible_gaps_keeps_the_full_extent() {
+    let white = Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    for gap in [0.0, 0.4, -1.0, f64::NAN, f64::INFINITY, 10.0] {
+        // Ten segments cannot fit nine one-pixel gaps into an 18-pixel box.
+        for direction in [
+            ProgressDirection::LeftToRight,
+            ProgressDirection::RightToLeft,
+            ProgressDirection::TopToBottom,
+            ProgressDirection::BottomToTop,
+        ] {
+            let horizontal = matches!(
+                direction,
+                ProgressDirection::LeftToRight | ProgressDirection::RightToLeft
+            );
+            let (width, height) = if horizontal { (18, 3) } else { (3, 18) };
+            for amount in [0.0, 0.25, 0.5, 1.0] {
+                let mut segmented = vec![0; (width * height) as usize];
+                let mut continuous = segmented.clone();
+                draw_progress(
+                    &mut segmented,
+                    width,
+                    height,
+                    white,
+                    1.0,
+                    amount,
+                    direction,
+                    10,
+                    gap,
+                );
+                draw_progress(
+                    &mut continuous,
+                    width,
+                    height,
+                    white,
+                    1.0,
+                    amount,
+                    direction,
+                    1,
+                    0.0,
+                );
+                assert_eq!(
+                    segmented, continuous,
+                    "gap={gap}, direction={direction:?}, amount={amount}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn segmented_progress_matches_across_directions_at_fractional_scales() {
+    let white = Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 255,
+    };
+    for scale in [1.0, 1.25, 1.5, 1.75, 2.0, 3.0] {
+        let extent = (109.0_f64 * scale).round() as u32;
+        let thickness = (8.0_f64 * scale).round() as u32;
+        for amount in [0.0, 0.01, 0.25, 0.5, 0.99, 1.0] {
+            let mut forward = vec![0; (extent * thickness) as usize];
+            draw_progress(
+                &mut forward,
+                extent,
+                thickness,
+                white,
+                2.0 * scale,
+                amount,
+                ProgressDirection::LeftToRight,
+                10,
+                scale,
+            );
+            for direction in [
+                ProgressDirection::RightToLeft,
+                ProgressDirection::TopToBottom,
+                ProgressDirection::BottomToTop,
+            ] {
+                let (width, height) = if direction == ProgressDirection::RightToLeft {
+                    (extent, thickness)
+                } else {
+                    (thickness, extent)
+                };
+                let mut actual = vec![0; forward.len()];
+                draw_progress(
+                    &mut actual,
+                    width,
+                    height,
+                    white,
+                    2.0 * scale,
+                    amount,
+                    direction,
+                    10,
+                    scale,
+                );
+                for y in 0..thickness {
+                    for x in 0..extent {
+                        let index = match direction {
+                            ProgressDirection::RightToLeft => y * extent + extent - 1 - x,
+                            ProgressDirection::TopToBottom => x * thickness + y,
+                            ProgressDirection::BottomToTop => (extent - 1 - x) * thickness + y,
+                            _ => unreachable!(),
+                        };
+                        assert_eq!(
+                            actual[index as usize],
+                            forward[(y * extent + x) as usize],
+                            "scale={scale}, amount={amount}, direction={direction:?}, x={x}, y={y}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn segmented_layout_stays_in_bounds_for_extreme_inputs() {
+    for extent in [0, 1, 2, 19, 109, 164, u32::MAX] {
+        for count in [0, 1, 2, 10, u16::MAX as u32, u32::MAX] {
+            for gap in [-1.0, 0.0, 0.4, 1.0, 1.5, f64::MAX, f64::NAN, f64::INFINITY] {
+                if let Some(layout) = SegmentLayout::new(extent, count, gap) {
+                    assert!(layout.extent() <= extent);
+                    assert!(layout.segment > 0);
+                    assert!(layout.contains(0));
+                    assert!(layout.contains(layout.extent() - 1));
+                    assert!(!layout.contains(layout.extent()));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn invalid_render_scales_fall_back_to_one() {
     let theme = ThemeDocument::starter();
     for scale in [0.0, -1.0, f64::NAN, f64::INFINITY] {
