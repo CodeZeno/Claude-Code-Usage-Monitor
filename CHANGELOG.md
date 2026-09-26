@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.20] - 2026-09-26
+
+### Fixed
+
+- Check only the installation's update source: standalone executables check GitHub releases, while WinGet installs check published WinGet versions independently. Offer the newest stable WinGet version only when it is newer than the running version, avoiding unavailable updates while WinGet publication trails GitHub. Preserve each source's errors without falling back to the other channel. ([#145](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/145), [#144](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/144))
+- Keep WinGet checks noninteractive with a timeout, reject unrecognizable output, and use the same WinGet source for checking and upgrading. Add regression coverage for source isolation, failures, localized output, and version precedence.
+
 ## [2.15.19] - 2026-09-25
 
 ### Fixed
@@ -1225,3 +1232,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.17]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.16...v2.15.17
 [2.15.18]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.17...v2.15.18
 [2.15.19]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.18...v2.15.19
+[2.15.20]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.19...v2.15.20

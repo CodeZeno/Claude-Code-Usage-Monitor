@@ -1127,16 +1127,9 @@ fn begin_update_install(hwnd: HWND, update: AvailableUpdate) {
 }
 
 fn show_update_prompt(hwnd: HWND, strings: Strings, update: &AvailableUpdate) -> bool {
-    let message = match update {
-        AvailableUpdate::Winget {
-            unlisted_release: Some(release),
-            ..
-        } => strings
-            .update_prompt_winget_behind
-            .replace("{release}", release),
-        _ => strings.update_prompt_now.to_owned(),
-    }
-    .replace("{version}", update.version());
+    let message = strings
+        .update_prompt_now
+        .replace("{version}", update.version());
 
     unsafe {
         let title_wide = native_interop::wide_str(strings.update_available);
@@ -1206,7 +1199,7 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
         let hwnd = send_hwnd.to_hwnd();
         let checked_at = now_unix_secs();
         match updater::check_for_updates(install_channel) {
-            Ok(result @ (UpdateCheckResult::UpToDate | UpdateCheckResult::Pending(_))) => {
+            Ok(UpdateCheckResult::UpToDate) => {
                 {
                     let mut state = lock_state();
                     if let Some(s) = state.as_mut() {
@@ -1217,13 +1210,7 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                 }
                 save_state_settings();
                 if interactive {
-                    let message = match result {
-                        UpdateCheckResult::Pending(version) => {
-                            strings.update_pending_winget.replace("{version}", &version)
-                        }
-                        _ => strings.up_to_date.to_string(),
-                    };
-                    show_info_message(hwnd, strings.updates, &message);
+                    show_info_message(hwnd, strings.updates, strings.up_to_date);
                 }
                 unsafe {
                     let _ = PostMessageW(

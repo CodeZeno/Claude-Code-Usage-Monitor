@@ -1,5 +1,13 @@
 # Updater verification
 
+Update checks use the running executable's installation channel. Standalone
+executables query GitHub only; executables in the recognized WinGet package
+directories query only the `winget` source with `winget show --versions`.
+WinGet checks offer the newest published stable version newer than the running
+version, even when GitHub has a later release. An equal or older source version
+means the installation is up to date. Source failures remain errors and never
+trigger a fallback to the other channel. WinGet upgrades use that same source.
+
 The portable updater accepts only the exact `claude-code-usage-monitor.exe`
 asset from the configured repository's latest stable GitHub release. It rejects
 duplicate assets, unexpected download URLs, invalid semantic versions, drafts,
@@ -41,3 +49,6 @@ SemVer precedence, streamed size limits, known SHA-256 vectors, corrupt and
 truncated bodies, interrupted and failed I/O, partial-file cleanup, helper
 arguments, and Windows file locking. Tests do not download or execute updates.
 The release workflow runs these tests before building a release.
+Channel tests also cover source isolation, WinGet version parsing, and source
+errors. To verify the live WinGet listing without installing an update, run
+`cargo test --locked winget_lists_published_versions_from_the_live_source -- --ignored`.

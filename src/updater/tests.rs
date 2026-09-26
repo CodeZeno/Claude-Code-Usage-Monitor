@@ -155,7 +155,7 @@ fn winget_upgrade_command_waits_upgrades_and_restarts_only_on_success() {
             "$target = 'C:\\Usage Monitor\\app.exe'; ",
             "$workingDir = 'C:\\Usage Monitor'; ",
             "try { Wait-Process -Id $pidToWait -Timeout 30 -ErrorAction Stop } catch { }; ",
-            "winget upgrade --id CodeZeno.ClaudeCodeUsageMonitor --exact; ",
+            "winget upgrade --id CodeZeno.ClaudeCodeUsageMonitor --exact --source winget; ",
             "$exitCode = $LASTEXITCODE; ",
             "if ($exitCode -eq 0) { ",
             "Start-Sleep -Seconds 2; ",
@@ -209,17 +209,8 @@ fn winget_show_args_list_versions_non_interactively() {
 
 #[test]
 fn winget_versions_outcome_parses_versions_under_localized_headers() {
-    let stdout = concat!(
-        "Trouvé Claude Code Usage Monitor [CodeZeno.ClaudeCodeUsageMonitor]
-",
-        "Version
--------
-2.15.14
-2.15.0
-  2.14.55  
-1.3
-",
-    );
+    let stdout = "Trouvé Claude Code Usage Monitor [CodeZeno.ClaudeCodeUsageMonitor]\r\n\
+        Version\r\n-------\r\n2.15.14\r\n2.15.0\r\n  2.14.55  \r\n1.3\r\n";
     assert_eq!(
         winget_versions_outcome(Some(0), stdout),
         Ok(vec![v("2.15.14"), v("2.15.0"), v("2.14.55")])
@@ -234,52 +225,123 @@ fn winget_versions_outcome_parses_versions_under_localized_headers() {
     );
     assert!(winget_versions_outcome(Some(1), "2.15.14").is_err());
     assert!(winget_versions_outcome(None, "2.15.14").is_err());
+    assert!(winget_versions_outcome(Some(0), "").is_err());
+    assert!(winget_versions_outcome(Some(0), "Version\n-------\ninvalid").is_err());
 }
 
 fn v(version: &str) -> Version {
     Version::parse(version).unwrap()
 }
 
-fn winget_result(current: &str, released: &str, listed: &[&str]) -> String {
+fn winget_result(current: &str, listed: &[&str]) -> String {
     let listed = listed.iter().map(|version| v(version)).collect::<Vec<_>>();
-    match winget_update_result(&v(current), &v(released), &listed) {
+    match winget_update_result(&v(current), &listed) {
         UpdateCheckResult::UpToDate => "up to date".into(),
-        UpdateCheckResult::Pending(released) => format!("pending {released}"),
-        UpdateCheckResult::Available(AvailableUpdate::Winget {
-            version,
-            unlisted_release,
-        }) => format!("winget {version} unlisted {unlisted_release:?}"),
+        UpdateCheckResult::Available(AvailableUpdate::Winget { version }) => {
+            format!("winget {version}")
+        }
         UpdateCheckResult::Available(AvailableUpdate::Release(_)) => "release".into(),
     }
 }
 
 #[test]
-fn winget_offers_the_released_version_once_listed() {
+fn winget_offers_the_newest_stable_listed_version() {
     assert_eq!(
-        winget_result("2.15.14", "2.15.19", &["2.15.0", "2.15.19", "2.15.14"]),
-        "winget 2.15.19 unlisted None"
+        winget_result("2.15.14", &["2.15.0", "2.15.19", "2.15.14", "2.16.0-beta1"]),
+        "winget 2.15.19"
     );
 }
 
 #[test]
-fn winget_offers_the_newest_listed_version_while_the_release_is_unlisted() {
+fn winget_compares_semver_precedence_instead_of_text_or_build_metadata() {
     assert_eq!(
-        winget_result("2.15.14", "2.15.19", &["2.15.14", "2.15.18", "2.15.17"]),
-        "winget 2.15.18 unlisted Some(\"2.15.19\")"
+        winget_result("2.9.0", &["2.9.0", "2.15.18", "2.15.17"]),
+        "winget 2.15.18"
+    );
+    assert_eq!(
+        winget_result("2.15.19+local", &["2.15.19+build"]),
+        "up to date"
+    );
+    assert_eq!(
+        winget_result("2.15.19-beta1", &["2.15.19"]),
+        "winget 2.15.19"
     );
 }
 
 #[test]
-fn winget_is_pending_when_nothing_newer_is_listed() {
+fn winget_is_up_to_date_when_nothing_newer_is_listed() {
     assert_eq!(
-        winget_result("2.15.14", "2.15.19", &["2.15.0", "2.15.14"]),
-        "pending 2.15.19"
+        winget_result("2.15.14", &["2.15.0", "2.15.14"]),
+        "up to date"
     );
-    assert_eq!(winget_result("2.15.14", "2.15.19", &[]), "pending 2.15.19");
-    assert_eq!(
-        winget_result("2.15.14", "2.15.19", &["2.15.18-beta1"]),
-        "pending 2.15.19"
+    assert_eq!(winget_result("2.15.14", &[]), "up to date");
+    assert_eq!(winget_result("2.15.19", &["2.15.18"]), "up to date");
+    assert_eq!(winget_result("2.15.14", &["2.15.18-beta1"]), "up to date");
+}
+
+#[test]
+fn portable_checks_only_github_and_returns_its_verified_release() {
+    let release = ReleaseDescriptor {
+        latest_version: "99.0.0".into(),
+        asset_url: "https://example.invalid/update.exe".into(),
+        integrity: AssetIntegrity::new(3, Some(ABC_DIGEST)).unwrap(),
+    };
+    let result = check_channel_updates(
+        InstallChannel::Portable,
+        || Ok(Some(release)),
+        || panic!("Portable checks must not invoke WinGet"),
+    )
+    .unwrap();
+    let UpdateCheckResult::Available(AvailableUpdate::Release(release)) = result else {
+        panic!("Expected a portable release");
+    };
+    assert_eq!(release.latest_version, "99.0.0");
+    assert_eq!(release.integrity.digest_arg(), ABC_DIGEST);
+    assert!(matches!(
+        check_channel_updates(
+            InstallChannel::Portable,
+            || Ok(None),
+            || panic!("Portable checks must not invoke WinGet"),
+        )
+        .unwrap(),
+        UpdateCheckResult::UpToDate
+    ));
+}
+
+#[test]
+fn winget_checks_only_its_source_for_available_and_current_versions() {
+    for (listed, available) in [(vec![v("99.0.0")], true), (vec![v("1.0.0")], false)] {
+        let result = check_channel_updates(
+            InstallChannel::Winget,
+            || panic!("WinGet checks must not contact GitHub"),
+            || Ok(listed),
+        )
+        .unwrap();
+        match result {
+            UpdateCheckResult::Available(AvailableUpdate::Winget { version }) => {
+                assert!(available);
+                assert_eq!(version, "99.0.0");
+            }
+            UpdateCheckResult::UpToDate => assert!(!available),
+            other => panic!("Unexpected update: {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn source_errors_never_fall_back_to_the_other_channel() {
+    let portable = check_channel_updates(
+        InstallChannel::Portable,
+        || Err("GitHub unavailable".into()),
+        || panic!("Must not fall back to WinGet"),
     );
+    assert_eq!(portable.unwrap_err(), "GitHub unavailable");
+    let winget = check_channel_updates(
+        InstallChannel::Winget,
+        || panic!("Must not fall back to GitHub"),
+        || Err("WinGet unavailable".into()),
+    );
+    assert_eq!(winget.unwrap_err(), "WinGet unavailable");
 }
 
 #[test]
