@@ -70,7 +70,7 @@ pub fn handle_cli(args: &[String]) -> Option<i32> {
 
 fn notify_running_instance_proof() {
     unsafe {
-        let class = native_interop::wide_str("ClaudeCodeUsageMonitor");
+        let _class = native_interop::wide_str("ClaudeCodeUsageMonitor");
         let mut target = HWND::default();
         unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> windows::Win32::Foundation::BOOL {
             let target = &mut *(lparam.0 as *mut HWND);
@@ -198,7 +198,7 @@ pub fn maybe_capture(
         GetWindowRect(hwnd, &mut hwnd_rect).is_ok() && IsWindowVisible(hwnd).as_bool()
     };
     let pixel_match_pct = pixel_match_ratio(buffer, &desktop);
-    let nonblack_balance = if buffer_nonblack.max(desktop_nonblack) == 0 {
+    let _nonblack_balance = if buffer_nonblack.max(desktop_nonblack) == 0 {
         0
     } else {
         (buffer_nonblack.min(desktop_nonblack) * 100) / buffer_nonblack.max(desktop_nonblack)

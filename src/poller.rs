@@ -355,19 +355,6 @@ extern "system" {
     fn CredFree(buffer: *mut c_void);
 }
 
-pub fn poll(
-    show_claude_code: bool,
-    show_codex: bool,
-    show_antigravity: bool,
-) -> Result<AppUsageData, PollError> {
-    poll_with_options(
-        show_claude_code,
-        show_codex,
-        show_antigravity,
-        PollOptions::default(),
-    )
-}
-
 pub fn poll_with_options(
     show_claude_code: bool,
     show_codex: bool,

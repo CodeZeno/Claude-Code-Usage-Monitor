@@ -779,15 +779,6 @@ fn toggle_widget_visibility(hwnd: HWND) {
     }
 }
 
-/// Pick a taskbar that actually hosts the notification area. On multi-monitor
-/// setups Windows can expose a spanning primary bar (often at a virtual top
-/// edge) that has no TrayNotifyWnd; embedding there hides the widget.
-fn taskbar_has_tray(taskbar: &native_interop::TaskbarWindow) -> bool {
-    native_interop::find_descendant_window(taskbar.hwnd, "TrayNotifyWnd")
-        .or_else(|| native_interop::find_child_window(taskbar.hwnd, "TrayNotifyWnd"))
-        .is_some()
-}
-
 fn resolve_taskbar_index(requested_index: usize, taskbars: &[native_interop::TaskbarWindow]) -> usize {
     if taskbars.is_empty() {
         return 0;
@@ -1784,7 +1775,7 @@ pub fn run() {
 
         // Create as layered popup (will be reparented into taskbar)
         let title = native_interop::wide_str(language.strings().window_title);
-        let initial_model_count = active_model_count(
+        let _initial_model_count = active_model_count(
             settings.show_claude_code,
             settings.show_codex,
             settings.show_antigravity,
@@ -1833,7 +1824,7 @@ pub fn run() {
         diagnose::log(format!("main window created hwnd={:?}", hwnd));
 
         let is_dark = theme::is_dark_mode();
-        let mut embedded = false;
+        let _embedded = false;
 
         {
             let mut state = lock_state();
@@ -2089,9 +2080,7 @@ fn render_layered() {
 
     let hwnd = hwnd_val.to_hwnd();
 
-    unsafe {
-        native_interop::ensure_layered_style(hwnd);
-    }
+    native_interop::ensure_layered_style(hwnd);
 
     let (width, height) = resolved_widget_size(account_pace_mode, show_credit_row);
 
@@ -4472,168 +4461,6 @@ fn show_context_menu(hwnd: HWND) {
         let _ = SetForegroundWindow(hwnd);
         let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, None);
         let _ = DestroyMenu(menu);
-    }
-}
-
-/// Paint for non-embedded fallback (normal WM_PAINT path)
-fn paint(hdc: HDC, hwnd: HWND) {
-    let (
-        is_dark,
-        strings,
-        session_pct,
-        session_text,
-        session_label,
-        weekly_pct,
-        weekly_text,
-        weekly_label,
-        codex_session_pct,
-        codex_session_text,
-        codex_weekly_pct,
-        codex_weekly_text,
-        antigravity_session_pct,
-        antigravity_session_text,
-        antigravity_weekly_pct,
-        antigravity_weekly_text,
-        show_claude_code,
-        show_codex,
-        show_antigravity,
-        account_pace_mode,
-        show_credit_row,
-        credit_pct,
-        credit_text,
-        credit_label,
-        day_pct,
-        day_text,
-        day_label,
-        session_pace_level,
-        weekly_pace_level,
-        day_pace_level,
-    ) = {
-        let state = lock_state();
-        match state.as_ref() {
-            Some(s) => (
-                s.is_dark,
-                s.language.strings(),
-                s.session_percent,
-                s.session_text.clone(),
-                s.session_label.clone(),
-                s.weekly_percent,
-                s.weekly_text.clone(),
-                s.weekly_label.clone(),
-                s.codex_session_percent,
-                s.codex_session_text.clone(),
-                s.codex_weekly_percent,
-                s.codex_weekly_text.clone(),
-                s.antigravity_session_percent,
-                s.antigravity_session_text.clone(),
-                s.antigravity_weekly_percent,
-                s.antigravity_weekly_text.clone(),
-                s.show_claude_code,
-                s.show_codex,
-                s.show_antigravity,
-                s.account_pace_mode,
-                s.show_credit_row,
-                s.credit_percent,
-                s.credit_text.clone(),
-                s.credit_label.clone(),
-                s.day_percent,
-                s.day_text.clone(),
-                s.day_label.clone(),
-                s.session_pace_level,
-                s.weekly_pace_level,
-                s.day_pace_level,
-            ),
-            None => return,
-        }
-    };
-
-    let mut rect = RECT::default();
-    unsafe {
-        let _ = GetClientRect(hwnd, &mut rect);
-    }
-    let width = rect.right - rect.left;
-    let height = rect.bottom - rect.top;
-
-    let accent = claude_accent_color();
-    let codex_accent = codex_accent_color(is_dark);
-    let antigravity_accent = antigravity_accent_color();
-    let track = if is_dark {
-        Color::from_hex("#444444")
-    } else {
-        Color::from_hex("#AAAAAA")
-    };
-    let text_color = if is_dark {
-        Color::from_hex("#888888")
-    } else {
-        Color::from_hex("#404040")
-    };
-    let bg_color = if is_dark {
-        Color::from_hex("#1C1C1C")
-    } else {
-        Color::from_hex("#F3F3F3")
-    };
-
-    unsafe {
-        let mut client_rect = RECT::default();
-        let _ = GetClientRect(hwnd, &mut client_rect);
-        let width = client_rect.right - client_rect.left;
-        let height = client_rect.bottom - client_rect.top;
-
-        if width <= 0 || height <= 0 {
-            return;
-        }
-
-        let mem_dc = CreateCompatibleDC(hdc);
-        let mem_bmp = CreateCompatibleBitmap(hdc, width, height);
-        let old_bmp = SelectObject(mem_dc, mem_bmp);
-
-        paint_content(
-            mem_dc,
-            width,
-            height,
-            is_dark,
-            &bg_color,
-            &text_color,
-            &accent,
-            &track,
-            strings,
-            session_pct,
-            &session_text,
-            &session_label,
-            weekly_pct,
-            &weekly_text,
-            &weekly_label,
-            codex_session_pct,
-            &codex_session_text,
-            codex_weekly_pct,
-            &codex_weekly_text,
-            antigravity_session_pct,
-            &antigravity_session_text,
-            antigravity_weekly_pct,
-            &antigravity_weekly_text,
-            show_claude_code,
-            show_codex,
-            show_antigravity,
-            account_pace_mode,
-            show_credit_row,
-            credit_pct,
-            &credit_text,
-            &credit_label,
-            day_pct,
-            &day_text,
-            &day_label,
-            session_pace_level,
-            weekly_pace_level,
-            day_pace_level,
-            &codex_accent,
-            &antigravity_accent,
-        );
-
-        let _ = BitBlt(hdc, 0, 0, width, height, mem_dc, 0, 0, SRCCOPY);
-
-        SelectObject(mem_dc, old_bmp);
-        let _ = DeleteObject(mem_bmp);
-        let _ = DeleteDC(mem_dc);
     }
 }
 

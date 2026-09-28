@@ -71,7 +71,6 @@ pub const WM_APP_FOREGROUND_CHANGED: u32 = WM_APP + 8;
 
 // Session lock/unlock notifications (WTSRegisterSessionNotification)
 pub const WM_WTSSESSION_CHANGE: u32 = 0x02B1;
-pub const WTS_SESSION_LOCK: usize = 0x7;
 pub const WTS_SESSION_UNLOCK: usize = 0x8;
 
 #[derive(Clone, Copy, Debug)]
@@ -272,113 +271,6 @@ pub fn find_descendant_window(parent: HWND, class_name: &str) -> Option<HWND> {
     search.found
 }
 
-struct TaskbarBandScan {
-    taskbar_rect: RECT,
-    content_left: i32,
-    pin_right: i32,
-}
-
-unsafe extern "system" fn scan_taskbar_band_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let scan = &mut *(lparam.0 as *mut TaskbarBandScan);
-    let mut class_buf = [0u16; 64];
-    let len = GetClassNameW(hwnd, &mut class_buf);
-    if len <= 0 {
-        return BOOL(1);
-    }
-    let class = String::from_utf16_lossy(&class_buf[..len as usize]);
-    if class != "MSTaskListWClass" && class != "MSTaskSwWClass" {
-        return BOOL(1);
-    }
-    if let Some(rect) = get_window_rect_safe(hwnd) {
-        if !rects_overlap(rect, scan.taskbar_rect) {
-            return BOOL(1);
-        }
-        scan.pin_right = scan.pin_right.max(rect.right);
-        let relative_right = rect.right.saturating_sub(scan.taskbar_rect.left);
-        let relative_left = rect.left.saturating_sub(scan.taskbar_rect.left);
-        let taskbar_width = scan.taskbar_rect.right - scan.taskbar_rect.left;
-        if relative_right > relative_left && relative_right < taskbar_width {
-            scan.content_left = scan.content_left.max(relative_right);
-        }
-    }
-    BOOL(1)
-}
-
-
-struct VisibleLeftScan {
-    band: RECT,
-    visible_left: i32,
-    found: bool,
-}
-
-unsafe extern "system" fn scan_visible_left_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let scan = &mut *(lparam.0 as *mut VisibleLeftScan);
-    let mut class_buf = [0u16; 64];
-    let len = GetClassNameW(hwnd, &mut class_buf);
-    if len > 0 {
-        let class = String::from_utf16_lossy(&class_buf[..len as usize]);
-        let is_chrome = class.contains("Start")
-            || class == "MSTaskListWClass"
-            || class == "MSTaskSwWClass"
-            || class == "ReBarWindow32"
-            || class == "ToolbarWindow32";
-        if is_chrome {
-            if let Some(rect) = get_window_rect_safe(hwnd) {
-                if rect.right > rect.left && rects_overlap(rect, scan.band) {
-                    scan.visible_left = if scan.found {
-                        scan.visible_left.min(rect.left)
-                    } else {
-                        rect.left
-                    };
-                    scan.found = true;
-                }
-            }
-        }
-        // Task buttons live under ReBarWindow32; avoid full-tree recursion here
-        // (can deadlock with WinEvent-driven SetWindowPos during EnumChildWindows).
-        if class == "ReBarWindow32" {
-            let _ = EnumChildWindows(hwnd, Some(scan_visible_left_proc), lparam);
-        }
-    }
-    BOOL(1)
-}
-
-fn taskbar_visible_left(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    let mut scan = VisibleLeftScan {
-        band: taskbar_rect,
-        visible_left: taskbar_rect.left,
-        found: false,
-    };
-    unsafe {
-        let _ = EnumChildWindows(
-            taskbar_hwnd,
-            Some(scan_visible_left_proc),
-            LPARAM(&mut scan as *mut _ as isize),
-        );
-    }
-    if scan.found {
-        scan.visible_left
-    } else {
-        taskbar_rect.left
-    }
-}
-
-fn scan_taskbar_band(taskbar_hwnd: HWND, taskbar_rect: RECT) -> (i32, i32) {
-    let mut scan = TaskbarBandScan {
-        taskbar_rect,
-        content_left: 0,
-        pin_right: 0,
-    };
-    unsafe {
-        let _ = EnumChildWindows(
-            taskbar_hwnd,
-            Some(scan_taskbar_band_proc),
-            LPARAM(&mut scan as *mut _ as isize),
-        );
-    }
-    (scan.content_left, scan.pin_right)
-}
-
 /// Find the next sibling child window matching `class_name`.
 pub fn find_next_child_window(parent: HWND, after: HWND, class_name: &str) -> Option<HWND> {
     unsafe {
@@ -481,49 +373,6 @@ fn taskbar_window_class(taskbar_hwnd: HWND) -> Option<String> {
             None
         }
     }
-}
-
-fn monitors_all() -> Vec<RECT> {
-    unsafe {
-        let mut monitors: Vec<RECT> = Vec::new();
-        unsafe extern "system" fn monitor_proc(
-            monitor: HMONITOR,
-            _dc: HDC,
-            _rect: *mut RECT,
-            lparam: LPARAM,
-        ) -> BOOL {
-            let monitors = &mut *(lparam.0 as *mut Vec<RECT>);
-            let mut info = MONITORINFO {
-                cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-                ..Default::default()
-            };
-            if GetMonitorInfoW(monitor, &mut info).as_bool() {
-                monitors.push(info.rcMonitor);
-            }
-            BOOL(1)
-        }
-        let _ = EnumDisplayMonitors(
-            HDC::default(),
-            None,
-            Some(monitor_proc),
-            LPARAM(&mut monitors as *mut _ as isize),
-        );
-        monitors
-    }
-}
-
-fn monitors_primary_first() -> Vec<RECT> {
-    let mut monitors = monitors_all();
-    monitors.sort_by_key(|mon| {
-        (
-            mon.top >= 0,
-            mon.top,
-            mon.left,
-            mon.bottom,
-            mon.right,
-        )
-    });
-    monitors
 }
 
 fn monitor_rect_for_taskbar(taskbar_hwnd: HWND) -> Option<RECT> {
@@ -744,10 +593,6 @@ fn monitor_rect_for_tray(tray_rect: RECT) -> Option<RECT> {
     })
 }
 
-fn point_in_rect(pt: POINT, rect: RECT) -> bool {
-    pt.x >= rect.left && pt.x < rect.right && pt.y >= rect.top && pt.y < rect.bottom
-}
-
 fn rects_overlap(a: RECT, b: RECT) -> bool {
     a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom
 }
@@ -827,42 +672,11 @@ pub fn should_hide_widget_for_fullscreen(self_hwnd: HWND, taskbar_hwnd: Option<H
 }
 
 /// Thumbnail peek / taskbar hover — only when preview UI is actually active.
-pub fn is_taskbar_peek_context(self_hwnd: HWND, _taskbar_hwnd: Option<HWND>) -> bool {
+pub fn is_taskbar_peek_context(_self_hwnd: HWND, _taskbar_hwnd: Option<HWND>) -> bool {
     taskbar_peek_latch_active()
         || taskbar_interactive_preview_active()
         || shell_preview_ui_active()
         || taskbar_thumbnail_preview_present()
-}
-
-fn any_system_taskbar_visible() -> bool {
-    for class in ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"] {
-        let hwnd = find_top_level_window(class);
-        if !hwnd.0.is_null() && taskbar_hwnd_is_on_screen(hwnd) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Cursor in the bottom band of the monitor under the pointer (taskbar + thumbnail zone).
-pub fn cursor_in_taskbar_zone(_anchor_hwnd: HWND) -> bool {
-    unsafe {
-        let mut pt = POINT::default();
-        if GetCursorPos(&mut pt).is_err() {
-            return false;
-        }
-        let monitor = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return false;
-        }
-        let mon = info.rcMonitor;
-        const ZONE_PX: i32 = 320;
-        pt.y >= mon.bottom - ZONE_PX && pt.x >= mon.left && pt.x <= mon.right
-    }
 }
 
 fn window_covers_monitor(win_rect: RECT, mon: RECT) -> bool {
@@ -1013,13 +827,6 @@ fn thumbnail_preview_visible_for_class(class: &str) -> bool {
     }
 }
 
-fn thumbnail_preview_exists_for_class(class: &str) -> bool {
-    unsafe {
-        let hwnd = find_top_level_window(class);
-        !hwnd.0.is_null()
-    }
-}
-
 fn find_top_level_window(class: &str) -> HWND {
     unsafe {
         let wide: Vec<u16> = class.encode_utf16().chain(std::iter::once(0)).collect();
@@ -1108,105 +915,6 @@ pub fn shell_preview_ui_active() -> bool {
     }
 }
 
-/// Taskbar peek minimizes other windows; foreground is the peeked app.
-pub fn desktop_peek_active(self_hwnd: HWND) -> bool {
-    struct Scan {
-        fg: HWND,
-        self_hwnd: HWND,
-        iconic: u32,
-    }
-
-    unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
-        let scan = &mut *(lparam.0 as *mut Scan);
-        if hwnd == scan.fg || hwnd == scan.self_hwnd || !IsWindowVisible(hwnd).as_bool() {
-            return BOOL(1);
-        }
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-        if ex_style & WS_EX_TOOLWINDOW.0 != 0 {
-            return BOOL(1);
-        }
-        if let Some(class_name) = window_class_name(hwnd) {
-            if is_shell_foreground_class(&class_name) {
-                return BOOL(1);
-            }
-        }
-        if IsIconic(hwnd).as_bool() {
-            scan.iconic += 1;
-        }
-        BOOL(1)
-    }
-
-    unsafe {
-        let fg = GetForegroundWindow();
-        if fg.0.is_null() || fg == self_hwnd || IsIconic(fg).as_bool() {
-            return false;
-        }
-        let mut scan = Scan {
-            fg,
-            self_hwnd,
-            iconic: 0,
-        };
-        let _ = EnumWindows(Some(enum_proc), LPARAM(&mut scan as *mut _ as isize));
-        scan.iconic >= 1
-    }
-}
-
-/// Physical taskbar window is mostly visible on its monitor (not auto-hidden off-screen).
-pub fn taskbar_hwnd_is_on_screen(taskbar_hwnd: HWND) -> bool {
-    unsafe {
-        if taskbar_hwnd.0.is_null() || !IsWindow(taskbar_hwnd).as_bool() {
-            return false;
-        }
-        if !IsWindowVisible(taskbar_hwnd).as_bool() {
-            return false;
-        }
-        let Some(rect) = get_window_rect_safe(taskbar_hwnd) else {
-            return false;
-        };
-        let monitor = MonitorFromWindow(taskbar_hwnd, MONITOR_DEFAULTTONEAREST);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return false;
-        }
-        let mon = info.rcMonitor;
-        let width = rect.right - rect.left;
-        let height = rect.bottom - rect.top;
-        if width <= 0 || height <= 0 {
-            return false;
-        }
-        let intersect_w = (rect.right.min(mon.right) - rect.left.max(mon.left)).max(0);
-        let intersect_h = (rect.bottom.min(mon.bottom) - rect.top.max(mon.top)).max(0);
-        let intersect_area = intersect_w * intersect_h;
-        let window_area = width * height;
-        intersect_area * 2 >= window_area
-    }
-}
-
-/// True when the shell still reserves taskbar space on the monitor (work area < monitor).
-pub fn taskbar_still_visible_on_monitor(hwnd: HWND) -> bool {
-    unsafe {
-        if hwnd.0.is_null() {
-            return true;
-        }
-        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
-            return true;
-        }
-        let work_w = info.rcWork.right - info.rcWork.left;
-        let work_h = info.rcWork.bottom - info.rcWork.top;
-        let mon_w = info.rcMonitor.right - info.rcMonitor.left;
-        let mon_h = info.rcMonitor.bottom - info.rcMonitor.top;
-        monitor_shows_taskbar_chrome(work_w, work_h, mon_w, mon_h)
-    }
-}
-
 fn monitor_shows_taskbar_chrome(work_w: i32, work_h: i32, mon_w: i32, mon_h: i32) -> bool {
     const SLACK: i32 = 8;
     (mon_w - work_w) > SLACK || (mon_h - work_h) > SLACK
@@ -1262,23 +970,6 @@ pub fn taskbar_placement_band_left(_taskbar_hwnd: HWND, _taskbar_rect: RECT) -> 
     0
 }
 
-/// Left edge of visible taskbar chrome (relative to taskbar rect).
-pub fn taskbar_content_left(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    taskbar_visible_left_screen(taskbar_hwnd, taskbar_rect)
-        .saturating_sub(taskbar_rect.left)
-        .max(0)
-}
-
-/// Left edge of visible taskbar chrome in screen coordinates.
-pub fn taskbar_visible_left_screen(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    taskbar_visible_left(taskbar_hwnd, taskbar_rect)
-}
-
-/// Right edge of the pinned-app band in screen coordinates.
-pub fn pin_band_right(taskbar_hwnd: HWND, taskbar_rect: RECT) -> i32 {
-    scan_taskbar_band(taskbar_hwnd, taskbar_rect).1
-}
-
 /// Tell DWM to never ghost/hide this window during Aero Peek — both the
 /// taskbar-thumbnail peek (hovering a taskbar icon's preview) and Show
 /// Desktop peek. This is the actual fix for "widget disappears on preview":
@@ -1316,19 +1007,6 @@ pub fn ensure_layered_style(hwnd: HWND) {
     }
 }
 
-/// Remove WS_EX_LAYERED so the child paints via normal WM_PAINT inside Shell_TrayWnd.
-pub fn strip_layered_style(hwnd: HWND) {
-    unsafe {
-        let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
-        let cleared = ex_style & !(WS_EX_LAYERED.0 as i32);
-        let _ = SetWindowLongW(
-            hwnd,
-            GWL_EXSTYLE,
-            cleared | WS_EX_TOOLWINDOW.0 as i32 | WS_EX_NOACTIVATE.0 as i32,
-        );
-    }
-}
-
 /// Embed our window as a child of the taskbar
 pub fn embed_in_taskbar(hwnd: HWND, taskbar_hwnd: HWND) {
     unsafe {
@@ -1362,33 +1040,6 @@ pub fn detach_from_taskbar(hwnd: HWND) {
 
 pub fn raise_on_taskbar_band(hwnd: HWND, taskbar_hwnd: Option<HWND>) {
     position_popup_zorder(hwnd, taskbar_hwnd, true, 0, 0, 0, 0);
-}
-
-/// Place the widget directly above the foreground window, then restore topmost.
-pub fn raise_above_foreground(hwnd: HWND) {
-    unsafe {
-        let fg = GetForegroundWindow();
-        if !fg.0.is_null() && fg != hwnd {
-            let _ = SetWindowPos(
-                hwnd,
-                fg,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-            );
-        }
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
-    }
 }
 
 /// Drop below exclusive-fullscreen apps (real taskbar behaviour) without SW_HIDE.
@@ -1523,28 +1174,6 @@ pub fn position_topmost_popup(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
         let _ = SetWindowPos(
             hwnd,
             HWND_TOPMOST,
-            x,
-            y,
-            w,
-            h,
-            SWP_NOACTIVATE,
-        );
-    }
-}
-
-/// Place a popup layered widget in the taskbar band (screen coords), just above the taskbar z-order.
-pub fn position_on_taskbar_band(
-    hwnd: HWND,
-    taskbar_hwnd: HWND,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-) {
-    unsafe {
-        let _ = SetWindowPos(
-            hwnd,
-            taskbar_hwnd,
             x,
             y,
             w,
