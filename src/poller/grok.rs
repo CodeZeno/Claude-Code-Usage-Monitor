@@ -273,8 +273,13 @@ fn fetch_grok_usage(session: &GrokSession) -> Result<UsageData, PollError> {
 
 fn grok_usage_from_billing(response: GrokBillingResponse) -> Option<UsageData> {
     let config = response.config?;
-    let percentage = config.credit_usage_percent?;
     let period = config.current_period.as_ref();
+    // The proxy speaks protobuf JSON, which omits zero values: right after a
+    // reset a complete period (with its end) arrives without
+    // `creditUsagePercent` nor any `productUsage`. That is 0% spent.
+    let percentage = config
+        .credit_usage_percent
+        .or(period.filter(|period| period.end.is_some()).map(|_| 0.0))?;
     let resets_at = period.and_then(|period| period_end(period.end.as_ref()));
     let monthly_period = period
         .and_then(|period| period.period_type.as_deref())
@@ -697,6 +702,45 @@ mod tests {
         assert_eq!(product.kind, "product");
         assert_eq!(product.usage.percentage, 48.0);
         assert_eq!(product.usage.resets_at, data.weekly.resets_at);
+    }
+
+    #[test]
+    fn a_fresh_period_without_spending_reads_as_zero() {
+        // Captured right after a weekly reset: protobuf JSON drops the zero
+        // `creditUsagePercent` and the empty `productUsage`.
+        let response: GrokBillingResponse = serde_json::from_str(
+            r#"{
+                "config": {
+                    "currentPeriod": {
+                        "type": "USAGE_PERIOD_TYPE_WEEKLY",
+                        "start": "2026-09-27T13:10:00.412622+00:00",
+                        "end": "2026-10-04T13:10:00.412622+00:00"
+                    },
+                    "onDemandCap": { "val": 0 },
+                    "onDemandUsed": { "val": 0 },
+                    "isUnifiedBillingUser": true,
+                    "prepaidBalance": { "val": 0 },
+                    "topUpMethod": "TOP_UP_METHOD_SAVED_PAYMENT_METHOD",
+                    "billingPeriodStart": "2026-09-27T13:10:00.412622+00:00",
+                    "billingPeriodEnd": "2026-10-04T13:10:00.412622+00:00"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let data = grok_usage_from_billing(response).unwrap();
+        assert!(data.weekly.available);
+        assert_eq!(data.weekly.percentage, 0.0);
+        assert!(data.weekly.resets_at.is_some());
+        assert!(data.limits.is_empty());
+        assert!(data.credits.is_none());
+    }
+
+    #[test]
+    fn a_config_without_period_or_percentage_is_rejected() {
+        let response: GrokBillingResponse =
+            serde_json::from_str(r#"{"config":{"isUnifiedBillingUser":true}}"#).unwrap();
+        assert!(grok_usage_from_billing(response).is_none());
     }
 
     #[test]
