@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.22] - 2026-09-29
+
+### Fixed
+
+- Show Grok usage as 0% after a billing reset when the response omits zero spending and includes a usable period end. Continue rejecting incomplete or malformed periods when usage is absent, and preserve explicit usage values. Add regression coverage for fresh weekly and monthly periods, invalid timestamps, and explicit usage without a reset time. ([#149](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/149))
+- Use violet for the Grok pool usage value in both light and dark variants of Compact Fluent Quad, matching its progress bar.
+
 ## [2.15.21] - 2026-09-29
 
 ### Added
@@ -1252,3 +1259,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.19]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.18...v2.15.19
 [2.15.20]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.19...v2.15.20
 [2.15.21]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.20...v2.15.21
+[2.15.22]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.21...v2.15.22
