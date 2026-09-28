@@ -8,6 +8,7 @@ param(
     [Parameter(Mandatory)][System.Management.Automation.PSCredential]$Credential,
     [string]$LabRoot = 'C:\work\CCUM-Lab',
     [string]$SwitchName = 'Default Switch',
+    [ValidateSet('Single', 'Maximum')][string]$DisplayResolutionType = 'Single',
     [switch]$Resume
 )
 Set-StrictMode -Version Latest
@@ -112,7 +113,7 @@ try {
     Set-VMFirmware -VM $vm -EnableSecureBoot On -SecureBootTemplate MicrosoftWindows
     Set-VMKeyProtector -VM $vm -NewLocalKeyProtector
     Enable-VMTPM -VM $vm
-    Set-VMVideo -VM $vm -HorizontalResolution 1920 -VerticalResolution 1080 -ResolutionType Single
+    Set-VMVideo -VM $vm -HorizontalResolution 1920 -VerticalResolution 1080 -ResolutionType $DisplayResolutionType
     Start-VM -VM $vm
     Write-Host "Started $VMName. Wait for C:\CCUM-Lab\initialized.json before capturing a checkpoint."
 } finally {

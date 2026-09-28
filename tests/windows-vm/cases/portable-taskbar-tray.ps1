@@ -1,4 +1,6 @@
-# Dot-sourced only by the guarded interactive guest scenario.
+# Invoked only by the guarded guest runner.
+param([Parameter(Mandatory)]$Context)
+. "$($Context.Root)\support\Guest.Helpers.ps1" -Context $Context
 function Test-TaskbarTray {
     $samples = [Collections.Generic.List[object]]::new()
     $icons = [Collections.Generic.List[object]]::new()
@@ -67,3 +69,10 @@ function Test-TaskbarTray {
         ConvertTo-Json -InputObject @($samples.ToArray()) -Depth 6 | Set-Content "$evidence\tray-samples.json" -Encoding UTF8
     }
 }
+
+if ($request.os -eq 'windows10') { Set-TestTaskbar -PromoteTray }
+Initialize-TestSettings -TrayFixture
+$executable = Install-PortableApp
+$app = Start-TestApp $executable
+Test-TaskbarTray
+Test-AppRestart $executable

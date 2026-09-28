@@ -56,5 +56,6 @@ The VM flow exercises stock Hyper-V graphics where OpenGL initialization fails:
 
 It restores only the configured disposable VM checkpoints before and after each
 scenario. Evidence includes renderer logs, OS/build and binary identity,
-assertions, and screenshots of settings and the theme studio. See the dated
-WARP results document in `tests/windows-vm` for the tested build and limitations.
+assertions, and screenshots of settings and the theme studio. Each run's
+`summary.md` and `summary.json` record the outcome and evidence paths. See
+[Windows VM testing](windows-vm-testing.md) for selection and reporting details.

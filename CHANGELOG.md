@@ -4,6 +4,24 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.15.21] - 2026-09-29
+
+### Added
+
+- Add ten Windows VM scenarios for clean profiles, Explorer recovery, update failures, resilient settings, sign-in startup, live display and system-theme changes, network/auth errors, locale/theme galleries, and a separate nightly soak. Add allowlisted host actions for reboot with one-time sign-in, network disconnection, outbound connection auditing, VM pause/resume, and guest clock changes; retain screenshots, resource samples, and per-subcase failures.
+- Define Windows VM tests in an ordered catalogue with separate case scripts, shared desktop helpers, discoverable test IDs, selectable suites, per-test requirements and timeouts, and an authoring guide. Preserve the existing six flows and the `-Flows` alias; default to a two-guest baseline smoke suite.
+- Report all planned VM scenarios in JSON and Markdown, including skipped and unexecuted cases, durations, failed assertions, infrastructure errors, and evidence links. Validate catalogue entries and required inputs before touching VMs.
+
+### Fixed
+
+- Collect VM evidence per file with bounded retries so a locked transcript does not prevent recovery of other results, logs, and screenshots. Preserve collection errors separately from the original test failure.
+- Check dashboard keyboard focus, use native keyboard injection instead of blocking `SendWait`, separate selection/edit/commit input, and wait for persisted settings and clipboard results in the WARP desktop case.
+- Correct the user guide's default smoke coverage to include portable launch and clean-profile first launch on both guests: four scenarios.
+
+### Removed
+
+- Replace checked-in historical VM result snapshots with per-run JSON and Markdown reports in the ignored evidence directory.
+
 ## [2.15.20] - 2026-09-26
 
 ### Fixed
@@ -1233,3 +1251,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.18]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.17...v2.15.18
 [2.15.19]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.18...v2.15.19
 [2.15.20]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.19...v2.15.20
+[2.15.21]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.20...v2.15.21

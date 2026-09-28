@@ -165,16 +165,20 @@ Cached limits follow the existing stale-data behaviour; check `claude.stale`
 ## Windows VM testing for developers
 
 Run this harness locally on a developer machine with Hyper-V. The scripts live in
-`tests/windows-vm/`. This proof of concept provisions two disposable guests and runs desktop
+`tests/windows-vm/`. The harness provisions two disposable guests and runs desktop
 scenarios against known checkpoints. `New-LabVM.ps1` applies an installation image
 to a new VHDX, prepares a local account and boots the guest. `Invoke-Lab.ps1` runs
-the test matrix.
+the test matrix from the ordered `tests.json` catalogue. See
+[extending the Windows VM tests](docs/windows-vm-testing.md) for test selection,
+suites, results, and how to add a test without changing the runner.
 
 ### Coverage
 
 | Flow | What the runner exercises | Inputs |
 | --- | --- | --- |
-| `portable-launch` (default) | Launch from a path with spaces, visible widget, one instance, restart, retained language and poll interval | Candidate EXE |
+| `portable-launch` (default smoke suite) | Launch from a path with spaces, visible widget, one instance, restart, retained language and poll interval | Candidate EXE |
+| `first-run-clean-profile` (default smoke suite) | Clean-profile defaults, visible widget, missing-sign-in message, and first dashboard launch | Candidate EXE |
+| `portable-dashboard-warp` | Automatic and forced software-renderer fallback, dashboard input and clipboard, resizing, single instance, close, and persisted settings | Candidate EXE; stock Hyper-V graphics |
 | `portable-taskbar-tray` | Drag into free taskbar space, add/remove notification icons, assert real tray growth, no false undocking, stable free-space position and restoration; save geometry samples and screenshots | Candidate EXE; visible taskbar |
 | `portable-update-helper` | Old EXE launches; its real `--apply-update` helper verifies, replaces and relaunches the candidate; candidate SHA-256 and retained settings checked | Previous and newer candidate EXEs |
 | `winget-install` | Public-source installation of a pinned version, package detection, launch, restart, uninstall | Published candidate version |
@@ -186,8 +190,13 @@ check, download, or staging. The old EXE must support the current helper argumen
 update action. Unpublished candidates are supported only in portable scenarios.
 Neither result should be reported as full updater end-to-end coverage.
 
-The default taskbar matrix is baseline and auto-hide on both OS versions, plus
-left and centre alignment on Windows 11: six scenarios per standard flow.
+The default `smoke` suite runs portable launch and clean-profile first launch on
+the baseline taskbar on both OS versions: four scenarios. `-Suite regression`
+includes launch, dashboard WARP, and taskbar/tray tests across their supported
+modes. Explicit `-Tests` (or the
+compatible `-Flows` alias) uses each test's declared taskbar matrix: normally
+baseline and auto-hide on both OS versions, plus left and centre alignment on
+Windows 11. Unsupported combinations are reported as skipped with a reason.
 `left` means Windows 11 icon alignment, not a Windows 10 taskbar edge.
 Use selected `-Flows` and `-Taskbars` for quick checks.
 Use `-VMNames CCUM-Win10` or `-VMNames CCUM-Win11` to select a single guest.
@@ -216,7 +225,9 @@ From the repository root in Windows PowerShell 5.1:
 
 ```powershell
 .\tests\windows-vm\Test-Harness.ps1
+.\tests\windows-vm\Invoke-Lab.ps1 -ListTests
 .\tests\windows-vm\Invoke-Lab.ps1 -PlanOnly
+.\tests\windows-vm\Invoke-Lab.ps1 -Suite regression -PlanOnly
 .\tests\windows-vm\Invoke-Lab.ps1 -PlanOnly `
   -Flows portable-launch,portable-update-helper,winget-install,winget-upgrade
 ```
@@ -330,7 +341,8 @@ matrix. Do not treat passing results on that checkpoint as clean-install success
 Build a candidate, then run from an elevated Windows PowerShell host session:
 
 ```powershell
-cargo build --release --locked
+.\tests\Test-Dependencies.ps1
+cargo build --release
 $credential = Get-Credential -UserName LabUser -Message 'Disposable VM local administrator'
 .\tests\windows-vm\Invoke-Lab.ps1 `
   -CandidateExe .\target\release\claude-code-usage-monitor.exe `
@@ -380,11 +392,14 @@ checkpoint manually before reuse if a run is forcibly interrupted.
 
 ### Results and AI use
 
-`tests/windows-vm/artifacts/<run-id>/summary.json` records status and evidence paths for each executed
-scenario. Each scenario's `evidence` subfolder contains its result/checks, OS build,
+`tests/windows-vm/artifacts/<run-id>/summary.json` records every planned scenario,
+including skipped and unexecuted scenarios, duration, failed checks, and evidence
+paths. `summary.md` provides a readable table with evidence links.
+Each scenario's `evidence` subfolder contains its result/checks, OS build,
 window bounds, screenshots, executable version/hash, settings, diagnostics,
 transcript and WinGet output when used. The host also records the scheduled task's
-exit result. Timeout evidence may be partial. An ordinary failure continues to the
+exit result. Files are collected individually so a locked transcript cannot block
+the remaining evidence. Timeout evidence may be partial. An ordinary failure continues to the
 next scenario; checkpoint cleanup failure aborts the run. Any failed scenario makes
 the command fail with a nonzero process exit when invoked with `powershell.exe -File`.
 

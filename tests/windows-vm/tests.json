@@ -1,0 +1,395 @@
+{
+  "schemaVersion": 1,
+  "suites": [
+    {
+      "id": "smoke",
+      "taskbars": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "regression",
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ]
+    },
+    {
+      "id": "update",
+      "taskbars": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "published-package",
+      "taskbars": [
+        "baseline"
+      ]
+    },
+    {
+      "id": "nightly",
+      "taskbars": [
+        "baseline"
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "id": "portable-launch",
+      "description": "Launch from a path with spaces, restart, and retain settings",
+      "script": "cases/portable-launch.ps1",
+      "suites": [
+        "smoke",
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 180
+    },
+    {
+      "id": "portable-dashboard-warp",
+      "description": "Automatic and forced WARP rendering, input, clipboard, and dashboard lifecycle",
+      "script": "cases/portable-dashboard-warp.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 600
+    },
+    {
+      "id": "portable-taskbar-tray",
+      "description": "Tray growth, docking, and stable widget placement",
+      "script": "cases/portable-taskbar-tray.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 600
+    },
+    {
+      "id": "portable-update-helper",
+      "description": "Replace with a newer executable, relaunch, and retain settings",
+      "script": "cases/portable-update-helper.ps1",
+      "suites": [
+        "update"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe",
+        "previousExe"
+      ],
+      "timeoutSeconds": 300
+    },
+    {
+      "id": "winget-install",
+      "description": "Install a published version, launch, restart, and uninstall",
+      "script": "cases/winget-install.ps1",
+      "suites": [
+        "published-package"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateVersion"
+      ],
+      "timeoutSeconds": 600
+    },
+    {
+      "id": "winget-upgrade",
+      "description": "Upgrade between published versions and retain settings",
+      "script": "cases/winget-upgrade.ps1",
+      "suites": [
+        "published-package"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateVersion",
+        "previousVersion"
+      ],
+      "timeoutSeconds": 600
+    },
+    {
+      "id": "first-run-clean-profile",
+      "description": "Clean profile defaults, missing sign-in, first-launch dashboard",
+      "script": "cases/first-run-clean-profile.ps1",
+      "suites": [
+        "smoke",
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 360,
+      "hostActions": []
+    },
+    {
+      "id": "explorer-restart-recovery",
+      "description": "Three Explorer restarts, stable process, docking and live tray recovery",
+      "script": "cases/explorer-restart-recovery.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "auto-hide",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 420,
+      "hostActions": []
+    },
+    {
+      "id": "portable-update-failures",
+      "description": "Invalid integrity, locked target and interrupted helper preserve executable and settings",
+      "script": "cases/portable-update-failures.ps1",
+      "suites": [
+        "update"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 900,
+      "hostActions": []
+    },
+    {
+      "id": "settings-resilience",
+      "description": "Corruption, truncation, BOM, unknown fields, previous-release settings and read-only saves",
+      "script": "cases/settings-resilience.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe",
+        "previousExe"
+      ],
+      "timeoutSeconds": 600,
+      "hostActions": []
+    },
+    {
+      "id": "startup-with-windows",
+      "description": "Real startup toggle, quoted path, reboot sign-in and portable upgrade",
+      "script": "cases/startup-with-windows.ps1",
+      "suites": [
+        "update"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe",
+        "previousExe"
+      ],
+      "timeoutSeconds": 600,
+      "hostActions": [
+        "reboot"
+      ]
+    },
+    {
+      "id": "display-scale-change",
+      "description": "Live resolution and DPI changes with geometry and screenshot evidence",
+      "script": "cases/display-scale-change.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline",
+        "left",
+        "center"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 900,
+      "hostActions": [
+        "display-modes",
+        "reboot"
+      ]
+    },
+    {
+      "id": "system-theme-switch",
+      "description": "Live light, dark and high-contrast transitions for docked and floating widgets",
+      "script": "cases/system-theme-switch.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 600,
+      "hostActions": []
+    },
+    {
+      "id": "network-and-auth-errors",
+      "description": "Auth rejection, host network loss and recovery, bounded retries and outbound auditing",
+      "script": "cases/network-and-auth-errors.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 600,
+      "hostActions": [
+        "network-disconnect",
+        "network-connect",
+        "audit-start",
+        "audit-stop"
+      ]
+    },
+    {
+      "id": "locale-and-theme-gallery",
+      "description": "All 14 languages by both built-ins, dashboard/widget gallery and malformed theme fallback",
+      "script": "cases/locale-and-theme-gallery.ps1",
+      "suites": [
+        "regression"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 1800,
+      "hostActions": []
+    },
+    {
+      "id": "soak-and-power",
+      "description": "Thirty-minute idle soak, 50 dashboard lifetimes, pause/resume and two-hour clock jump",
+      "script": "cases/soak-and-power.ps1",
+      "suites": [
+        "nightly"
+      ],
+      "operatingSystems": [
+        "windows10",
+        "windows11"
+      ],
+      "taskbars": [
+        "baseline"
+      ],
+      "requires": [
+        "candidateExe"
+      ],
+      "timeoutSeconds": 4200,
+      "hostActions": [
+        "pause-resume",
+        "clock-forward"
+      ]
+    }
+  ]
+}
