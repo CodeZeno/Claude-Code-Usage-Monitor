@@ -1432,69 +1432,6 @@ pub fn position_notopmost_popup(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-/// Ground-truth check: is this window actually the topmost thing at its own
-/// on-screen location right now, per WindowFromPoint (which queries the
-/// real hit-test/compositor order), rather than the WS_EX_TOPMOST style bit
-/// or the classic GetWindow z-order chain - both confirmed live to keep
-/// reporting "we're on top" while the widget sat stuck behind Shell_TrayWnd.
-/// Samples a point safely inside the window's own client rect.
-pub fn is_widget_on_top(hwnd: HWND) -> bool {
-    unsafe {
-        let mut rect = RECT::default();
-        if GetWindowRect(hwnd, &mut rect).is_err() {
-            return true; // can't check - don't loop forever on a bogus read
-        }
-        if rect.right - rect.left < 4 || rect.bottom - rect.top < 4 {
-            return true;
-        }
-        let pt = POINT {
-            x: rect.left + (rect.right - rect.left) / 4,
-            y: rect.top + (rect.bottom - rect.top) / 2,
-        };
-        let hit = WindowFromPoint(pt);
-        hit == hwnd
-    }
-}
-
-/// Cheap in-process topmost reassert, kept as low-cost insurance alongside
-/// the real fix (force_repaint_now in window.rs - see its doc comment).
-/// `attempt` is unused now but kept in the signature since callers already
-/// track it for logging.
-///
-/// This used to escalate to spawning a short-lived external helper process
-/// (this same exe re-invoked with --reassert-topmost) after repeated
-/// failures, on the theory that a fresh process succeeded where in-process
-/// retries plateaued. Live testing (2026-09-28) disproved that: across a
-/// single stuck episode this fired 75 in-process attempts plus ~24 external
-/// process spawns, and NONE of them changed the outcome - the episode
-/// cleared on its own on the same timescale it would have with no
-/// intervention at all. The escalation was pure overhead. Root cause turned
-/// out to be a dropped/stale WS_EX_LAYERED composited surface, not a
-/// z-order problem SetWindowPos could ever have fixed - see
-/// force_repaint_now.
-pub fn attempt_topmost_recovery(hwnd: HWND, _attempt: u32) {
-    unsafe {
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_NOTOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
-        let _ = SetWindowPos(
-            hwnd,
-            HWND_TOPMOST,
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
-        );
-    }
-}
-
 fn position_popup_zorder(
     hwnd: HWND,
     taskbar_hwnd: Option<HWND>,
@@ -1628,7 +1565,19 @@ pub fn position_on_taskbar_band(
 /// list, since plain MoveWindow never touches sibling order.
 pub fn move_child_to_front(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
-        let _ = SetWindowPos(hwnd, HWND_TOP, x, y, w, h, SWP_NOACTIVATE);
+        // SWP_ASYNCWINDOWPOS, matching move_window_async below: a
+        // synchronous SetWindowPos on a taskbar-embedded WS_CHILD can block
+        // the calling thread on explorer.exe's UI thread (the same reason
+        // that function exists; see its own doc comment).
+        let _ = SetWindowPos(
+            hwnd,
+            HWND_TOP,
+            x,
+            y,
+            w,
+            h,
+            SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
+        );
     }
 }
 

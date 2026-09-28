@@ -201,12 +201,7 @@ const FORCE_REPAINT_EVERY_N_TICKS: u32 = 4; // ~60s at the 15s keepalive interva
 /// a moderate, low-overhead cadence since it's unproven either way and this
 /// is cheap insurance, not a confirmed fix.
 const STARTMENU_FOLLOWUP_INTERVAL_MS: u32 = 400;
-// Safety-net cap only - the real stop condition is a verified is_widget_on_top()
-// check (see TIMER_STARTMENU_FOLLOWUP), not this tick count. Generous because
-// each tick is cheap (one hit-test, one reassert only when actually stuck) and
-// getting stuck for the rest of the session is a far worse outcome than
-// polling a few extra seconds.
-const STARTMENU_FOLLOWUP_MAX_TICKS: u32 = 75; // ~30s at 400ms
+const STARTMENU_FOLLOWUP_MAX_TICKS: u32 = 30; // ~12s at 400ms
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
 static CURRENT_DPI: AtomicU32 = AtomicU32::new(96);
@@ -847,16 +842,13 @@ fn attach_to_taskbar(hwnd: HWND, requested_index: usize) -> bool {
     // as its parent), so embedding structurally avoids the problem instead
     // of fighting it.
     //
-    // This was the original v1.0.0 design; it was abandoned in commit
-    // eacd4eba for a coordinate bug, then briefly revived and reverted
-    // again in this same investigation for what looked like a total
-    // rendering failure. Both turned out to be the same underlying issue:
-    // UpdateLayeredWindow's pptDst is documented unconditionally as SCREEN
-    // coordinates, but for a WS_CHILD window reparented cross-process into
-    // explorer.exe, it actually needs PARENT-CLIENT-RELATIVE coordinates -
-    // confirmed live by isolating the call in a minimal standalone repro
-    // (identical call succeeds visually with parent-relative coords, fails
-    // to render - while still reporting success - with screen-absolute
+    // Getting this to actually render required one more fix: despite MSDN
+    // documenting UpdateLayeredWindow's pptDst unconditionally as SCREEN
+    // coordinates, a WS_CHILD window reparented cross-process into
+    // explorer.exe needs PARENT-CLIENT-RELATIVE coordinates there instead
+    // (confirmed live by isolating the call in a minimal standalone repro -
+    // identical call renders correctly with parent-relative coords, fails
+    // silently - while still reporting success - with screen-absolute
     // ones). See position_at_taskbar's embedded branch for where this is
     // applied.
     native_interop::embed_in_taskbar(hwnd, taskbar.hwnd);
@@ -3082,79 +3074,6 @@ fn invalidate_popup_layout() {
     }
 }
 
-static LAST_TOPMOST_RECOVERY_ATTEMPT: Mutex<Option<Instant>> = Mutex::new(None);
-static TOPMOST_RECOVERY_STREAK: AtomicU32 = AtomicU32::new(0);
-
-/// Centralized, throttled recovery for "widget stuck behind Shell_TrayWnd
-/// in z-order" (see TIMER_STARTMENU_FOLLOWUP for the full story - root
-/// cause, trigger, and why this needs an escalating, verified fix rather
-/// than a blind one). Called from several independent triggers (the
-/// Start-menu-specific timer, every foreground change, and the 15s
-/// keepalive) so recovery is attempted quickly right after the bug's known
-/// trigger AND kept alive indefinitely afterward as a fallback for the rare
-/// case the fast path doesn't resolve it in time.
-///
-/// A SINGLE shared throttle + streak counter here (rather than one per call
-/// site, which is what this started as) is required: confirmed live that
-/// letting multiple call sites fire independent recovery attempts
-/// (including spawning external helper processes) within the same short
-/// window made recovery LESS reliable, not more - plausibly by racing each
-/// other's SetWindowPos/process-spawn calls, though the exact mechanism
-/// isn't understood. Returns true if the widget is currently stuck
-/// (regardless of whether a new attempt was actually fired this call, since
-/// the throttle may have skipped it).
-fn check_and_recover_topmost(hwnd: HWND) -> bool {
-    // Doesn't apply to an embedded WS_CHILD widget: it has no independent
-    // topmost z-order to lose (it inherits the taskbar's own Z-order-band
-    // membership - see attach_to_taskbar's doc comment), and both halves of
-    // this function are actively harmful for one: is_widget_on_top() uses
-    // GetWindowRect(hwnd), which returns bogus DPI-scaled coordinates for a
-    // WS_CHILD reparented cross-process into explorer.exe (confirmed live
-    // 2026-09-28), so it would spuriously report "stuck" almost always; and
-    // SetWindowPos(hwnd, HWND_TOPMOST/HWND_NOTOPMOST, ...) on a WS_CHILD
-    // window is undefined/implementation-specific and was confirmed live to
-    // silently break the reparenting (watchdog saw GetParent() no longer
-    // matching the taskbar within ~1s of every successful re-attach, in a
-    // tight relaunch loop, until this guard was added).
-    let embedded = lock_state().as_ref().map(|s| s.embedded).unwrap_or(false);
-    if embedded {
-        return false;
-    }
-    if native_interop::is_widget_on_top(hwnd) {
-        TOPMOST_RECOVERY_STREAK.store(0, Ordering::Relaxed);
-        return false;
-    }
-    let now = Instant::now();
-    let should_attempt = {
-        let mut last = LAST_TOPMOST_RECOVERY_ATTEMPT
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
-        let ready = last
-            .map(|t| now.duration_since(t) >= Duration::from_millis(300))
-            .unwrap_or(true);
-        if ready {
-            *last = Some(now);
-        }
-        ready
-    };
-    if should_attempt {
-        let attempt = TOPMOST_RECOVERY_STREAK.fetch_add(1, Ordering::Relaxed);
-        diagnose::log(format!(
-            "check_and_recover_topmost: widget stuck behind another window - recovery attempt {attempt}"
-        ));
-        // Force a real re-push of the composited surface FIRST - live
-        // testing showed this (not z-order renegotiation) is what actually
-        // clears this state; see force_repaint_now's doc comment. The cheap
-        // in-process topmost reassert is kept as low-cost insurance since
-        // it's not proven harmful, but the external-process escalation this
-        // used to have is removed: it had a measured 0% success rate across
-        // dozens of attempts in live testing and only added overhead.
-        force_repaint_now();
-        native_interop::attempt_topmost_recovery(hwnd, attempt);
-    }
-    true
-}
-
 fn ensure_popup_visible() {
     let (visible, dragging, embedded, already_visible, layout_valid, hidden_for_fullscreen) = {
         let state = lock_state();
@@ -3192,47 +3111,23 @@ fn ensure_popup_visible() {
 /// surface while every Win32 call (IsWindowVisible, UpdateLayeredWindow)
 /// keeps reporting success — a state the cheap checks in
 /// `ensure_popup_visible` cannot detect, only recover from periodically.
+/// Runs whether or not the widget is embedded: a WS_CHILD's composited
+/// surface can silently drop just as a popup's can, and position_at_taskbar
+/// /render_layered() both already branch correctly on `embedded`.
 fn force_periodic_repaint() {
     if KEEPALIVE_TICKS_SINCE_FORCE.fetch_add(1, Ordering::Relaxed) + 1 < FORCE_REPAINT_EVERY_N_TICKS
     {
         return;
     }
     KEEPALIVE_TICKS_SINCE_FORCE.store(0, Ordering::Relaxed);
-    force_repaint_now();
-}
-
-/// The actual repaint work behind force_periodic_repaint, factored out so
-/// check_and_recover_topmost can trigger it immediately instead of waiting
-/// on that function's ~60s throttle. Live testing (2026-09-28) established
-/// that a "stuck behind Shell_TrayWnd" episode is NOT a z-order problem at
-/// all: WindowFromPoint returns Shell_TrayWnd across the widget's entire
-/// rect (not a localized transparent-pixel gap), the widget's own
-/// WS_EX_TOPMOST bit and GetWindow z-chain position stay correct throughout,
-/// and DWMWA_CLOAKED stays 0 - yet repeated SetWindowPos(HWND_TOPMOST)
-/// (in-process and via a freshly spawned external process), a hide/show
-/// toggle, and even a real SetForegroundWindow activation all failed to
-/// change the outcome, across dozens of attempts and multiple live trials.
-/// The one thing that reliably was missing during those failed trials: an
-/// actual re-push of this WS_EX_LAYERED window's composited surface via
-/// UpdateLayeredWindow. This matches the failure mode this function's
-/// original doc comment already predicted ("DWM dropping this window's
-/// composited surface") - it's a rendering/compositing desync, not a
-/// z-order one, so no amount of z-order negotiation could ever have fixed
-/// it.
-fn force_repaint_now() {
-    let (visible, dragging, embedded, hidden_for_fullscreen) = {
+    let (visible, dragging, hidden_for_fullscreen) = {
         let state = lock_state();
         match state.as_ref() {
-            Some(s) => (
-                s.widget_visible,
-                s.dragging,
-                s.embedded,
-                s.hidden_for_fullscreen,
-            ),
+            Some(s) => (s.widget_visible, s.dragging, s.hidden_for_fullscreen),
             None => return,
         }
     };
-    if !visible || dragging || embedded || hidden_for_fullscreen {
+    if !visible || dragging || hidden_for_fullscreen {
         return;
     }
     invalidate_popup_layout();
@@ -3375,21 +3270,34 @@ fn position_at_taskbar() {
             diagnose::log("position_at_taskbar skipped: no taskbar found");
             return;
         };
-        let rebound = {
+        let (rebound, was_embedded) = {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 if s.taskbar_hwnd != Some(selected) {
+                    let was_embedded = s.embedded;
                     s.taskbar_hwnd = Some(selected);
                     s.embedded = false;
                     s.layered_position_valid = false;
-                    true
+                    (true, was_embedded)
                 } else {
-                    false
+                    (false, false)
                 }
             } else {
-                false
+                (false, false)
             }
         };
+        // A WS_CHILD reparented into the old taskbar stays reparented until
+        // explicitly detached - clearing the `embedded` flag alone (as this
+        // used to do) left the window still a real Win32 child of the old
+        // taskbar while the rest of this function went on to position it as
+        // a free popup, moving it to the wrong on-screen location. Only
+        // reachable via taskbar_hwnd_for_settings_index resolving a
+        // different Shell_SecondaryTrayWnd instance across calls on a
+        // multi-secondary-monitor setup, not via a normal single-monitor
+        // session, but detaching properly here is required either way.
+        if was_embedded {
+            native_interop::detach_from_taskbar(hwnd);
+        }
         if rebound {
             invalidate_popup_layout();
             diagnose::log(format!(
@@ -3529,22 +3437,10 @@ fn position_at_taskbar() {
             let mut state = lock_state();
             if let Some(s) = state.as_mut() {
                 // layered_screen_x/y feed UpdateLayeredWindow's pptDst in
-                // render_layered(). MSDN documents pptDst unconditionally as
-                // SCREEN coordinates, but that's wrong for a WS_CHILD window
-                // reparented cross-process into explorer.exe: confirmed live
-                // 2026-09-28 by isolating the call in a minimal standalone
-                // repro - the identical UpdateLayeredWindow call renders
-                // correctly with parent-client-relative coordinates (x,
-                // y_child) but silently renders nothing - while still
-                // reporting success - with screen-absolute ones
-                // (screen_x/screen_y, used below only for change-detection
-                // and logging, not for this). This was the actual reason
-                // embedding looked broken both times it was tried before
-                // (this time, and originally in commit eacd4eba, which
-                // additionally never set layered_position_valid here at
-                // all, so it fell back to GetWindowRect(hwnd) - itself
-                // bogus and DPI-scaled for a cross-process WS_CHILD, e.g.
-                // reporting Y=3408 instead of 1704 at 200% DPI).
+                // render_layered() - parent-client-relative (x, y_child),
+                // not screen-absolute (screen_x/screen_y, used below only
+                // for change-detection and logging). See attach_to_taskbar's
+                // doc comment for why.
                 s.layered_screen_x = x;
                 s.layered_screen_y = y_child;
                 s.layered_position_valid = true;
@@ -3893,9 +3789,6 @@ unsafe extern "system" fn wnd_proc(
                         render_layered();
                     }
                     force_periodic_repaint();
-                    // Standing, indefinite safety net - see
-                    // check_and_recover_topmost's doc comment.
-                    check_and_recover_topmost(hwnd);
                 }
                 TIMER_FULLSCREEN_CHECK => {
                     sync_fullscreen_visibility(hwnd);
@@ -3905,33 +3798,12 @@ unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
 
-                    // ROOT CAUSE (confirmed live 2026-09-28 via the
-                    // undocumented GetWindowBand API): the popup/topmost
-                    // widget gets stuck behind Shell_TrayWnd because Windows
-                    // temporarily elevates the taskbar into a higher
-                    // Z-order "band" (ZBID_IMMERSIVE_MOGO) during Start-menu
-                    // interaction - an OS-internal mechanism no public
-                    // Win32 z-order API can affect from a different band.
-                    // Exhaustive live testing ruled out every such API:
-                    // repeated SetWindowPos(HWND_TOPMOST) (in-process and
-                    // via a freshly spawned external process), a hide/show
-                    // toggle, real SetForegroundWindow activation, and
-                    // forcing a full UpdateLayeredWindow re-push all had a
-                    // measured 0% success rate across dozens of live
-                    // attempts. The actual fix is attach_to_taskbar()
-                    // embedding the widget as a real WS_CHILD of
-                    // Shell_TrayWnd (see its doc comment): a child inherits
-                    // its parent's band, so it rides along with the
-                    // taskbar's elevation instead of needing to fight it.
-                    // check_and_recover_topmost() below is now a no-op
-                    // whenever embedded (its GetWindowRect-based check is
-                    // unreliable for a reparented WS_CHILD, and its
-                    // SetWindowPos calls actively broke the reparenting) -
-                    // it only still matters for the non-embedded popup
-                    // fallback path (e.g. when find_taskbars() returns
-                    // none).
-                    let stuck = check_and_recover_topmost(hwnd);
-
+                    // Keeps the widget's position/composited surface fresh
+                    // while the Start menu is open. See attach_to_taskbar's
+                    // doc comment for why the widget no longer needs to
+                    // fight for Z-order here at all (it's embedded as a
+                    // WS_CHILD of Shell_TrayWnd and inherits its band).
+                    //
                     // startmenu_surface_visible() checks for a visible
                     // CoreWindow/Xaml surface anywhere in z-order rather than
                     // GetForegroundWindow() (focus-only): confirmed via repro
@@ -3943,19 +3815,7 @@ unsafe extern "system" fn wnd_proc(
                     static TICKS: AtomicU32 = AtomicU32::new(0);
                     let ticks = TICKS.fetch_add(1, Ordering::Relaxed) + 1;
 
-                    // Stop once Start has closed AND we've verified we're
-                    // not stuck - not after a fixed tick count. The tick cap
-                    // is only a safety net so this fast-path timer can't
-                    // poll forever; check_and_recover_topmost() keeps trying
-                    // indefinitely afterward via TIMER_WIDGET_KEEPALIVE and
-                    // every foreground change regardless of whether this
-                    // timer gives up first.
-                    if (!still_active && !stuck) || ticks >= STARTMENU_FOLLOWUP_MAX_TICKS {
-                        if stuck {
-                            diagnose::log(format!(
-                                "TIMER_STARTMENU_FOLLOWUP: giving up fast-path after {ticks} ticks, still stuck - falling back to the standing keepalive/foreground-change recovery"
-                            ));
-                        }
+                    if !still_active || ticks >= STARTMENU_FOLLOWUP_MAX_TICKS {
                         TICKS.store(0, Ordering::Relaxed);
                         unsafe {
                             let _ = KillTimer(hwnd, TIMER_STARTMENU_FOLLOWUP);
@@ -4030,12 +3890,6 @@ unsafe extern "system" fn wnd_proc(
             invalidate_popup_layout();
             position_at_taskbar();
             render_layered();
-            // Every foreground change is another chance to notice and fix
-            // "stuck behind Shell_TrayWnd in z-order" faster than waiting
-            // for TIMER_WIDGET_KEEPALIVE's 15s cadence - see
-            // check_and_recover_topmost's doc comment for why this shares
-            // that function's throttle/streak instead of using its own.
-            check_and_recover_topmost(hwnd);
             LRESULT(0)
         }
         WM_WTSSESSION_CHANGE => {
