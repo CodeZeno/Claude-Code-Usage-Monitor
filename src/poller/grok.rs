@@ -274,13 +274,11 @@ fn fetch_grok_usage(session: &GrokSession) -> Result<UsageData, PollError> {
 fn grok_usage_from_billing(response: GrokBillingResponse) -> Option<UsageData> {
     let config = response.config?;
     let period = config.current_period.as_ref();
-    // The proxy speaks protobuf JSON, which omits zero values: right after a
-    // reset a complete period (with its end) arrives without
-    // `creditUsagePercent` nor any `productUsage`. That is 0% spent.
-    let percentage = config
-        .credit_usage_percent
-        .or(period.filter(|period| period.end.is_some()).map(|_| 0.0))?;
     let resets_at = period.and_then(|period| period_end(period.end.as_ref()));
+    // The proxy speaks protobuf JSON, which omits zero values: right after a
+    // reset a complete period (with a usable end) arrives without
+    // `creditUsagePercent` nor any `productUsage`. That is 0% spent.
+    let percentage = config.credit_usage_percent.or(resets_at.map(|_| 0.0))?;
     let monthly_period = period
         .and_then(|period| period.period_type.as_deref())
         .is_some_and(|period_type| period_type.to_ascii_lowercase().contains("monthly"));
@@ -741,6 +739,69 @@ mod tests {
         let response: GrokBillingResponse =
             serde_json::from_str(r#"{"config":{"isUnifiedBillingUser":true}}"#).unwrap();
         assert!(grok_usage_from_billing(response).is_none());
+    }
+
+    #[test]
+    fn an_unusable_period_end_does_not_imply_zero_usage() {
+        for end in [
+            serde_json::json!(null),
+            serde_json::json!(""),
+            serde_json::json!("invalid"),
+            serde_json::json!({}),
+            serde_json::json!([]),
+            serde_json::json!(false),
+            serde_json::json!(0),
+            serde_json::json!(-1),
+            serde_json::json!(1e100),
+        ] {
+            let response = serde_json::from_value(serde_json::json!({
+                "config": {"currentPeriod": {"type": "weekly", "end": end}}
+            }))
+            .unwrap();
+            assert!(grok_usage_from_billing(response).is_none(), "{end}");
+        }
+    }
+
+    #[test]
+    fn a_fresh_monthly_period_with_a_numeric_end_reads_as_zero() {
+        let response = serde_json::from_value(serde_json::json!({
+            "config": {
+                "currentPeriod": {"type": "monthly", "end": 1790000000}
+            }
+        }))
+        .unwrap();
+
+        let data = grok_usage_from_billing(response).unwrap();
+        assert!(data.weekly.available);
+        assert_eq!(data.weekly.percentage, 0.0);
+        assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+        let monthly = data.monthly.unwrap();
+        assert!(monthly.available);
+        assert_eq!(monthly.percentage, 0.0);
+        assert_eq!(monthly.resets_at, data.weekly.resets_at);
+        assert_eq!(
+            data.weekly.resets_at,
+            Some(UNIX_EPOCH + Duration::from_secs(1_790_000_000))
+        );
+    }
+
+    #[test]
+    fn explicit_usage_does_not_require_a_usable_period() {
+        for period in [
+            serde_json::json!(null),
+            serde_json::json!({"end": "invalid"}),
+        ] {
+            for percentage in [0.0, 42.5] {
+                let response = serde_json::from_value(serde_json::json!({
+                    "config": {"creditUsagePercent": percentage, "currentPeriod": period}
+                }))
+                .unwrap();
+                let data = grok_usage_from_billing(response).unwrap();
+                assert!(data.weekly.available);
+                assert_eq!(data.weekly.percentage, percentage);
+                assert!(data.weekly.resets_at.is_none());
+            }
+        }
     }
 
     #[test]
