@@ -1,4 +1,4 @@
-﻿code = "pl"
+code = "pl"
 native_name = "Polski"
 locale_patterns = ["pl"]
 order = 12
@@ -448,3 +448,6 @@ grok_window_title = "Monitor zużycia Grok"
 "X" = "X"
 "Y offset" = "Przesunięcie Y"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

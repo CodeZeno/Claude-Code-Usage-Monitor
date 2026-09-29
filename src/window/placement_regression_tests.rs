@@ -34,6 +34,7 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         auto_ejected: false,
         auto_ejected_origin: None,
         auto_ejected_host: None,
+        lock_taskbar: false,
         is_switching_window_style: false,
         is_snapped: false,
         placement_override: Some(placement),

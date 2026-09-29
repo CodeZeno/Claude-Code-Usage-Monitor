@@ -732,6 +732,7 @@ fn context_menu_action_scripts_round_trip_every_action_kind() {
             provider: ContextMenuProvider::Codex,
         },
         ContextMenuAction::ToggleStartup,
+        ContextMenuAction::ToggleTaskbarLock,
         ContextMenuAction::ToggleWidget,
         ContextMenuAction::SetLanguage {
             language: "en-US".into(),

@@ -1,4 +1,4 @@
-﻿code = "ja"
+code = "ja"
 native_name = "日本語"
 locale_patterns = ["ja"]
 order = 5
@@ -450,3 +450,6 @@ grok_window_title = "Grok 使用量モニター"
 "X" = "X"
 "Y offset" = "Y オフセット"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

@@ -322,6 +322,7 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
             format!("toggle_provider({})", provider.descriptor().key)
         }
         ContextMenuAction::ToggleStartup => "toggle_startup()".into(),
+        ContextMenuAction::ToggleTaskbarLock => "toggle_taskbar_lock()".into(),
         ContextMenuAction::ToggleWidget => "toggle_widget()".into(),
         ContextMenuAction::LegacyResetPosition => String::new(),
         ContextMenuAction::SetLanguage { language } => {
@@ -348,6 +349,7 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         ("open_dashboard", ContextMenuAction::OpenDashboard),
         ("refresh", ContextMenuAction::Refresh),
         ("toggle_startup", ContextMenuAction::ToggleStartup),
+        ("toggle_taskbar_lock", ContextMenuAction::ToggleTaskbarLock),
         ("toggle_widget", ContextMenuAction::ToggleWidget),
         ("check_for_updates", ContextMenuAction::CheckForUpdates),
         ("exit", ContextMenuAction::Exit),

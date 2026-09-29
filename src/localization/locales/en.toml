@@ -1,4 +1,4 @@
-﻿code = "en"
+code = "en"
 native_name = "English"
 locale_patterns = ["en"]
 order = 0
@@ -448,3 +448,6 @@ grok_window_title = "Grok Usage Monitor"
 "X" = "X"
 "Y offset" = "Y offset"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

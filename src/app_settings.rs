@@ -74,6 +74,12 @@ pub struct SettingsFile {
     pub dashboard_height: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floating_card_opacity: Option<u8>,
+    /// When true the widget never auto-ejects to floating; it stays docked in
+    /// the taskbar (it can still be dragged along the bar or moved to floating
+    /// manually). Protects against spurious ejects when opening apps or
+    /// connecting monitors.
+    #[serde(default)]
+    pub lock_taskbar: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement_override: Option<PlacementOverride>,
 }
@@ -126,6 +132,7 @@ impl Default for SettingsFile {
             dashboard_width: None,
             dashboard_height: None,
             floating_card_opacity: None,
+            lock_taskbar: false,
             placement_override: None,
         }
     }

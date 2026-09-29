@@ -1,4 +1,4 @@
-﻿code = "zh-CN"
+code = "zh-CN"
 native_name = "简体中文"
 locale_patterns = ["zh"]
 order = 8
@@ -450,3 +450,6 @@ grok_window_title = "Grok 使用量监控"
 "X" = "X"
 "Y offset" = "Y 偏移"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

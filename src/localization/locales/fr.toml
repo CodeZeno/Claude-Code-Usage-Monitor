@@ -1,4 +1,4 @@
-﻿code = "fr"
+code = "fr"
 native_name = "Français"
 locale_patterns = ["fr"]
 order = 3
@@ -448,3 +448,6 @@ grok_window_title = "Moniteur d'utilisation Grok"
 "X" = "X"
 "Y offset" = "Décalage Y"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

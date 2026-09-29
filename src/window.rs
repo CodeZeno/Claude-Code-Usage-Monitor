@@ -119,6 +119,9 @@ struct AppState {
     auto_ejected: bool,
     auto_ejected_origin: Option<POINT>,
     auto_ejected_host: Option<app_settings::FloatingHost>,
+    /// When true, never auto-eject to floating on taskbar collisions.
+    /// The widget stays docked (but can still be dragged along the bar).
+    lock_taskbar: bool,
     is_switching_window_style: bool,
     is_snapped: bool,
     placement_override: Option<PlacementOverride>,
@@ -196,6 +199,7 @@ const IDM_FREQ_5MIN: u16 = 11;
 const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
+const IDM_LOCK_TASKBAR: u16 = 21;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 100;
 const IDM_LANG_FIRST: u16 = 101;
@@ -545,6 +549,11 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
             .as_ref()
             .is_none_or(|p| p.nest != "floating")
     {
+        // Locked widgets stay docked even when app buttons overlap them.
+        // The user can still drag them along the bar manually.
+        if state.lock_taskbar {
+            return None;
+        }
         let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
         occupancy.overlaps_app_controls(widget).then_some(1)
     } else {
@@ -803,6 +812,7 @@ fn save_state_settings() {
             .map(|path| path.to_string_lossy().to_string());
         persisted.placement_override = s.placement_override.clone();
         persisted.floating_card_opacity = s.floating_card_opacity;
+        persisted.lock_taskbar = s.lock_taskbar;
         // The dashboard process owns its dimensions, so leave the freshly
         // loaded values unchanged when monitor actions persist settings.
         if let Err(error) = save_settings(&persisted) {
@@ -815,6 +825,29 @@ fn save_settings_or_log(settings: &SettingsFile, context: &str) {
     if let Err(error) = save_settings(settings) {
         diagnose::log(format!("{context}: {error}"));
     }
+}
+
+pub(super) fn toggle_taskbar_lock(hwnd: HWND) {
+    let enabled = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        state.lock_taskbar = !state.lock_taskbar;
+        // Enabling the lock while auto-ejected returns immediately; the
+        // watchdog restore check may never succeed after a monitor change.
+        if state.lock_taskbar && state.auto_ejected {
+            state.auto_ejected = false;
+            state.auto_ejected_origin = None;
+            state.auto_ejected_host = None;
+        }
+        state.lock_taskbar
+    };
+    save_state_settings();
+    if enabled {
+        redock_locked_widget(hwnd);
+    }
+    diagnose::log(format!("taskbar lock toggled: {enabled}"));
 }
 
 fn tray_usage_summary_lines(
@@ -2111,6 +2144,7 @@ pub fn run() {
                 auto_ejected: false,
                 auto_ejected_origin: None,
                 auto_ejected_host: None,
+                lock_taskbar: settings.lock_taskbar,
                 is_switching_window_style: false,
                 is_snapped: false,
                 placement_override: settings.placement_override.clone(),
@@ -2802,6 +2836,7 @@ fn reload_external_settings(hwnd: HWND) {
     let language_override = settings.language.as_deref().and_then(LanguageId::from_code);
     let theme_path = settings.active_theme_path.as_ref().map(PathBuf::from);
     let providers_changed;
+    let lock_enabled;
     {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
@@ -2820,16 +2855,65 @@ fn reload_external_settings(hwnd: HWND) {
         state.tray_offset = settings.tray_offset;
         state.placement_override = settings.placement_override;
         state.floating_card_opacity = settings.floating_card_opacity;
+        state.lock_taskbar = settings.lock_taskbar;
+        lock_enabled = state.lock_taskbar;
+        // Enabling the lock while floating returns the widget to the bar
+        // immediately instead of waiting for the watchdog's restore check
+        // (which may never succeed after a monitor change).
+        if lock_enabled && state.auto_ejected {
+            state.auto_ejected = false;
+            state.auto_ejected_origin = None;
+            state.auto_ejected_host = None;
+        }
         apply_language_to_state(state, language_override);
     }
     unsafe {
         SetTimer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);
     }
     let _ = apply_custom_theme(hwnd, settings.custom_theme_enabled, theme_path, None);
+    if lock_enabled {
+        // apply_custom_theme leaves the window as a popup; re-embed a
+        // previously ejected widget so the lock takes effect at once.
+        redock_locked_widget(hwnd);
+    }
     if providers_changed {
         request_poll(hwnd);
     }
     sync_tray_icon(hwnd);
+    position_at_taskbar();
+    render_layered();
+}
+
+/// Re-embed a locked widget that is currently floating. Used when the lock is
+/// enabled while ejected and on display changes where the watchdog's
+/// restore check may not fire (e.g. stale occupancy after a new monitor).
+fn redock_locked_widget(hwnd: HWND) {
+    let taskbar_hwnd = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if !state.lock_taskbar || !state.auto_ejected {
+            return;
+        }
+        state.auto_ejected = false;
+        state.auto_ejected_origin = None;
+        state.auto_ejected_host = None;
+        state.taskbar_hwnd.map(|h| h.to_hwnd())
+    };
+    // Re-embed first so position_at_taskbar sees a docked window.
+    if let Some(taskbar) = taskbar_hwnd {
+        // Mark the style switch so a synchronous WM_CAPTURECHANGED or layout
+        // message does not clear unrelated drag state.
+        if let Some(state) = lock_state().as_mut() {
+            state.is_switching_window_style = true;
+        }
+        native_interop::embed_as_child(hwnd, taskbar);
+        if let Some(state) = lock_state().as_mut() {
+            state.is_switching_window_style = false;
+        }
+        diagnose::log("taskbar lock enabled: re-docked floating widget");
+    }
     position_at_taskbar();
     render_layered();
 }

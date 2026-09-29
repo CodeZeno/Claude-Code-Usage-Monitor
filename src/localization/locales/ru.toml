@@ -1,4 +1,4 @@
-﻿code = "ru"
+code = "ru"
 native_name = "Русский"
 locale_patterns = ["ru"]
 order = 9
@@ -448,3 +448,6 @@ grok_window_title = "Монитор использования Grok"
 "X" = "X"
 "Y offset" = "Смещение Y"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"
