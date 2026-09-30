@@ -437,6 +437,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         page: Page::Studio,
         settings: SettingsFile::default(),
         synced_poll_interval_ms: SettingsFile::default().poll_interval_ms,
+        synced_taskbar_lock: false,
         poll_interval_editor_generation: 0,
         startup_enabled: false,
         theme,
@@ -577,6 +578,41 @@ fn local_frequency_edits_survive_sync_before_save() {
     app.sync_poll_interval(POLL_15_MIN);
     assert_eq!(app.settings.poll_interval_ms, POLL_15_MIN);
     assert_eq!(app.poll_interval_editor_generation, generation + 1);
+}
+
+#[test]
+fn menu_taskbar_lock_survives_unrelated_dashboard_edits() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    let mut persisted = SettingsFile::default();
+    persisted.lock_taskbar = true;
+    app_settings::save_settings(&persisted).unwrap();
+    // Simulate a menu toggle while the dashboard still holds its startup snapshot.
+    assert!(!app.settings.lock_taskbar);
+    app.settings.usage_countdown = true;
+    app.save_settings();
+    assert!(app.settings.lock_taskbar);
+    let saved = app_settings::load_settings();
+    assert!(saved.lock_taskbar && saved.usage_countdown);
+    persisted.lock_taskbar = false;
+    app_settings::save_settings(&persisted).unwrap();
+    app.sync_taskbar_lock(false);
+    assert!(!app.settings.lock_taskbar);
+}
+
+#[test]
+fn local_taskbar_lock_edits_survive_sync_before_save() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    for saved in [false, true] {
+        app.settings.lock_taskbar = saved;
+        app.synced_taskbar_lock = saved;
+        app.settings.lock_taskbar = !saved;
+        app.sync_taskbar_lock(saved);
+        assert_eq!(app.settings.lock_taskbar, !saved);
+        // A subsequent menu toggle becomes authoritative after saving.
+        app.synced_taskbar_lock = app.settings.lock_taskbar;
+        app.sync_taskbar_lock(saved);
+        assert_eq!(app.settings.lock_taskbar, saved);
+    }
 }
 
 #[test]

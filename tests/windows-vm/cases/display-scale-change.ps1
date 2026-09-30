@@ -8,7 +8,26 @@ if ($Context.Phase -eq 'initial') {
     Invoke-HostAction 'reboot'
 }
 if ($Context.Phase -ne 'display-ready') { throw "Unexpected display phase: $($Context.Phase)" }
-Write-Settings @{language='en'; poll_interval_ms=900000}
+$settings = @{language='en'; poll_interval_ms=900000}
+if ($request.flow -eq 'taskbar-lock-display') {
+    # Exercise docking independently of Classic's fixed 46px height, which
+    # exceeds a standard Win10 taskbar. This 36px fixture fits both OSes.
+    $themePath = "$Root\display-lock-fixture.json"
+    @{
+        schema_version=1; id='display-lock-fixture'; name='Display lock regression'
+        surfaces=@(@{
+            id='main'; name='Display lock'; width='200'; height='36'
+            background=@{type='colour'; colour=@{color='#2080D0FF'}}
+            placement=@{reference=@{region='system_tray'; display=0}; nest='taskbar'; horizontal='left'; vertical='bottom'; surface_horizontal='right'; surface_vertical='bottom'; offset_x=-80}
+            children=@(@{id='label'; name='Lock label'; x='8'; y='6'; width='180'; height='24';
+                content=@{type='text'; template='Taskbar lock'; font_family='Segoe UI'; font_size='16'; color=@{color='#FFFFFFFF'}}})
+        })
+    } | ConvertTo-Json -Depth 10 | Set-Content $themePath -Encoding ASCII
+    $settings.lock_taskbar=$true
+    $settings.custom_theme_enabled=$true
+    $settings.active_theme_path=$themePath
+}
+Write-Settings $settings
 $executable = Install-PortableApp
 $null = Start-Process $executable -ArgumentList '--diagnose --no-poll'
 Assert-App $executable 'display-initial'

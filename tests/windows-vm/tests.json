@@ -390,6 +390,47 @@
         "pause-resume",
         "clock-forward"
       ]
+    },
+    {
+      "id": "taskbar-lock",
+      "description": "Real taskbar collision, lock toggles, dragging and restart persistence",
+      "script": "cases/taskbar-lock.ps1",
+      "suites": ["regression"],
+      "operatingSystems": ["windows10", "windows11"],
+      "taskbars": ["baseline", "left", "center"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 900
+    },
+    {
+      "id": "taskbar-collision-baseline",
+      "description": "Reproduce unlocked watchdog auto-ejection with a measured application-button collision",
+      "script": "cases/taskbar-lock.ps1",
+      "suites": ["regression"],
+      "operatingSystems": ["windows10", "windows11"],
+      "taskbars": ["baseline", "left", "center"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 120
+    },
+    {
+      "id": "taskbar-lock-display",
+      "description": "Locked widget through live resolution and DPI transitions",
+      "script": "cases/display-scale-change.ps1",
+      "suites": ["regression"],
+      "operatingSystems": ["windows10", "windows11"],
+      "taskbars": ["baseline"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 900,
+      "hostActions": ["display-modes", "reboot"]
+    },
+    {
+      "id": "taskbar-lock-hosts",
+      "description": "Lock on/off and restart across Taskbar, Tray icon, Desktop and Floating hosts",
+      "script": "cases/taskbar-lock-hosts.ps1",
+      "suites": ["regression"],
+      "operatingSystems": ["windows10", "windows11"],
+      "taskbars": ["baseline"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 900
     }
   ]
 }

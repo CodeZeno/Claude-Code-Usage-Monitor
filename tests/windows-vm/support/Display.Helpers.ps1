@@ -28,7 +28,26 @@ function Set-DisplayChoice([string]$Pattern, [string]$Choice) {
     $items = (Get-DisplaySettingsWindow).FindAll([Windows.Automation.TreeScope]::Descendants, $condition)
     $target = @($items | Where-Object { $_.Current.Name -match $Choice -and -not $_.Current.IsOffscreen })
     Assert-Check 'requested display choice supported' ($target.Count -eq 1) @{choice=$Choice; available=@($items | ForEach-Object { $_.Current.Name })}
-    $target[0].GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    try {
+        $target[0].GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Select()
+    } catch {
+        # Win10 can invalidate the Settings provider while applying a mode.
+        # Accept a stale UIA selection only if the actual requested value landed.
+        $selectionError = $_
+        $applied = Wait-Condition {
+            if ($Pattern -eq 'Resolution') {
+                $size = [CCUMScenarioDesktop]::DisplaySize()
+                return "$($size.Width) x $($size.Height)" -match $Choice
+            }
+            if ($Pattern -match 'Scal|Dpi') {
+                $dpi = [CCUMScenarioDesktop]::GetDpiForWindow([IntPtr](Get-Widget).Handle)
+                return "$([Math]::Round($dpi * 100 / 96))%" -match $Choice
+            }
+            return $false
+        } 10
+        if (-not $applied) { throw $selectionError }
+        Assert-Check 'display choice applied despite refreshed UIA provider' $applied $Choice
+    }
     Start-Sleep -Seconds 2
     # Windows offers a confirmation after resolution changes. Invoke by AutomationId
     # where possible; the English label is a fallback for English lab checkpoints.

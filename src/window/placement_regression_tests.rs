@@ -67,6 +67,99 @@ fn placement(nest: &str) -> PlacementOverride {
 }
 
 #[test]
+fn taskbar_lock_restores_auto_ejection_without_discarding_dock_placement() {
+    let mut saved = placement("taskbar");
+    saved.screen_x = 640;
+    saved.tray_offset = 80;
+    let mut state = state_for(ThemeDocument::starter(), saved.clone());
+    state.auto_ejected = true;
+    state.auto_ejected_origin = Some(POINT { x: 640, y: 900 });
+    state.auto_ejected_host = Some(app_settings::FloatingHost {
+        theme_id: "classic".into(),
+        surface_id: "main".into(),
+        width: 1920,
+        height: 46,
+    });
+    assert!(!clear_locked_auto_ejection(&mut state));
+    assert!(state.auto_ejected);
+    assert!(state.auto_ejected_origin.is_some());
+    assert!(state.auto_ejected_host.is_some());
+
+    state.lock_taskbar = true;
+    assert!(clear_locked_auto_ejection(&mut state));
+    assert!(!state.auto_ejected);
+    assert!(state.auto_ejected_origin.is_none());
+    assert!(state.auto_ejected_host.is_none());
+    assert_eq!(state.placement_override, Some(saved));
+    assert!(!clear_locked_auto_ejection(&mut state));
+}
+
+#[test]
+fn taskbar_lock_follows_configured_host_during_drag_and_auto_ejection() {
+    for nest in [
+        SurfaceNest::Taskbar,
+        SurfaceNest::TrayIcon,
+        SurfaceNest::Desktop,
+        SurfaceNest::Floating,
+    ] {
+        let mut theme = ThemeDocument::starter();
+        theme.surfaces[0].placement.nest = nest;
+        let mut state = state_for(theme, placement("taskbar"));
+        state.placement_override = None;
+        for locked in [false, true] {
+            state.lock_taskbar = locked;
+            // A drag temporarily detaches the HWND; it must retain its host policy.
+            state.dragging = true;
+            state.embedded = false;
+            assert_eq!(
+                taskbar_lock_applies(&state),
+                locked && nest == SurfaceNest::Taskbar
+            );
+            state.dragging = false;
+            state.auto_ejected = true;
+            assert_eq!(
+                taskbar_lock_applies(&state),
+                locked && nest == SurfaceNest::Taskbar
+            );
+        }
+    }
+}
+
+#[test]
+fn taskbar_lock_respects_saved_host_overrides_and_legacy_auto_hosts() {
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].placement.nest = SurfaceNest::Floating;
+    let mut state = state_for(theme, placement("taskbar"));
+    state.lock_taskbar = true;
+    assert!(taskbar_lock_applies(&state));
+    state.active_theme.as_mut().unwrap().surfaces[0]
+        .placement
+        .nest = SurfaceNest::Taskbar;
+    state.placement_override = Some(placement("floating"));
+    assert!(!taskbar_lock_applies(&state));
+    state.placement_override = None;
+    let surface = &mut state.active_theme.as_mut().unwrap().surfaces[0];
+    surface.placement.nest = SurfaceNest::Auto;
+    surface.placement.reference.region = ReferenceRegion::SystemTray;
+    assert!(taskbar_lock_applies(&state));
+    state.active_theme.as_mut().unwrap().surfaces[0]
+        .placement
+        .reference
+        .region = ReferenceRegion::Monitor;
+    assert!(!taskbar_lock_applies(&state));
+}
+
+#[test]
+fn taskbar_lock_leaves_intentional_floating_placement_unchanged() {
+    let saved = placement("floating");
+    let mut state = state_for(ThemeDocument::starter(), saved.clone());
+    state.lock_taskbar = true;
+    assert!(!taskbar_lock_applies(&state));
+    assert!(!clear_locked_auto_ejection(&mut state));
+    assert_eq!(state.placement_override, Some(saved));
+}
+
+#[test]
 fn floating_layout_survives_restart_repeated_drags_and_auto_ejection() {
     let mut theme = ThemeDocument::starter();
     theme.surfaces[0].height = theme_engine::Expression("host.height".into());

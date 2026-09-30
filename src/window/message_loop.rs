@@ -55,9 +55,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 check_language_change();
             }
             refresh_dpi();
-            // A locked widget must never stay floating across monitor/DPI
-            // changes (the watchdog restore check can stay stale for seconds).
-            if lock_state().as_ref().is_some_and(|s| s.lock_taskbar) {
+            // Restore an auto-ejected Taskbar host across monitor/DPI changes.
+            if lock_state().as_ref().is_some_and(taskbar_lock_applies) {
                 redock_locked_widget(hwnd);
             }
             position_at_taskbar();
@@ -526,31 +525,31 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 } else {
                     // Locked widgets cannot be dropped as floating: return them
                     // to the bar so they can only be moved along it.
-                    let locked = lock_state().as_ref().is_some_and(|s| s.lock_taskbar);
+                    let locked = lock_state().as_ref().is_some_and(taskbar_lock_applies);
                     if locked {
-                        {
+                        let taskbar = {
                             let mut state = lock_state();
-                            if let Some(s) = state.as_mut() {
+                            state.as_mut().and_then(|s| {
+                                s.embedded = true;
+                                s.is_switching_window_style = true;
                                 s.is_snapped = false;
                                 s.auto_ejected = false;
                                 s.auto_ejected_origin = None;
                                 s.auto_ejected_host = None;
-                                // Drop any floating placement from the drag; keep
-                                // the previous taskbar placement instead.
-                                if s.placement_override
-                                    .as_ref()
-                                    .is_some_and(|p| p.nest == "floating")
-                                {
-                                    s.placement_override = None;
-                                }
-                            }
-                        }
-                        if let Some(taskbar) = lock_state()
-                            .as_ref()
-                            .and_then(|s| s.taskbar_hwnd.map(|h| h.to_hwnd()))
-                        {
+                                // The drag leaves the configured taskbar host
+                                // and saved dock placement unchanged.
+                                s.taskbar_hwnd.map(|h| h.to_hwnd())
+                            })
+                        };
+                        // SetParent/style changes can synchronously re-enter
+                        // wnd_proc. Release STATE before calling Win32.
+                        if let Some(taskbar) = taskbar {
                             native_interop::embed_as_child(hwnd, taskbar);
                         }
+                        if let Some(s) = lock_state().as_mut() {
+                            s.is_switching_window_style = false;
+                        }
+                        save_state_settings();
                         position_at_taskbar();
                         render_layered();
                         return LRESULT(0);
