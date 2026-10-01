@@ -557,6 +557,36 @@ pub(super) const TEXT_TEMPLATE_VALUES: &[TextTemplateValue] = &[
         kind: TextTemplateValueKind::Text,
     },
     TextTemplateValue {
+        group: "Copilot",
+        label: "Premium requests summary",
+        expression: "copilot.weekly",
+        kind: TextTemplateValueKind::UsageSummary,
+    },
+    TextTemplateValue {
+        group: "Copilot",
+        label: "Premium requests used",
+        expression: "copilot.weekly.percentage",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Copilot",
+        label: "Premium requests remaining",
+        expression: "copilot.weekly.remaining",
+        kind: TextTemplateValueKind::Percentage,
+    },
+    TextTemplateValue {
+        group: "Copilot",
+        label: "Premium requests shown",
+        expression: "copilot.weekly.display",
+        kind: TextTemplateValueKind::DisplayPercentage,
+    },
+    TextTemplateValue {
+        group: "Copilot",
+        label: "Premium requests reset",
+        expression: "copilot.weekly.reset.seconds",
+        kind: TextTemplateValueKind::Duration,
+    },
+    TextTemplateValue {
         group: "Labels",
         label: "Session window label",
         expression: "i18n.session_window",

@@ -60,6 +60,8 @@ pub struct SettingsFile {
     show_cursor: bool,
     #[serde(default)]
     show_grok: bool,
+    #[serde(default)]
+    show_copilot: bool,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
     /// Show what is left of each allowance instead of what has been spent, so
@@ -120,6 +122,7 @@ impl Default for SettingsFile {
             show_opencode: false,
             show_cursor: false,
             show_grok: false,
+            show_copilot: false,
             custom_theme_enabled: true,
             usage_countdown: false,
             active_theme_path: None,
@@ -202,6 +205,7 @@ impl SettingsFile {
             ProviderId::OpenCode => self.show_opencode,
             ProviderId::Cursor => self.show_cursor,
             ProviderId::Grok => self.show_grok,
+            ProviderId::Copilot => self.show_copilot,
         }
     }
 
@@ -213,6 +217,7 @@ impl SettingsFile {
             ProviderId::OpenCode => self.show_opencode = enabled,
             ProviderId::Cursor => self.show_cursor = enabled,
             ProviderId::Grok => self.show_grok = enabled,
+            ProviderId::Copilot => self.show_copilot = enabled,
         }
     }
 
@@ -549,6 +554,7 @@ mod tests {
             ProviderId::OpenCode,
             ProviderId::Cursor,
             ProviderId::Grok,
+            ProviderId::Copilot,
         ]));
 
         let json = settings_json(&settings);
@@ -558,6 +564,7 @@ mod tests {
         assert_eq!(json["show_opencode"], true);
         assert_eq!(json["show_cursor"], true);
         assert_eq!(json["show_grok"], true);
+        assert_eq!(json["show_copilot"], true);
 
         let decoded = decode_settings(&json.to_string()).unwrap();
         assert_eq!(decoded.enabled_providers(), settings.enabled_providers());

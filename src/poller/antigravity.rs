@@ -1,6 +1,5 @@
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::ffi::c_void;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
@@ -8,7 +7,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
 
-use super::{build_agent, parse_iso8601, PollError};
+use super::{build_agent, parse_iso8601, windows_credentials, PollError};
 use crate::diagnose;
 use crate::models::{UsageData, UsageSection};
 
@@ -87,33 +86,6 @@ pub(super) struct AntigravityQuotaSummaryBucket {
     remaining_fraction: Option<f64>,
     #[serde(rename = "resetTime")]
     reset_time: Option<String>,
-}
-
-#[repr(C)]
-struct CredentialW {
-    flags: u32,
-    type_: u32,
-    target_name: *mut u16,
-    comment: *mut u16,
-    last_written: u64,
-    credential_blob_size: u32,
-    credential_blob: *mut u8,
-    persist: u32,
-    attribute_count: u32,
-    attributes: *mut c_void,
-    target_alias: *mut u16,
-    user_name: *mut u16,
-}
-
-#[link(name = "Advapi32")]
-extern "system" {
-    fn CredReadW(
-        target_name: *const u16,
-        type_: u32,
-        reserved_flags: u32,
-        credential: *mut *mut CredentialW,
-    ) -> i32;
-    fn CredFree(buffer: *mut c_void);
 }
 
 pub(super) fn poll_antigravity() -> Result<UsageData, PollError> {
@@ -328,7 +300,7 @@ fn parse_refresh_response(
 }
 
 pub(super) fn antigravity_credential_watch_signature() -> String {
-    let Some(content) = read_windows_generic_credential(ANTIGRAVITY_CREDENTIAL_TARGET) else {
+    let Some(content) = windows_credentials::read_generic(ANTIGRAVITY_CREDENTIAL_TARGET) else {
         return format!("{ANTIGRAVITY_CREDENTIAL_TARGET}|missing");
     };
 
@@ -637,7 +609,7 @@ pub(super) fn is_antigravity_display_model(model: &str) -> bool {
 }
 
 fn read_antigravity_credentials() -> Option<AntigravityTokenData> {
-    let content = read_windows_generic_credential(ANTIGRAVITY_CREDENTIAL_TARGET)?;
+    let content = windows_credentials::read_generic(ANTIGRAVITY_CREDENTIAL_TARGET)?;
     let auth: AntigravityAuthFile = serde_json::from_str(&content).ok()?;
     (!auth.token.access_token.is_empty()
         || auth
@@ -646,35 +618,6 @@ fn read_antigravity_credentials() -> Option<AntigravityTokenData> {
             .as_deref()
             .is_some_and(|value| !value.is_empty()))
     .then_some(auth.token)
-}
-
-fn read_windows_generic_credential(target: &str) -> Option<String> {
-    const CRED_TYPE_GENERIC: u32 = 1;
-
-    let target_wide: Vec<u16> = target.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut credential: *mut CredentialW = std::ptr::null_mut();
-    let ok = unsafe { CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) };
-    if ok == 0 || credential.is_null() {
-        diagnose::log(format!(
-            "unable to read Windows generic credential target {target}"
-        ));
-        return None;
-    }
-
-    unsafe {
-        let credentials = &*credential;
-        if credentials.credential_blob_size == 0 || credentials.credential_blob.is_null() {
-            CredFree(credential as *mut c_void);
-            return None;
-        }
-        let bytes = std::slice::from_raw_parts(
-            credentials.credential_blob,
-            credentials.credential_blob_size as usize,
-        );
-        let text = String::from_utf8(bytes.to_vec()).ok();
-        CredFree(credential as *mut c_void);
-        text
-    }
 }
 
 #[cfg(test)]
