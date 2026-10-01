@@ -240,15 +240,7 @@ pub fn format_pace_fraction(spent: f64, cap: f64) -> String {
 }
 
 fn format_usd(amount: f64) -> String {
-    if amount >= 100.0 {
-        format!("${:.0}", amount.round())
-    } else if amount >= 10.0 {
-        format!("${:.0}", amount)
-    } else if amount >= 1.0 {
-        format!("${:.1}", amount)
-    } else {
-        format!("${:.2}", amount)
-    }
+    format!("${:.0}", amount.round())
 }
 
 fn spend_close(a: f64, b: f64) -> bool {
@@ -396,6 +388,10 @@ mod tests {
 
     #[test]
     fn format_pace_fraction_rounds_dollars() {
+        assert_eq!(format_pace_fraction(0.0, 2000.0), "$0/$2000");
+        assert_eq!(format_pace_fraction(0.4, 65.2), "$0/$65");
+        assert_eq!(format_pace_fraction(1.4, 452.0), "$1/$452");
+        assert_eq!(format_pace_fraction(9.6, 65.0), "$10/$65");
         assert_eq!(format_pace_fraction(57.2, 400.0), "$57/$400");
         assert_eq!(format_pace_fraction(13.4, 13.3), "$13/$13");
     }
