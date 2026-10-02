@@ -23,6 +23,7 @@ public static class CCUMScenarioDesktop {
     [DllImport("user32.dll")] static extern bool IsWindow(IntPtr h);
     [DllImport("user32.dll")] static extern IntPtr GetDlgItem(IntPtr h, int id);
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
+    [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr h);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out Rect r);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);
@@ -47,6 +48,16 @@ public static class CCUMScenarioDesktop {
     public static bool Responding(long h) { IntPtr result; return SendMessageTimeout(new IntPtr(h),0,IntPtr.Zero,IntPtr.Zero,2,1000,out result)!=IntPtr.Zero; }
     public static void UsePhysicalPixels() { if(SetThreadDpiAwarenessContext(new IntPtr(-4))==IntPtr.Zero) throw new Exception("Cannot enable per-monitor DPI awareness for the test thread"); }
     public static Size DisplaySize() { return new Size(GetSystemMetrics(0),GetSystemMetrics(1)); }
+    public static void CloseWindow(int processId, string expectedTitle) {
+        EnumWindows(delegate(IntPtr h, IntPtr p) {
+            uint owner; GetWindowThreadProcessId(h, out owner);
+            if (owner != processId) return true;
+            var title = new StringBuilder(256); GetWindowText(h, title, title.Capacity);
+            if (title.ToString() != expectedTitle) return true;
+            if (!PostMessage(h, 0x10, IntPtr.Zero, IntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Cannot close fixture window");
+            return false;
+        }, IntPtr.Zero);
+    }
     public static string ReadUpdateError(int processId) {
         var text=new StringBuilder();
         EnumWindows(delegate(IntPtr h,IntPtr p) {
@@ -130,6 +141,21 @@ public static class CCUMScenarioDesktop {
         },IntPtr.Zero);
         return found;
     }
+    public class HostWindow { public long Handle, Parent; public string Class; public bool Visible; public Rect Bounds; }
+    public static HostWindow[] HostWindows(int pid) {
+        var result = new List<HostWindow>(); var seen = new HashSet<IntPtr>();
+        EnumProc collect = delegate(IntPtr h, IntPtr unused) {
+            uint owner; GetWindowThreadProcessId(h, out owner);
+            if (owner != pid || !seen.Add(h)) return true;
+            var name = new StringBuilder(256); GetClassName(h, name, name.Capacity);
+            if (name.ToString() != "ClaudeCodeUsageMonitor" && name.ToString() != "CCUMDesktopSurface") return true;
+            Rect bounds;
+            if (GetWindowRect(h, out bounds)) result.Add(new HostWindow { Handle=h.ToInt64(), Parent=GetParent(h).ToInt64(), Class=name.ToString(), Visible=IsWindowVisible(h), Bounds=bounds });
+            return true;
+        };
+        EnumWindows(delegate(IntPtr h, IntPtr unused) { collect(h, unused); EnumChildWindows(h, collect, unused); return true; }, IntPtr.Zero);
+        return result.ToArray();
+    }
     public static Rect Taskbar() { Rect r; if (!GetWindowRect(FindWindow("Shell_TrayWnd",null),out r)) throw new Exception("No taskbar"); return r; }
     public static IntPtr TaskbarHandle() { return FindWindow("Shell_TrayWnd",null); }
     public static bool IsTaskbarChild(long h) { return IsChild(FindWindow("Shell_TrayWnd",null),new IntPtr(h)); }
@@ -146,6 +172,13 @@ public static class CCUMScenarioDesktop {
         System.Threading.Thread.Sleep(100);
         if(!SetCursorPos(x,y)) throw new Exception("Cannot move pointer to tray icon");
         mouse_event(1,1,0,0,UIntPtr.Zero);
+    }
+    public static void RightClick(long h) {
+        Rect r;
+        if (!GetWindowRect(new IntPtr(h), out r)) throw new Exception("Right-click target unavailable");
+        HoverPoint((r.Left+r.Right)/2, (r.Top+r.Bottom)/2);
+        mouse_event(8,0,0,0,UIntPtr.Zero);
+        mouse_event(16,0,0,0,UIntPtr.Zero);
     }
     public static Rect TrayBounds(long h, uint iconId) {
         Rect r; var id=new IconId { Window=new IntPtr(h), Id=iconId }; id.Size=(uint)Marshal.SizeOf(id);

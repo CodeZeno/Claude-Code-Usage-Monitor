@@ -76,6 +76,10 @@ pub struct SettingsFile {
     pub dashboard_height: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub floating_card_opacity: Option<u8>,
+    /// Prevent auto-ejection and outside drops for widgets configured with a
+    /// taskbar host. Intentional floating, desktop and tray hosts are unaffected.
+    #[serde(default)]
+    pub lock_taskbar: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement_override: Option<PlacementOverride>,
 }
@@ -129,6 +133,7 @@ impl Default for SettingsFile {
             dashboard_width: None,
             dashboard_height: None,
             floating_card_opacity: None,
+            lock_taskbar: false,
             placement_override: None,
         }
     }
@@ -438,6 +443,19 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn taskbar_lock_is_opt_in_and_survives_settings_round_trip() {
+        assert!(!decode_settings("{}").unwrap().lock_taskbar);
+        for lock_taskbar in [false, true] {
+            let settings = SettingsFile {
+                lock_taskbar,
+                ..Default::default()
+            };
+            let decoded = decode_settings(&settings_json(&settings).to_string()).unwrap();
+            assert_eq!(decoded.lock_taskbar, lock_taskbar);
+        }
+    }
 
     #[test]
     fn application_files_stay_inside_the_test_directory() {

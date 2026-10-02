@@ -223,6 +223,13 @@ const MENU_ACTIONS: &[ActionSpec] = &[
         "toggle_startup",
     ),
     (
+        "toggle_taskbar_lock",
+        APP,
+        "Lock in taskbar",
+        "toggle_taskbar_lock()",
+        "toggle_taskbar_lock",
+    ),
+    (
         "check_for_updates",
         APP,
         "Check for updates",
@@ -1362,6 +1369,7 @@ fn menu_action_details(
         "refresh" => ContextMenuAction::Refresh,
         "toggle_widget" => ContextMenuAction::ToggleWidget,
         "toggle_startup" => ContextMenuAction::ToggleStartup,
+        "toggle_taskbar_lock" => ContextMenuAction::ToggleTaskbarLock,
         "check_for_updates" => ContextMenuAction::CheckForUpdates,
         "exit" => ContextMenuAction::Exit,
         "set_update_frequency" => {

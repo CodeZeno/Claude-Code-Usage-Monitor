@@ -1,4 +1,4 @@
-﻿code = "es"
+code = "es"
 native_name = "Español"
 locale_patterns = ["es"]
 order = 2
@@ -454,3 +454,6 @@ copilot_window_title = "Monitor de uso de Copilot"
 "X" = "X"
 "Y offset" = "Desplazamiento Y"
 "Y" = "Y"
+"Lock in taskbar" = "Fijar en la barra"
+"Keep the widget docked; never float automatically" = "Mantener el widget acoplado; no flotar automáticamente"
+"Locked" = "Fijado"

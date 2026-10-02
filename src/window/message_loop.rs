@@ -55,6 +55,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 check_language_change();
             }
             refresh_dpi();
+            // Restore an auto-ejected Taskbar host across monitor/DPI changes.
+            if lock_state().as_ref().is_some_and(taskbar_lock_applies) {
+                redock_locked_widget(hwnd);
+            }
             position_at_taskbar();
             render_layered();
             sync_tray_icon(hwnd);
@@ -519,6 +523,37 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                 } else {
+                    // Locked widgets cannot be dropped as floating: return them
+                    // to the bar so they can only be moved along it.
+                    let locked = lock_state().as_ref().is_some_and(taskbar_lock_applies);
+                    if locked {
+                        let taskbar = {
+                            let mut state = lock_state();
+                            state.as_mut().and_then(|s| {
+                                s.embedded = true;
+                                s.is_switching_window_style = true;
+                                s.is_snapped = false;
+                                s.auto_ejected = false;
+                                s.auto_ejected_origin = None;
+                                s.auto_ejected_host = None;
+                                // The drag leaves the configured taskbar host
+                                // and saved dock placement unchanged.
+                                s.taskbar_hwnd.map(|h| h.to_hwnd())
+                            })
+                        };
+                        // SetParent/style changes can synchronously re-enter
+                        // wnd_proc. Release STATE before calling Win32.
+                        if let Some(taskbar) = taskbar {
+                            native_interop::embed_as_child(hwnd, taskbar);
+                        }
+                        if let Some(s) = lock_state().as_mut() {
+                            s.is_switching_window_style = false;
+                        }
+                        save_state_settings();
+                        position_at_taskbar();
+                        render_layered();
+                        return LRESULT(0);
+                    }
                     let displays = native_interop::find_monitors();
                     let (monitor_idx, display) = positioning::monitor_for_point(&displays, pt);
                     let floating_frame = lock_state().as_ref().and_then(|s| {
@@ -719,6 +754,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
+                }
+                IDM_LOCK_TASKBAR => {
+                    toggle_taskbar_lock(hwnd);
                 }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {

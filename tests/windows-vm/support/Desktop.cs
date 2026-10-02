@@ -14,6 +14,7 @@ public static class CCUMLabDesktop {
     [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] static extern IntPtr GetParent(IntPtr hwnd);
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint dx, uint dy, uint data, UIntPtr extra);
     [DllImport("user32.dll")] static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr w, IntPtr l, uint flags, uint timeout, out IntPtr result);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string cls, string title);
     public static WindowInfo Tray() {
@@ -29,6 +30,21 @@ public static class CCUMLabDesktop {
         SetCursorPos(x + dx, Tray().Bottom - (window.Bottom - window.Top) / 2);
         if (SendMessageTimeout(h, 0x200, new IntPtr(1), IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero) throw new Exception("Drag move timed out");
         if (SendMessageTimeout(h, 0x202, IntPtr.Zero, IntPtr.Zero, 2, 3000, out result) == IntPtr.Zero) throw new Exception("Drag release timed out");
+        SetCursorPos(10, 10);
+    }
+    public static void PhysicalDragTo(WindowInfo window, int x, int y) {
+        int startX = window.Left + 15, startY = (window.Top + window.Bottom) / 2;
+        SetCursorPos(startX, startY);
+        mouse_event(2, 0, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(150);
+        SetCursorPos((startX + x) / 2, (startY + y) / 2);
+        mouse_event(1, 1, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(100);
+        SetCursorPos(x, y);
+        mouse_event(1, 1, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(100);
+        mouse_event(4, 0, 0, 0, UIntPtr.Zero);
+        System.Threading.Thread.Sleep(250);
         SetCursorPos(10, 10);
     }
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr hwnd, StringBuilder name, int count);

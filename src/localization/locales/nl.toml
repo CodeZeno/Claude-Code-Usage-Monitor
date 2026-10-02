@@ -1,4 +1,4 @@
-﻿code = "nl"
+code = "nl"
 native_name = "Nederlands"
 locale_patterns = ["nl"]
 order = 1
@@ -454,3 +454,6 @@ copilot_window_title = "Copilot-gebruiksmonitor"
 "X" = "X"
 "Y offset" = "Y-verschuiving"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

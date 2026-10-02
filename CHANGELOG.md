@@ -4,6 +4,20 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.16.0] - 2026-09-30
+
+### Added
+
+- Add an optional, persistent **Lock in taskbar** setting to Dashboard Settings and the Classic tray menu, with Theme Studio menu-action support and locale labels. Keep locked widgets docked through taskbar collisions, allow dragging along the bar, and snap outside drops back to their saved dock placement. ([#150](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/150))
+- Add Windows VM scenarios that reproduce watchdog ejection using a measured one-pixel overlap with an actual application task button, then check lock toggles, outside drops, dragging, restart persistence, and live resolution/DPI changes.
+
+### Fixed
+
+- Re-dock an auto-ejected widget immediately when enabling the taskbar lock from the tray menu. Preserve the ejection state until the re-docking helper consumes it and release the application state lock before Win32 re-parenting.
+- Apply the lock only to the configured Taskbar host, preserving intentional Floating, Desktop, and Tray icon placement. Keep newer menu lock selections when an open dashboard saves unrelated settings, while preserving deliberate dashboard toggles.
+- Run the VM collision fixture in its own process with a continuous message loop and bounded teardown. Handle monitor processes that exit during cleanup.
+- Validate the actual display mode when Windows refreshes its Settings automation provider during a resolution or DPI selection.
+
 ## [2.15.22] - 2026-09-29
 
 ### Fixed
@@ -1260,3 +1274,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.20]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.19...v2.15.20
 [2.15.21]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.20...v2.15.21
 [2.15.22]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.21...v2.15.22
+[2.16.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.22...v2.16.0

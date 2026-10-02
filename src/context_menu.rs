@@ -65,6 +65,7 @@ pub enum ContextMenuAction {
         provider: ContextMenuProvider,
     },
     ToggleStartup,
+    ToggleTaskbarLock,
     ToggleWidget,
     /// Accepted only so menus saved by older versions can be loaded and
     /// cleaned up. New menus cannot create or execute this legacy action.
@@ -320,6 +321,7 @@ pub fn rendered_label(
         "Every hour" => language.text("Every hour"),
         "Providers" => language.text("Providers"),
         "Check for updates" => language.text("Check for updates"),
+        "Lock in taskbar" => language.text("Lock in taskbar"),
         "Show widget" => language.text("Show widget"),
         _ => label,
     };
@@ -449,6 +451,7 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 "Start with Windows",
                 Action::ToggleStartup,
             ),
+            ContextMenuItem::action("lock-taskbar", "Lock in taskbar", Action::ToggleTaskbarLock),
             ContextMenuItem::submenu("language", "Language", languages),
             ContextMenuItem::separator("settings-separator"),
             ContextMenuItem::action(

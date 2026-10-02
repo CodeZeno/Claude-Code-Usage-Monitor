@@ -1,4 +1,4 @@
-﻿code = "ko"
+code = "ko"
 native_name = "한국어"
 locale_patterns = ["ko"]
 order = 6
@@ -456,3 +456,6 @@ copilot_window_title = "Copilot 사용량 모니터"
 "X" = "X"
 "Y offset" = "Y 오프셋"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

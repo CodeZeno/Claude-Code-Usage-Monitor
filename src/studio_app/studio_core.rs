@@ -117,6 +117,7 @@ impl StudioApp {
             diagnostics: studio_diagnostics::DiagnosticsView::new(),
             page: initial_page,
             synced_poll_interval_ms: settings.poll_interval_ms,
+            synced_taskbar_lock: settings.lock_taskbar,
             poll_interval_editor_generation: 0,
             settings,
             startup_enabled: crate::window::is_startup_enabled(),
@@ -210,11 +211,22 @@ impl StudioApp {
         self.synced_poll_interval_ms = persisted_interval;
     }
 
+    pub(super) fn sync_taskbar_lock(&mut self, persisted_lock: bool) {
+        // Preserve a local toggle; unrelated edits adopt the latest menu value.
+        if self.settings.lock_taskbar == self.synced_taskbar_lock {
+            self.settings.lock_taskbar = persisted_lock;
+        }
+        self.synced_taskbar_lock = persisted_lock;
+    }
+
     pub(super) fn save_settings(&mut self) {
-        self.sync_poll_interval(app_settings::load_settings().poll_interval_ms);
+        let persisted = app_settings::load_settings();
+        self.sync_poll_interval(persisted.poll_interval_ms);
+        self.sync_taskbar_lock(persisted.lock_taskbar);
         match app_settings::save_settings(&self.settings) {
             Ok(()) => {
                 self.synced_poll_interval_ms = self.settings.poll_interval_ms;
+                self.synced_taskbar_lock = self.settings.lock_taskbar;
                 self.settings_error = None;
                 self.notify_owner();
             }
@@ -814,7 +826,9 @@ impl StudioApp {
         let now = Instant::now();
         self.last_cache_read = now;
         self.update_status = crate::dashboard::read_update_status(self.owner);
-        self.sync_poll_interval(app_settings::load_settings().poll_interval_ms);
+        let persisted = app_settings::load_settings();
+        self.sync_poll_interval(persisted.poll_interval_ms);
+        self.sync_taskbar_lock(persisted.lock_taskbar);
         let usage_changed =
             app_settings::load_usage_cache().is_some_and(|cache| self.update_usage_cache(cache));
         let countdown_due = self

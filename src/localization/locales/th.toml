@@ -1,4 +1,4 @@
-﻿code = "th"
+code = "th"
 native_name = "ไทย"
 locale_patterns = ["th"]
 order = 13
@@ -456,3 +456,6 @@ copilot_window_title = "ตัวติดตามการใช้งาน C
 "X" = "X"
 "Y offset" = "ระยะเยื้อง Y"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"

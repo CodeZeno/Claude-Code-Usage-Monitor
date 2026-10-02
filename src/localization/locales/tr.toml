@@ -1,4 +1,4 @@
-﻿code = "tr"
+code = "tr"
 native_name = "Türkçe"
 locale_patterns = ["tr"]
 order = 11
@@ -454,3 +454,6 @@ copilot_window_title = "Copilot Kullanım İzleyicisi"
 "X" = "X"
 "Y offset" = "Y uzaklığı"
 "Y" = "Y"
+"Lock in taskbar" = "Lock in taskbar"
+"Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
+"Locked" = "Locked"
