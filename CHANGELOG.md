@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.17.0] - 2026-10-02
+
+### Added
+
+- Add GitHub Copilot usage monitoring with automatic Copilot CLI and GitHub CLI login detection, environment-token overrides, monthly premium-request usage, and optional metered chat and completion theme bindings. Include provider settings, localized authentication guidance, a brand mark, and pink gauges in both built-in themes. ([#151](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/151))
+
+### Fixed
+
+- Show Copilot loading badges in both built-in themes and honor countdown mode in Compact Fluent Quad tray percentages, keeping usage warning colors based on the amount spent. Cover both built-in Copilot tray badges at digit boundaries in either usage direction.
+
 ## [2.16.0] - 2026-09-30
 
 ### Added
@@ -1275,3 +1285,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.15.21]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.20...v2.15.21
 [2.15.22]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.21...v2.15.22
 [2.16.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.22...v2.16.0
+[2.17.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.16.0...v2.17.0
