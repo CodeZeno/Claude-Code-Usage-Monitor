@@ -2731,6 +2731,96 @@ fn display_summaries_preserve_status_reset_formatting_and_legacy_tokens() {
 }
 
 #[test]
+fn copilot_tray_badges_follow_usage_direction_and_keep_warning_thresholds() {
+    use crate::models::{UsageData, UsageSection};
+
+    for theme in [
+        ThemeDocument::starter(),
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap(),
+    ] {
+        assert!(theme.validate().is_empty());
+        let surface = theme
+            .surfaces
+            .iter()
+            .find(|surface| surface.id == "copilot-tray-icon")
+            .unwrap();
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Copilot]));
+        let loading = DataContext::from_usage_with_runtime(None, &Canvas::default(), runtime);
+        let placeholder = surface
+            .children
+            .iter()
+            .find(|object| object.id == "copilot-tray-placeholder")
+            .unwrap();
+        assert_ne!(evaluate(&placeholder.render.0, &loading).unwrap(), 0.0);
+        let SceneContent::Text { template, .. } = &placeholder.content else {
+            panic!("Copilot placeholder must contain text");
+        };
+        assert_eq!(format_template(template, &loading), "Cp");
+
+        for spent in [
+            0.0, 5.0, 9.49, 9.5, 42.0, 90.0, 90.5, 95.0, 99.49, 99.5, 100.0,
+        ] {
+            for countdown in [false, true] {
+                let usage = AppUsageData::from_iter([(
+                    ProviderId::Copilot,
+                    UsageData {
+                        weekly: UsageSection {
+                            available: true,
+                            percentage: spent,
+                            resets_at: None,
+                        },
+                        ..Default::default()
+                    },
+                )]);
+                let context = DataContext::from_usage_with_runtime(
+                    Some(&usage),
+                    &Canvas::default(),
+                    runtime.with_countdown(countdown),
+                );
+                let badges: Vec<_> = surface
+                    .children
+                    .iter()
+                    .filter(|object| {
+                        object.id.contains("digit")
+                            && evaluate(&object.render.0, &context).unwrap() != 0.0
+                    })
+                    .collect();
+                assert_eq!(
+                    badges.len(),
+                    1,
+                    "{}: {spent}, countdown={countdown}",
+                    theme.id
+                );
+                let badge = badges[0];
+                assert_eq!(badge.id.contains("high"), spent >= 90.0);
+                let displayed = if countdown { 100.0 - spent } else { spent };
+                let SceneContent::Text {
+                    template,
+                    font_size,
+                    ..
+                } = &badge.content
+                else {
+                    panic!("Copilot badge must contain text");
+                };
+                assert_eq!(
+                    format_template(template, &context),
+                    format!("{displayed:.0}")
+                );
+                let expected_size = if displayed < 9.5 {
+                    50.0
+                } else if displayed < 99.5 {
+                    42.0
+                } else {
+                    30.0
+                };
+                assert_eq!(evaluate(&font_size.0, &context).unwrap(), expected_size);
+            }
+        }
+    }
+}
+
+#[test]
 fn the_classic_theme_shows_one_badge_digit_group_in_both_usage_directions() {
     use crate::models::{UsageData, UsageSection};
 

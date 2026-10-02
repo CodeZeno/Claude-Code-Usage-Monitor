@@ -2911,7 +2911,7 @@
           "height": "64",
           "content": {
             "type": "text",
-            "template": "Gr",
+            "template": "Cp",
             "font_family": "Arial Bold",
             "font_size": "34",
             "weight": "bold",
