@@ -748,6 +748,11 @@ mod tests {
         );
 
         assert_eq!(data.weekly.percentage, 24.0);
+        assert!(!data.session.available);
+        assert_eq!(
+            data.weekly.resets_at,
+            Some(UNIX_EPOCH + Duration::from_secs(1793491201))
+        );
         assert_eq!(data.weekly_label.as_deref(), Some("30d"));
         assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
     }
@@ -794,5 +799,72 @@ mod tests {
 
         assert_eq!(data.weekly.percentage, 42.0);
         assert_eq!(data.monthly, None);
+    }
+
+    #[test]
+    fn missing_or_null_individual_limits_do_not_fabricate_usage() {
+        for json in [
+            r#"{}"#,
+            r#"{"rate_limit":null,"spend_control":null}"#,
+            r#"{"spend_control":{}}"#,
+            r#"{"spend_control":{"individual_limit":null}}"#,
+            r#"{"spend_control":{"individual_limit":{}}}"#,
+            r#"{"spend_control":{"individual_limit":{"used_percent":null,"reset_at":1793491201}}}"#,
+            r#"{"spend_control":{"individual_limit":{"reset_at":1793491201}}}"#,
+        ] {
+            let response = serde_json::from_str(json).expect("fixture should deserialize");
+            assert!(
+                codex_usage_from_response(response, None).is_none(),
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_monthly_fallback_keeps_the_legacy_session_window() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 42,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1787100000
+                    },
+                    "secondary_window": null
+                },
+                "spend_control": {
+                    "individual_limit": {"used_percent": 24, "reset_at": 1793491201}
+                }
+            }"#,
+        );
+
+        assert!(data.session.available);
+        assert_eq!(data.session.percentage, 42.0);
+        assert_eq!(
+            data.session.resets_at,
+            Some(UNIX_EPOCH + Duration::from_secs(1787100000))
+        );
+        assert_eq!(data.weekly.percentage, 24.0);
+        assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+        assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
+    }
+
+    #[test]
+    fn an_idle_individual_limit_is_available_without_a_reset_time() {
+        for limit in [
+            r#"{"used_percent":0}"#,
+            r#"{"used_percent":0,"reset_at":null}"#,
+            r#"{"used_percent":0,"reset_at":-1}"#,
+        ] {
+            let data = usage_from_json(&format!(
+                r#"{{"spend_control":{{"individual_limit":{limit}}}}}"#
+            ));
+
+            assert!(data.weekly.available);
+            assert_eq!(data.weekly.percentage, 0.0);
+            assert!(data.weekly.resets_at.is_none());
+            assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+            assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
+        }
     }
 }
