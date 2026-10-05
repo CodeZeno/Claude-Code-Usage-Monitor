@@ -36,6 +36,7 @@ public static class CCUMScenarioDesktop {
     [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("user32.dll")] static extern int GetMenuItemCount(IntPtr menu);
+    [DllImport("user32.dll")] static extern uint GetMenuState(IntPtr menu, uint item, uint flags);
     [DllImport("user32.dll")] static extern IntPtr GetSubMenu(IntPtr menu, int item);
     [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetMenuString(IntPtr menu, uint item, StringBuilder s, int size, uint flags);
     [DllImport("user32.dll")] static extern bool GetMenuItemRect(IntPtr window, IntPtr menu, uint item, out Rect rect);
@@ -176,7 +177,10 @@ public static class CCUMScenarioDesktop {
     public static void RightClick(long h) {
         Rect r;
         if (!GetWindowRect(new IntPtr(h), out r)) throw new Exception("Right-click target unavailable");
-        HoverPoint((r.Left+r.Right)/2, (r.Top+r.Bottom)/2);
+        RightClickPoint((r.Left+r.Right)/2, (r.Top+r.Bottom)/2);
+    }
+    public static void RightClickPoint(int x, int y) {
+        HoverPoint(x,y);
         mouse_event(8,0,0,0,UIntPtr.Zero);
         mouse_event(16,0,0,0,UIntPtr.Zero);
     }
@@ -200,6 +204,16 @@ public static class CCUMScenarioDesktop {
     }
     public static void DismissShellFlyout() { SetCursorPos(10,10); mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero); }
     public static bool MenuVisible() { return FindWindow("#32768",null)!=IntPtr.Zero; }
+    public static bool MenuItemChecked(string label) {
+        IntPtr popup=FindWindow("#32768",null), menu;
+        if (SendMessageTimeout(popup,0x1e1,IntPtr.Zero,IntPtr.Zero,2,3000,out menu)==IntPtr.Zero) throw new Exception("Menu query timed out");
+        var path=new List<uint>();
+        if (!FindMenuPath(menu,label,path)) throw new Exception("Menu item not found: "+label);
+        for(int depth=0;depth<path.Count-1;depth++) menu=GetSubMenu(menu,(int)path[depth]);
+        uint state=GetMenuState(menu,path[path.Count-1],0x400);
+        if(state==0xffffffff) throw new Exception("Menu state unavailable");
+        return (state&8)!=0;
+    }
     public static void ChooseMenuItem(string label) {
         IntPtr popup=FindWindow("#32768",null), menu;
         if (SendMessageTimeout(popup,0x1e1,IntPtr.Zero,IntPtr.Zero,2,3000,out menu)==IntPtr.Zero) throw new Exception("Menu query timed out");

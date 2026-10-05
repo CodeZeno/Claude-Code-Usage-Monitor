@@ -117,6 +117,7 @@ struct AppState {
     drag_start_origin: POINT,
     drag_start_client_x: i32,
     auto_ejected: bool,
+    auto_ejected_for_capacity: bool,
     auto_ejected_origin: Option<POINT>,
     auto_ejected_host: Option<app_settings::FloatingHost>,
     /// When true, never auto-eject to floating on taskbar collisions.
@@ -538,10 +539,14 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
     }
     let taskbar = state.taskbar_hwnd?.to_hwnd();
     let bounds = native_interop::get_taskbar_rect(taskbar)?;
-    let occupancy = taskbar_collision::cached(taskbar, bounds)?;
     if state.auto_ejected {
+        let occupancy = taskbar_collision::cached(taskbar, bounds)?;
         let target = restored_dock_rect(state, taskbar, bounds)?;
-        let margin = (20.0 * CURRENT_DPI.load(Ordering::Relaxed) as f64 / 96.0).round() as i32;
+        let margin = if state.auto_ejected_for_capacity {
+            0
+        } else {
+            (20.0 * CURRENT_DPI.load(Ordering::Relaxed) as f64 / 96.0).round() as i32
+        };
         occupancy.can_restore(target, margin).then_some(0)
     } else if state.embedded
         && state
@@ -549,13 +554,16 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
             .as_ref()
             .is_none_or(|p| p.nest != "floating")
     {
-        // Locked widgets stay docked even when app buttons overlap them.
-        // The user can still drag them along the bar manually.
-        if taskbar_lock_applies(state) {
-            return None;
-        }
         let widget = native_interop::get_window_rect_safe(state.hwnd.to_hwnd())?;
-        occupancy.overlaps_app_controls(widget).then_some(1)
+        let locked = taskbar_lock_applies(state);
+        // Visibility fallback needs only native geometry; an unavailable or
+        // stale accessibility sample must not leave the widget clipped.
+        let overlaps_apps = if positioning::taskbar_surface_is_clipped(bounds, widget) || locked {
+            false
+        } else {
+            taskbar_collision::cached(taskbar, bounds)?.overlaps_app_controls(widget)
+        };
+        positioning::taskbar_ejection_required(bounds, widget, overlaps_apps, locked).then_some(1)
     } else {
         None
     }
@@ -1545,6 +1553,49 @@ fn floating_frame_for_state(
     ))
 }
 
+fn clear_auto_ejection(state: &mut AppState) {
+    state.auto_ejected = false;
+    state.auto_ejected_for_capacity = false;
+    state.auto_ejected_origin = None;
+    state.auto_ejected_host = None;
+}
+
+fn replace_active_theme(state: &mut AppState, loaded: ThemeDocument, path: Option<PathBuf>) {
+    // A fallback belongs to the configured root that was ejected. Preserve it
+    // during ordinary refreshes, but never carry it into a new theme or host.
+    let changed = state.active_theme.as_ref().is_none_or(|current| {
+        current.id != loaded.id
+            || current.surfaces.first().map(|s| (&s.id, &s.placement))
+                != loaded.surfaces.first().map(|s| (&s.id, &s.placement))
+    }) || path
+        .as_ref()
+        .is_some_and(|p| state.active_theme_path.as_ref() != Some(p));
+    if changed {
+        clear_auto_ejection(state);
+    }
+    state.active_theme = Some(loaded);
+    if path.is_some() {
+        state.active_theme_path = path;
+    }
+}
+
+fn update_configured_placement(
+    state: &mut AppState,
+    placement: Option<PlacementOverride>,
+    taskbar_index: usize,
+    tray_offset: i32,
+) {
+    if state.placement_override != placement
+        || state.taskbar_index != taskbar_index
+        || state.tray_offset != tray_offset
+    {
+        clear_auto_ejection(state);
+    }
+    state.placement_override = placement;
+    state.taskbar_index = taskbar_index;
+    state.tray_offset = tray_offset;
+}
+
 fn apply_custom_theme(
     hwnd: HWND,
     _enabled: bool,
@@ -1567,16 +1618,13 @@ fn apply_custom_theme(
             return Err("Application is not ready".into());
         };
         state.custom_theme_enabled = true;
-        state.active_theme = Some(loaded);
+        replace_active_theme(state, loaded, path);
         state.theme_clock_interval = theme_clock_interval;
         state.tray_theme_uses_current_time = tray_theme_uses_current_time;
         state.mouse_action_overrides.clear();
         state.hovered_mouse_layer = None;
         state.pending_mouse_click = None;
         state.suppress_next_left_up = false;
-        if path.is_some() {
-            state.active_theme_path = path;
-        }
         state.embedded = false;
         state.win_event_hook.take()
     };
@@ -2135,6 +2183,7 @@ pub fn run() {
                 drag_start_origin: POINT::default(),
                 drag_start_client_x: 0,
                 auto_ejected: false,
+                auto_ejected_for_capacity: false,
                 auto_ejected_origin: None,
                 auto_ejected_host: None,
                 lock_taskbar: settings.lock_taskbar,
@@ -2844,9 +2893,12 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
-        state.taskbar_index = settings.taskbar_index;
-        state.tray_offset = settings.tray_offset;
-        state.placement_override = settings.placement_override;
+        update_configured_placement(
+            state,
+            settings.placement_override,
+            settings.taskbar_index,
+            settings.tray_offset,
+        );
         state.floating_card_opacity = settings.floating_card_opacity;
         state.lock_taskbar = settings.lock_taskbar;
         lock_enabled = state.lock_taskbar;
@@ -2895,9 +2947,7 @@ fn clear_locked_auto_ejection(state: &mut AppState) -> bool {
     if !taskbar_lock_applies(state) || !state.auto_ejected {
         return false;
     }
-    state.auto_ejected = false;
-    state.auto_ejected_origin = None;
-    state.auto_ejected_host = None;
+    clear_auto_ejection(state);
     true
 }
 
@@ -2909,6 +2959,19 @@ fn redock_locked_widget(hwnd: HWND) {
         let Some(state) = state.as_mut() else {
             return;
         };
+        // Locking suppresses collisions with app buttons, but must not restore
+        // an incompatible layout into a parent that would clip the widget.
+        if let Some(taskbar) = state.taskbar_hwnd.map(SendHwnd::to_hwnd) {
+            let Some(bounds) = native_interop::get_taskbar_rect(taskbar) else {
+                return;
+            };
+            let Some(target) = restored_dock_rect(state, taskbar, bounds) else {
+                return;
+            };
+            if positioning::taskbar_surface_is_clipped(bounds, target) {
+                return;
+            }
+        }
         if !clear_locked_auto_ejection(state) {
             return;
         }

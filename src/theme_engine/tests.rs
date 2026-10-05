@@ -1789,9 +1789,10 @@ fn starter_tray_icons_follow_enabled_providers() {
 
 #[test]
 fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
-    assert_eq!(BUILTIN_THEME_SOURCES.len(), 2);
+    assert_eq!(BUILTIN_THEME_SOURCES.len(), 3);
     assert_eq!(BUILTIN_THEME_SOURCES[0].0, CLASSIC_THEME_ID);
     assert_eq!(BUILTIN_THEME_SOURCES[1].0, COMPACT_FLUENT_QUAD_THEME_ID);
+    assert_eq!(BUILTIN_THEME_SOURCES[2].0, CLASSIC_VERTICAL_THEME_ID);
     assert!(REMOVED_BUILTIN_THEME_IDS
         .iter()
         .all(|id| !is_builtin_theme_id(id)));
@@ -1829,6 +1830,144 @@ fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
     duplicate.id = "classic-copy".into();
     assert!(!duplicate.is_builtin());
     assert!(!duplicate.is_builtin_classic());
+}
+
+#[test]
+fn classic_vertical_stacks_enabled_providers_and_preserves_tray_roots() {
+    let mut theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/classic-vertical.json")).unwrap();
+    theme.prepare_runtime();
+    let classic = ThemeDocument::starter();
+    assert_eq!(theme.surfaces.len(), classic.surfaces.len());
+    for (vertical, original) in theme.surfaces.iter().zip(&classic.surfaces).skip(1) {
+        assert_eq!(
+            serde_json::to_value(vertical).unwrap(),
+            serde_json::to_value(original).unwrap()
+        );
+    }
+    for providers in [
+        ProviderSet::from_enabled([ProviderId::Codex]),
+        ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Copilot]),
+        ProviderSet::from_enabled(ProviderId::ALL),
+    ] {
+        for host_width in [46, 62, 100] {
+            let runtime =
+                ThemeRuntime::from_providers(providers).with_host_dimensions(host_width, 1440);
+            let width = (host_width - 2).min(62);
+            let provider_height = |provider| match provider {
+                ProviderId::Grok | ProviderId::Copilot => 42,
+                _ => 64,
+            };
+            let height = providers.iter().map(provider_height).sum();
+            assert_eq!(
+                resolve_surface_size(&theme, 0, None, runtime),
+                (width, height)
+            );
+            let rendered = render_theme_surface_with_runtime(&theme, 0, None, runtime);
+            assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+            assert!(rendered.pixels.iter().any(|pixel| pixel >> 24 > 0));
+            let mut y = 0;
+            for provider in providers.iter() {
+                let id = format!("{}-provider", provider.descriptor().key);
+                let index = theme.surfaces[0]
+                    .children
+                    .iter()
+                    .position(|layer| layer.id == id)
+                    .unwrap();
+                assert_eq!(
+                    resolve_object_bounds_with_runtime(&theme, 0, index, None, runtime),
+                    Some((
+                        0.0,
+                        y as f64,
+                        width as f64,
+                        provider_height(provider) as f64
+                    ))
+                );
+                y += provider_height(provider);
+            }
+        }
+    }
+}
+
+#[test]
+fn classic_vertical_formats_monthly_limits_and_countdown_badges() {
+    use crate::models::{UsageData, UsageSection};
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/classic-vertical.json")).unwrap();
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Codex,
+        UsageData {
+            weekly: UsageSection {
+                available: true,
+                percentage: 42.0,
+                resets_at: None,
+            },
+            weekly_label: Some("30d".into()),
+            ..Default::default()
+        },
+    )]);
+    for (countdown, expected) in [(false, "30d 42%"), (true, "30d 58%")] {
+        let runtime = ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Codex]))
+            .with_poll_state(true, false)
+            .with_countdown(countdown)
+            .with_host_dimensions(62, 1440);
+        let context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        let text = theme.surfaces[0]
+            .children
+            .iter()
+            .find(|object| object.id == "codex-weekly-value-dark")
+            .unwrap();
+        let SceneContent::Text { template, .. } = &text.content else {
+            panic!("missing usage badge")
+        };
+        assert_eq!(format_template(template, &context), expected);
+        let rendered =
+            render_theme_surface_with_runtime_at_scale(&theme, 0, Some(&usage), runtime, 1.25);
+        assert_eq!((rendered.width, rendered.height), (75, 80));
+        assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+    }
+}
+
+#[test]
+fn classic_vertical_headings_remain_legible_on_taskbars_and_floating_cards() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/classic-vertical.json")).unwrap();
+    let luminance = |color: Rgba| {
+        let linear = |channel: u8| {
+            let value = f64::from(channel) / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+    };
+    for (suffix, backgrounds) in [
+        ("-light", ["#CBD4E6", "#D3D3D3", "#FFFFFF", "#F3F3F3"]),
+        ("", ["#010A1C", "#181820", "#141E34", "#182137"]),
+    ] {
+        for provider in ProviderId::ALL {
+            let id = format!("{}-title{suffix}", provider.descriptor().key);
+            let title = theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .unwrap();
+            let SceneContent::Text { color, .. } = &title.content else {
+                panic!("missing heading");
+            };
+            let foreground = luminance(parse_color(&color.color).unwrap());
+            // Include the tinted Windows 10 VM taskbar and floating card.
+            for background in backgrounds {
+                let background = luminance(parse_color(background).unwrap());
+                let contrast =
+                    (background.max(foreground) + 0.05) / (background.min(foreground) + 0.05);
+                assert!(contrast >= 4.5, "{id}: contrast={contrast}");
+            }
+        }
+    }
 }
 
 #[test]

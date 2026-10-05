@@ -27,7 +27,19 @@ struct CodexTokenData {
 #[derive(Deserialize)]
 pub(super) struct CodexUsageResponse {
     rate_limit: Option<Option<Box<CodexRateLimitDetails>>>,
+    spend_control: Option<CodexSpendControl>,
     credits: Option<Option<Box<CodexCredits>>>,
+}
+
+#[derive(Deserialize)]
+struct CodexSpendControl {
+    individual_limit: Option<CodexIndividualLimit>,
+}
+
+#[derive(Deserialize)]
+struct CodexIndividualLimit {
+    used_percent: Option<f64>,
+    reset_at: Option<i64>,
 }
 
 #[derive(Deserialize)]
@@ -158,26 +170,47 @@ fn codex_usage_from_response_at(
     path: Option<&Path>,
 ) -> Option<UsageData> {
     let credits = response.credits.flatten();
-    let details = *response.rate_limit.flatten()?;
+    let details = response.rate_limit.flatten().map(|details| *details);
+    let monthly = response
+        .spend_control
+        .and_then(|spend_control| spend_control.individual_limit)
+        .as_ref()
+        .and_then(codex_section_from_individual_limit);
+    if details.is_none() && monthly.is_none() {
+        return None;
+    }
     let mut data = UsageData::default();
+    let limit_reached = details
+        .as_ref()
+        .is_some_and(|details| details.limit_reached);
 
     // Assign by window length, not by slot. Codex has shipped the weekly
     // allowance in `primary_window` with `secondary_window` empty while the
     // five-hour window is switched off, so trusting the slot order puts a
     // weekly figure in the session bar.
-    for (window, default_is_weekly) in [
-        (details.primary_window.flatten(), false),
-        (details.secondary_window.flatten(), true),
-    ]
-    .into_iter()
-    .filter_map(|(window, default_is_weekly)| window.map(|window| (window, default_is_weekly)))
-    {
-        let section = codex_section_from_window(&window);
-        if window_is_weekly(&window).unwrap_or(default_is_weekly) {
-            data.weekly = section;
-        } else {
-            data.session = section;
+    if let Some(details) = details {
+        for (window, default_is_weekly) in [
+            (details.primary_window.flatten(), false),
+            (details.secondary_window.flatten(), true),
+        ]
+        .into_iter()
+        .filter_map(|(window, default_is_weekly)| window.map(|window| (window, default_is_weekly)))
+        {
+            let section = codex_section_from_window(&window);
+            if window_is_weekly(&window).unwrap_or(default_is_weekly) {
+                data.weekly = section;
+            } else {
+                data.session = section;
+            }
         }
+    }
+
+    if let Some(monthly) = monthly {
+        if !data.weekly.available {
+            data.weekly = monthly.clone();
+            data.weekly_label = Some("30d".to_string());
+        }
+        data.monthly = Some(monthly);
     }
 
     data.credits = credits.and_then(|credits| {
@@ -195,7 +228,7 @@ fn codex_usage_from_response_at(
                 }),
             None => app_settings::load_codex_credits(),
         };
-        let (state, section) = codex_credits(previous, &credits, details.limit_reached, account_id);
+        let (state, section) = codex_credits(previous, &credits, limit_reached, account_id);
         let saved = match &state_path {
             Some(path) => app_settings::write_json_atomic(path, &state),
             None => app_settings::save_codex_credits(&state),
@@ -294,6 +327,15 @@ pub(super) fn codex_section_from_window(window: &CodexRateLimitWindow) -> UsageS
         percentage: window.used_percent,
         resets_at: unix_to_system_time(Some(window.reset_at)),
     }
+}
+
+fn codex_section_from_individual_limit(limit: &CodexIndividualLimit) -> Option<UsageSection> {
+    let percentage = limit.used_percent?.clamp(0.0, 100.0);
+    percentage.is_finite().then(|| UsageSection {
+        available: true,
+        percentage,
+        resets_at: unix_to_system_time(limit.reset_at),
+    })
 }
 
 pub(super) fn credential_watch_snapshot() -> Vec<String> {
@@ -469,7 +511,7 @@ mod tests {
     fn usage_from_json(json: &str) -> UsageData {
         let response: CodexUsageResponse =
             serde_json::from_str(json).expect("the fixture should deserialize");
-        codex_usage_from_response(response, None).expect("the fixture should carry rate limits")
+        codex_usage_from_response(response, None).expect("the fixture should carry usage")
     }
 
     fn credits(balance: &str, has_credits: bool) -> CodexCredits {
@@ -689,5 +731,140 @@ mod tests {
 
         assert_eq!(data.session.percentage, 20.0);
         assert_eq!(data.weekly.percentage, 80.0);
+    }
+
+    #[test]
+    fn an_individual_spend_limit_fills_the_monthly_and_long_windows() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": null,
+                "spend_control": {
+                    "individual_limit": {
+                        "used_percent": 24,
+                        "reset_at": 1793491201
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(data.weekly.percentage, 24.0);
+        assert!(!data.session.available);
+        assert_eq!(
+            data.weekly.resets_at,
+            Some(UNIX_EPOCH + Duration::from_secs(1793491201))
+        );
+        assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+        assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
+    }
+
+    #[test]
+    fn a_legacy_weekly_window_remains_the_selected_long_window() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 20,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1787198224
+                    }
+                },
+                "spend_control": {
+                    "individual_limit": {
+                        "used_percent": 24,
+                        "reset_at": 1793491201
+                    }
+                }
+            }"#,
+        );
+
+        assert_eq!(data.weekly.percentage, 20.0);
+        assert_eq!(data.weekly_label, None);
+        assert_eq!(data.monthly.unwrap().percentage, 24.0);
+    }
+
+    #[test]
+    fn an_incomplete_individual_limit_does_not_hide_legacy_windows() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 42,
+                        "limit_window_seconds": 604800,
+                        "reset_at": 1787198224
+                    }
+                },
+                "spend_control": {"individual_limit": {}}
+            }"#,
+        );
+
+        assert_eq!(data.weekly.percentage, 42.0);
+        assert_eq!(data.monthly, None);
+    }
+
+    #[test]
+    fn missing_or_null_individual_limits_do_not_fabricate_usage() {
+        for json in [
+            r#"{}"#,
+            r#"{"rate_limit":null,"spend_control":null}"#,
+            r#"{"spend_control":{}}"#,
+            r#"{"spend_control":{"individual_limit":null}}"#,
+            r#"{"spend_control":{"individual_limit":{}}}"#,
+            r#"{"spend_control":{"individual_limit":{"used_percent":null,"reset_at":1793491201}}}"#,
+            r#"{"spend_control":{"individual_limit":{"reset_at":1793491201}}}"#,
+        ] {
+            let response = serde_json::from_str(json).expect("fixture should deserialize");
+            assert!(
+                codex_usage_from_response(response, None).is_none(),
+                "{json}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_monthly_fallback_keeps_the_legacy_session_window() {
+        let data = usage_from_json(
+            r#"{
+                "rate_limit": {
+                    "primary_window": {
+                        "used_percent": 42,
+                        "limit_window_seconds": 18000,
+                        "reset_at": 1787100000
+                    },
+                    "secondary_window": null
+                },
+                "spend_control": {
+                    "individual_limit": {"used_percent": 24, "reset_at": 1793491201}
+                }
+            }"#,
+        );
+
+        assert!(data.session.available);
+        assert_eq!(data.session.percentage, 42.0);
+        assert_eq!(
+            data.session.resets_at,
+            Some(UNIX_EPOCH + Duration::from_secs(1787100000))
+        );
+        assert_eq!(data.weekly.percentage, 24.0);
+        assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+        assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
+    }
+
+    #[test]
+    fn an_idle_individual_limit_is_available_without_a_reset_time() {
+        for limit in [
+            r#"{"used_percent":0}"#,
+            r#"{"used_percent":0,"reset_at":null}"#,
+            r#"{"used_percent":0,"reset_at":-1}"#,
+        ] {
+            let data = usage_from_json(&format!(
+                r#"{{"spend_control":{{"individual_limit":{limit}}}}}"#
+            ));
+
+            assert!(data.weekly.available);
+            assert_eq!(data.weekly.percentage, 0.0);
+            assert!(data.weekly.resets_at.is_none());
+            assert_eq!(data.weekly_label.as_deref(), Some("30d"));
+            assert_eq!(data.monthly.as_ref(), Some(&data.weekly));
+        }
     }
 }

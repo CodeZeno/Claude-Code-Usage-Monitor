@@ -1,6 +1,270 @@
 use super::*;
 
 #[test]
+fn builtins_leave_incompatible_taskbars_and_keep_compatible_layouts_docked() {
+    let sources = [
+        include_str!("../themes/classic-usage-widget.json"),
+        include_str!("../themes/compact-fluent-quad.json"),
+        include_str!("../themes/classic-vertical.json"),
+    ];
+    for (theme_index, source) in sources.iter().enumerate() {
+        let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
+        theme.prepare_runtime();
+        for providers in [
+            ProviderSet::from_enabled([ProviderId::Claude]),
+            ProviderSet::from_enabled(ProviderId::ALL),
+        ] {
+            for scale in [1.0, 1.25, 2.0] {
+                let px = |n| scaled_theme_dimension(n, scale);
+                let monitor = RECT {
+                    left: -px(1920),
+                    top: -px(1080),
+                    right: 0,
+                    bottom: 0,
+                };
+                for edge in 0..4 {
+                    let horizontal = edge < 2;
+                    let taskbar = match edge {
+                        0 => RECT {
+                            top: -px(48),
+                            ..monitor
+                        },
+                        1 => RECT {
+                            bottom: monitor.top + px(48),
+                            ..monitor
+                        },
+                        2 => RECT {
+                            left: -px(62),
+                            ..monitor
+                        },
+                        _ => RECT {
+                            right: monitor.left + px(62),
+                            ..monitor
+                        },
+                    };
+                    let tray = if horizontal {
+                        RECT {
+                            left: -px(240),
+                            ..taskbar
+                        }
+                    } else {
+                        RECT {
+                            top: -px(240),
+                            ..taskbar
+                        }
+                    };
+                    let runtime = ThemeRuntime::from_providers(providers).with_host_dimensions(
+                        logical_host_dimension(taskbar.right - taskbar.left, scale),
+                        logical_host_dimension(taskbar.bottom - taskbar.top, scale),
+                    );
+                    let frame = positioning::widget_frame(&theme, None, runtime, scale);
+                    let rect = positioning::surface_screen_rect(
+                        &theme.surfaces[0].placement,
+                        frame.width,
+                        frame.height,
+                        scale,
+                        monitor,
+                        Some(taskbar),
+                        Some(tray),
+                    );
+                    let incompatible = (theme_index == 2) == horizontal;
+                    for locked in [false, true] {
+                        assert_eq!(
+                            positioning::taskbar_ejection_required(taskbar, rect, false, locked),
+                            incompatible,
+                            "theme={theme_index} edge={edge} scale={scale} locked={locked}"
+                        );
+                    }
+                    if incompatible {
+                        let floating = positioning::widget_frame(
+                            &theme,
+                            None,
+                            runtime.with_nest(SurfaceNest::Floating),
+                            scale,
+                        );
+                        let origin = positioning::auto_eject_origin(
+                            RECT {
+                                right: rect.left + floating.width,
+                                bottom: rect.top + floating.height,
+                                ..rect
+                            },
+                            taskbar,
+                            monitor,
+                        );
+                        let x = origin.x.clamp(monitor.left, monitor.right - floating.width);
+                        let y = origin
+                            .y
+                            .clamp(monitor.top, monitor.bottom - floating.height);
+                        assert!(!positioning::taskbar_surface_is_clipped(
+                            monitor,
+                            RECT {
+                                left: x,
+                                top: y,
+                                right: x + floating.width,
+                                bottom: y + floating.height,
+                            }
+                        ));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn taskbar_fallback_preserves_lock_and_auto_hide_behavior() {
+    let bar = RECT {
+        left: 0,
+        top: 1032,
+        right: 1920,
+        bottom: 1080,
+    };
+    let widget = RECT {
+        left: 1200,
+        top: 1034,
+        right: 1417,
+        bottom: 1080,
+    };
+    assert!(positioning::taskbar_ejection_required(
+        bar, widget, true, false
+    ));
+    assert!(!positioning::taskbar_ejection_required(
+        bar, widget, true, true
+    ));
+    // An authored offset can put a layout outside its parent even when its
+    // dimensions would otherwise fit. Lock must not keep that widget invisible.
+    let clipped = RECT {
+        top: 980,
+        bottom: 1026,
+        ..widget
+    };
+    assert!(positioning::taskbar_ejection_required(
+        bar, clipped, false, true
+    ));
+    for strip in [
+        RECT { top: 1078, ..bar },
+        RECT {
+            left: 1918,
+            top: 0,
+            ..bar
+        },
+        RECT {
+            right: 2,
+            top: 0,
+            ..bar
+        },
+        RECT {
+            top: 0,
+            bottom: 2,
+            ..bar
+        },
+    ] {
+        assert!(!positioning::taskbar_ejection_required(
+            strip, widget, false, false
+        ));
+    }
+}
+
+#[test]
+fn classic_vertical_fits_above_the_tray_on_either_vertical_edge() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/classic-vertical.json")).unwrap();
+    for (left, top, scale) in [(2498, 0, 1.0), (0, 0, 1.0), (-2560, -1440, 1.25)] {
+        let taskbar = RECT {
+            left,
+            top,
+            right: left + (62.0 * scale) as i32,
+            bottom: top + 1440,
+        };
+        let tray = RECT {
+            top: top + 1200,
+            ..taskbar
+        };
+        let runtime = ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL))
+            .with_host_dimensions(62, logical_host_dimension(1440, scale));
+        let (width, height) = theme_engine::resolve_surface_size(&theme, 0, None, runtime);
+        let target = positioning::surface_screen_rect(
+            &theme.surfaces[0].placement,
+            scaled_theme_dimension(width, scale),
+            scaled_theme_dimension(height, scale),
+            scale,
+            taskbar,
+            Some(taskbar),
+            Some(tray),
+        );
+        assert!(target.left >= taskbar.left && target.right <= taskbar.right);
+        assert!(target.top >= taskbar.top && target.bottom < tray.top);
+        // Win10's News and interests button occupies one row above TrayNotifyWnd.
+        assert!(target.bottom <= tray.top - scaled_theme_dimension(48, scale));
+        assert!(positioning::is_taskbar_capacity_sufficient(
+            taskbar,
+            RECT {
+                bottom: tray.top,
+                ..taskbar
+            },
+            target.right - target.left,
+            target.bottom - target.top,
+        ));
+    }
+}
+
+#[test]
+fn legacy_vertical_taskbars_anchor_above_the_tray_and_clamp_y_offsets() {
+    // Include the exact right-docked geometry from issue #155, a left bar,
+    // and a secondary display above and to the left of the primary display.
+    for (left, top) in [(2498, 0), (0, 0), (-2560, -1440)] {
+        let taskbar = RECT {
+            left,
+            top,
+            right: left + 62,
+            bottom: top + 1440,
+        };
+        let tray = RECT {
+            top: top + 1200,
+            ..taskbar
+        };
+        for (requested, expected) in [(-20, 0), (80, 80), (2000, 1000)] {
+            let (rect, offset) =
+                positioning::legacy_taskbar_rect(taskbar, Some(tray), 46, 200, requested);
+            assert_eq!(offset, expected);
+            assert_eq!(rect.left, left);
+            assert_eq!(rect.right, left + 46);
+            assert_eq!(rect.top, tray.top - 200 - expected);
+            assert_eq!(rect.bottom, tray.top - expected);
+            assert!(rect.top >= taskbar.top);
+        }
+        let (rect, _) = positioning::legacy_taskbar_rect(taskbar, None, 46, 200, 80);
+        assert_eq!(rect.bottom, taskbar.bottom - 80);
+    }
+}
+
+#[test]
+fn legacy_horizontal_taskbars_keep_bottom_alignment_on_top_and_bottom_bars() {
+    for top in [0, 1394, -1440] {
+        let taskbar = RECT {
+            left: -2560,
+            top,
+            right: 0,
+            bottom: top + 46,
+        };
+        let tray = RECT {
+            left: -240,
+            ..taskbar
+        };
+        let (rect, offset) = positioning::legacy_taskbar_rect(taskbar, Some(tray), 200, 40, 80);
+        assert_eq!(offset, 80);
+        assert_eq!((rect.left, rect.top), (-520, top + 6));
+        assert_eq!((rect.right, rect.bottom), (-320, taskbar.bottom));
+        let (rect, offset) =
+            positioning::legacy_taskbar_rect(taskbar, Some(tray), 200, 40, i32::MAX);
+        assert_eq!(rect.left, taskbar.left);
+        assert_eq!(offset, 2120);
+        let (rect, _) = positioning::legacy_taskbar_rect(taskbar, None, 200, 40, 80);
+        assert_eq!(rect.right, taskbar.right - 80);
+    }
+}
+
+#[test]
 fn window_state_timer_is_only_needed_for_floating_surfaces() {
     let mut theme = ThemeDocument::starter();
     assert!(!theme_has_floating_surface(&theme));

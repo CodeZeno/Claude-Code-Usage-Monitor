@@ -2,7 +2,8 @@ param([Parameter(Mandatory)]$Context)
 . "$($Context.Root)\support\Scenario.Helpers.ps1" -Context $Context
 $executable = Install-PortableApp
 $gallery = [Collections.Generic.List[object]]::new()
-# Matches LanguageId::ALL and BUILTIN_THEME_SOURCES; Test-Harness verifies drift.
+# Covers LanguageId::ALL and horizontal built-ins. Classic Vertical is covered
+# on Windows 10 by vertical-taskbar.ps1; Test-Harness verifies catalogue drift.
 $languages = @('en','de','es','fr','ja','ko','nl','pl','pt-BR','ru','th','tr','zh-CN','zh-TW')
 $themes = @('classic-usage-widget','compact-fluent-quad')
 try {
