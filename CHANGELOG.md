@@ -4,6 +4,21 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.18.0] - 2026-10-05
+
+### Added
+
+- Add **Classic Vertical**, a separate copy of the default theme for left and right-docked taskbars. Stack enabled providers above the notification area, fit the taskbar width at the selected display's DPI, retain themed tray icons, and show monthly allowances and countdown percentages. Select it from the theme gallery. ([#155](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/155))
+- Add a Windows 10 VM scenario for real right/left taskbar docking, default-theme fallback, live light/dark and orientation changes, automatic redocking, restart persistence, single-provider sizing, and widget/taskbar/desktop screenshots with a separate sample-usage fixture.
+
+### Fixed
+
+- Anchor legacy widgets along the taskbar's long axis, using the notification area's top edge on vertical taskbars. Clamp saved offsets along that axis and use the same screen geometry for embedded and fallback windows, including secondary taskbars without a tray.
+- Leave clearance above Windows 10's News and interests button in Classic Vertical so the default placement avoids watchdog ejection beside the taskbar.
+- Keep incompatible themed widgets visible beside the taskbar instead of clipping them inside the shell parent. Preserve the selected theme and saved placement, redock automatically when they fit again, and allow visibility fallback even when taskbar lock is enabled. Keep auto-hide reveal strips from triggering fallback.
+- Keep Classic Vertical's provider headings readable in both light and dark appearances, with contrast coverage for each heading on taskbars and floating cards.
+- Clear temporary visibility fallback when selecting another theme or changing its placement, so desktop, tray and intentional floating layouts take effect immediately without carrying over the previous widget's position.
+
 ## [2.17.1] - 2026-10-05
 
 ### Fixed
@@ -1294,3 +1309,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.16.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.15.22...v2.16.0
 [2.17.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.16.0...v2.17.0
 [2.17.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.17.0...v2.17.1
+[2.18.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.17.1...v2.18.0

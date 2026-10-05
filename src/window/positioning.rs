@@ -64,20 +64,12 @@ pub(super) fn position_at_taskbar() {
         }
     };
 
-    let taskbar_height = taskbar_rect.bottom - taskbar_rect.top;
-    let mut tray_left = taskbar_rect.right;
-    let anchor_top = taskbar_rect.top;
-    let anchor_height = taskbar_height;
-
-    if let Some(tray_hwnd) = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd") {
-        if let Some(tray_rect) = native_interop::get_window_rect_safe(tray_hwnd) {
-            tray_left = tray_rect.left;
-        }
-    }
-
+    let tray = native_interop::find_child_window(taskbar_hwnd, "TrayNotifyWnd")
+        .and_then(native_interop::get_window_rect_safe);
     let widget_width = total_widget_width();
-    let max_offset = (tray_left - taskbar_rect.left - widget_width).max(0);
-    let tray_offset = tray_offset.clamp(0, max_offset);
+    let widget_height = total_widget_height();
+    let (rect, tray_offset) =
+        legacy_taskbar_rect(taskbar_rect, tray, widget_width, widget_height, tray_offset);
     let offset_changed = {
         let mut state = lock_state();
         if let Some(s) = state.as_mut() {
@@ -95,24 +87,56 @@ pub(super) fn position_at_taskbar() {
         save_state_settings();
     }
 
-    let widget_height = total_widget_height();
-    let y = compute_anchor_y(anchor_top, anchor_height, widget_height);
+    let (mut x, mut y) = (rect.left, rect.top);
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
-        let x = tray_left - taskbar_rect.left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y - taskbar_rect.top, widget_width, widget_height);
-        diagnose::log(format!(
-            "positioned embedded widget at x={x} y={} w={widget_width} h={widget_height}",
-            y - taskbar_rect.top
-        ));
-    } else {
-        // Topmost popup: screen coordinates
-        let x = tray_left - widget_width - tray_offset;
-        native_interop::move_window(hwnd, x, y, widget_width, widget_height);
-        diagnose::log(format!(
-            "positioned fallback widget at x={x} y={y} w={widget_width} h={widget_height}"
-        ));
+        let mut point = [POINT { x, y }];
+        unsafe { MapWindowPoints(None, Some(taskbar_hwnd), &mut point) };
+        x = point[0].x;
+        y = point[0].y;
     }
+    native_interop::move_window(hwnd, x, y, widget_width, widget_height);
+    diagnose::log(format!(
+        "positioned widget embedded={embedded} at x={x} y={y} w={widget_width} h={widget_height}"
+    ));
+}
+
+/// Screen coordinates for both child and popup legacy widgets. The tray sits
+/// at the trailing end of the taskbar's long axis, including on secondary bars
+/// without a notification area.
+pub(super) fn legacy_taskbar_rect(
+    taskbar: RECT,
+    tray: Option<RECT>,
+    width: i32,
+    height: i32,
+    offset: i32,
+) -> (RECT, i32) {
+    let horizontal = native_interop::is_taskbar_horizontal(taskbar);
+    let reference = system_tray_reference(taskbar, tray);
+    let max_offset = if horizontal {
+        reference.left - taskbar.left - width
+    } else {
+        reference.top - taskbar.top - height
+    }
+    .max(0);
+    let offset = offset.clamp(0, max_offset);
+    let (x, y) = if horizontal {
+        (
+            reference.left - width - offset,
+            compute_anchor_y(taskbar.top, taskbar.bottom - taskbar.top, height),
+        )
+    } else {
+        (taskbar.left, reference.top - height - offset)
+    };
+    (
+        RECT {
+            left: x,
+            top: y,
+            right: x + width,
+            bottom: y + height,
+        },
+        offset,
+    )
 }
 
 pub(super) fn ensure_layered_window(hwnd: HWND) {
@@ -983,6 +1007,27 @@ pub(super) fn is_taskbar_capacity_sufficient(
         // Vertical taskbar: widget doesn't fit inside narrow vertical bar
         taskbar_w >= widget_width && slot_h >= widget_height
     }
+}
+
+/// Auto-hide temporarily exposes only a reveal strip. Do not mistake that
+/// shell geometry for an incompatible theme or a reason to leave the bar.
+pub(super) fn taskbar_surface_is_clipped(taskbar: RECT, widget: RECT) -> bool {
+    if (taskbar.right - taskbar.left).min(taskbar.bottom - taskbar.top) <= 2 {
+        return false;
+    }
+    widget.left < taskbar.left
+        || widget.top < taskbar.top
+        || widget.right > taskbar.right
+        || widget.bottom > taskbar.bottom
+}
+
+pub(super) fn taskbar_ejection_required(
+    taskbar: RECT,
+    widget: RECT,
+    overlaps_apps: bool,
+    locked: bool,
+) -> bool {
+    taskbar_surface_is_clipped(taskbar, widget) || (!locked && overlaps_apps)
 }
 
 /// Choose a measured gap near the drag, including gaps left of centred apps.

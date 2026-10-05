@@ -21,6 +21,7 @@ use crate::providers::{ProviderId, ProviderSet, PROVIDER_DESCRIPTORS};
 pub const THEME_SCHEMA_VERSION: u32 = 1;
 pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
 pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
+pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
@@ -31,6 +32,10 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
         COMPACT_FLUENT_QUAD_THEME_ID,
         include_str!(concat!(env!("OUT_DIR"), "/compact-fluent-quad.json")),
+    ),
+    (
+        CLASSIC_VERTICAL_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/classic-vertical.json")),
     ),
 ];
 

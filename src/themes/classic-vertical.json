@@ -1,0 +1,2765 @@
+{
+  "schema_version": 1,
+  "id": "classic-vertical",
+  "name": "Classic Vertical",
+  "surfaces": [
+    {
+      "id": "main",
+      "name": "Vertical taskbar widget",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "taskbar",
+        "horizontal": "center",
+        "vertical": "top",
+        "surface_horizontal": "center",
+        "surface_vertical": "bottom",
+        "offset_x": 0,
+        "offset_y": -52
+      },
+      "width": "min(62, max(1, host.width - 2))",
+      "height": "max(1, providers.count * 64 - (providers.grok.enabled + providers.copilot.enabled) * 22)",
+      "mouse_events": {
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "children": [
+        {
+          "id": "provider-column",
+          "name": "Enabled providers",
+          "width": "canvas.width",
+          "height": "canvas.height",
+          "layout": "column"
+        },
+        {
+          "id": "claude-provider",
+          "name": "Claude",
+          "parent": "provider-column",
+          "render": "providers.claude.enabled",
+          "width": "canvas.width",
+          "height": "64"
+        },
+        {
+          "id": "claude-title",
+          "name": "claude-title",
+          "parent": "claude-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Claude",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#D97757"
+            }
+          }
+        },
+        {
+          "id": "claude-title-light",
+          "name": "claude-title-light",
+          "parent": "claude-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Claude",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#8B3E25"
+            }
+          }
+        },
+        {
+          "id": "claude-session-value-dark",
+          "name": "claude-session-value-dark",
+          "parent": "claude-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {claude.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "claude-session-value-light",
+          "name": "claude-session-value-light",
+          "parent": "claude-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {claude.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "claude-session-bar",
+          "name": "claude session usage",
+          "parent": "claude-provider",
+          "render": "claude.session.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "claude.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "claude-weekly-value-dark",
+          "name": "claude-weekly-value-dark",
+          "parent": "claude-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.label} {claude.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "claude-weekly-value-light",
+          "name": "claude-weekly-value-light",
+          "parent": "claude-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.label} {claude.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "claude-weekly-bar",
+          "name": "claude weekly usage",
+          "parent": "claude-provider",
+          "render": "claude.weekly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "claude.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "codex-provider",
+          "name": "Codex",
+          "parent": "provider-column",
+          "render": "providers.codex.enabled",
+          "width": "canvas.width",
+          "height": "64"
+        },
+        {
+          "id": "codex-title",
+          "name": "codex-title",
+          "parent": "codex-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Codex",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#4CAF50"
+            }
+          }
+        },
+        {
+          "id": "codex-title-light",
+          "name": "codex-title-light",
+          "parent": "codex-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Codex",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#1B5E20"
+            }
+          }
+        },
+        {
+          "id": "codex-session-value-dark",
+          "name": "codex-session-value-dark",
+          "parent": "codex-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {codex.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "codex-session-value-light",
+          "name": "codex-session-value-light",
+          "parent": "codex-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {codex.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "codex-session-bar",
+          "name": "codex session usage",
+          "parent": "codex-provider",
+          "render": "codex.session.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "codex.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4CAF50"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "codex-weekly-value-dark",
+          "name": "codex-weekly-value-dark",
+          "parent": "codex-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{codex.weekly.label} {codex.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "codex-weekly-value-light",
+          "name": "codex-weekly-value-light",
+          "parent": "codex-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{codex.weekly.label} {codex.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "codex-weekly-bar",
+          "name": "codex weekly usage",
+          "parent": "codex-provider",
+          "render": "codex.weekly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "codex.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4CAF50"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "antigravity-provider",
+          "name": "Antigravity",
+          "parent": "provider-column",
+          "render": "providers.antigravity.enabled",
+          "width": "canvas.width",
+          "height": "64"
+        },
+        {
+          "id": "antigravity-title",
+          "name": "antigravity-title",
+          "parent": "antigravity-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Antigravity",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#2196F3"
+            }
+          }
+        },
+        {
+          "id": "antigravity-title-light",
+          "name": "antigravity-title-light",
+          "parent": "antigravity-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Antigravity",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#0B5C9E"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-value-dark",
+          "name": "antigravity-session-value-dark",
+          "parent": "antigravity-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {antigravity.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-value-light",
+          "name": "antigravity-session-value-light",
+          "parent": "antigravity-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {antigravity.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-bar",
+          "name": "antigravity session usage",
+          "parent": "antigravity-provider",
+          "render": "antigravity.session.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2196F3"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-value-dark",
+          "name": "antigravity-weekly-value-dark",
+          "parent": "antigravity-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.weekly.label} {antigravity.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-value-light",
+          "name": "antigravity-weekly-value-light",
+          "parent": "antigravity-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.weekly.label} {antigravity.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-bar",
+          "name": "antigravity weekly usage",
+          "parent": "antigravity-provider",
+          "render": "antigravity.weekly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2196F3"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "opencode-provider",
+          "name": "OpenCode",
+          "parent": "provider-column",
+          "render": "providers.opencode.enabled",
+          "width": "canvas.width",
+          "height": "64"
+        },
+        {
+          "id": "opencode-title",
+          "name": "opencode-title",
+          "parent": "opencode-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "OpenCode",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F59E0B"
+            }
+          }
+        },
+        {
+          "id": "opencode-title-light",
+          "name": "opencode-title-light",
+          "parent": "opencode-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "OpenCode",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#805000"
+            }
+          }
+        },
+        {
+          "id": "opencode-session-value-dark",
+          "name": "opencode-session-value-dark",
+          "parent": "opencode-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {opencode.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "opencode-session-value-light",
+          "name": "opencode-session-value-light",
+          "parent": "opencode-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{i18n.session_window} {opencode.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "opencode-session-bar",
+          "name": "opencode session usage",
+          "parent": "opencode-provider",
+          "render": "opencode.session.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "opencode.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F59E0B"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "opencode-weekly-value-dark",
+          "name": "opencode-weekly-value-dark",
+          "parent": "opencode-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "opencode-weekly-value-light",
+          "name": "opencode-weekly-value-light",
+          "parent": "opencode-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "opencode-weekly-bar",
+          "name": "opencode weekly usage",
+          "parent": "opencode-provider",
+          "render": "opencode.weekly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "opencode.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F59E0B"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "cursor-provider",
+          "name": "Cursor",
+          "parent": "provider-column",
+          "render": "providers.cursor.enabled",
+          "width": "canvas.width",
+          "height": "64"
+        },
+        {
+          "id": "cursor-title",
+          "name": "cursor-title",
+          "parent": "cursor-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Cursor",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#00BCD4"
+            }
+          }
+        },
+        {
+          "id": "cursor-title-light",
+          "name": "cursor-title-light",
+          "parent": "cursor-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Cursor",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#006473"
+            }
+          }
+        },
+        {
+          "id": "cursor-session-value-dark",
+          "name": "cursor-session-value-dark",
+          "parent": "cursor-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Auto {cursor.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "cursor-session-value-light",
+          "name": "cursor-session-value-light",
+          "parent": "cursor-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Auto {cursor.session.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "cursor-session-bar",
+          "name": "cursor session usage",
+          "parent": "cursor-provider",
+          "render": "cursor.session.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "cursor.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00BCD4"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "cursor-weekly-value-dark",
+          "name": "cursor-weekly-value-dark",
+          "parent": "cursor-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "API {cursor.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "cursor-weekly-value-light",
+          "name": "cursor-weekly-value-light",
+          "parent": "cursor-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "API {cursor.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "cursor-weekly-bar",
+          "name": "cursor weekly usage",
+          "parent": "cursor-provider",
+          "render": "cursor.weekly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "cursor.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00BCD4"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "grok-provider",
+          "name": "Grok",
+          "parent": "provider-column",
+          "render": "providers.grok.enabled",
+          "width": "canvas.width",
+          "height": "42"
+        },
+        {
+          "id": "grok-title",
+          "name": "grok-title",
+          "parent": "grok-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Grok",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#B57EF8"
+            }
+          }
+        },
+        {
+          "id": "grok-title-light",
+          "name": "grok-title-light",
+          "parent": "grok-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Grok",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#7132A8"
+            }
+          }
+        },
+        {
+          "id": "grok-weekly-value-dark",
+          "name": "grok-weekly-value-dark",
+          "parent": "grok-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{grok.weekly.label} {grok.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "grok-weekly-value-light",
+          "name": "grok-weekly-value-light",
+          "parent": "grok-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{grok.weekly.label} {grok.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "grok-weekly-bar",
+          "name": "grok weekly usage",
+          "parent": "grok-provider",
+          "render": "grok.weekly.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "grok.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#A855F7"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "copilot-provider",
+          "name": "Copilot",
+          "parent": "provider-column",
+          "render": "providers.copilot.enabled",
+          "width": "canvas.width",
+          "height": "42"
+        },
+        {
+          "id": "copilot-title",
+          "name": "copilot-title",
+          "parent": "copilot-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Copilot",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F472B6"
+            }
+          }
+        },
+        {
+          "id": "copilot-title-light",
+          "name": "copilot-title-light",
+          "parent": "copilot-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "2",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "Copilot",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#A11250"
+            }
+          }
+        },
+        {
+          "id": "copilot-weekly-value-dark",
+          "name": "copilot-weekly-value-dark",
+          "parent": "copilot-provider",
+          "render": "system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{copilot.weekly.label} {copilot.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "copilot-weekly-value-light",
+          "name": "copilot-weekly-value-light",
+          "parent": "copilot-provider",
+          "render": "1 - system.dark",
+          "x": "2",
+          "y": "18",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "{copilot.weekly.label} {copilot.weekly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "copilot-weekly-bar",
+          "name": "copilot weekly usage",
+          "parent": "copilot-provider",
+          "render": "copilot.weekly.available",
+          "x": "4",
+          "y": "33",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "copilot.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#DB2777"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "claude-tray-icon",
+      "name": "Claude Code usage",
+      "render": "providers.claude.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#D97757FF"
+        }
+      },
+      "corner_radius": "1",
+      "children": [
+        {
+          "id": "claude-tray-70-color",
+          "name": "Claude 50 to 70 percent colour transition",
+          "render": "claude.headline.percentage > 50",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#D08540FF",
+              "opacity": "clamp((claude.session.percentage - 50) / 20, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-85-color",
+          "name": "Claude 70 to 85 percent colour transition",
+          "render": "claude.headline.percentage > 70",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#CC8C20FF",
+              "opacity": "clamp((claude.session.percentage - 70) / 15, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-95-color",
+          "name": "Claude 85 to 95 percent colour transition",
+          "render": "claude.headline.percentage > 85",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#C45020FF",
+              "opacity": "clamp((claude.session.percentage - 85) / 10, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-100-color",
+          "name": "Claude 95 to 100 percent colour transition",
+          "render": "claude.headline.percentage > 95",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#B82020FF",
+              "opacity": "clamp((claude.session.percentage - 95) / 5, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-one-digit",
+          "name": "Claude one-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display < 9.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-two-digits",
+          "name": "Claude two-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display >= 9.5 && claude.headline.display < 99.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-three-digits",
+          "name": "Claude three-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display >= 99.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-one-digit",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance < 9.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-two-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 9.5 && claude.credits.balance < 99.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-three-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 99.5 && claude.credits.balance < 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-thousands",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance / 1000:0.0}k",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "codex-tray-icon",
+      "name": "Codex usage",
+      "render": "providers.codex.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "codex-tray-high-outline",
+          "name": "Codex high-usage dark outline",
+          "render": "codex.headline.percentage >= 90",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#111111FF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "codex-tray-low-fill",
+          "name": "Codex normal dark fill",
+          "render": "codex.headline.percentage < 90",
+          "parent": "codex-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#111111FF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "codex-tray-high-fill",
+          "name": "Codex high-usage white fill",
+          "render": "codex.headline.percentage >= 90",
+          "parent": "codex-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "codex-tray-placeholder",
+          "name": "Codex loading placeholder",
+          "render": "data.poll_ok == 0 || codex.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "C",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-one-digit",
+          "name": "Codex normal one-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display < 9.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-two-digits",
+          "name": "Codex normal two-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 9.5 && codex.headline.display < 99.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-three-digits",
+          "name": "Codex normal three-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 99.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-one-digit",
+          "name": "Codex high-usage one-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display < 9.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-two-digits",
+          "name": "Codex high-usage two-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 9.5 && codex.headline.display < 99.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-three-digits",
+          "name": "Codex high-usage three-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 99.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-one-digit",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance < 9.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-two-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 9.5 && codex.credits.balance < 99.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-three-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 99.5 && codex.credits.balance < 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-thousands",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance / 1000:0.0}k",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "antigravity-tray-icon",
+      "name": "Antigravity usage",
+      "render": "providers.antigravity.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "antigravity-tray-high-outline",
+          "name": "Antigravity high-usage blue outline",
+          "render": "antigravity.headline.percentage >= 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1967D2FF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "antigravity-tray-low-fill",
+          "name": "Antigravity normal blue fill",
+          "render": "antigravity.headline.percentage < 90",
+          "parent": "antigravity-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#4285F4FF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "antigravity-tray-high-fill",
+          "name": "Antigravity high-usage white fill",
+          "render": "antigravity.headline.percentage >= 90",
+          "parent": "antigravity-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "antigravity-tray-placeholder",
+          "name": "Antigravity loading placeholder",
+          "render": "data.poll_ok == 0 || antigravity.available == 0",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "A",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-low-one-digit",
+          "name": "Antigravity normal one-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display < 9.5 && antigravity.headline.percentage < 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-low-two-digits",
+          "name": "Antigravity normal two-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display >= 9.5 && antigravity.headline.display < 99.5 && antigravity.headline.percentage < 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-low-three-digits",
+          "name": "Antigravity normal three-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display >= 99.5 && antigravity.headline.percentage < 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-high-one-digit",
+          "name": "Antigravity high-usage one-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display < 9.5 && antigravity.headline.percentage >= 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1967D2FF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-high-two-digits",
+          "name": "Antigravity high-usage two-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display >= 9.5 && antigravity.headline.display < 99.5 && antigravity.headline.percentage >= 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1967D2FF"
+            }
+          }
+        },
+        {
+          "id": "antigravity-tray-high-three-digits",
+          "name": "Antigravity high-usage three-digit percentage",
+          "render": "data.poll_ok && antigravity.available && antigravity.headline.display >= 99.5 && antigravity.headline.percentage >= 90",
+          "parent": "antigravity-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1967D2FF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "cursor-tray-icon",
+      "name": "Cursor usage",
+      "render": "providers.cursor.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "cursor-tray-high-outline",
+          "name": "Cursor high-usage black outline",
+          "render": "cursor.headline.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "cursor-tray-low-fill",
+          "name": "Cursor normal black fill",
+          "render": "cursor.headline.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "cursor-tray-high-fill",
+          "name": "Cursor high-usage white fill",
+          "render": "cursor.headline.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "cursor-tray-placeholder",
+          "name": "Cursor loading placeholder",
+          "render": "data.poll_ok == 0 || cursor.available == 0",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "Cu",
+            "font_family": "Arial Bold",
+            "font_size": "34",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-low-one-digit",
+          "name": "Cursor normal one-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display < 9.5 && cursor.headline.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-low-two-digits",
+          "name": "Cursor normal two-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display >= 9.5 && cursor.headline.display < 99.5 && cursor.headline.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-low-three-digits",
+          "name": "Cursor normal three-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display >= 99.5 && cursor.headline.percentage < 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-high-one-digit",
+          "name": "Cursor high-usage one-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display < 9.5 && cursor.headline.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1A1A1AFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-high-two-digits",
+          "name": "Cursor high-usage two-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display >= 9.5 && cursor.headline.display < 99.5 && cursor.headline.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1A1A1AFF"
+            }
+          }
+        },
+        {
+          "id": "cursor-tray-high-three-digits",
+          "name": "Cursor high-usage three-digit percentage",
+          "render": "data.poll_ok && cursor.available && cursor.headline.display >= 99.5 && cursor.headline.percentage >= 90",
+          "parent": "cursor-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{cursor.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1A1A1AFF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "grok-tray-icon",
+      "name": "Grok usage",
+      "render": "providers.grok.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "grok-tray-high-outline",
+          "name": "Grok high-usage black outline",
+          "render": "grok.headline.percentage >= 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#5B21B6FF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "grok-tray-low-fill",
+          "name": "Grok normal black fill",
+          "render": "grok.headline.percentage < 90",
+          "parent": "grok-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#7C3AEDFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "grok-tray-high-fill",
+          "name": "Grok high-usage white fill",
+          "render": "grok.headline.percentage >= 90",
+          "parent": "grok-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "grok-tray-placeholder",
+          "name": "Grok loading placeholder",
+          "render": "data.poll_ok == 0 || grok.available == 0",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "Gr",
+            "font_family": "Arial Bold",
+            "font_size": "34",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-low-one-digit",
+          "name": "Grok normal one-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display < 9.5 && grok.headline.percentage < 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-low-two-digits",
+          "name": "Grok normal two-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display >= 9.5 && grok.headline.display < 99.5 && grok.headline.percentage < 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-low-three-digits",
+          "name": "Grok normal three-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display >= 99.5 && grok.headline.percentage < 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-high-one-digit",
+          "name": "Grok high-usage one-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display < 9.5 && grok.headline.percentage >= 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#5B21B6FF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-high-two-digits",
+          "name": "Grok high-usage two-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display >= 9.5 && grok.headline.display < 99.5 && grok.headline.percentage >= 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#5B21B6FF"
+            }
+          }
+        },
+        {
+          "id": "grok-tray-high-three-digits",
+          "name": "Grok high-usage three-digit percentage",
+          "render": "data.poll_ok && grok.available && grok.headline.display >= 99.5 && grok.headline.percentage >= 90",
+          "parent": "grok-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{grok.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#5B21B6FF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "copilot-tray-icon",
+      "name": "Copilot usage",
+      "render": "providers.copilot.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "copilot-tray-high-outline",
+          "name": "Copilot high-usage black outline",
+          "render": "copilot.headline.percentage >= 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#9D174DFF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "copilot-tray-low-fill",
+          "name": "Copilot normal black fill",
+          "render": "copilot.headline.percentage < 90",
+          "parent": "copilot-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#DB2777FF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "copilot-tray-high-fill",
+          "name": "Copilot high-usage white fill",
+          "render": "copilot.headline.percentage >= 90",
+          "parent": "copilot-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "copilot-tray-placeholder",
+          "name": "Copilot loading placeholder",
+          "render": "data.poll_ok == 0 || copilot.available == 0",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "Cp",
+            "font_family": "Arial Bold",
+            "font_size": "34",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-low-one-digit",
+          "name": "Copilot normal one-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display < 9.5 && copilot.headline.percentage < 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-low-two-digits",
+          "name": "Copilot normal two-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display >= 9.5 && copilot.headline.display < 99.5 && copilot.headline.percentage < 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-low-three-digits",
+          "name": "Copilot normal three-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display >= 99.5 && copilot.headline.percentage < 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-high-one-digit",
+          "name": "Copilot high-usage one-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display < 9.5 && copilot.headline.percentage >= 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-high-two-digits",
+          "name": "Copilot high-usage two-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display >= 9.5 && copilot.headline.display < 99.5 && copilot.headline.percentage >= 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        },
+        {
+          "id": "copilot-tray-high-three-digits",
+          "name": "Copilot high-usage three-digit percentage",
+          "render": "data.poll_ok && copilot.available && copilot.headline.display >= 99.5 && copilot.headline.percentage >= 90",
+          "parent": "copilot-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "opencode-tray-icon",
+      "name": "OpenCode usage",
+      "render": "providers.opencode.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "opencode-tray-high-outline",
+          "name": "OpenCode high-usage green outline",
+          "render": "opencode.headline.percentage >= 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1B5E20FF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "opencode-tray-low-fill",
+          "name": "OpenCode normal green fill",
+          "render": "opencode.headline.percentage < 90",
+          "parent": "opencode-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#2E7D32FF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "opencode-tray-high-fill",
+          "name": "OpenCode high-usage white fill",
+          "render": "opencode.headline.percentage >= 90",
+          "parent": "opencode-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "opencode-tray-placeholder",
+          "name": "OpenCode loading placeholder",
+          "render": "data.poll_ok == 0 || opencode.available == 0",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "O",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-low-one-digit",
+          "name": "OpenCode normal one-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display < 9.5 && opencode.headline.percentage < 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-low-two-digits",
+          "name": "OpenCode normal two-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display >= 9.5 && opencode.headline.display < 99.5 && opencode.headline.percentage < 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-low-three-digits",
+          "name": "OpenCode normal three-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display >= 99.5 && opencode.headline.percentage < 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-high-one-digit",
+          "name": "OpenCode high-usage one-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display < 9.5 && opencode.headline.percentage >= 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1B5E20FF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-high-two-digits",
+          "name": "OpenCode high-usage two-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display >= 9.5 && opencode.headline.display < 99.5 && opencode.headline.percentage >= 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1B5E20FF"
+            }
+          }
+        },
+        {
+          "id": "opencode-tray-high-three-digits",
+          "name": "OpenCode high-usage three-digit percentage",
+          "render": "data.poll_ok && opencode.available && opencode.headline.display >= 99.5 && opencode.headline.percentage >= 90",
+          "parent": "opencode-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{opencode.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#1B5E20FF"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

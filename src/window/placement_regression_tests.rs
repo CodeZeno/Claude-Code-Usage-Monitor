@@ -32,6 +32,7 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         drag_start_origin: POINT::default(),
         drag_start_client_x: 0,
         auto_ejected: false,
+        auto_ejected_for_capacity: false,
         auto_ejected_origin: None,
         auto_ejected_host: None,
         lock_taskbar: false,
@@ -63,6 +64,97 @@ fn placement(nest: &str) -> PlacementOverride {
         screen_y: 0,
         tray_offset: 0,
         floating_host: None,
+    }
+}
+
+#[test]
+fn theme_selection_releases_the_previous_roots_temporary_fallback() {
+    for nest in [
+        SurfaceNest::Desktop,
+        SurfaceNest::TrayIcon,
+        SurfaceNest::Floating,
+        SurfaceNest::Taskbar,
+    ] {
+        let mut state = ejected_state();
+        let mut next = ThemeDocument::starter();
+        next.id = "new-theme".into();
+        next.surfaces[0].placement.nest = nest;
+        next.surfaces[0].placement.offset_x = 400;
+        next.surfaces[0].placement.offset_y = 300;
+        next.prepare_runtime();
+        let authored = next.surfaces[0].placement.clone();
+        replace_active_theme(&mut state, next, Some("new-theme.json".into()));
+        assert!(!state.auto_ejected);
+        assert!(!state.auto_ejected_for_capacity);
+        assert!(state.auto_ejected_origin.is_none());
+        assert!(state.auto_ejected_host.is_none());
+        assert_eq!(
+            effective_theme_from_state(&state).unwrap().surfaces[0].placement,
+            authored
+        );
+    }
+}
+
+fn ejected_state() -> AppState {
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    state.placement_override = None;
+    state.active_theme_path = Some("current.json".into());
+    state.auto_ejected = true;
+    state.auto_ejected_for_capacity = true;
+    state.auto_ejected_origin = Some(POINT { x: 100, y: 100 });
+    state.auto_ejected_host = Some(app_settings::FloatingHost {
+        theme_id: state.active_theme.as_ref().unwrap().id.clone(),
+        surface_id: "main".into(),
+        width: 62,
+        height: 1080,
+    });
+    state
+}
+
+#[test]
+fn same_theme_refresh_preserves_fallback_until_the_configured_root_changes() {
+    let mut state = ejected_state();
+    let current = state.active_theme.clone().unwrap();
+    replace_active_theme(&mut state, current.clone(), Some("current.json".into()));
+    update_configured_placement(&mut state, None, 0, 0);
+    assert!(state.auto_ejected && state.auto_ejected_for_capacity);
+    assert_eq!(state.auto_ejected_origin.unwrap().x, 100);
+    assert!(state.auto_ejected_host.is_some());
+    // Editing an existing file must take effect even with the same theme id.
+    let mut edited = current.clone();
+    edited.surfaces[0].placement.nest = SurfaceNest::Desktop;
+    replace_active_theme(&mut state, edited, Some("current.json".into()));
+    assert!(!state.auto_ejected);
+    let mut state = ejected_state();
+    let mut edited = current.clone();
+    edited.surfaces[0].placement.offset_y += 1;
+    replace_active_theme(&mut state, edited, None);
+    assert!(!state.auto_ejected);
+    let mut state = ejected_state();
+    replace_active_theme(&mut state, current, Some("duplicate-id.json".into()));
+    assert!(!state.auto_ejected);
+}
+
+#[test]
+fn explicit_placement_changes_take_precedence_over_temporary_fallback() {
+    for nest in ["taskbar", "floating"] {
+        let mut state = ejected_state();
+        let mut saved = placement(nest);
+        saved.screen_x = 400;
+        saved.screen_y = 300;
+        update_configured_placement(&mut state, Some(saved.clone()), 0, 0);
+        assert!(!state.auto_ejected);
+        assert_eq!(state.placement_override, Some(saved.clone()));
+        // Selecting another theme retains the user's explicit placement.
+        let mut next = ThemeDocument::starter();
+        next.id = "new-theme".into();
+        replace_active_theme(&mut state, next, None);
+        assert_eq!(state.placement_override, Some(saved));
+    }
+    for (index, offset) in [(1, 0), (0, 50)] {
+        let mut state = ejected_state();
+        update_configured_placement(&mut state, None, index, offset);
+        assert!(!state.auto_ejected);
     }
 }
 

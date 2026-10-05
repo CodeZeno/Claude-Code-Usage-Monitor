@@ -271,14 +271,18 @@ try {
     }
     Check 'gallery fixtures cover current locales and built-ins' {
         $source = Get-Content "$PSScriptRoot\cases\locale-and-theme-gallery.ps1" -Raw
+        $verticalSource = Get-Content "$PSScriptRoot\cases\vertical-taskbar.ps1" -Raw
         $locales = @(Get-ChildItem "$PSScriptRoot\..\..\src\localization\locales" -Filter '*.toml')
         Require ($locales.Count -eq 14)
         foreach ($locale in $locales) { Require ($source.Contains("'$($locale.BaseName)'")) }
         $engine = Get-Content "$PSScriptRoot\..\..\src\theme_engine.rs" -Raw
         $builtins = [regex]::Match($engine, '(?s)const BUILTIN_THEME_SOURCES.*?= &\[(.*?)\];').Groups[1].Value
         $files = [regex]::Matches($builtins, '/([a-z0-9-]+)\.json')
-        Require ($files.Count -eq 2)
-        foreach ($file in $files) { Require ($source.Contains("'$($file.Groups[1].Value)'")) }
+        Require ($files.Count -eq 3)
+        foreach ($file in $files) {
+            $id = $file.Groups[1].Value
+            Require ($source.Contains("'$id'") -or $verticalSource.Contains("$id.json"))
+        }
     }
     Check 'catalogue rejects arbitrary host actions and excessive timeouts' {
         foreach ($mutation in @(

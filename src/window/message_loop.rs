@@ -505,6 +505,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             s.is_snapped = false;
                             s.taskbar_index = target_idx;
                             s.auto_ejected = false;
+                            s.auto_ejected_for_capacity = false;
                             s.auto_ejected_origin = None;
                             s.auto_ejected_host = None;
                             s.tray_offset = tray_offset;
@@ -534,6 +535,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 s.is_switching_window_style = true;
                                 s.is_snapped = false;
                                 s.auto_ejected = false;
+                                s.auto_ejected_for_capacity = false;
                                 s.auto_ejected_origin = None;
                                 s.auto_ejected_host = None;
                                 // The drag leaves the configured taskbar host
@@ -582,6 +584,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             s.embedded = false;
                             s.is_snapped = false;
                             s.auto_ejected = false;
+                            s.auto_ejected_for_capacity = false;
                             s.auto_ejected_origin = None;
                             s.auto_ejected_host = None;
                             s.placement_override = Some(PlacementOverride {
@@ -655,6 +658,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     .taskbar_hwnd
                     .and_then(|h| native_interop::get_window_rect_safe(h.to_hwnd()))
                     .unwrap_or_default();
+                // Capacity fallback can return as soon as the authored layout
+                // fits. App collisions retain their existing extra clearance.
+                s.auto_ejected_for_capacity =
+                    positioning::taskbar_surface_is_clipped(taskbar_rect, widget_rect);
 
                 let displays = native_interop::find_monitors();
                 let mon = displays
@@ -707,6 +714,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 render_layered();
             } else if action == 0 && s.auto_ejected {
                 s.auto_ejected = false;
+                s.auto_ejected_for_capacity = false;
                 s.auto_ejected_origin = None;
                 s.auto_ejected_host = None;
                 let taskbar_hwnd = s.taskbar_hwnd.map(|h| h.to_hwnd());

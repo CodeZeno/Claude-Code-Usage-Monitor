@@ -431,6 +431,16 @@
       "taskbars": ["baseline"],
       "requires": ["candidateExe"],
       "timeoutSeconds": 900
+    },
+    {
+      "id": "vertical-taskbar",
+      "description": "Classic Vertical on Windows 10 right and left taskbars, live light/dark changes, restart and sample-usage screenshots",
+      "script": "cases/vertical-taskbar.ps1",
+      "suites": ["regression"],
+      "operatingSystems": ["windows10"],
+      "taskbars": ["baseline"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 900
     }
   ]
 }
