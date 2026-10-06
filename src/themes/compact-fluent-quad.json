@@ -21,7 +21,7 @@
         "offset_x": 6,
         "offset_y": 0
       },
-      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18",
+      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18 + claude.model.fable.available * 96",
       "height": "46",
       "background": {
         "type": "none"
@@ -638,6 +638,160 @@
             "align": "left",
             "color": {
               "color": "#A94F32FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "fable-provider",
+          "name": "Fable weekly meter",
+          "render": "claude.model.fable.available",
+          "visibility": "100",
+          "parent": "provider-row",
+          "width": "90",
+          "height": "46",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "fable-weekly-segments-dark",
+          "name": "dark Fable weekly segments",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "fable-provider",
+          "y": "11",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "fable-weekly-value-dark",
+          "name": "dark Fable weekly value",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "fable-provider",
+          "y": "25",
+          "width": "90",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Fable {claude.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B5A8E0FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "fable-weekly-segments-light",
+          "name": "light Fable weekly segments",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "fable-provider",
+          "y": "11",
+          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#7C6BB0FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 8,
+            "segments_expression": "floor((90 + 1) / 11)",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "fable-weekly-value-light",
+          "name": "light Fable weekly value",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "fable-provider",
+          "y": "25",
+          "width": "90",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Fable {claude.model.fable.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5B4B8AFF",
               "opacity": "1"
             }
           }

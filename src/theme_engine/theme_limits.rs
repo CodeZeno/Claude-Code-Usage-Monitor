@@ -326,7 +326,7 @@ mod tests {
     }
 
     #[test]
-    fn extra_limits_do_not_change_builtin_rendering_or_headlines() {
+    fn unrecognized_limits_do_not_change_builtin_rendering_or_headlines() {
         let plain_usage = UsageData {
             session: UsageSection {
                 available: true,
@@ -341,10 +341,14 @@ mod tests {
             ..Default::default()
         };
         let plain = AppUsageData::from_iter([(ProviderId::Claude, plain_usage.clone())]);
+        let mut extra_limit = limit();
+        extra_limit.key = "weekly_scoped_future".into();
+        extra_limit.label = "Future".into();
+        extra_limit.model = Some("Future".into());
         let extra = AppUsageData::from_iter([(
             ProviderId::Claude,
             UsageData {
-                limits: vec![limit()],
+                limits: vec![extra_limit],
                 ..plain_usage
             },
         )]);

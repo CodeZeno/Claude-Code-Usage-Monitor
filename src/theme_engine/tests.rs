@@ -749,6 +749,47 @@ fn built_in_classic_uses_149_geometry() {
 }
 
 #[test]
+fn built_in_classic_adds_a_fable_column_when_the_limit_is_available() {
+    use crate::models::{UsageData, UsageLimit, UsageSection};
+
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Claude,
+        UsageData {
+            limits: vec![UsageLimit {
+                key: "weekly_scoped_fable".into(),
+                kind: "weekly_scoped".into(),
+                label: "Fable".into(),
+                model: Some("Fable".into()),
+                model_id: None,
+                scope: None,
+                is_active: true,
+                usage: UsageSection {
+                    available: true,
+                    percentage: 43.0,
+                    resets_at: None,
+                },
+            }],
+            ..Default::default()
+        },
+    )]);
+    let theme = ThemeDocument::starter();
+
+    assert_eq!(
+        resolve_surface_size(
+            &theme,
+            0,
+            Some(&usage),
+            ThemeRuntime::new(true, false, false)
+        ),
+        (310, 46)
+    );
+    assert!(theme.surfaces[0]
+        .children
+        .iter()
+        .any(|object| object.id == "fable-provider"));
+}
+
+#[test]
 fn starter_theme_round_trips_and_validates() {
     let theme = ThemeDocument::starter();
     assert!(theme.validate().is_empty());
@@ -764,8 +805,12 @@ fn starter_theme_round_trips_and_validates() {
     // 1.4.9 palette follows the taskbar mode without runtime recolouring:
     // five providers over two windows in two modes, plus Grok and Copilot,
     // which fill only the long-window row, plus a credit overlay on that row
-    // for the three providers that report credits.
-    assert_eq!(segments, vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2]);
+    // for the three providers that report credits, plus the two eight-segment
+    // Fable layers.
+    assert_eq!(
+        segments,
+        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2]].concat()
+    );
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -1122,6 +1167,45 @@ fn compact_quad_only_grows_when_the_automatic_floating_card_is_present() {
             );
         }
     }
+}
+
+#[test]
+fn compact_fluent_quad_adds_a_fable_column_when_the_limit_is_available() {
+    use crate::models::{UsageData, UsageLimit, UsageSection};
+
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    let usage = AppUsageData::from_iter([(
+        ProviderId::Claude,
+        UsageData {
+            limits: vec![UsageLimit {
+                key: "weekly_scoped_fable".into(),
+                kind: "weekly_scoped".into(),
+                label: "Fable".into(),
+                model: Some("Fable".into()),
+                model_id: None,
+                scope: None,
+                is_active: true,
+                usage: UsageSection {
+                    available: true,
+                    percentage: 43.0,
+                    resets_at: None,
+                },
+            }],
+            ..Default::default()
+        },
+    )]);
+    let runtime = ThemeRuntime::new(true, false, false);
+    let (base_width, height) = resolve_surface_size(&theme, 0, None, runtime);
+
+    assert_eq!(
+        resolve_surface_size(&theme, 0, Some(&usage), runtime),
+        (base_width + 96, height)
+    );
+    assert!(theme.surfaces[0]
+        .children
+        .iter()
+        .any(|object| object.id == "fable-provider"));
 }
 
 #[test]
@@ -1972,7 +2056,7 @@ fn classic_vertical_headings_remain_legible_on_taskbars_and_floating_cards() {
 
 #[test]
 fn compact_fluent_quad_widget_respects_usage_direction() {
-    use crate::models::{CreditsSection, UsageData, UsageSection};
+    use crate::models::{CreditsSection, UsageData, UsageLimit, UsageSection};
 
     let theme: ThemeDocument =
         serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
@@ -1987,6 +2071,19 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
             UsageData {
                 session: section.clone(),
                 weekly: section.clone(),
+                limits: (provider == ProviderId::Claude)
+                    .then(|| UsageLimit {
+                        key: "weekly_scoped_fable".into(),
+                        kind: "weekly_scoped".into(),
+                        label: "Fable".into(),
+                        model: Some("Fable".into()),
+                        model_id: None,
+                        scope: None,
+                        is_active: true,
+                        usage: section.clone(),
+                    })
+                    .into_iter()
+                    .collect(),
                 credits: Some(CreditsSection {
                     percentage: 25.0,
                     remaining: 24.1,
