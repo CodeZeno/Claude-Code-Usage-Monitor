@@ -8,6 +8,7 @@ The instructions below use the app's English labels.
 
 - [Open the dashboard](#open-the-dashboard)
 - [Duplicate and customise a built-in theme](#duplicate-and-customise-a-built-in-theme)
+- [Show usage pace](#show-usage-pace)
 - [Choose providers and refresh usage](#choose-providers-and-refresh-usage)
 - [Show used or remaining allowance](#show-used-or-remaining-allowance)
 - [Windows VM testing for developers](#windows-vm-testing-for-developers)
@@ -76,6 +77,46 @@ Custom theme files are stored in:
 ```text
 %APPDATA%\ClaudeCodeUsageMonitor\themes
 ```
+
+## Show usage pace
+
+Select **Compact Fluent Pace** under **Settings > Appearance > Active theme**.
+This optional, editable theme adds small icons to the left of the usage bars,
+in the same colours as the bars. It is also available in Theme Studio.
+
+![Compact Fluent Pace in dark mode, showing underpace, in pace, and overpace icons](docs/images/compact-fluent-pace-dark.png)
+
+![Compact Fluent Pace in light mode](docs/images/compact-fluent-pace-light.png)
+
+The previews use example data. The icons compare allowance consumed with time
+elapsed in the current window:
+
+| Icon | Meaning |
+| --- | --- |
+| Downward trend | **Underpace:** usage is more than 5 percentage points below elapsed time. |
+| Gauge | **In pace:** usage is within 5 percentage points of elapsed time. |
+| Upward trend | **Overpace:** usage is more than 5 percentage points above elapsed time. |
+
+For example, halfway through a window, 20% used is underpace, 50% is in pace,
+and 80% is overpace. This assumes an even rate of usage through the window;
+it does not predict future activity. **Remaining** mode changes the bars and
+percentages but keeps pace based on usage consumed.
+
+Pace covers Claude's five-hour and seven-day windows, Codex's available
+five-hour and seven-day windows, and Copilot's UTC calendar month. Icons stay
+hidden when reset times are missing or expired, data is unavailable or stale,
+or a credit balance replaces the weekly row. Codex's monthly quota does not get
+a seven-day pace icon. Copilot pace requires a reset at the next month boundary
+and accounts for the month's length, including leap years.
+
+Pace updates once per minute using the existing usage reading and reset time.
+It does not add provider requests. Other providers keep the Compact Fluent Quad
+layout without pace icons.
+
+The theme is installed once and can be edited or deleted in Theme Studio.
+Updates preserve your edits and do not restore a theme you have deleted.
+The trend and gauge icons come from [Lucide](https://lucide.dev/), with the
+[license included](src/themes/assets/pace-lucide-LICENSE.txt).
 
 ## Choose providers and refresh usage
 

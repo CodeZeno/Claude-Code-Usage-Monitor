@@ -43,6 +43,7 @@ fn build_themes() {
     for name in [
         "classic-usage-widget.json",
         "compact-fluent-quad.json",
+        "compact-fluent-pace.json",
         "classic-vertical.json",
         "minecraft-codex.json",
     ] {

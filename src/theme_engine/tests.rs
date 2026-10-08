@@ -2036,10 +2036,9 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
 
 #[test]
 fn bundled_minecraft_theme_is_valid_editable_and_uses_dashboard_v2() {
-    assert_eq!(BUNDLED_EDITABLE_THEME_SOURCES.len(), 1);
-    let (expected_id, source) = BUNDLED_EDITABLE_THEME_SOURCES[0];
-    let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
-    assert_eq!(expected_id, MINECRAFT_THEME_ID);
+    let bundle = &BUNDLED_EDITABLE_THEMES[0];
+    let mut theme: ThemeDocument = serde_json::from_str(bundle.source).unwrap();
+    assert_eq!(bundle.id, MINECRAFT_THEME_ID);
     assert_eq!(theme.id, MINECRAFT_THEME_ID);
     assert!(!theme.is_builtin());
     theme.prepare_runtime();
@@ -2052,7 +2051,7 @@ fn bundled_minecraft_theme_is_valid_editable_and_uses_dashboard_v2() {
         Some("show_context_menu(\"dashboard-v2\")")
     );
 
-    for (file_name, bytes) in BUNDLED_THEME_ASSETS {
+    for (file_name, bytes) in bundle.assets {
         assert!(file_name.starts_with("minecraft-"));
         assert!(image::load_from_memory(bytes).is_ok());
         assert_eq!(theme_asset_usage(&theme, &format!("assets/{file_name}")), 1);
@@ -2062,7 +2061,7 @@ fn bundled_minecraft_theme_is_valid_editable_and_uses_dashboard_v2() {
 #[test]
 fn minecraft_context_menu_migration_is_targeted_and_one_time() {
     let mut minecraft: ThemeDocument =
-        serde_json::from_str(BUNDLED_EDITABLE_THEME_SOURCES[0].1).unwrap();
+        serde_json::from_str(BUNDLED_EDITABLE_THEMES[0].source).unwrap();
     minecraft.surfaces[0]
         .mouse_events
         .as_mut()
@@ -2110,7 +2109,7 @@ fn bundled_minecraft_install_preserves_user_edits() {
 
     ensure_bundled_editable_themes(&themes, &assets).unwrap();
     assert_eq!(load_theme(&theme_path).unwrap().name, "My Minecraft");
-    for (file_name, _) in BUNDLED_THEME_ASSETS {
+    for (file_name, _) in MINECRAFT_THEME_ASSETS {
         assert!(assets.join(file_name).is_file());
     }
 
