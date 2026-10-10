@@ -451,6 +451,7 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         usage: None,
         usage_poll_ok: false,
         usage_has_error: false,
+        usage_updated_unix: None,
         last_cache_read: Instant::now(),
         next_preview_countdown_refresh: None,
         next_preview_clock_refresh: None,
@@ -689,6 +690,22 @@ fn unchanged_usage_cache_does_not_invalidate_the_preview() {
 }
 
 #[test]
+fn dashboard_fresh_time_follows_the_cache_field() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    let cache = |fresh_unix| UsageCache {
+        updated_unix: 50,
+        fresh_unix,
+        ..Default::default()
+    };
+    app.update_usage_cache(cache(None));
+    assert_eq!(app.usage_updated_unix, Some(50));
+    app.update_usage_cache(cache(Some(Some(30))));
+    assert_eq!(app.usage_updated_unix, Some(30));
+    app.update_usage_cache(cache(Some(None)));
+    assert_eq!(app.usage_updated_unix, None);
+}
+
+#[test]
 fn preview_countdowns_refresh_on_minute_boundaries_until_the_final_minute() {
     assert_eq!(
         preview_countdown_delay(Duration::from_secs(125)),
@@ -783,6 +800,7 @@ fn context_menu_action_scripts_round_trip_every_action_kind() {
         ContextMenuAction::OpenUrl {
             url: "https://example.com/a?q=1".into(),
         },
+        ContextMenuAction::SnoozeAlarm,
         ContextMenuAction::Exit,
     ];
     for action in actions {
@@ -1525,14 +1543,15 @@ fn duplicate_and_delete_include_the_selected_subtree() {
 fn scene_preview_colors_preserve_alpha_and_choose_readable_icons() {
     let mut light = Paint::new("#FFFFFFFF");
     light.opacity = 0.5.into();
-    let light = scene_paint_color(&light);
+    let none = || DataContext::from_usage(None, &Canvas::default());
+    let light = scene_paint_color(&light, &none);
     assert_eq!(light.a(), 128);
     assert_eq!(
         scene_icon_contrast_color(egui::Color32::WHITE),
         egui::Color32::BLACK
     );
 
-    let dark = scene_paint_color(&Paint::new("#101214FF"));
+    let dark = scene_paint_color(&Paint::new("#101214FF"), &none);
     assert_eq!(scene_icon_contrast_color(dark), egui::Color32::WHITE);
     assert_eq!(
         scene_icon_contrast_color(egui::Color32::TRANSPARENT),
@@ -1567,9 +1586,157 @@ fn scene_preview_colors_preserve_alpha_and_choose_readable_icons() {
         color: text_paint.clone(),
     };
     assert_eq!(
-        scene_object_icon_color(&layout_object, egui::Color32::WHITE),
-        scene_paint_color(&text_paint)
+        scene_object_icon_color(&layout_object, egui::Color32::WHITE, &none),
+        scene_paint_color(&text_paint, &none)
     );
+}
+
+#[test]
+fn colour_expressions_display_their_evaluated_colour_and_stay_unchanged() {
+    let expression = r##"if(system.dark, "#102030", "#F0E0D0")"##;
+    let paint = Paint::new(expression);
+    let context = |dark| {
+        move || {
+            DataContext::from_usage_with_runtime(
+                None,
+                &Canvas::default(),
+                ThemeRuntime::default().with_system_dark(dark),
+            )
+        }
+    };
+    let dark = scene_paint_color(&paint, &context(true));
+    let light = scene_paint_color(&paint, &context(false));
+    assert_eq!(dark, egui::Color32::from_rgb(0x10, 0x20, 0x30));
+    assert_eq!(light, egui::Color32::from_rgb(0xF0, 0xE0, 0xD0));
+    let shown = display_color(expression, &context(true)());
+    assert_eq!(shown.map(|c| (c.r, c.g, c.b)), Some((0x10, 0x20, 0x30)));
+    assert_eq!(paint.color, expression);
+    assert_eq!(
+        scene_paint_color(&Paint::new("not a colour"), &context(true)),
+        egui::Color32::TRANSPARENT
+    );
+}
+
+/// Drives the colour field the inspector uses (`color_string_field`, fed the
+/// evaluated colour exactly as `paint_control` does) with synthetic input.
+struct PickerHarness {
+    context: egui::Context,
+    value: String,
+    button: egui::Pos2,
+}
+
+impl PickerHarness {
+    fn new(value: &str) -> Self {
+        let context = egui::Context::default();
+        configure_style(&context, LanguageId::English);
+        let mut harness = Self {
+            context,
+            value: value.into(),
+            button: egui::Pos2::ZERO,
+        };
+        harness.frame(Vec::new());
+        harness
+    }
+
+    fn frame(&mut self, events: Vec<egui::Event>) {
+        let dark = DataContext::from_usage_with_runtime(
+            None,
+            &Canvas::default(),
+            ThemeRuntime::default().with_system_dark(true),
+        );
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(700.0, 900.0),
+            )),
+            events,
+            ..Default::default()
+        };
+        let (value, button) = (&mut self.value, &mut self.button);
+        run_test_ui(&self.context, input, |ui| {
+            let shown = display_color(value, &dark).map(|c| [c.r, c.g, c.b, c.a]);
+            let rect =
+                crate::ui::components::color_picker::color_string_field(ui, value, 260.0, shown)
+                    .rect;
+            *button = rect.left_center() + egui::vec2(8.0, 0.0);
+        });
+    }
+
+    fn click(&mut self, at: egui::Pos2) {
+        let event = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![egui::Event::PointerMoved(at)]);
+        self.frame(vec![event(true)]);
+        self.frame(vec![event(false)]);
+        self.frame(Vec::new());
+        self.frame(Vec::new());
+    }
+
+    /// The largest floating layer: the open colour popup.
+    fn popup(&self) -> Option<egui::Rect> {
+        self.context.memory(|memory| {
+            memory
+                .layer_ids()
+                .filter(|layer| layer.order != egui::Order::Background)
+                .filter_map(|layer| memory.area_rect(layer.id))
+                .max_by(|a, b| a.area().total_cmp(&b.area()))
+        })
+    }
+}
+
+#[test]
+fn the_real_picker_rewrites_an_expression_only_when_a_colour_is_chosen() {
+    let expression = r##"if(system.dark, "#102030", "#F0E0D0")"##;
+    let mut harness = PickerHarness::new(expression);
+    harness.click(harness.button);
+    let popup = harness
+        .popup()
+        .expect("clicking the swatch opens the picker");
+    // Opening, hovering and idling without choosing must not touch the text.
+    harness.frame(vec![egui::Event::PointerMoved(popup.center())]);
+    harness.frame(Vec::new());
+    assert_eq!(harness.value, expression);
+    // Choosing a colour in the picker replaces the text with that colour.
+    harness.click(popup.center() + egui::vec2(40.0, 20.0));
+    assert_ne!(harness.value, expression);
+    assert!(
+        harness.value.starts_with('#') && harness.value.len() == 9,
+        "{}",
+        harness.value
+    );
+}
+
+#[test]
+fn colour_previews_use_the_selected_surfaces_real_canvas() {
+    // Default Canvas is 292 wide; this surface is 200 wide.
+    let expression = r##"if(canvas.width > 250, "#FF0000", "#00FF00")"##;
+    let app = app_with_surfaces(vec![root("alpha")]);
+    let context = app.color_preview_context(0);
+    assert_eq!(context.get("canvas.width"), Some(200.0));
+    let shown = display_color(expression, &context).expect("expression evaluates");
+    assert_eq!((shown.r, shown.g, shown.b), (0x00, 0xFF, 0x00));
+}
+
+#[test]
+fn an_untouched_colour_expression_survives_a_save_and_reload() {
+    let expression = r##"if(system.dark, "#102030", "#F0E0D0")"##;
+    let mut theme = ThemeDocument::starter();
+    theme.id = "expression-round-trip".into();
+    theme.name = "Expression round trip".into();
+    theme.surfaces[0].background = theme_engine::LayerBackground::Colour {
+        colour: Paint::new(expression),
+    };
+    let path = theme_engine::save_theme(&theme).unwrap();
+    let loaded = theme_engine::load_theme(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    match &loaded.surfaces[0].background {
+        theme_engine::LayerBackground::Colour { colour } => assert_eq!(colour.color, expression),
+        other => panic!("background changed on reload: {other:?}"),
+    }
 }
 
 #[test]

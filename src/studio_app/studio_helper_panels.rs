@@ -9,6 +9,7 @@ pub(super) enum TextTemplateFormat {
     Percentage,
     ShortDuration,
     DetailedDuration,
+    Countdown,
     UsageLine,
     UsageBadge,
     WeekdayTwo,
@@ -791,6 +792,7 @@ pub(super) fn text_template_formats(kind: TextTemplateValueKind) -> &'static [Te
         TextTemplateValueKind::Duration => &[
             Format::ShortDuration,
             Format::DetailedDuration,
+            Format::Countdown,
             Format::WholeNumber,
         ],
         TextTemplateValueKind::Timestamp => &[
@@ -841,6 +843,7 @@ pub(super) fn text_template_format_label(
         TextTemplateFormat::Percentage => language.text("Percentage"),
         TextTemplateFormat::ShortDuration => language.text("Short duration"),
         TextTemplateFormat::DetailedDuration => language.text("Detailed duration"),
+        TextTemplateFormat::Countdown => language.text("Countdown"),
         TextTemplateFormat::UsageLine => language.text("Usage and reset"),
         TextTemplateFormat::UsageBadge => language.text("Usage only"),
         TextTemplateFormat::WeekdayTwo => language.text("Weekday (2 letters)"),
@@ -880,6 +883,7 @@ pub(super) fn text_template_format_code(format: TextTemplateFormat) -> Option<&'
         TextTemplateFormat::Percentage => Some("percent"),
         TextTemplateFormat::ShortDuration => Some("duration_short"),
         TextTemplateFormat::DetailedDuration => Some("duration"),
+        TextTemplateFormat::Countdown => Some("countdown"),
         TextTemplateFormat::UsageLine => Some("usage_line"),
         TextTemplateFormat::UsageBadge => Some("usage_badge"),
         TextTemplateFormat::WeekdayTwo => Some("weekday_2"),

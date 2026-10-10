@@ -336,6 +336,7 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
             format!("layer_actions({})", string_arg(actions))
         }
         ContextMenuAction::OpenUrl { url } => format!("open_url({})", string_arg(url)),
+        ContextMenuAction::SnoozeAlarm => "snooze_alarm()".into(),
         ContextMenuAction::Exit => "exit()".into(),
     }
 }
@@ -352,6 +353,7 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         ("toggle_taskbar_lock", ContextMenuAction::ToggleTaskbarLock),
         ("toggle_widget", ContextMenuAction::ToggleWidget),
         ("check_for_updates", ContextMenuAction::CheckForUpdates),
+        ("snooze_alarm", ContextMenuAction::SnoozeAlarm),
         ("exit", ContextMenuAction::Exit),
     ] {
         if script == format!("{name}()") {

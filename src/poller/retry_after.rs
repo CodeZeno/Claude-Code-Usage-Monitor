@@ -234,11 +234,16 @@ mod tests {
                     Err(ureq::Error::StatusCode(code)) if code == status
                 ));
 
-                // Advance the cooldown's age without sleeping or restarting.
+                // Advance the cooldown's age without sleeping or restarting. A
+                // machine booted less than a day ago cannot represent that
+                // instant, so expire the delay instead.
                 {
                     let mut cooldowns = state.cooldowns.lock().unwrap();
-                    cooldowns.get_mut(&key).unwrap().received =
-                        Instant::now() - Duration::from_secs(86_400);
+                    let cooldown = cooldowns.get_mut(&key).unwrap();
+                    match Instant::now().checked_sub(Duration::from_secs(86_400)) {
+                        Some(received) => cooldown.received = received,
+                        None => cooldown.delay = Duration::ZERO,
+                    }
                 }
                 let mut sent = false;
                 state

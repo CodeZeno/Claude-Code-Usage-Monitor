@@ -35,3 +35,6 @@ test_bin/
 # Local dev builds and scratch
 /builds/
 /scratch/
+
+# Approval screenshots rendered from fixture data
+/approval/

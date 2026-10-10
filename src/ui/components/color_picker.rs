@@ -56,16 +56,19 @@ pub(crate) fn color_button(ui: &mut egui::Ui, color: &mut [u8; 4]) -> egui::Resp
     response
 }
 
+/// `shown` is the evaluated colour when `value` is an expression; the text is
+/// only rewritten when the user picks a new colour.
 pub(crate) fn color_string_field(
     ui: &mut egui::Ui,
     value: &mut String,
     width: f32,
+    shown: Option<[u8; 4]>,
 ) -> egui::Response {
     ui.allocate_ui_with_layout(
         egui::vec2(width, CONTROL_HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            let mut color = parse_color(value).unwrap_or([255, 0, 255, 255]);
+            let mut color = parse_color(value).or(shown).unwrap_or([255, 0, 255, 255]);
             let button_width = ui.spacing().interact_size.x;
             let text_width = (width - button_width - ui.spacing().item_spacing.x).max(1.0);
             let button = color_button(ui, &mut color);
@@ -323,7 +326,7 @@ mod tests {
         let mut size = egui::Vec2::ZERO;
         let mut output = context.run_ui(egui::RawInput::default(), |ui| {
             let mut value = "#FFFFFFFF".to_owned();
-            size = color_string_field(ui, &mut value, 240.0).rect.size();
+            size = color_string_field(ui, &mut value, 240.0, None).rect.size();
         });
         output.textures_delta.clear();
 

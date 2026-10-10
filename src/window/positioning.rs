@@ -166,9 +166,42 @@ pub(super) fn render_custom_window(
         render_desktop_custom_window(hwnd, rendered);
         return;
     }
+    present_layered(
+        hwnd,
+        rendered,
+        LayeredFrame {
+            source_top: 0,
+            height: rendered.height as i32,
+            origin: None,
+            opacity: 255,
+            interactive: true,
+        },
+    );
+}
 
+/// Which rows of a rendered surface a layered window shows, and where.
+pub(super) struct LayeredFrame {
+    pub source_top: i32,
+    pub height: i32,
+    /// Screen position, or `None` to keep the window where it is.
+    pub origin: Option<POINT>,
+    pub opacity: u8,
+    /// Keep fully transparent pixels hit-testable.
+    pub interactive: bool,
+}
+
+pub(super) fn present_layered(
+    hwnd: HWND,
+    rendered: &theme_engine::RenderedTheme,
+    frame: LayeredFrame,
+) {
     let width = rendered.width as i32;
-    let height = rendered.height as i32;
+    let source_top = frame.source_top.clamp(0, rendered.height as i32);
+    let height = frame
+        .height
+        .clamp(1, (rendered.height as i32 - source_top).max(1));
+    let rows = (rendered.width as usize * source_top as usize)
+        ..(rendered.width as usize * (source_top + height) as usize).min(rendered.pixels.len());
     unsafe {
         // Keep the DWM surface alive across frames. Desktop rendering uses a
         // separate DirectComposition window, so no layered-style reset is
@@ -200,12 +233,13 @@ pub(super) fn render_custom_window(
             return;
         }
         let old = SelectObject(memory_dc, bitmap.into());
-        let window_pixels = std::slice::from_raw_parts_mut(bits as *mut u32, rendered.pixels.len());
-        for (target, source) in window_pixels.iter_mut().zip(&rendered.pixels) {
+        let source_pixels = &rendered.pixels[rows];
+        let window_pixels = std::slice::from_raw_parts_mut(bits as *mut u32, source_pixels.len());
+        for (target, source) in window_pixels.iter_mut().zip(source_pixels) {
             // Windows normally lets mouse input pass through zero-alpha pixels in
             // layered windows. A nearly transparent pixel keeps the full surface
             // interactive without changing the theme renderer's pixel output.
-            *target = if source >> 24 == 0 {
+            *target = if frame.interactive && source >> 24 == 0 {
                 0x0100_0000
             } else {
                 *source
@@ -219,13 +253,13 @@ pub(super) fn render_custom_window(
         let blend = BLENDFUNCTION {
             BlendOp: AC_SRC_OVER as u8,
             BlendFlags: 0,
-            SourceConstantAlpha: 255,
+            SourceConstantAlpha: frame.opacity,
             AlphaFormat: AC_SRC_ALPHA as u8,
         };
         if let Err(error) = UpdateLayeredWindow(
             hwnd,
             Some(screen_dc),
-            None,
+            frame.origin.as_ref().map(|origin| origin as *const POINT),
             Some(&size),
             Some(memory_dc),
             Some(&source),
@@ -254,36 +288,14 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
         let state = lock_state();
         state.as_ref().is_some_and(|s| s.dragging)
     };
-    if is_dragging {
+    // Auto-hiding surfaces are positioned by their presenter, frame by frame.
+    if is_dragging || theme.placement.auto_hide_edge().is_some() {
         return;
     }
-    let taskbars = native_interop::find_taskbars();
-    let displays = native_interop::find_monitors();
-    let display_index = theme.placement.reference.display;
-    let selected_display = displays
-        .get(display_index)
-        .copied()
-        .or_else(|| displays.first().copied());
-    let Some(display) = selected_display else {
+    let Some((rect, taskbar)) = surface_target(theme, scale) else {
         return;
     };
-    let taskbar = taskbars.iter().find(|taskbar| unsafe {
-        MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
-    });
-    let width = scaled_theme_dimension(theme.canvas.width.max(1), scale);
-    let height = scaled_theme_dimension(theme.canvas.height.max(1), scale);
-    let tray = taskbar
-        .and_then(|tb| native_interop::find_child_window(tb.hwnd, "TrayNotifyWnd"))
-        .and_then(native_interop::get_window_rect_safe);
-    let rect = surface_screen_rect(
-        &theme.placement,
-        width,
-        height,
-        scale,
-        display.rect,
-        taskbar.map(|tb| tb.rect),
-        tray,
-    );
+    let (width, height) = (rect.right - rect.left, rect.bottom - rect.top);
     let (x, y) = (rect.left, rect.top);
     let nest = theme
         .placement
@@ -351,6 +363,40 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
     }
 }
 
+/// Screen rectangle of a positioned surface on its selected display, and the
+/// taskbar that display owns.
+pub(super) fn surface_target(
+    theme: &ThemeDocument,
+    scale: f64,
+) -> Option<(RECT, Option<native_interop::TaskbarWindow>)> {
+    let taskbars = native_interop::find_taskbars();
+    let displays = native_interop::find_monitors();
+    let display = displays
+        .get(native_interop::display_or_first(
+            theme.placement.reference.display,
+            displays.len(),
+        ))
+        .copied()?;
+    let taskbar = taskbars.into_iter().find(|taskbar| unsafe {
+        MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
+    });
+    let width = scaled_theme_dimension(theme.canvas.width.max(1), scale);
+    let height = scaled_theme_dimension(theme.canvas.height.max(1), scale);
+    let tray = taskbar
+        .and_then(|tb| native_interop::find_child_window(tb.hwnd, "TrayNotifyWnd"))
+        .and_then(native_interop::get_window_rect_safe);
+    let rect = surface_screen_rect(
+        &theme.placement,
+        width,
+        height,
+        scale,
+        display.rect,
+        taskbar.map(|tb| tb.rect),
+        tray,
+    );
+    Some((rect, taskbar))
+}
+
 pub(super) fn sync_theme_window_visibility() {
     let (theme, data, runtime, windows) = {
         let state = lock_state();
@@ -372,6 +418,7 @@ pub(super) fn sync_theme_window_visibility() {
                 .collect::<Vec<_>>(),
         )
     };
+    let mut resume_poll = false;
     unsafe {
         for (surface_index, surface) in theme.surfaces.iter().enumerate() {
             let nest = surface
@@ -396,7 +443,16 @@ pub(super) fn sync_theme_window_visibility() {
                     data.as_ref(),
                     surface_runtime,
                 ) && !foreground_is_fullscreen_on_display(surface.placement.reference.display);
-            if should_show == IsWindowVisible(hwnd).as_bool() {
+            // Auto-hiding surfaces are shown and hidden by their own module,
+            // which also restarts the pointer poll it suspends while they are
+            // hidden.
+            let auto_hiding = auto_hide::owns(hwnd);
+            let visible = if auto_hiding {
+                auto_hide::is_shown(hwnd)
+            } else {
+                IsWindowVisible(hwnd).as_bool()
+            };
+            if should_show == visible {
                 continue;
             }
             if should_show {
@@ -410,19 +466,31 @@ pub(super) fn sync_theme_window_visibility() {
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
                 );
             }
-            let _ = ShowWindow(
-                hwnd,
-                if should_show {
-                    SW_SHOWNOACTIVATE
-                } else {
-                    SW_HIDE
-                },
-            );
+            if auto_hiding {
+                auto_hide::show(hwnd, should_show);
+                resume_poll = true;
+            } else {
+                let _ = ShowWindow(
+                    hwnd,
+                    if should_show {
+                        SW_SHOWNOACTIVATE
+                    } else {
+                        SW_HIDE
+                    },
+                );
+            }
         }
+    }
+    if resume_poll {
+        auto_hide::schedule(windows[0].to_hwnd());
     }
 }
 
 pub(super) fn foreground_is_fullscreen_on_display(display_index: usize) -> bool {
+    // Tests must not depend on whatever app the developer has in front.
+    if cfg!(test) {
+        return false;
+    }
     unsafe {
         let foreground = GetForegroundWindow();
         if foreground.is_invalid()

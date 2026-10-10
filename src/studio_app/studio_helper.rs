@@ -42,6 +42,7 @@ const VALUE_CATEGORIES: &[&str] = &[
 /// values can use.
 const MOUSE_ACTION_CATEGORIES: &[&str] = &[
     DASHBOARD,
+    APP,
     LINKS_AND_MENUS,
     LAYERS,
     USAGE,
@@ -149,6 +150,13 @@ const MOUSE_ACTIONS: &[ActionSpec] = &[
         "toggle_dashboard",
     ),
     (
+        "snooze_alarm",
+        APP,
+        "Snooze alarm (1 hour)",
+        "snooze_alarm()",
+        "snooze_alarm",
+    ),
+    (
         "open_url",
         LINKS_AND_MENUS,
         "Open URL",
@@ -235,6 +243,13 @@ const MENU_ACTIONS: &[ActionSpec] = &[
         "Check for updates",
         "check_for_updates()",
         "check_for_updates",
+    ),
+    (
+        "snooze_alarm",
+        APP,
+        "Snooze alarm (1 hour)",
+        "snooze_alarm()",
+        "snooze_alarm",
     ),
     ("exit", APP, "Exit", "exit()", "exit"),
     (
@@ -911,6 +926,17 @@ pub(super) fn value_entries(
         ("i18n.hour_suffix", "Hour suffix"),
         ("i18n.minute_suffix", "Minute suffix"),
         ("i18n.second_suffix", "Second suffix"),
+        ("i18n.status_waiting", "Waiting for data status"),
+        ("i18n.status_live", "Live status"),
+        ("i18n.status_stale", "Stale status"),
+        (
+            "i18n.status_live_updated",
+            "Live status with the age of the data",
+        ),
+        (
+            "i18n.status_stale_updated",
+            "Stale status with the age of the data",
+        ),
         ("i18n.locale", "Language code"),
     ] {
         list.value(LABELS, None, labels, label, name);
@@ -1315,6 +1341,7 @@ fn mouse_action_details(
             );
             "toggle_dashboard()".to_string()
         }
+        "snooze_alarm" => "snooze_alarm()".to_string(),
         "open_url" => format!("open_url({})", quoted(&url_form(ui, forms, language)?)),
         "show_context_menu" => {
             note(ui, language.text("Shows a context menu at the pointer."));
@@ -1371,6 +1398,7 @@ fn menu_action_details(
         "toggle_startup" => ContextMenuAction::ToggleStartup,
         "toggle_taskbar_lock" => ContextMenuAction::ToggleTaskbarLock,
         "check_for_updates" => ContextMenuAction::CheckForUpdates,
+        "snooze_alarm" => ContextMenuAction::SnoozeAlarm,
         "exit" => ContextMenuAction::Exit,
         "set_update_frequency" => {
             form_label(ui, language.text("Update frequency"));

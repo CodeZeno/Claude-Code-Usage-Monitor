@@ -23,6 +23,7 @@ pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
 pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
 pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
+pub const TOP_BAR_THEME_ID: &str = "top-bar";
 
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
@@ -36,6 +37,10 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
         CLASSIC_VERTICAL_THEME_ID,
         include_str!(concat!(env!("OUT_DIR"), "/classic-vertical.json")),
+    ),
+    (
+        TOP_BAR_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/top-bar.json")),
     ),
 ];
 
@@ -193,11 +198,53 @@ pub struct Placement {
     pub offset_y: i32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub offset_y_expression: Option<Expression>,
+    /// Tuck an edge-docked floating surface away behind a slim handle until
+    /// the pointer rests on it. Ignored where `edge` is `None`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_hide: bool,
+    /// Colour of the collapsed handle's accent, as an expression producing
+    /// `#RRGGBB` or `#RRGGBBAA` text, so it can warn about high usage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_color: Option<Expression>,
+    /// Fill of the collapsed handle, as colour text like `handle_color`, so
+    /// the tab can match the surface's own card. Omitted, the tab is dark.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle_background: Option<Expression>,
+    /// Keep an auto-hiding surface revealed while this is non-zero, for
+    /// example `alarm.active` so an almost spent limit cannot slide away.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub force_reveal: Option<Expression>,
+}
+
+/// The monitor edge a floating surface is docked against.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SurfaceEdge {
+    Top,
+    Bottom,
 }
 
 impl Placement {
     fn is_default(&self) -> bool {
         self == &Self::default()
+    }
+
+    /// A floating surface whose top or bottom sits on its reference's top or
+    /// bottom edge. Only these can hide until hovered.
+    pub fn edge(&self) -> Option<SurfaceEdge> {
+        if self.nest.resolve(self.reference.region) != SurfaceNest::Floating
+            || self.surface_vertical.unwrap_or(self.vertical) != self.vertical
+        {
+            return None;
+        }
+        match self.vertical {
+            VerticalAnchor::Top => Some(SurfaceEdge::Top),
+            VerticalAnchor::Bottom => Some(SurfaceEdge::Bottom),
+            VerticalAnchor::Center => None,
+        }
+    }
+
+    pub fn auto_hide_edge(&self) -> Option<SurfaceEdge> {
+        self.edge().filter(|_| self.auto_hide)
     }
 }
 
@@ -463,6 +510,8 @@ pub enum MouseActionTarget {
 pub enum MouseAction {
     ShowDashboard,
     ToggleDashboard,
+    /// What "Snooze alarm (1 hour)" does in the context menu.
+    SnoozeAlarm,
     OpenUrl {
         url: String,
     },
@@ -505,13 +554,14 @@ pub struct MouseActionOverrideKey {
 pub enum MouseActionEffect {
     ShowDashboard,
     ToggleDashboard,
+    SnoozeAlarm,
     OpenUrl(String),
     ShowContextMenu(Option<String>),
 }
 
 /// Parse the deliberately small, line-or-semicolon separated action language.
 /// Supported forms include `show_dashboard()`, `toggle_dashboard()`,
-/// `open_url("https://example.com")`, `show_context_menu()`,
+/// `snooze_alarm()`, `open_url("https://example.com")`, `show_context_menu()`,
 /// `show_context_menu("menu-id")`, `set(self.render, false)`,
 /// `increase("layer-id", height, 10)`, `decrease(self.width, 5)`,
 /// `toggle(self.render)`, and `reset("layer-id", height)`.
@@ -532,6 +582,8 @@ pub fn parse_mouse_actions(source: &str) -> Result<Vec<MouseAction>, String> {
             "show_dashboard" => return Err("show_dashboard() does not take arguments".into()),
             "toggle_dashboard" if args.is_empty() => actions.push(MouseAction::ToggleDashboard),
             "toggle_dashboard" => return Err("toggle_dashboard() does not take arguments".into()),
+            "snooze_alarm" if args.is_empty() => actions.push(MouseAction::SnoozeAlarm),
+            "snooze_alarm" => return Err("snooze_alarm() does not take arguments".into()),
             "open_url" if args.len() == 1 => {
                 let url = parse_quoted_action_string(&args[0], "URL")?;
                 if !crate::context_menu::supported_url(&url) {
@@ -1338,6 +1390,45 @@ pub struct ThemeRuntime {
     pub floating_card_opacity: u8,
     host_width: u32,
     host_height: u32,
+    /// Unix time of the last successful usage refresh, when known.
+    updated_unix: Option<u64>,
+    /// Windows dark mode; `None` reads the system setting.
+    system_dark: Option<bool>,
+    pub alarm: ThemeAlarm,
+}
+
+/// What remains of a limit, in percent, at or below which it raises the
+/// low-usage alarm. Compared after rounding the way usage text is shown, so a
+/// limit reading "5%" left always alarms.
+pub const ALARM_REMAINING_PERCENT: f64 = 5.0;
+
+/// Whether a limit's reading is in the low-usage alarm zone.
+pub fn limit_in_alarm_zone(section: &crate::models::UsageSection) -> bool {
+    section.available && 100.0 - section.percentage < ALARM_REMAINING_PERCENT + 0.5
+}
+
+/// The real window a provider's `session` binding shows: `five_hour`, or for
+/// Codex without a five-hour window, `weekly`. The renderer and the alarm both
+/// resolve `session` through here.
+pub(crate) fn session_window(
+    usage: &crate::models::UsageData,
+    codex_compatibility: bool,
+) -> &'static str {
+    if codex_compatibility && !usage.session.available && usage.weekly.available {
+        "weekly"
+    } else {
+        "five_hour"
+    }
+}
+
+/// The low-usage alarm as the app last decided it, exposed as `alarm.*`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThemeAlarm {
+    /// The alarm setting is on, so almost spent limits set `<limit>.alarm`.
+    pub enabled: bool,
+    /// A shown limit is almost spent and the alarm is not snoozed.
+    pub active: bool,
+    pub snoozed: bool,
 }
 
 impl Default for ThemeRuntime {
@@ -1352,6 +1443,9 @@ impl Default for ThemeRuntime {
             floating_card_opacity: 85,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
+            updated_unix: None,
+            system_dark: None,
+            alarm: ThemeAlarm::default(),
         }
     }
 }
@@ -1382,7 +1476,32 @@ impl ThemeRuntime {
             floating_card_opacity: 85,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
+            updated_unix: None,
+            system_dark: None,
+            alarm: ThemeAlarm::default(),
         }
+    }
+
+    /// Record when usage was last refreshed, exposed as `data.updated.*`.
+    pub fn with_updated_unix(mut self, updated_unix: Option<u64>) -> Self {
+        self.updated_unix = updated_unix.filter(|unix| *unix > 0);
+        self
+    }
+
+    /// Render as if Windows were in dark or light mode.
+    #[cfg(test)]
+    pub fn with_system_dark(mut self, dark: bool) -> Self {
+        self.system_dark = Some(dark);
+        self
+    }
+
+    pub fn system_dark(self) -> bool {
+        self.system_dark.unwrap_or_else(crate::theme::is_dark_mode)
+    }
+
+    pub fn with_alarm(mut self, alarm: ThemeAlarm) -> Self {
+        self.alarm = alarm;
+        self
     }
 
     pub fn with_nest(mut self, nest: SurfaceNest) -> Self {
@@ -1448,6 +1567,9 @@ impl DataContext {
         context.insert("canvas.height", canvas.height as f64);
         context.insert("parent.width", canvas.width as f64);
         context.insert("parent.height", canvas.height as f64);
+        // Layout replaces this with the real parent's gap; validation and root
+        // expressions see no parent spacing.
+        context.insert("parent.gap", 0.0);
         context.insert("host.width", runtime.host_width as f64);
         context.insert("host.height", runtime.host_height as f64);
         context.insert("pi", std::f64::consts::PI);
@@ -1461,7 +1583,10 @@ impl DataContext {
         context.insert("app.version.major", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.minor", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.patch", version_parts.next().unwrap_or(0.0));
-        context.insert("system.dark", crate::theme::is_dark_mode() as u8 as f64);
+        context.insert("system.dark", runtime.system_dark() as u8 as f64);
+        context.insert("alarm.enabled", runtime.alarm.enabled as u8 as f64);
+        context.insert("alarm.active", runtime.alarm.active as u8 as f64);
+        context.insert("alarm.snoozed", runtime.alarm.snoozed as u8 as f64);
         context.insert("data.poll_ok", runtime.poll_ok as u8 as f64);
         context.insert("data.has_error", runtime.has_error as u8 as f64);
         context.insert(
@@ -1479,6 +1604,9 @@ impl DataContext {
         context.insert_string("i18n.hour_suffix", strings.hour_suffix);
         context.insert_string("i18n.minute_suffix", strings.minute_suffix);
         context.insert_string("i18n.second_suffix", strings.second_suffix);
+        context.insert_string("i18n.status_waiting", strings.status_waiting);
+        context.insert_string("i18n.status_live", strings.status_live);
+        context.insert_string("i18n.status_stale", strings.status_stale);
         context.insert("providers.count", runtime.provider_count() as f64);
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1486,6 +1614,24 @@ impl DataContext {
             .unwrap_or(0.0);
         context.insert("time.now.unix", now);
         context.insert("time.now.milliseconds", now * 1000.0);
+        let updated = runtime.updated_unix.map(|unix| unix as f64);
+        context.insert("data.updated.available", updated.is_some() as u8 as f64);
+        context.insert("data.updated.unix", updated.unwrap_or(0.0));
+        context.insert(
+            "data.updated.seconds",
+            updated.map_or(0.0, |unix| (now - unix).max(0.0)),
+        );
+        // The status lines carry the data's age in the user's word order.
+        let age = updated.map(|unix| format_value((now - unix).max(0.0), "countdown", &context));
+        for (name, template) in [
+            ("status_live_updated", strings.status_live_updated),
+            ("status_stale_updated", strings.status_stale_updated),
+        ] {
+            let line = age
+                .as_deref()
+                .map_or_else(String::new, |age| template.replace("{time}", age));
+            context.insert_string(&format!("i18n.{name}"), line);
+        }
         for (zone, local) in [("local", true), ("utc", false)] {
             if let Some(value) = timestamp_parts(now, local) {
                 for (component, value) in [
@@ -1509,6 +1655,9 @@ impl DataContext {
             );
         }
         context.insert("display.countdown", runtime.countdown as u8 as f64);
+        // Only enabled providers can raise the alarm.
+        let alarm =
+            |provider: ProviderId| runtime.alarm.enabled && runtime.provider_enabled(provider);
         if let Some(data) = data {
             for account in &data.accounts {
                 let key = format!(
@@ -1527,6 +1676,7 @@ impl DataContext {
                     account.usage.as_ref(),
                     account.provider == ProviderId::Codex,
                     runtime.countdown,
+                    alarm(account.provider),
                 );
             }
             for descriptor in PROVIDER_DESCRIPTORS {
@@ -1549,6 +1699,7 @@ impl DataContext {
                     data.get(descriptor.id),
                     descriptor.id == ProviderId::Codex,
                     runtime.countdown,
+                    alarm(descriptor.id),
                 );
             }
             let active = ProviderId::ALL
@@ -1559,6 +1710,7 @@ impl DataContext {
                 active.map(|(_, usage)| usage),
                 active.is_some_and(|(provider, _)| provider == ProviderId::Codex),
                 runtime.countdown,
+                active.is_some_and(|(provider, _)| alarm(provider)),
             );
         } else {
             for descriptor in PROVIDER_DESCRIPTORS {
@@ -1567,9 +1719,10 @@ impl DataContext {
                     None,
                     descriptor.id == ProviderId::Codex,
                     runtime.countdown,
+                    false,
                 );
             }
-            context.insert_provider("active", None, false, runtime.countdown);
+            context.insert_provider("active", None, false, runtime.countdown, false);
         }
         context
     }
@@ -1580,11 +1733,12 @@ impl DataContext {
         usage: Option<&crate::models::UsageData>,
         codex_compatibility: bool,
         countdown: bool,
+        alarm: bool,
     ) {
         // What a gauge or a badge should show. `percentage` stays the share
         // that has been spent so warning thresholds keep working, while
         // `display` follows the countdown setting.
-        self.insert_limits(name, usage, countdown);
+        self.insert_limits(name, usage, countdown, alarm);
         let display = |percentage: f64| {
             if countdown {
                 100.0 - percentage
@@ -1605,8 +1759,8 @@ impl DataContext {
         // response arrived in the primary slot and was exposed to themes as
         // `codex.session`. Keep that established binding working for existing
         // custom themes, while `codex.five_hour` always means the real window.
-        let use_codex_session_fallback = codex_compatibility
-            && usage.is_some_and(|usage| !usage.session.available && usage.weekly.available);
+        let use_codex_session_fallback =
+            usage.is_some_and(|usage| session_window(usage, codex_compatibility) == "weekly");
         let session = if use_codex_session_fallback {
             weekly
         } else {
@@ -1724,6 +1878,27 @@ impl DataContext {
                 available as u8 as f64,
             );
         }
+        // Almost spent, by the same rule that sounds the app's alarm.
+        let zone = |section: Option<&crate::models::UsageSection>| {
+            (alarm && section.is_some_and(limit_in_alarm_zone)) as u8 as f64
+        };
+        let five_hour_alarm = zone(usage.map(|usage| &usage.session));
+        let weekly_alarm = zone(usage.map(|usage| &usage.weekly));
+        for (window, value) in [
+            (
+                "session",
+                if use_codex_session_fallback {
+                    weekly_alarm
+                } else {
+                    five_hour_alarm
+                },
+            ),
+            ("five_hour", five_hour_alarm),
+            ("weekly", weekly_alarm),
+            ("monthly", zone(monthly)),
+        ] {
+            self.insert(&format!("{name}.{window}.alarm"), value);
+        }
         let (monthly_unix, monthly_seconds) =
             reset_value(monthly.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
@@ -1814,7 +1989,7 @@ impl DataContext {
         static DEFAULTS: OnceLock<DataContext> = OnceLock::new();
         DEFAULTS.get_or_init(|| {
             let mut context = Self::default();
-            context.insert_provider("account", None, false, false);
+            context.insert_provider("account", None, false, false, false);
             context.insert_string("account.name", "");
             context.insert("account.selected", 0.0);
             context.insert("account.has_error", 0.0);
@@ -1946,6 +2121,7 @@ pub fn validate_mouse_action_script(
         let (target, property, value) = match action {
             MouseAction::ShowDashboard
             | MouseAction::ToggleDashboard
+            | MouseAction::SnoozeAlarm
             | MouseAction::OpenUrl { .. }
             | MouseAction::ShowContextMenu { .. } => continue,
             MouseAction::Set {
@@ -2152,6 +2328,7 @@ pub fn execute_mouse_actions(
         match action {
             MouseAction::ShowDashboard => effects.push(MouseActionEffect::ShowDashboard),
             MouseAction::ToggleDashboard => effects.push(MouseActionEffect::ToggleDashboard),
+            MouseAction::SnoozeAlarm => effects.push(MouseActionEffect::SnoozeAlarm),
             MouseAction::OpenUrl { url } => effects.push(MouseActionEffect::OpenUrl(url)),
             MouseAction::ShowContextMenu { menu } => {
                 effects.push(MouseActionEffect::ShowContextMenu(menu))
@@ -2247,6 +2424,37 @@ impl ThemeDocument {
 
     pub fn is_builtin(&self) -> bool {
         is_builtin_theme_id(&self.id)
+    }
+
+    /// The first surface docked against a monitor edge, which the display
+    /// settings for hiding and monitor choice describe.
+    pub fn edge_surface(&self) -> Option<&SceneObject> {
+        self.surfaces
+            .iter()
+            .find(|surface| surface.placement.edge().is_some())
+    }
+
+    /// Apply the user's settings for edge-docked surfaces. Built-in themes are
+    /// read-only, so hiding and the chosen display live in settings.
+    pub fn apply_edge_preferences(
+        &mut self,
+        hide_until_hover: Option<bool>,
+        display: Option<usize>,
+    ) {
+        for surface in &mut self.surfaces {
+            if surface.placement.edge().is_none() {
+                continue;
+            }
+            if let Some(hide) = hide_until_hover {
+                surface.placement.auto_hide = hide;
+            }
+            if let Some(display) = display {
+                surface.placement.reference.display = display;
+            }
+        }
+        if let Some(surface) = self.surfaces.first() {
+            self.placement = surface.placement.clone();
+        }
     }
 
     pub fn is_builtin_classic(&self) -> bool {
@@ -2373,6 +2581,24 @@ impl ThemeDocument {
             let context = DataContext::from_usage(None, &canvas);
             validate_scene_object(&mut errors, &context, root);
             validate_scene_mouse_events(&mut errors, &context, self, surface_index, root);
+            for (name, expression) in [
+                ("handle_color", &root.placement.handle_color),
+                ("handle_background", &root.placement.handle_background),
+            ] {
+                if let Some(Err(error)) =
+                    expression.as_ref().map(|e| evaluate_color(&e.0, &context))
+                {
+                    errors.push(format!("{}.placement.{name}: {error}", root.name));
+                }
+            }
+            if let Some(expression) = &root.placement.force_reveal {
+                validate_expression(
+                    &mut errors,
+                    &context,
+                    &format!("{}.placement.force_reveal", root.name),
+                    expression,
+                );
+            }
 
             let mut ids = std::collections::HashSet::new();
             ids.insert(root.id.to_ascii_lowercase());
@@ -2429,8 +2655,13 @@ impl ThemeDocument {
 
 fn current_time_refresh_interval_for(value: &impl Serialize) -> Option<Duration> {
     let source = serde_json::to_string(value).ok()?.to_ascii_lowercase();
-    let uses_clock =
-        source.contains("time.now") || source.contains("time.local") || source.contains("time.utc");
+    // Countdowns and the age of the last refresh change every minute even
+    // when no new usage arrives.
+    let uses_clock = source.contains("time.now")
+        || source.contains("time.local")
+        || source.contains("time.utc")
+        || source.contains(":countdown")
+        || source.contains("data.updated");
     if !uses_clock {
         return None;
     }
@@ -2682,9 +2913,9 @@ fn validate_expression(
 }
 
 fn validate_paint(errors: &mut Vec<String>, context: &DataContext, label: &str, paint: &Paint) {
-    if parse_color(&paint.color).is_none() {
+    if parse_color(&paint.color).is_none() && evaluate_color(&paint.color, context).is_err() {
         errors.push(format!(
-            "{label}: '{}' is not #RRGGBB or #AARRGGBB",
+            "{label}: '{}' is not #RRGGBB, #RRGGBBAA or an expression producing one",
             paint.color
         ));
     }
@@ -2752,6 +2983,10 @@ impl Default for Placement {
             offset_x_expression: None,
             offset_y: 0,
             offset_y_expression: None,
+            auto_hide: false,
+            handle_color: None,
+            handle_background: None,
+            force_reveal: None,
         }
     }
 }
@@ -2768,12 +3003,16 @@ impl Paint {
         }
     }
     pub fn resolve(&self, context: &DataContext) -> Rgba {
-        let mut rgba = parse_color(&self.color).unwrap_or(Rgba {
-            r: 255,
-            g: 0,
-            b: 255,
-            a: 255,
-        });
+        // A colour can also be an expression producing colour text, such as
+        // `if(system.dark, "#19191C", "#FFFFFF")`.
+        let mut rgba = parse_color(&self.color)
+            .or_else(|| evaluate_color(&self.color, context).ok())
+            .unwrap_or(Rgba {
+                r: 255,
+                g: 0,
+                b: 255,
+                a: 255,
+            });
         let opacity = evaluate(&self.opacity.0, context)
             .unwrap_or(1.0)
             .clamp(0.0, 1.0);
@@ -2794,6 +3033,7 @@ pub use theme_expression::*;
 mod theme_datetime;
 mod theme_limits;
 use theme_datetime::*;
+pub use theme_limits::{alarm_scan, AlarmScan};
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }
@@ -2875,3 +3115,6 @@ fn safe_file_stem(id: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod top_bar_tests;

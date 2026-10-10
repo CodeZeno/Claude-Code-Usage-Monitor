@@ -467,6 +467,17 @@ pub(super) fn call_function(
     }
 }
 
+/// Evaluate an expression that must produce colour text, such as
+/// `if(claude.headline.percentage >= 90, "#FF5C61", "#FFFFFFA0")`.
+pub fn evaluate_color(source: &str, context: &DataContext) -> Result<Rgba, String> {
+    match evaluate_value(source, context)? {
+        ExpressionValue::Text(text) => {
+            parse_color(&text).ok_or_else(|| format!("'{text}' is not #RRGGBB or #RRGGBBAA"))
+        }
+        ExpressionValue::Number(_) => Err("Expected colour text, found a number".into()),
+    }
+}
+
 pub fn parse_color(source: &str) -> Option<Rgba> {
     let hex = source.trim().strip_prefix('#')?;
     let pair = |start| u8::from_str_radix(&hex[start..start + 2], 16).ok();
@@ -626,6 +637,28 @@ pub(super) fn format_value(value: f64, format: &str, context: &DataContext) -> S
             format!("{seconds}{}", localized(context, "i18n.second_suffix", "s"))
         } else {
             localized(context, "i18n.now", "now").to_string()
+        };
+    }
+    if format.eq_ignore_ascii_case("countdown") {
+        // Minute precision for a display refreshed once a minute; whole
+        // minutes are truncated so a countdown never reads ahead of time.
+        let seconds = value.max(0.0).floor() as u64;
+        let (days, hours, minutes) = (
+            seconds / 86_400,
+            seconds % 86_400 / 3_600,
+            seconds % 3_600 / 60,
+        );
+        let day = localized(context, "i18n.day_suffix", "d");
+        let hour = localized(context, "i18n.hour_suffix", "h");
+        let minute = localized(context, "i18n.minute_suffix", "m");
+        return if days > 0 {
+            format!("{days}{day} {hours}{hour}")
+        } else if hours > 0 {
+            format!("{hours}{hour} {minutes}{minute}")
+        } else if minutes > 0 {
+            format!("{minutes}{minute}")
+        } else {
+            format!("<1{minute}")
         };
     }
     if format.eq_ignore_ascii_case("percent") {

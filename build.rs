@@ -44,6 +44,7 @@ fn build_themes() {
         "classic-usage-widget.json",
         "compact-fluent-quad.json",
         "classic-vertical.json",
+        "top-bar.json",
         "minecraft-codex.json",
     ] {
         let path = Path::new("src/themes").join(name);

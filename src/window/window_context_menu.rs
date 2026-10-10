@@ -33,6 +33,8 @@ pub(super) fn show_context_menu_document(
         let mut point = POINT::default();
         let _ = GetCursorPos(&mut point);
         let _ = SetForegroundWindow(hwnd);
+        // The menu sits outside an auto-hiding surface; keep that surface open.
+        auto_hide::hold_open(true);
         let selected = TrackPopupMenu(
             menu,
             TPM_RIGHTBUTTON | TPM_RETURNCMD,
@@ -43,6 +45,7 @@ pub(super) fn show_context_menu_document(
             None,
         )
         .0 as usize;
+        auto_hide::hold_open(false);
         let _ = DestroyMenu(menu);
         if selected >= 1_000 {
             if let Some(action) = actions.get(selected - 1_000).cloned() {
@@ -282,7 +285,8 @@ pub(super) fn execute_context_menu_action(
         | ContextMenuAction::LegacyResetPosition
         | ContextMenuAction::ToggleLayerRender { .. }
         | ContextMenuAction::LayerActions { .. }
-        | ContextMenuAction::OpenUrl { .. } => None,
+        | ContextMenuAction::OpenUrl { .. }
+        | ContextMenuAction::SnoozeAlarm => None,
     };
     if let Some(command) = static_command {
         unsafe {
@@ -318,6 +322,7 @@ pub(super) fn execute_context_menu_action(
         ContextMenuAction::OpenUrl { url } => {
             open_web_url(hwnd, &url, "context menu URL could not be opened")
         }
+        ContextMenuAction::SnoozeAlarm => snooze_low_usage_alarm(hwnd),
         _ => {}
     }
 }

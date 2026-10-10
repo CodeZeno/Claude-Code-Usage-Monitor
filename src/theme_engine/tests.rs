@@ -1789,10 +1789,11 @@ fn starter_tray_icons_follow_enabled_providers() {
 
 #[test]
 fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
-    assert_eq!(BUILTIN_THEME_SOURCES.len(), 3);
+    assert_eq!(BUILTIN_THEME_SOURCES.len(), 4);
     assert_eq!(BUILTIN_THEME_SOURCES[0].0, CLASSIC_THEME_ID);
     assert_eq!(BUILTIN_THEME_SOURCES[1].0, COMPACT_FLUENT_QUAD_THEME_ID);
     assert_eq!(BUILTIN_THEME_SOURCES[2].0, CLASSIC_VERTICAL_THEME_ID);
+    assert_eq!(BUILTIN_THEME_SOURCES[3].0, TOP_BAR_THEME_ID);
     assert!(REMOVED_BUILTIN_THEME_IDS
         .iter()
         .all(|id| !is_builtin_theme_id(id)));
@@ -2228,6 +2229,13 @@ fn mouse_action_parser_preserves_nested_value_expressions() {
     assert!(parse_mouse_actions("open_url(\"file:///temp\")")
         .unwrap_err()
         .contains("http:// or https://"));
+    assert_eq!(
+        parse_mouse_actions("snooze_alarm()").unwrap(),
+        [MouseAction::SnoozeAlarm]
+    );
+    assert!(parse_mouse_actions("snooze_alarm(60)")
+        .unwrap_err()
+        .contains("does not take arguments"));
 }
 
 #[test]
@@ -2369,7 +2377,7 @@ fn dashboard_and_context_menu_actions_emit_ordered_effects() {
         &theme,
         0,
         &self_id,
-        "show_dashboard(); toggle_dashboard(); open_url(\"https://example.com/usage\"); show_context_menu()",
+        "show_dashboard(); toggle_dashboard(); open_url(\"https://example.com/usage\"); show_context_menu(); snooze_alarm()",
         None,
         ThemeRuntime::default(),
         &mut HashMap::new(),
@@ -2382,6 +2390,7 @@ fn dashboard_and_context_menu_actions_emit_ordered_effects() {
             MouseActionEffect::ToggleDashboard,
             MouseActionEffect::OpenUrl("https://example.com/usage".into()),
             MouseActionEffect::ShowContextMenu(None),
+            MouseActionEffect::SnoozeAlarm,
         ]
     );
 }

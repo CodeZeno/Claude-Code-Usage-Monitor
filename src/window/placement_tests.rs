@@ -877,3 +877,302 @@ fn can_redock_at_tray(free_space: i32, width: i32) -> bool {
     };
     occupancy.can_restore(widget, 20)
 }
+
+fn top_bar_theme() -> ThemeDocument {
+    let mut theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+    theme.prepare_runtime();
+    theme
+}
+
+// A two-monitor layout: DISPLAY1 primary at the origin, DISPLAY2 to its right.
+const DISPLAYS: [RECT; 2] = [
+    RECT {
+        left: 0,
+        top: 0,
+        right: 1920,
+        bottom: 1080,
+    },
+    RECT {
+        left: 1920,
+        top: 0,
+        right: 3840,
+        bottom: 1080,
+    },
+];
+
+#[test]
+fn top_bar_docks_at_the_top_centre_of_each_monitor_and_dpi() {
+    let theme = top_bar_theme();
+    let placement = &theme.surfaces[0].placement;
+    assert_eq!(
+        placement.auto_hide_edge(),
+        Some(theme_engine::SurfaceEdge::Top)
+    );
+    for monitor in DISPLAYS {
+        for scale in [1.0, 1.25, 1.5] {
+            let runtime = ThemeRuntime::from_providers(ProviderSet::from_enabled([
+                ProviderId::Claude,
+                ProviderId::Codex,
+                ProviderId::Cursor,
+            ]))
+            .with_nest(SurfaceNest::Floating)
+            .with_host_dimensions(
+                logical_host_dimension(monitor.right - monitor.left, scale),
+                logical_host_dimension(monitor.bottom - monitor.top, scale),
+            );
+            let frame = positioning::widget_frame(&theme, None, runtime, scale);
+            assert_eq!(frame.inset, 0);
+            assert_eq!(frame.height, scaled_theme_dimension(84, scale));
+            let rect = positioning::surface_screen_rect(
+                placement,
+                frame.width,
+                frame.height,
+                scale,
+                monitor,
+                None,
+                None,
+            );
+            let context = format!("monitor={monitor:?} scale={scale}");
+            assert_eq!(rect.top, monitor.top, "{context}");
+            assert_eq!(rect.bottom - rect.top, frame.height, "{context}");
+            assert!(
+                (rect.left + rect.right - monitor.left - monitor.right).abs() <= 1,
+                "{context}: {rect:?}"
+            );
+            assert!(
+                rect.left >= monitor.left && rect.right <= monitor.right,
+                "{context}"
+            );
+
+            let handle = (
+                scaled_theme_dimension(64, scale),
+                scaled_theme_dimension(6, scale),
+            );
+            let layout = auto_hide::layout(
+                rect,
+                theme_engine::SurfaceEdge::Top,
+                (handle.0 as u32, handle.1 as u32),
+                scale,
+            );
+            let centre = (monitor.left + monitor.right) / 2;
+            for (target, width, depth) in [
+                (layout.handle, handle.0, handle.1),
+                (
+                    layout.zone,
+                    scaled_theme_dimension(200, scale),
+                    scaled_theme_dimension(6, scale),
+                ),
+            ] {
+                assert_eq!(target.top, monitor.top, "{context}");
+                assert_eq!(target.bottom - target.top, depth, "{context}");
+                assert_eq!(target.right - target.left, width, "{context}");
+                assert!(
+                    ((target.left + target.right) / 2 - centre).abs() <= 1,
+                    "{context}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn hidden_surfaces_show_a_handle_and_slide_out_from_their_edge() {
+    let surface = RECT {
+        left: 2400,
+        top: 0,
+        right: 3400,
+        bottom: 138,
+    };
+    let top = auto_hide::layout(surface, theme_engine::SurfaceEdge::Top, (96, 9), 1.5);
+    let collapsed = auto_hide::frame(&top, 0.0);
+    assert!(collapsed.handle && !collapsed.interactive);
+    assert_eq!(collapsed.window, top.handle);
+    assert_eq!(
+        (
+            top.handle.left,
+            top.handle.top,
+            top.handle.right,
+            top.handle.bottom
+        ),
+        (2852, 0, 2948, 9)
+    );
+
+    let half = auto_hide::frame(&top, 0.5);
+    assert!(!half.handle && !half.interactive);
+    // The bottom half of the bar shows first, hanging from the screen edge.
+    assert_eq!((half.window.top, half.window.bottom), (0, 69));
+    assert_eq!((half.window.left, half.window.right), (2400, 3400));
+    assert_eq!(half.source_top, 69);
+    assert!(half.opacity > 89 && half.opacity < 255);
+
+    let open = auto_hide::frame(&top, 1.0);
+    assert!(!open.handle && open.interactive);
+    assert_eq!(open.window, surface);
+    assert_eq!((open.source_top, open.opacity), (0, 255));
+
+    let bottom_surface = RECT {
+        top: 942,
+        bottom: 1080,
+        ..surface
+    };
+    let bottom = auto_hide::layout(
+        bottom_surface,
+        theme_engine::SurfaceEdge::Bottom,
+        (96, 9),
+        1.5,
+    );
+    assert_eq!((bottom.handle.top, bottom.handle.bottom), (1071, 1080));
+    assert_eq!((bottom.zone.top, bottom.zone.bottom), (1071, 1080));
+    let rising = auto_hide::frame(&bottom, 0.5);
+    assert_eq!((rising.window.top, rising.window.bottom), (1011, 1080));
+    assert_eq!(rising.source_top, 0);
+
+    // Leaving the open bar is measured from its full rectangle plus slack.
+    let pointer = |x, y| auto_hide::pointer(&top, POINT { x, y }, false, 1.5);
+    assert!(pointer(2900, 3).over_handle);
+    assert!(!pointer(2700, 3).over_handle);
+    assert!(pointer(2700, 140).over_surface);
+    assert!(!pointer(2700, 150).over_surface);
+}
+
+#[test]
+fn auto_hiding_bar_only_takes_input_when_fully_open() {
+    let layout = auto_hide::layout(DISPLAYS[0], theme_engine::SurfaceEdge::Top, (64, 6), 1.0);
+    for eased in [0.0, 0.01, 0.5, 0.99] {
+        assert!(!auto_hide::frame(&layout, eased).interactive, "{eased}");
+    }
+    assert!(auto_hide::frame(&layout, 1.0).interactive);
+}
+
+#[test]
+fn reveal_needs_a_resting_pointer_ignores_drags_and_lingers_after_leaving() {
+    use auto_hide::{Pointer, Reveal, HIDE_DURATION, INTENT_DELAY, LEAVE_DELAY, REVEAL_DURATION};
+    let start = Instant::now();
+    let at = |ms: u64| start + Duration::from_millis(ms);
+    let handle = Pointer {
+        over_handle: true,
+        ..Default::default()
+    };
+    let surface = Pointer {
+        over_surface: true,
+        ..Default::default()
+    };
+    let away = Pointer::default();
+    let dragging = Pointer {
+        button_down: true,
+        ..handle
+    };
+    assert_eq!(INTENT_DELAY, Duration::from_millis(80));
+    assert_eq!(LEAVE_DELAY, Duration::from_millis(600));
+
+    // A pointer sweeping past the handle does not open it.
+    let mut reveal = Reveal::default();
+    reveal.tick(at(0), handle);
+    reveal.tick(at(40), handle);
+    reveal.tick(at(56), away);
+    reveal.tick(at(120), handle);
+    reveal.tick(at(160), handle);
+    assert!(!reveal.open, "the dwell must restart after leaving");
+
+    // Dragging a window up to the edge never opens it.
+    let mut held = Reveal::default();
+    for ms in (0..1_000).step_by(40) {
+        held.tick(at(ms), dragging);
+    }
+    assert!(!held.open && held.progress == 0.0);
+
+    // Resting opens after the intent delay and slides in over ~250 ms.
+    let mut ms = 160;
+    while !reveal.open {
+        ms += 16;
+        reveal.tick(at(ms), handle);
+    }
+    assert!((200..=216).contains(&ms), "opened at {ms} ms");
+    let opened_at = ms;
+    let mut previous = reveal.eased();
+    let mut frames = 0;
+    while reveal.busy() {
+        ms += 16;
+        reveal.tick(at(ms), surface);
+        assert!(reveal.eased() >= previous);
+        previous = reveal.eased();
+        frames += 1;
+    }
+    let slide = (ms - opened_at) as u128;
+    assert!(
+        (REVEAL_DURATION.as_millis()..=REVEAL_DURATION.as_millis() + 16).contains(&slide),
+        "slide took {slide} ms"
+    );
+    assert!(frames >= 15, "{frames} frames is below 60 fps");
+    assert_eq!(reveal.eased(), 1.0);
+
+    // It stays open while the pointer is over it, then lingers after it leaves.
+    let left_at = ms + 1_000;
+    reveal.tick(at(left_at - 500), surface);
+    reveal.tick(at(left_at), away);
+    reveal.tick(at(left_at + 590), away);
+    assert!(reveal.open, "closed before the leave delay");
+    reveal.tick(at(left_at + 600), surface);
+    reveal.tick(at(left_at + 700), away);
+    reveal.tick(at(left_at + 1_250), away);
+    assert!(reveal.open, "returning must restart the leave delay");
+    reveal.tick(at(left_at + 1_300), away);
+    assert!(!reveal.open);
+    let closed_at = left_at + 1_300;
+    let mut ms = 0;
+    while reveal.progress > 0.0 {
+        ms += 16;
+        reveal.tick(at(closed_at + ms), away);
+    }
+    assert!(
+        ms as u128 <= HIDE_DURATION.as_millis() + 16,
+        "hid in {ms} ms"
+    );
+    assert!(!reveal.busy());
+}
+
+#[test]
+fn a_forced_reveal_opens_at_once_stays_open_and_then_hides_normally() {
+    use auto_hide::{Pointer, Reveal, LEAVE_DELAY, REVEAL_DURATION};
+    let start = Instant::now();
+    let at = |ms: u64| start + Duration::from_millis(ms);
+    let away = Pointer::default();
+    let forced = Pointer {
+        force_reveal: true,
+        ..away
+    };
+    let dragging = Pointer {
+        button_down: true,
+        ..forced
+    };
+
+    // No pointer anywhere near it, not even the handle: it slides down.
+    let mut reveal = Reveal::default();
+    reveal.tick(at(0), forced);
+    assert!(reveal.open, "a forced surface opens on the first tick");
+    let mut ms = 0;
+    while reveal.busy() {
+        ms += 16;
+        reveal.tick(at(ms), dragging);
+    }
+    assert!(ms as u128 <= REVEAL_DURATION.as_millis() + 16);
+    assert_eq!(reveal.eased(), 1.0);
+
+    // It stays down for hours with the pointer away.
+    for minute in 1..=180 {
+        reveal.tick(at(ms + minute * 60_000), forced);
+        assert!(reveal.open, "hid {minute} min into the alarm");
+    }
+
+    // Once nothing forces it, the usual leave delay applies and it hides.
+    let cleared = ms + 181 * 60_000;
+    reveal.tick(at(cleared), away);
+    reveal.tick(at(cleared + LEAVE_DELAY.as_millis() as u64 - 10), away);
+    assert!(reveal.open);
+    reveal.tick(at(cleared + LEAVE_DELAY.as_millis() as u64), away);
+    assert!(
+        !reveal.open,
+        "the surface hides again once the alarm clears"
+    );
+}

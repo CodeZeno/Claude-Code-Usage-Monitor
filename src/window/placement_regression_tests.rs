@@ -1,3 +1,4 @@
+use super::low_usage_alarm::mono_for;
 use super::*;
 
 fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
@@ -22,6 +23,8 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         auth_watch_snapshot: Vec::new(),
         last_poll_ok: false,
         last_poll_failure: None,
+        last_update_unix: None,
+        last_fresh_unix: None,
         update_status: UpdateStatus::Idle,
         last_update_check_unix: None,
         taskbar_index: 0,
@@ -40,6 +43,10 @@ fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
         is_snapped: false,
         placement_override: Some(placement),
         floating_card_opacity: None,
+        hide_until_hover: None,
+        edge_display: None,
+        low_usage_alarm: true,
+        alarm: Default::default(),
         window_state_timer_active: false,
         custom_theme_enabled: true,
         usage_countdown: false,
@@ -93,6 +100,73 @@ fn theme_selection_releases_the_previous_roots_temporary_fallback() {
             authored
         );
     }
+}
+
+#[test]
+fn carried_forward_readings_do_not_advance_the_fresh_time() {
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    let reading = |stale| {
+        AppUsageData::from_iter([(
+            ProviderId::Claude,
+            crate::models::UsageData {
+                stale,
+                ..Default::default()
+            },
+        )])
+    };
+    state.note_fresh(&reading(true));
+    assert_eq!(state.last_fresh_unix, None);
+    state.note_fresh(&reading(false));
+    assert!(state.last_fresh_unix.is_some());
+}
+
+#[test]
+fn failed_accounts_merged_with_old_readings_do_not_advance_the_fresh_time() {
+    let profile = |id: &str| crate::accounts::AccountProfile {
+        id: id.into(),
+        name: id.into(),
+        enabled: true,
+        ..Default::default()
+    };
+    let account = |id: &str, ok: bool| crate::models::AccountUsage {
+        provider: ProviderId::Claude,
+        profile: profile(id),
+        source_signature: "sig".into(),
+        source_path: None,
+        usage: ok.then(crate::models::UsageData::default),
+        error: (!ok).then_some(poller::PollError::NetworkError),
+        selected: false,
+    };
+    let update = |a: bool, b: bool| {
+        let mut data = AppUsageData::default();
+        data.accounts.push(account("a", a));
+        data.accounts.push(account("b", b));
+        data
+    };
+    let mut settings = crate::accounts::AccountSettings::default();
+    settings.claude.profiles = vec![profile("a"), profile("b")];
+    settings.claude.selected = "a".into();
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    state.apply_progress(update(true, true), &settings);
+    let first = state.last_fresh_unix.expect("a successful poll stamps");
+    state.last_fresh_unix = Some(first - 600);
+    // Both fail, delivered one account at a time: old readings are carried
+    // forward (stale) but the fresh time must not move.
+    let mut only_a = AppUsageData::default();
+    only_a.accounts.push(account("a", false));
+    let merged = state.apply_progress(only_a, &settings);
+    assert_eq!(state.last_fresh_unix, Some(first - 600));
+    let mut only_b = AppUsageData::default();
+    only_b.accounts.push(account("b", false));
+    state.apply_progress(only_b, &settings);
+    assert_eq!(state.last_fresh_unix, Some(first - 600));
+    // The merge still holds another account's old non-stale reading.
+    assert!(merged.has_fresh_reading());
+    // One success moves it.
+    let mut a_ok = AppUsageData::default();
+    a_ok.accounts.push(account("a", true));
+    state.apply_progress(a_ok, &settings);
+    assert!(state.last_fresh_unix.unwrap() > first - 600);
 }
 
 fn ejected_state() -> AppState {
@@ -1027,5 +1101,609 @@ fn collision_fixture(
         bounds,
         occupied,
         reserved: tray.into_iter().collect(),
+    }
+}
+
+#[test]
+fn auto_hiding_roots_ignore_saved_drags_and_follow_display_settings() {
+    let mut top_bar: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+    top_bar.prepare_runtime();
+    let authored = top_bar.surfaces[0].placement.clone();
+    // A drag saved under another theme must not pull the bar into the taskbar
+    // or leave it floating mid-screen.
+    for nest in ["taskbar", "floating"] {
+        let mut saved = placement(nest);
+        saved.screen_x = 400;
+        saved.screen_y = 300;
+        let mut state = state_for(top_bar.clone(), saved);
+        assert_eq!(
+            effective_theme_from_state(&state).unwrap().surfaces[0].placement,
+            authored,
+            "{nest}"
+        );
+        state.edge_display = Some(1);
+        let moved = effective_theme_from_state(&state).unwrap();
+        assert_eq!(moved.surfaces[0].placement.reference.display, 1);
+        assert_eq!(moved.placement.reference.display, 1);
+        assert_eq!(
+            moved.surfaces[0].placement.auto_hide_edge(),
+            authored.auto_hide_edge()
+        );
+
+        // Hiding turned off, it stays at its edge and still ignores the drag.
+        state.hide_until_hover = Some(false);
+        let pinned = effective_theme_from_state(&state).unwrap();
+        assert!(!pinned.surfaces[0].placement.auto_hide);
+        assert_eq!(pinned.surfaces[0].placement.edge(), authored.edge());
+        assert_eq!(
+            pinned.surfaces[0].placement.offset_x, authored.offset_x,
+            "{nest}"
+        );
+        assert_eq!(
+            pinned.surfaces[0].placement.offset_y, authored.offset_y,
+            "{nest}"
+        );
+        assert_eq!(pinned.surfaces[0].placement.nest, authored.nest, "{nest}");
+    }
+    // Other themes keep their saved drag placement and ignore the settings.
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    let before = effective_theme_from_state(&state).unwrap().surfaces[0]
+        .placement
+        .clone();
+    state.hide_until_hover = Some(true);
+    state.edge_display = Some(1);
+    assert_eq!(
+        effective_theme_from_state(&state).unwrap().surfaces[0].placement,
+        before
+    );
+}
+
+#[test]
+fn an_offset_floating_root_that_never_hides_still_honours_a_saved_drag() {
+    // The Top Bar's docking, authored without hiding and with an offset.
+    let mut theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+    theme.surfaces[0].placement.offset_y = 20;
+    theme.surfaces[0].placement.auto_hide = false;
+    theme.prepare_runtime();
+    let authored = theme.surfaces[0].placement.clone();
+    assert!(authored.edge().is_some() && authored.auto_hide_edge().is_none());
+    let mut saved = placement("floating");
+    saved.screen_x = 400;
+    saved.screen_y = 300;
+    let state = state_for(theme, saved);
+    assert_ne!(
+        effective_theme_from_state(&state).unwrap().surfaces[0].placement,
+        authored
+    );
+}
+
+#[test]
+fn the_low_usage_alarm_sounds_once_holds_the_top_bar_open_and_can_be_snoozed_or_turned_off() {
+    use crate::models::{UsageData, UsageSection};
+    let mut top_bar: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+    top_bar.prepare_runtime();
+    let usage = |percentage| UsageData {
+        session: UsageSection {
+            available: true,
+            percentage,
+            resets_at: None,
+        },
+        ..Default::default()
+    };
+    let data = |readings: &[(ProviderId, f64)]| {
+        Some(AppUsageData::from_iter(readings.iter().map(
+            |(provider, percentage)| (*provider, usage(*percentage)),
+        )))
+    };
+    // What the render path does: update the alarm, then ask the theme.
+    let forced = |state: &AppState| {
+        let theme = effective_theme_from_state(state).unwrap();
+        theme_engine::surface_force_reveal(
+            &theme,
+            0,
+            state.data.as_ref(),
+            theme_runtime_from_state(state),
+        )
+    };
+    let mut state = state_for(top_bar, placement("floating"));
+    state.providers = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+
+    state.data = data(&[(ProviderId::Claude, 94.0)]);
+    assert!(
+        !update_low_usage_alarm(&mut state),
+        "6% left is not an alarm"
+    );
+    assert!(!forced(&state));
+    state.data = data(&[(ProviderId::Claude, 95.0)]);
+    assert!(update_low_usage_alarm(&mut state), "5% left sounds");
+    assert!(forced(&state));
+    for _ in 0..3 {
+        assert!(
+            !update_low_usage_alarm(&mut state),
+            "later polls stay quiet"
+        );
+        assert!(forced(&state));
+    }
+
+    // Snoozed, the bar may hide while that limit stays low.
+    state.alarm.snooze(Instant::now());
+    assert!(!update_low_usage_alarm(&mut state));
+    assert!(!forced(&state));
+    // Another limit crossing during the snooze alarms again.
+    state.data = data(&[(ProviderId::Claude, 95.0), (ProviderId::Codex, 97.0)]);
+    let later = std::time::SystemTime::now() + Duration::from_secs(120);
+    assert!(update_low_usage_alarm_at(
+        &mut state,
+        later,
+        mono_for(later)
+    ));
+    assert!(forced(&state));
+
+    // Providers publishing one by one within a poll: the second crossing 3 s
+    // after the first still holds the bar open but plays no second sound.
+    state.data = data(&[(ProviderId::Claude, 10.0), (ProviderId::Codex, 10.0)]);
+    update_low_usage_alarm_at(&mut state, later, mono_for(later));
+    state.data = data(&[(ProviderId::Claude, 96.0), (ProviderId::Codex, 10.0)]);
+    let t = later + Duration::from_secs(70);
+    assert!(
+        update_low_usage_alarm_at(&mut state, t, mono_for(t)),
+        "first result"
+    );
+    state.data = data(&[(ProviderId::Claude, 96.0), (ProviderId::Codex, 97.0)]);
+    let t3 = t + Duration::from_secs(3);
+    assert!(!update_low_usage_alarm_at(&mut state, t3, mono_for(t3)));
+    assert!(forced(&state));
+    state.data = data(&[(ProviderId::Claude, 96.0), (ProviderId::Codex, 10.0)]);
+    let t4 = t + Duration::from_secs(4);
+    update_low_usage_alarm_at(&mut state, t4, mono_for(t4));
+    state.data = data(&[(ProviderId::Claude, 96.0), (ProviderId::Codex, 97.0)]);
+    let t120 = t + Duration::from_secs(120);
+    assert!(update_low_usage_alarm_at(&mut state, t120, mono_for(t120)));
+    state.data = data(&[(ProviderId::Claude, 95.0), (ProviderId::Codex, 97.0)]);
+
+    // No data for a moment (a poll gap) is not a recovery: still held open,
+    // and the same low readings returning stay silent.
+    state.data = None;
+    assert!(!update_low_usage_alarm(&mut state));
+    assert!(forced(&state));
+    state.data = data(&[(ProviderId::Claude, 95.0), (ProviderId::Codex, 97.0)]);
+    assert!(!update_low_usage_alarm(&mut state));
+    assert!(forced(&state));
+
+    // After the resets it hides normally again.
+    state.data = data(&[(ProviderId::Claude, 3.0), (ProviderId::Codex, 0.0)]);
+    assert!(!update_low_usage_alarm(&mut state));
+    assert!(!forced(&state));
+
+    // Turned off: no sound and never held open.
+    state.low_usage_alarm = false;
+    state.data = data(&[(ProviderId::Claude, 99.0)]);
+    assert!(!update_low_usage_alarm(&mut state));
+    assert!(!forced(&state));
+}
+
+/// A usage cache from a report of a silent alarm: Codex weekly at 96% used
+/// (4% left) with no five-hour window, Claude far from its limits. Times are
+/// placeholders `@N@`, seconds after now, filled in by `sample_cache` so the
+/// fixture never ages past the clock the alarm reads.
+const SAMPLE_CACHE: &str = r#"{
+  "updated_unix": @0@,
+  "poll_ok": true,
+  "data": {
+    "claude_code": {
+      "session": {"available": true, "percentage": 55.0, "resets_at": {"secs_since_epoch": @5400@, "nanos_since_epoch": 0}},
+      "weekly": {"available": true, "percentage": 10.0, "resets_at": {"secs_since_epoch": @280800@, "nanos_since_epoch": 0}},
+      "limits": [
+        {"key": "iguana_necktie", "kind": "iguana_necktie", "label": "iguana necktie", "model": null, "model_id": null, "scope": null, "is_active": false, "usage": {"available": true, "percentage": 0.0, "resets_at": {"secs_since_epoch": @2257000@, "nanos_since_epoch": 0}}},
+        {"key": "session", "kind": "session", "label": "session", "model": null, "model_id": null, "scope": null, "is_active": true, "usage": {"available": true, "percentage": 55.0, "resets_at": {"secs_since_epoch": @5400@, "nanos_since_epoch": 0}}},
+        {"key": "weekly_all", "kind": "weekly_all", "label": "weekly all", "model": null, "model_id": null, "scope": null, "is_active": false, "usage": {"available": true, "percentage": 10.0, "resets_at": {"secs_since_epoch": @280800@, "nanos_since_epoch": 0}}},
+        {"key": "weekly_scoped_fable", "kind": "weekly_scoped", "label": "Fable", "model": "Fable", "model_id": null, "scope": {"model": {"display_name": "Fable", "id": null}, "surface": null}, "is_active": false, "usage": {"available": true, "percentage": 0.0, "resets_at": {"secs_since_epoch": @280801@, "nanos_since_epoch": 0}}}
+      ]
+    },
+    "codex": {
+      "session": {"available": false, "percentage": 0.0, "resets_at": null},
+      "weekly": {"available": true, "percentage": 96.0, "resets_at": {"secs_since_epoch": @343000@, "nanos_since_epoch": 0}}
+    },
+    "accounts": [
+      {
+        "provider": "claude",
+        "profile": {"id": "default", "name": "Default", "config_dir": "", "credentials_path": "", "enabled": true},
+        "source_signature": "",
+        "usage": {
+          "session": {"available": true, "percentage": 55.0, "resets_at": {"secs_since_epoch": @5400@, "nanos_since_epoch": 0}},
+          "weekly": {"available": true, "percentage": 10.0, "resets_at": {"secs_since_epoch": @280800@, "nanos_since_epoch": 0}},
+          "limits": [
+            {"key": "iguana_necktie", "kind": "iguana_necktie", "label": "iguana necktie", "model": null, "model_id": null, "scope": null, "is_active": false, "usage": {"available": true, "percentage": 0.0, "resets_at": {"secs_since_epoch": @2257000@, "nanos_since_epoch": 0}}},
+            {"key": "session", "kind": "session", "label": "session", "model": null, "model_id": null, "scope": null, "is_active": true, "usage": {"available": true, "percentage": 55.0, "resets_at": {"secs_since_epoch": @5400@, "nanos_since_epoch": 0}}},
+            {"key": "weekly_all", "kind": "weekly_all", "label": "weekly all", "model": null, "model_id": null, "scope": null, "is_active": false, "usage": {"available": true, "percentage": 10.0, "resets_at": {"secs_since_epoch": @280800@, "nanos_since_epoch": 0}}},
+            {"key": "weekly_scoped_fable", "kind": "weekly_scoped", "label": "Fable", "model": "Fable", "model_id": null, "scope": {"model": {"display_name": "Fable", "id": null}, "surface": null}, "is_active": false, "usage": {"available": true, "percentage": 0.0, "resets_at": {"secs_since_epoch": @280801@, "nanos_since_epoch": 0}}}
+          ]
+        },
+        "error": null,
+        "selected": true
+      },
+      {
+        "provider": "codex",
+        "profile": {"id": "default", "name": "Default", "config_dir": "", "credentials_path": "", "enabled": true},
+        "source_signature": "",
+        "usage": {
+          "session": {"available": false, "percentage": 0.0, "resets_at": null},
+          "weekly": {"available": true, "percentage": 96.0, "resets_at": {"secs_since_epoch": @343000@, "nanos_since_epoch": 0}}
+        },
+        "error": null,
+        "selected": true
+      }
+    ]
+  }
+}"#;
+
+/// `SAMPLE_CACHE` with every time placed relative to `now`.
+fn sample_cache(now: u64) -> String {
+    let mut cache = SAMPLE_CACHE.to_string();
+    for offset in [0, 5400, 280800, 280801, 2257000, 343000] {
+        cache = cache.replace(&format!("@{offset}@"), &(now + offset).to_string());
+    }
+    cache
+}
+
+#[test]
+fn the_sample_cache_has_no_absolute_times_left() {
+    let cache = sample_cache(2_000_000_000);
+    assert!(!cache.contains('@'), "every placeholder is filled");
+    assert!(cache.contains("2000005400"), "times follow the given clock");
+    assert!(
+        !cache.contains("1791"),
+        "no absolute epoch from a real cache"
+    );
+}
+
+/// Settings for it: Claude and Codex on, counting what is used, no alarm setting
+/// saved (so it is on), and a floating placement left by another theme.
+const SAMPLE_SETTINGS: &str = r#"{
+  "accounts": {
+    "claude": {"profiles": [{"config_dir": "", "credentials_path": "", "enabled": true, "id": "default", "name": "Default"}], "selected": "default", "used_ids": ["default"]},
+    "codex": {"profiles": [{"config_dir": "", "credentials_path": "", "enabled": true, "id": "default", "name": "Default"}], "selected": "default", "used_ids": ["default"]}
+  },
+  "custom_theme_enabled": true,
+  "placement_override": {"floating_host": {"height": 48, "surface_id": "main", "theme_id": "compact-fluent-quad", "width": 1920}, "monitor_index": 1, "nest": "floating", "screen_x": 3529, "screen_y": 126, "tray_offset": 0},
+  "poll_interval_ms": 60000,
+  "show_antigravity": false,
+  "show_claude_code": true,
+  "show_codex": true,
+  "show_cursor": false,
+  "show_grok": false,
+  "show_opencode": false,
+  "usage_countdown": false
+}"#;
+
+/// Tests driving the app's global state and the auto-hide presenter run one at
+/// a time.
+static LIVE_APP: Mutex<()> = Mutex::new(());
+
+unsafe extern "system" fn plain_window(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    DefWindowProcW(hwnd, message, wparam, lparam)
+}
+
+/// The app started with the sample settings and the Top Bar from the theme
+/// library, before its first poll. Everything runs for real down to Windows:
+/// the alarm is counted instead of played, and the window is a private one
+/// that is only marked shown (see `auto_hide::show`).
+struct LiveApp {
+    window: HWND,
+    _one_at_a_time: MutexGuard<'static, ()>,
+}
+
+impl LiveApp {
+    fn start() -> Self {
+        let guard = LIVE_APP.lock().unwrap_or_else(|error| error.into_inner());
+        std::fs::write(app_settings::settings_path(), SAMPLE_SETTINGS).unwrap();
+        let settings = load_settings();
+        theme_engine::ensure_starter_theme().unwrap();
+        let theme =
+            theme_engine::load_theme(&theme_engine::themes_directory().join("top-bar.json"))
+                .unwrap();
+        let window = unsafe {
+            let class = native_interop::wide_str("UsageMonitorAlarmCallSite");
+            let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
+            RegisterClassW(&WNDCLASSW {
+                lpfnWndProc: Some(plain_window),
+                hInstance: instance.into(),
+                lpszClassName: PCWSTR(class.as_ptr()),
+                ..Default::default()
+            });
+            CreateWindowExW(
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                PCWSTR(class.as_ptr()),
+                PCWSTR::null(),
+                WS_POPUP,
+                0,
+                0,
+                1,
+                1,
+                None,
+                None,
+                Some(instance.into()),
+                None,
+            )
+            .unwrap()
+        };
+        let mut state = state_for(theme, settings.placement_override.clone().unwrap());
+        state.hwnd = SendHwnd::from_hwnd(window);
+        state.providers = settings.enabled_providers();
+        state.accounts = settings.accounts.clone();
+        state.low_usage_alarm = settings.low_usage_alarm;
+        state.usage_countdown = settings.usage_countdown;
+        state.is_dark = crate::theme::is_dark_mode();
+        *lock_state() = Some(state);
+        let app = Self {
+            window,
+            _one_at_a_time: guard,
+        };
+        render_layered();
+        app
+    }
+
+    /// A poll delivers the sample reading, and the widget redraws as it does
+    /// on WM_APP_USAGE_UPDATED.
+    fn poll_result(&self) {
+        let cache: app_settings::UsageCache =
+            serde_json::from_str(&sample_cache(now_unix_secs())).unwrap();
+        if let Some(state) = lock_state().as_mut() {
+            state.data = Some(cache.data);
+            state.last_poll_ok = true;
+            state.last_update_unix = Some(now_unix_secs());
+            state.last_fresh_unix = Some(now_unix_secs());
+        }
+        render_layered();
+    }
+
+    /// Let the hide-until-hover timer run, as the message loop would.
+    fn run_timer(&self, duration: Duration) {
+        let end = Instant::now() + duration;
+        while Instant::now() < end {
+            unsafe {
+                wnd_proc(self.window, WM_TIMER, WPARAM(TIMER_AUTO_HIDE), LPARAM(0));
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+    }
+
+    fn sounds() -> usize {
+        low_usage_alarm::SOUNDED.with(std::cell::Cell::get)
+    }
+
+    /// The window's size on screen, and whether it lets clicks through.
+    fn presented(&self) -> ((i32, i32), bool) {
+        let rect = native_interop::get_window_rect_safe(self.window).unwrap();
+        let ex_style = unsafe { GetWindowLongW(self.window, GWL_EXSTYLE) } as u32;
+        (
+            (rect.right - rect.left, rect.bottom - rect.top),
+            ex_style & WS_EX_TRANSPARENT.0 != 0,
+        )
+    }
+
+    /// The open bar's and the collapsed tab's sizes in device pixels.
+    fn sizes(&self) -> ((i32, i32), (i32, i32)) {
+        let state = lock_state();
+        let state = state.as_ref().unwrap();
+        let theme = effective_theme_from_state(state).unwrap();
+        let scale = theme_surface_scale(&theme, 0);
+        let runtime = theme_runtime_for_surface(&theme, 0, theme_runtime_from_state(state));
+        let (width, height) =
+            theme_engine::resolve_surface_size(&theme, 0, state.data.as_ref(), runtime);
+        let handle = theme_engine::render_surface_handle(
+            &theme,
+            0,
+            state.data.as_ref(),
+            runtime,
+            scale,
+            theme_engine::SurfaceEdge::Top,
+        );
+        (
+            (
+                scaled_theme_dimension(width, scale),
+                scaled_theme_dimension(height, scale),
+            ),
+            (handle.width as i32, handle.height as i32),
+        )
+    }
+
+    /// Where a layer's centre is, in the window's device pixels.
+    fn centre_of(&self, id: &str) -> Option<LPARAM> {
+        let state = lock_state();
+        let state = state.as_ref().unwrap();
+        let theme = effective_theme_from_state(state).unwrap();
+        let scale = theme_surface_scale(&theme, 0);
+        let runtime = theme_runtime_for_surface(&theme, 0, theme_runtime_from_state(state));
+        let index = theme.surfaces[0]
+            .children
+            .iter()
+            .position(|layer| layer.id == id)
+            .unwrap();
+        let (x, y, width, height) = theme_engine::resolve_object_bounds_with_runtime(
+            &theme,
+            0,
+            index,
+            state.data.as_ref(),
+            runtime,
+        )?;
+        let x = ((x + width / 2.0) * scale).round() as u32;
+        let y = ((y + height / 2.0) * scale).round() as u32;
+        Some(LPARAM(((y << 16) | x) as isize))
+    }
+
+    fn click(&self, at: LPARAM) {
+        unsafe {
+            wnd_proc(self.window, WM_LBUTTONDOWN, WPARAM(1), at);
+            wnd_proc(self.window, WM_LBUTTONUP, WPARAM(0), at);
+        }
+    }
+}
+
+impl Drop for LiveApp {
+    fn drop(&mut self) {
+        *lock_state() = None;
+        auto_hide::retain(&[]);
+        auto_hide::show(self.window, false);
+        unsafe {
+            let _ = DestroyWindow(self.window);
+        }
+    }
+}
+
+#[test]
+fn a_surface_on_a_display_that_is_gone_lands_on_the_first_display() {
+    let mut top_bar: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+    top_bar.prepare_runtime();
+    let mut rect_on = |display: usize| {
+        top_bar.placement.reference.display = display;
+        let (rect, _) = positioning::surface_target(&top_bar, 1.0).unwrap();
+        (rect.left, rect.top, rect.right, rect.bottom)
+    };
+    let first = rect_on(0);
+    assert_eq!(rect_on(native_interop::find_monitors().len() + 2), first);
+}
+
+#[test]
+fn the_pointer_poll_sleeps_while_every_auto_hiding_surface_is_hidden_and_wakes_when_one_shows() {
+    let app = LiveApp::start();
+    app.run_timer(Duration::from_millis(400));
+    assert_eq!(
+        auto_hide::poll_interval(),
+        Some(auto_hide::POLL_INTERVAL_MS)
+    );
+    assert!(auto_hide::take_timer(app.window), "running while collapsed");
+    auto_hide::schedule(app.window);
+
+    // A fullscreen app hides the bar: the poll stops once it is collapsed.
+    auto_hide::show(app.window, false);
+    app.run_timer(Duration::from_millis(100));
+    assert_eq!(auto_hide::poll_interval(), None, "hidden and collapsed");
+    assert!(!auto_hide::take_timer(app.window), "no timer while hidden");
+
+    // The visibility timer shows it again and the poll comes back with it.
+    sync_theme_window_visibility();
+    assert_eq!(
+        auto_hide::poll_interval(),
+        Some(auto_hide::POLL_INTERVAL_MS)
+    );
+    assert!(auto_hide::take_timer(app.window), "timer restarted");
+    auto_hide::schedule(app.window);
+
+    // Hidden while still open: one more tick collapses it, then the poll stops.
+    app.poll_result();
+    app.run_timer(Duration::from_millis(500));
+    auto_hide::show(app.window, false);
+    assert!(auto_hide::poll_interval().is_some(), "still open");
+    app.run_timer(Duration::from_millis(100));
+    assert_eq!(auto_hide::poll_interval(), None);
+    assert!(!auto_hide::take_timer(app.window));
+}
+
+#[test]
+fn the_sample_reading_sounds_once_and_the_hide_timer_holds_the_top_bar_open() {
+    let app = LiveApp::start();
+    let (_, collapsed) = app.sizes();
+    app.run_timer(Duration::from_millis(400));
+    assert_eq!(app.presented(), (collapsed, true), "before any usage");
+    assert_eq!(LiveApp::sounds(), 0);
+
+    app.poll_result();
+    assert_eq!(LiveApp::sounds(), 1, "Codex weekly has 4% left");
+    let (open, collapsed) = app.sizes();
+    assert!(open.1 > 10 * collapsed.1, "{open:?} {collapsed:?}");
+    app.run_timer(Duration::from_millis(500));
+    assert_eq!(app.presented(), (open, false), "held open and clickable");
+
+    // Later polls with the same reading stay quiet and keep it open, well
+    // past the moment it would slide away after a hover.
+    for _ in 0..2 {
+        app.poll_result();
+        app.run_timer(auto_hide::LEAVE_DELAY + auto_hide::HIDE_DURATION);
+    }
+    assert_eq!(LiveApp::sounds(), 1);
+    assert_eq!(app.presented(), (open, false));
+}
+
+#[test]
+fn several_quotas_crossing_in_one_poll_play_one_sound() {
+    use crate::models::{UsageData, UsageSection};
+    let app = LiveApp::start();
+    assert_eq!(LiveApp::sounds(), 0);
+    let low = || UsageData {
+        session: UsageSection {
+            available: true,
+            percentage: 97.0,
+            resets_at: None,
+        },
+        weekly: UsageSection {
+            available: true,
+            percentage: 98.0,
+            resets_at: None,
+        },
+        ..Default::default()
+    };
+    if let Some(state) = lock_state().as_mut() {
+        state.data = Some(AppUsageData::from_iter([
+            (ProviderId::Claude, low()),
+            (ProviderId::Codex, low()),
+        ]));
+        state.last_poll_ok = true;
+    }
+    render_layered();
+    assert_eq!(LiveApp::sounds(), 1, "four quotas crossed, one sound");
+    render_layered();
+    assert_eq!(LiveApp::sounds(), 1);
+    drop(app);
+}
+
+#[test]
+fn the_snooze_button_on_the_held_bar_lets_it_hide_exactly_like_the_menu_item() {
+    for use_menu in [false, true] {
+        let app = LiveApp::start();
+        app.poll_result();
+        app.run_timer(Duration::from_millis(500));
+        let (open, collapsed) = app.sizes();
+        assert_eq!(app.presented(), (open, false), "menu={use_menu}");
+        let button = app
+            .centre_of("snooze-button")
+            .expect("the held bar shows the Snooze button");
+        if use_menu {
+            window_context_menu::execute_context_menu_action(
+                app.window,
+                ContextMenuAction::SnoozeAlarm,
+                None,
+            );
+        } else {
+            app.click(button);
+        }
+        let remaining = lock_state()
+            .as_ref()
+            .and_then(|state| state.alarm.snooze_remaining(Instant::now()))
+            .expect("snoozed");
+        assert!(
+            remaining > low_usage_alarm::SNOOZE - Duration::from_secs(60),
+            "{remaining:?}"
+        );
+        assert!(
+            app.centre_of("snooze-button").is_none(),
+            "hidden once snoozed"
+        );
+        app.run_timer(auto_hide::LEAVE_DELAY + auto_hide::HIDE_DURATION * 2);
+        assert_eq!(app.presented(), (collapsed, true), "menu={use_menu}");
+        // The same reading arriving again neither sounds nor reopens it.
+        app.poll_result();
+        app.run_timer(Duration::from_millis(300));
+        assert_eq!(app.presented(), (collapsed, true), "menu={use_menu}");
+        assert_eq!(LiveApp::sounds(), 1 + use_menu as usize);
     }
 }
