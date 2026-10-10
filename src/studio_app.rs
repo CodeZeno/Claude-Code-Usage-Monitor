@@ -587,6 +587,7 @@ struct StudioApp {
     usage: Option<AppUsageData>,
     usage_poll_ok: bool,
     usage_has_error: bool,
+    usage_updated_unix: Option<u64>,
     last_cache_read: Instant,
     next_preview_countdown_refresh: Option<Instant>,
     next_preview_clock_refresh: Option<Instant>,

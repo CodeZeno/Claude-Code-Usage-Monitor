@@ -29,6 +29,12 @@ impl StudioApp {
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
+            .with_updated_unix(self.usage_updated_unix)
+            // Previews flag almost spent limits; only the monitor holds surfaces open.
+            .with_alarm(crate::theme_engine::ThemeAlarm {
+                enabled: self.settings.low_usage_alarm,
+                ..Default::default()
+            })
     }
 
     pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {
@@ -105,6 +111,9 @@ impl StudioApp {
                         .iter()
                         .any(|account| account.error.is_some()))
         });
+        let usage_updated_unix = usage_cache
+            .as_ref()
+            .and_then(UsageCache::fresh_or_updated_unix);
         let usage = usage_cache.map(|cache| cache.data);
         let next_preview_countdown_refresh = preview_countdown_refresh_delay(usage.as_ref())
             .and_then(|delay| Instant::now().checked_add(delay));
@@ -132,6 +141,7 @@ impl StudioApp {
             usage,
             usage_poll_ok,
             usage_has_error,
+            usage_updated_unix,
             last_cache_read: Instant::now(),
             next_preview_countdown_refresh,
             next_preview_clock_refresh,
@@ -803,7 +813,8 @@ impl StudioApp {
                     .any(|account| account.error.is_some()));
         let changed = self.usage.as_ref() != Some(&cache.data)
             || self.usage_poll_ok != poll_ok
-            || self.usage_has_error != has_error;
+            || self.usage_has_error != has_error
+            || self.usage_updated_unix != cache.fresh_or_updated_unix();
         if changed {
             crate::diagnose::log_lazy(|| {
                 format!(
@@ -812,6 +823,7 @@ impl StudioApp {
                     cache.data.accounts.len()
                 )
             });
+            self.usage_updated_unix = cache.fresh_or_updated_unix();
             self.usage = Some(cache.data);
             self.usage_poll_ok = poll_ok;
             self.usage_has_error = has_error;

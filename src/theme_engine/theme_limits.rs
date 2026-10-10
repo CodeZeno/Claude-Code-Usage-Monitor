@@ -1,49 +1,165 @@
 use super::*;
 use crate::models::{limit_slug, UsageData, UsageLimit};
 
+/// One quota the low-usage alarm watches, named by the quota itself
+/// (`owner` plus window or limit key), never by the theme that shows it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AlarmReading {
+    pub owner: String,
+    pub key: String,
+    pub low: bool,
+    pub resets_at: Option<std::time::SystemTime>,
+    /// The poller kept this reading from an earlier poll (a failed refresh).
+    pub stale: bool,
+}
+
+/// Every quota of every enabled provider and account, independent of the
+/// active theme. `owners` lists each source present in the data, including
+/// ones with no reading right now, so a missing reading is not a recovery.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AlarmScan {
+    pub readings: Vec<AlarmReading>,
+    pub owners: std::collections::BTreeSet<String>,
+}
+
+/// Standard windows plus the known model caps. Limits of kind `session` or
+/// `weekly_all` duplicate a window and unknown kinds are opaque, so neither
+/// counts. A provider with accounts is read through them, once each.
+pub fn alarm_scan(data: &AppUsageData, providers: ProviderSet) -> AlarmScan {
+    let mut scan = AlarmScan::default();
+    let mut add = |owner: String, usage: Option<&UsageData>| {
+        scan.owners.insert(owner.clone());
+        let Some(usage) = usage else {
+            return;
+        };
+        let windows = [
+            ("five_hour", Some(&usage.session)),
+            ("weekly", Some(&usage.weekly)),
+            ("monthly", usage.monthly.as_ref()),
+        ];
+        let caps: Vec<_> = usage
+            .limits
+            .iter()
+            .filter(|limit| is_model_cap(limit))
+            .collect();
+        let slug_of = |limit: &UsageLimit| limit.model.as_deref().map(limit_slug);
+        // Name a cap by its model, as the renderer does, so the same cap
+        // reported under another kind or key keeps one crossing identity. Two
+        // caps sharing a model fall back to the raw key (a known limit).
+        let capped = caps.iter().map(|limit| {
+            let slug = slug_of(limit).filter(|slug| {
+                caps.iter()
+                    .filter(|other| slug_of(other).as_ref() == Some(slug))
+                    .count()
+                    == 1
+            });
+            let name = match slug {
+                Some(slug) => format!("model.{slug}"),
+                None => format!("limits.{}", limit.key),
+            };
+            (name, Some(&limit.usage))
+        });
+        let windows = windows.into_iter().map(|(n, s)| (n.to_string(), s));
+        for (name, section) in windows.chain(capped) {
+            if let Some(section) = section.filter(|section| section.available) {
+                scan.readings.push(AlarmReading {
+                    owner: owner.clone(),
+                    key: format!("{owner}.{name}").to_ascii_lowercase(),
+                    low: limit_in_alarm_zone(section),
+                    resets_at: section.resets_at,
+                    stale: usage.stale,
+                });
+            }
+        }
+    };
+    for descriptor in PROVIDER_DESCRIPTORS {
+        if !providers.contains(descriptor.id) {
+            continue;
+        }
+        let tracked = data.accounts.iter().any(|a| a.provider == descriptor.id);
+        if !tracked {
+            if let Some(usage) = data.get(descriptor.id) {
+                add(descriptor.key.to_string(), Some(usage));
+            }
+        }
+    }
+    for account in &data.accounts {
+        if providers.contains(account.provider) {
+            let owner = format!(
+                "accounts.{}.{}",
+                account.provider.descriptor().key,
+                account.profile.id
+            );
+            add(owner.to_ascii_lowercase(), account.usage.as_ref());
+        }
+    }
+    scan
+}
+
+fn is_model_cap(limit: &UsageLimit) -> bool {
+    matches!(
+        limit.kind.as_str(),
+        "weekly_scoped" | "seven_day_opus" | "seven_day_sonnet"
+    )
+}
+
+/// The quota bindings a provider or account exposes: `limits.<key>`, the
+/// weekly model shortcut and the single active scoped cap. One rule for what
+/// the theme can read and what the alarm watches.
+fn limit_bases<'a>(name: &str, limits: &'a [UsageLimit]) -> Vec<(String, &'a UsageLimit)> {
+    let mut bases: Vec<_> = limits
+        .iter()
+        .map(|limit| (format!("{name}.limits.{}", limit.key), limit))
+        .collect();
+    let mut models = std::collections::BTreeMap::<String, Vec<&UsageLimit>>::new();
+    for limit in limits.iter().filter(|limit| is_model_cap(limit)) {
+        if let Some(model) = &limit.model {
+            models.entry(limit_slug(model)).or_default().push(limit);
+        }
+    }
+    for (model, candidates) in models {
+        // Never select an arbitrary quota when two distinct scopes share
+        // a model name. The full limit keys remain available in Studio.
+        if let [limit] = candidates.as_slice() {
+            bases.push((format!("{name}.model.{model}"), limit));
+        }
+    }
+    let active: Vec<_> = limits
+        .iter()
+        .filter(|limit| limit.is_active && (limit.scope.is_some() || limit.model.is_some()))
+        .collect();
+    // Preserve ambiguity rather than guessing which active cap binds.
+    if let [limit] = active.as_slice() {
+        bases.push((format!("{name}.scoped"), limit));
+    }
+    bases
+}
+
 impl DataContext {
-    pub(super) fn insert_limits(&mut self, name: &str, usage: Option<&UsageData>, countdown: bool) {
+    pub(super) fn insert_limits(
+        &mut self,
+        name: &str,
+        usage: Option<&UsageData>,
+        countdown: bool,
+        alarm: bool,
+    ) {
         let limits = usage
             .map(|usage| usage.limits.as_slice())
             .unwrap_or_default();
         self.insert(&format!("{name}.limits.count"), limits.len() as f64);
-        for limit in limits {
-            self.insert_limit(&format!("{name}.limits.{}", limit.key), limit, countdown);
-        }
-        // The model shortcut means a weekly model cap. Other kinds remain
-        // individually addressable through limits.<key>, avoiding ambiguity.
-        let mut models = std::collections::BTreeMap::<String, Vec<&UsageLimit>>::new();
-        for limit in limits.iter().filter(|limit| {
-            matches!(
-                limit.kind.as_str(),
-                "weekly_scoped" | "seven_day_opus" | "seven_day_sonnet"
-            )
-        }) {
-            if let Some(model) = &limit.model {
-                models.entry(limit_slug(model)).or_default().push(limit);
-            }
-        }
-        for (model, candidates) in models {
-            // Never select an arbitrary quota when two distinct scopes share
-            // a model name. The full limit keys remain available in Studio.
-            if let [limit] = candidates.as_slice() {
-                self.insert_limit(&format!("{name}.model.{model}"), limit, countdown);
-            }
-        }
-        let active: Vec<_> = limits
-            .iter()
-            .filter(|limit| limit.is_active && (limit.scope.is_some() || limit.model.is_some()))
-            .collect();
-        // Preserve ambiguity rather than guessing which active cap binds.
-        if let [limit] = active.as_slice() {
-            self.insert_limit(&format!("{name}.scoped"), limit, countdown);
+        for (base, limit) in limit_bases(name, limits) {
+            self.insert_limit(&base, limit, countdown, alarm);
         }
     }
 
-    fn insert_limit(&mut self, base: &str, limit: &UsageLimit, countdown: bool) {
+    fn insert_limit(&mut self, base: &str, limit: &UsageLimit, countdown: bool, alarm: bool) {
         let percentage = limit.usage.percentage;
         for (metric, value) in [
             ("available", limit.usage.available as u8 as f64),
+            (
+                "alarm",
+                (alarm && limit_in_alarm_zone(&limit.usage)) as u8 as f64,
+            ),
             ("percentage", percentage),
             ("remaining", 100.0 - percentage),
             (
@@ -137,7 +253,7 @@ impl DataContext {
     pub(super) fn limit_default(&self, name: &str) -> Option<f64> {
         let (_, field) = Self::limit_field(name)?;
         match field {
-            "available" | "percentage" | "is_active" | "reset.unix" | "reset.seconds"
+            "available" | "alarm" | "percentage" | "is_active" | "reset.unix" | "reset.seconds"
             | "reset.minutes" | "reset.hours" | "reset.days" => Some(0.0),
             "remaining" => Some(100.0),
             "display" => Some(
@@ -326,6 +442,41 @@ mod tests {
     }
 
     #[test]
+    fn alarm_names_a_cap_by_its_model_unless_two_caps_share_it() {
+        let scan = |limits: Vec<UsageLimit>| {
+            let data = AppUsageData::from_iter([(
+                ProviderId::Claude,
+                UsageData {
+                    limits,
+                    ..Default::default()
+                },
+            )]);
+            let providers = ProviderSet::from_enabled([ProviderId::Claude]);
+            alarm_scan(&data, providers)
+                .readings
+                .into_iter()
+                .map(|reading| reading.key)
+                .collect::<Vec<_>>()
+        };
+        // The same cap under another kind and key keeps one identity.
+        let mut renamed = limit();
+        renamed.key = "seven_day_fable".into();
+        renamed.kind = "seven_day_sonnet".into();
+        assert_eq!(scan(vec![limit()]), scan(vec![renamed.clone()]));
+        assert_eq!(scan(vec![limit()]), ["claude.model.fable"]);
+        // An ambiguous model falls back to the raw keys.
+        let mut other = limit();
+        other.key = "weekly_scoped_fable_other".into();
+        assert_eq!(
+            scan(vec![limit(), other]),
+            [
+                "claude.limits.weekly_scoped_fable",
+                "claude.limits.weekly_scoped_fable_other"
+            ]
+        );
+    }
+
+    #[test]
     fn extra_limits_do_not_change_builtin_rendering_or_headlines() {
         let plain_usage = UsageData {
             session: UsageSection {
@@ -348,7 +499,11 @@ mod tests {
                 ..plain_usage
             },
         )]);
-        for (_, source) in BUILTIN_THEME_SOURCES {
+        // Top Bar shows the Fable weekly cap by design; the others must not change.
+        for (_, source) in BUILTIN_THEME_SOURCES
+            .iter()
+            .filter(|(id, _)| *id != TOP_BAR_THEME_ID)
+        {
             let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
             theme.prepare_runtime();
             for countdown in [false, true] {

@@ -121,6 +121,14 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 TIMER_TRAY_HOVER => {
                     clear_tray_mouse_hover_if_left(hwnd);
                 }
+                TIMER_AUTO_HIDE => {
+                    auto_hide::tick(hwnd);
+                }
+                TIMER_ALARM_SNOOZE => {
+                    // Re-arms itself if it fired before the snooze ran out.
+                    schedule_alarm_snooze_timer(hwnd);
+                    render_layered();
+                }
                 TIMER_TRAY_REPOSITION => {
                     let _ = KillTimer(Some(hwnd), TIMER_TRAY_REPOSITION);
                     refresh_theme_host_geometry();
@@ -214,11 +222,13 @@ pub(super) unsafe extern "system" fn wnd_proc(
         WM_MOUSEMOVE => {
             let mut pt = POINT::default();
             let _ = unsafe { GetCursorPos(&mut pt) };
+            // Edge-docked auto-hiding surfaces keep their place; a press only clicks.
+            let draggable = !auto_hide::owns(hwnd);
 
             let (should_start_drag, is_dragging) = {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
-                    if s.pending_drag && !s.dragging {
+                    if s.pending_drag && !s.dragging && draggable {
                         let cx_drag = unsafe { GetSystemMetrics(SM_CXDRAG) };
                         let cy_drag = unsafe { GetSystemMetrics(SM_CYDRAG) };
                         let dx = (pt.x - s.drag_start_cursor.x).abs();

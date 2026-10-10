@@ -1,5 +1,6 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 pub(super) fn scene_row_contents(
     ui: &mut egui::Ui,
     object: &mut SceneObject,
@@ -8,18 +9,19 @@ pub(super) fn scene_row_contents(
     expanded: Option<bool>,
     editable: bool,
     language: LanguageId,
+    context: &dyn Fn() -> DataContext,
 ) -> SceneRowResponses {
     ui.horizontal(|ui| {
         let (leading_item, expand_button) = if let Some(expanded) = expanded {
             let expand_button = scene_tree_chevron(ui, expanded)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(language.text("Expand or collapse"));
-            let preview = scene_object_preview(ui, object, preview_size)
+            let preview = scene_object_preview(ui, object, preview_size, context)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(language.text("Select object"));
             (expand_button.clone() | preview, expand_button)
         } else {
-            let preview = scene_object_preview(ui, object, preview_size)
+            let preview = scene_object_preview(ui, object, preview_size, context)
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(language.text("Select object"));
             (preview.clone(), preview)
@@ -101,6 +103,7 @@ pub(super) fn scene_object_preview(
     ui: &mut egui::Ui,
     object: &SceneObject,
     source_size: egui::Vec2,
+    context: &dyn Fn() -> DataContext,
 ) -> egui::Response {
     let (allocated_rect, response) =
         ui.allocate_exact_size(egui::vec2(27.0, 24.0), egui::Sense::click());
@@ -123,7 +126,7 @@ pub(super) fn scene_object_preview(
     );
     let background = match &object.background {
         LayerBackground::Colour { colour } => {
-            let colour = scene_paint_color(colour);
+            let colour = scene_paint_color(colour, context);
             ui.painter().add(egui::Shape::convex_polygon(
                 outline.clone(),
                 colour,
@@ -132,8 +135,8 @@ pub(super) fn scene_object_preview(
             colour
         }
         LayerBackground::Gradient { start, end, angle } => {
-            let start = scene_paint_color(start);
-            let end = scene_paint_color(end);
+            let start = scene_paint_color(start, context);
+            let end = scene_paint_color(end, context);
             let angle = angle.0.trim().parse::<f32>().unwrap_or_default();
             paint_scene_preview_gradient(ui, preview_bounds, &outline, start, end, angle);
             lerp_scene_color(start, end, 0.5)
@@ -147,7 +150,7 @@ pub(super) fn scene_object_preview(
         let width = width.clamp(0.5, 3.0);
         ui.painter().add(egui::Shape::closed_line(
             outline,
-            egui::Stroke::new(width, scene_paint_color(&border.color)),
+            egui::Stroke::new(width, scene_paint_color(&border.color, context)),
         ));
     }
 
@@ -157,7 +160,7 @@ pub(super) fn scene_object_preview(
         egui::Align2::CENTER_CENTER,
         icon.unicode().to_string(),
         egui::FontId::new(16.0, egui::FontFamily::Name("lucide".into())),
-        scene_object_icon_color(object, background),
+        scene_object_icon_color(object, background, context),
     );
     response
 }
@@ -309,15 +312,28 @@ pub(super) fn scene_object_icon(object: &SceneObject) -> LucideIcon {
 pub(super) fn scene_object_icon_color(
     object: &SceneObject,
     background: egui::Color32,
+    context: &dyn Fn() -> DataContext,
 ) -> egui::Color32 {
     match &object.content {
-        SceneContent::Text { color, .. } => scene_paint_color(color),
+        SceneContent::Text { color, .. } => scene_paint_color(color, context),
         SceneContent::None | SceneContent::Progress { .. } => scene_icon_contrast_color(background),
     }
 }
 
-pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
-    let Some(color) = theme_engine::parse_color(&paint.color) else {
+/// A colour as the preview shows it: a literal, or an expression such as
+/// `if(system.dark, "#19191C", "#FFFFFF")` evaluated with the preview data.
+/// The stored text is never rewritten.
+pub(super) fn display_color(color: &str, context: &DataContext) -> Option<theme_engine::Rgba> {
+    theme_engine::parse_color(color).or_else(|| theme_engine::evaluate_color(color, context).ok())
+}
+
+/// `context` is built only when a colour or opacity is not a plain literal.
+pub(super) fn scene_paint_color(paint: &Paint, context: &dyn Fn() -> DataContext) -> egui::Color32 {
+    let built = std::cell::OnceCell::new();
+    let context = || built.get_or_init(context);
+    let color = theme_engine::parse_color(&paint.color)
+        .or_else(|| theme_engine::evaluate_color(&paint.color, context()).ok());
+    let Some(color) = color else {
         return egui::Color32::TRANSPARENT;
     };
     let opacity = paint
@@ -325,6 +341,12 @@ pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
         .0
         .trim()
         .parse::<f32>()
+        .ok()
+        .or_else(|| {
+            theme_engine::evaluate(&paint.opacity.0, context())
+                .ok()
+                .map(|value| value as f32)
+        })
         .unwrap_or(1.0)
         .clamp(0.0, 1.0);
     egui::Color32::from_rgba_unmultiplied(

@@ -501,7 +501,7 @@ mod tests {
     #[test]
     fn stale_failed_moved_and_recreated_taskbars_are_unknown_not_free() {
         let now = Instant::now();
-        let hwnd = HWND(1usize as *mut _);
+        let hwnd = HWND(std::ptr::dangling_mut());
         let other = HWND(2usize as *mut _);
         let bounds = rect(0, 1032, 1920, 1080);
         let sample = layout(bounds, vec![rect(700, 1032, 1220, 1080)]);

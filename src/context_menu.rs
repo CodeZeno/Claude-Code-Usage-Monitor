@@ -84,6 +84,8 @@ pub enum ContextMenuAction {
     OpenUrl {
         url: String,
     },
+    /// Let edge-docked widgets hide again for an hour during a low-usage alarm.
+    SnoozeAlarm,
     Exit,
 }
 
@@ -323,6 +325,7 @@ pub fn rendered_label(
         "Check for updates" => language.text("Check for updates"),
         "Lock in taskbar" => language.text("Lock in taskbar"),
         "Show widget" => language.text("Show widget"),
+        "Snooze alarm (1 hour)" => language.text("Snooze alarm (1 hour)"),
         _ => label,
     };
     crate::theme_engine::format_template(translated, context)
@@ -462,11 +465,23 @@ pub fn classic_context_menu() -> ContextMenuDocument {
         ],
     );
 
+    // Shown only while an almost spent limit is holding the widget open.
+    let snooze = ContextMenuItem {
+        render: Expression("alarm.active".into()),
+        ..ContextMenuItem::action("snooze-alarm", "Snooze alarm (1 hour)", Action::SnoozeAlarm)
+    };
+    let snooze_separator = ContextMenuItem {
+        render: Expression("alarm.active".into()),
+        ..ContextMenuItem::separator("snooze-separator")
+    };
+
     ContextMenuDocument {
         schema_version: CONTEXT_MENU_SCHEMA_VERSION,
         id: CLASSIC_CONTEXT_MENU_ID.into(),
         name: "Classic v1".into(),
         items: vec![
+            snooze,
+            snooze_separator,
             ContextMenuItem::action("refresh", "Refresh", Action::Refresh),
             frequency,
             providers,
@@ -740,6 +755,26 @@ mod tests {
         let mut legacy = menu.clone();
         legacy.id = LEGACY_CLASSIC_CONTEXT_MENU_ID.into();
         assert!(legacy.is_builtin());
+    }
+
+    #[test]
+    fn classic_menu_offers_the_alarm_snooze_only_while_it_is_active() {
+        let menu = classic_context_menu();
+        let snooze = &menu.items[0];
+        assert_eq!(snooze.label, "Snooze alarm (1 hour)");
+        assert_eq!(
+            snooze.kind,
+            ContextMenuItemKind::Action {
+                action: ContextMenuAction::SnoozeAlarm
+            }
+        );
+        let mut context = DataContext::from_usage(None, &theme_engine::Canvas::default());
+        assert_eq!(context.get("alarm.active"), Some(0.0));
+        assert!(!snooze.should_render(&context) && !menu.items[1].should_render(&context));
+        context.insert("alarm.active", 1.0);
+        assert!(snooze.should_render(&context) && menu.items[1].should_render(&context));
+        let json = serde_json::to_string(&ContextMenuAction::SnoozeAlarm).unwrap();
+        assert_eq!(json, r#"{"type":"snooze_alarm"}"#);
     }
 
     #[test]

@@ -122,7 +122,7 @@ pub fn render_theme_surface_with_runtime_at_scale(
         let alpha = ((runtime.floating_card_opacity.min(100) as u32 * 255) / 100) as u8;
         // Match the card to the system theme: a fixed dark card under
         // light-mode content destroys contrast when the widget floats.
-        let dark = crate::theme::is_dark_mode();
+        let dark = runtime.system_dark();
         let card_color = if dark {
             Rgba {
                 r: 24,
@@ -231,6 +231,151 @@ pub fn render_theme_surface_with_runtime_at_scale(
                 | (scale((*pixel >> 16) & 0xff) << 16)
                 | (scale((*pixel >> 8) & 0xff) << 8)
                 | scale(*pixel & 0xff);
+        }
+    }
+    RenderedTheme {
+        width,
+        height,
+        pixels,
+        warnings,
+    }
+}
+
+/// Logical size of the tab an auto-hiding surface leaves at its edge.
+pub const SURFACE_HANDLE_WIDTH: u32 = 64;
+pub const SURFACE_HANDLE_HEIGHT: u32 = 6;
+
+/// Expression context of a root surface at its resolved size, as its
+/// placement expressions see it.
+fn surface_context(
+    theme: &ThemeDocument,
+    surface_index: usize,
+    data: Option<&AppUsageData>,
+    runtime: ThemeRuntime,
+) -> Option<DataContext> {
+    let surface = theme.surfaces.get(surface_index)?;
+    let (width, height) = resolve_surface_content_size(theme, surface_index, data, runtime);
+    let canvas = Canvas {
+        width,
+        width_expression: Some(surface.width.clone()),
+        height,
+        height_expression: Some(surface.height.clone()),
+        background: surface.background.canvas_paint(),
+    };
+    Some(DataContext::from_usage_with_runtime(data, &canvas, runtime))
+}
+
+/// Whether an auto-hiding surface must stay revealed: its `force_reveal`
+/// expression is non-zero. Invalid expressions never force it open.
+pub fn surface_force_reveal(
+    theme: &ThemeDocument,
+    surface_index: usize,
+    data: Option<&AppUsageData>,
+    runtime: ThemeRuntime,
+) -> bool {
+    theme
+        .surfaces
+        .get(surface_index)
+        .and_then(|surface| surface.placement.force_reveal.as_ref())
+        .zip(surface_context(theme, surface_index, data, runtime))
+        .and_then(|(expression, context)| evaluate(&expression.0, &context).ok())
+        .is_some_and(|value| value.is_finite() && value != 0.0)
+}
+
+/// Rasterize the collapsed state of an auto-hiding surface: a tab whose flat
+/// side meets the screen edge, filled by the surface's `handle_background`
+/// expression (dark when absent), with a short accent line coloured by its
+/// `handle_color` expression.
+pub fn render_surface_handle(
+    theme: &ThemeDocument,
+    surface_index: usize,
+    data: Option<&AppUsageData>,
+    runtime: ThemeRuntime,
+    scale: f64,
+    edge: SurfaceEdge,
+) -> RenderedTheme {
+    let scale = normalized_render_scale(scale);
+    let width = scaled_render_dimension(SURFACE_HANDLE_WIDTH, scale);
+    let height = scaled_render_dimension(SURFACE_HANDLE_HEIGHT, scale);
+    let mut warnings = Vec::new();
+    let surface = theme.surfaces.get(surface_index);
+    let context = surface_context(theme, surface_index, data, runtime);
+    let mut colour = |name: &str, expression: Option<&Expression>| {
+        let (surface, expression, context) = (surface?, expression?, context.as_ref()?);
+        evaluate_color(&expression.0, context)
+            .map_err(|error| warnings.push(format!("{}.{name}: {error}", surface.name)))
+            .ok()
+    };
+    let placement = surface.map(|surface| &surface.placement);
+    let accent = colour(
+        "handle_color",
+        placement.and_then(|placement| placement.handle_color.as_ref()),
+    )
+    .unwrap_or(Rgba {
+        r: 255,
+        g: 255,
+        b: 255,
+        a: 160,
+    });
+    let fill = colour(
+        "handle_background",
+        placement.and_then(|placement| placement.handle_background.as_ref()),
+    )
+    .unwrap_or(Rgba {
+        r: 20,
+        g: 21,
+        b: 26,
+        a: 232,
+    });
+    // A hairline that reads against the fill: dark on light tabs, light on dark.
+    let light_fill = u32::from(fill.r) + u32::from(fill.g) + u32::from(fill.b) > 3 * 128;
+    let outline = if light_fill {
+        Rgba {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 28,
+        }
+    } else {
+        Rgba {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 46,
+        }
+    };
+    // Draw a tab twice as tall and keep the half away from the screen edge,
+    // so only the outer corners are rounded.
+    let radius = height as f64 / 2.0;
+    let mut tab = vec![0u32; width as usize * height as usize * 2];
+    fill_rounded(&mut tab, width, height * 2, fill, radius);
+    stroke_rounded_rectangle(&mut tab, width, height * 2, outline, radius, scale.max(1.0));
+    let start = match edge {
+        SurfaceEdge::Top => height as usize * width as usize,
+        SurfaceEdge::Bottom => 0,
+    };
+    let mut pixels = tab[start..start + width as usize * height as usize].to_vec();
+    let line_width = scaled_render_dimension(28, scale).min(width);
+    let line_height = ((2.0 * scale).round() as u32).clamp(1, height);
+    let mut line = vec![0u32; line_width as usize * line_height as usize];
+    fill_rounded(
+        &mut line,
+        line_width,
+        line_height,
+        accent,
+        line_height as f64 / 2.0,
+    );
+    let inset = ((1.5 * scale).round() as u32).min(height - line_height);
+    let top = match edge {
+        SurfaceEdge::Top => inset,
+        SurfaceEdge::Bottom => height - line_height - inset,
+    };
+    let left = (width - line_width) / 2;
+    for y in 0..line_height {
+        for x in 0..line_width {
+            let source = line[(y * line_width + x) as usize];
+            let target = ((top + y) * width + left + x) as usize;
+            blend(&mut pixels[target], source, 1.0);
         }
     }
     RenderedTheme {
@@ -381,7 +526,19 @@ pub fn hit_test_mouse_event(
         height_expression: Some(surface.height.clone()),
         background: surface.background.canvas_paint(),
     };
-    let (resolved, _) = resolve_objects_for(surface, &canvas, &surface.children, data, runtime);
+    // Only layers with handlers can be hit. Resolving every layer on each
+    // pointer move is costly for large surfaces, so skip it when none can be.
+    let interactive_children = surface.children.iter().any(|object| {
+        object
+            .mouse_events
+            .as_ref()
+            .is_some_and(|events| !events.is_empty())
+    });
+    let (resolved, _) = if interactive_children {
+        resolve_objects_for(surface, &canvas, &surface.children, data, runtime)
+    } else {
+        (Vec::new(), Vec::new())
+    };
     for object in resolved.into_iter().rev() {
         if object.opacity <= 0.0
             || object.width <= 0.0

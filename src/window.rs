@@ -29,11 +29,11 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL,
-    TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE,
-    WM_APP_DISABLE_DIAGNOSTICS, WM_APP_ENABLE_DIAGNOSTICS, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT,
-    WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED, WM_APP_TASKBAR_COLLISION, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    self, TIMER_ALARM_SNOOZE, TIMER_AUTO_HIDE, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK,
+    TIMER_POLL, TIMER_RESET_POLL, TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK,
+    TIMER_WINDOW_STATE, WM_APP_DISABLE_DIAGNOSTICS, WM_APP_ENABLE_DIAGNOSTICS,
+    WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED,
+    WM_APP_TASKBAR_COLLISION, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::providers::{ProviderId, ProviderSet};
@@ -106,6 +106,10 @@ struct AppState {
     auth_watch_snapshot: poller::CredentialWatchSnapshot,
     last_poll_ok: bool,
     last_poll_failure: Option<poller::PollFailure>,
+    /// When usage last arrived from a successful poll.
+    last_update_unix: Option<u64>,
+    /// The last poll that delivered a non-stale reading; drives `data.updated.*`.
+    last_fresh_unix: Option<u64>,
     update_status: UpdateStatus,
     last_update_check_unix: Option<u64>,
 
@@ -127,6 +131,12 @@ struct AppState {
     is_snapped: bool,
     placement_override: Option<PlacementOverride>,
     floating_card_opacity: Option<u8>,
+    /// Settings overrides for edge-docked surfaces; `None` keeps the theme's.
+    hide_until_hover: Option<bool>,
+    edge_display: Option<usize>,
+    /// The "Alarm at 5% remaining" setting.
+    low_usage_alarm: bool,
+    alarm: low_usage_alarm::LowUsageAlarm,
     window_state_timer_active: bool,
 
     custom_theme_enabled: bool,
@@ -141,6 +151,32 @@ struct AppState {
     hovered_mouse_layer: Option<(usize, String)>,
     pending_mouse_click: Option<PendingMouseClick>,
     suppress_next_left_up: bool,
+}
+
+impl AppState {
+    /// Stamp the fresh time only when the INCOMING poll result (before any
+    /// merge with older readings) brought a non-stale reading.
+    fn note_fresh(&mut self, incoming: &AppUsageData) {
+        if incoming.has_fresh_reading() {
+            self.last_fresh_unix = Some(now_unix_secs());
+        }
+    }
+
+    /// Fold one incremental poll update into the state; returns the merged data.
+    fn apply_progress(
+        &mut self,
+        update: AppUsageData,
+        accounts: &crate::accounts::AccountSettings,
+    ) -> AppUsageData {
+        self.note_fresh(&update);
+        let data =
+            poller::merge_poll_progress(update, &self.data.clone().unwrap_or_default(), accounts);
+        self.data = Some(data.clone());
+        self.last_poll_ok = true;
+        self.last_poll_failure = None;
+        self.last_update_unix = Some(now_unix_secs());
+        data
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -595,12 +631,69 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         SurfaceNest::Taskbar
     };
     let opacity = state.floating_card_opacity.unwrap_or(85);
+    let now = Instant::now();
     ThemeRuntime::from_providers(state.providers)
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
+        .with_updated_unix(state.last_fresh_unix)
+        .with_alarm(theme_engine::ThemeAlarm {
+            enabled: state.low_usage_alarm,
+            active: state.alarm.active(now),
+            snoozed: state.alarm.snoozed(now),
+        })
+}
+
+/// Bring the alarm up to date with the usage about to be drawn, sounding it
+/// when a quota has just become almost spent. Returns whether it sounded.
+/// Every quota of every enabled provider and account counts, whatever the
+/// active theme shows. No data yet changes nothing.
+fn update_low_usage_alarm(state: &mut AppState) -> bool {
+    update_low_usage_alarm_at(state, std::time::SystemTime::now(), Instant::now())
+}
+
+fn update_low_usage_alarm_at(
+    state: &mut AppState,
+    now: std::time::SystemTime,
+    mono: Instant,
+) -> bool {
+    if !state.low_usage_alarm {
+        state.alarm.clear();
+        return false;
+    }
+    let Some(data) = state.data.as_ref() else {
+        return false;
+    };
+    let scan = theme_engine::alarm_scan(data, state.providers);
+    state.alarm.update(&scan, now, mono)
+}
+
+fn snooze_low_usage_alarm(hwnd: HWND) {
+    if let Some(state) = lock_state().as_mut() {
+        state.alarm.snooze(Instant::now());
+    }
+    schedule_alarm_snooze_timer(hwnd);
+    render_layered();
+}
+
+/// Re-render when a snooze runs out so the alarm can hold surfaces open again.
+fn schedule_alarm_snooze_timer(hwnd: HWND) {
+    let remaining = lock_state()
+        .as_ref()
+        .and_then(|state| state.alarm.snooze_remaining(Instant::now()));
+    unsafe {
+        match remaining {
+            Some(remaining) => {
+                let ms = remaining.as_millis().clamp(1, u32::MAX as u128) as u32;
+                SetTimer(Some(hwnd), TIMER_ALARM_SNOOZE, ms, None);
+            }
+            None => {
+                let _ = KillTimer(Some(hwnd), TIMER_ALARM_SNOOZE);
+            }
+        }
+    }
 }
 
 /// A transient outage can keep presenting the last real reading while its
@@ -635,6 +728,17 @@ fn theme_with_placement(state: &AppState, auto_ejected: bool) -> Option<ThemeDoc
     let mut theme = state.active_theme.as_ref().map(|theme| {
         theme_engine::apply_mouse_action_overrides(theme, &state.mouse_action_overrides)
     })?;
+    // A root the theme authored as auto-hiding stays at its edge whether or
+    // not the user turns hiding off; saved drag placements from another theme
+    // must not move it. Read before the preferences change `auto_hide`.
+    let edge_docked = theme
+        .surfaces
+        .first()
+        .is_some_and(|surface| surface.placement.auto_hide_edge().is_some());
+    theme.apply_edge_preferences(state.hide_until_hover, state.edge_display);
+    if edge_docked {
+        return Some(theme);
+    }
     let floating = if auto_ejected {
         state.auto_ejected_origin.map(|point| (None, point))
     } else {
@@ -967,6 +1071,10 @@ fn tray_icon_tooltip_from_state() -> String {
 }
 
 fn sync_tray_icon(hwnd: HWND) {
+    // Tests never touch Explorer.
+    if cfg!(test) {
+        return;
+    }
     let usage_tooltip = tray_usage_summary_from_state();
     let themed = {
         let state = lock_state();
@@ -1923,6 +2031,14 @@ fn total_widget_width() -> i32 {
         .unwrap_or(1)
 }
 
+/// Dev-only switch: a release build must never raise an alarm from cached data.
+fn wants_cached_usage(args: &[String]) -> bool {
+    cfg!(debug_assertions)
+        && args
+            .iter()
+            .any(|argument| argument == "--show-cached-usage")
+}
+
 pub fn run() {
     let run_args: Vec<String> = std::env::args().collect();
     let open_dashboard_on_start = run_args.iter().any(|argument| argument == "--dashboard");
@@ -1930,6 +2046,10 @@ pub fn run() {
         .iter()
         .any(|argument| argument == "--allow-multiple");
     let no_poll = run_args.iter().any(|argument| argument == "--no-poll");
+    // Smoke tests start from a saved reading, so they never need real accounts.
+    let cached_usage = wants_cached_usage(&run_args)
+        .then(app_settings::load_usage_cache)
+        .flatten();
     unsafe {
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         CURRENT_DPI.store(GetDpiForSystem(), Ordering::Relaxed);
@@ -2162,7 +2282,7 @@ pub fn run() {
                 install_channel,
                 providers: settings.enabled_providers(),
                 accounts: settings.accounts.clone(),
-                data: None,
+                data: cached_usage.as_ref().map(|cache| cache.data.clone()),
                 poll_interval_ms: settings.poll_interval_ms,
                 retry_count: 0,
                 force_notify_auth_error: false,
@@ -2171,8 +2291,12 @@ pub fn run() {
                     settings.enabled_providers().first().unwrap_or_default(),
                 ),
                 auth_watch_snapshot: Vec::new(),
-                last_poll_ok: false,
+                last_poll_ok: cached_usage.as_ref().is_some_and(|cache| cache.poll_ok),
                 last_poll_failure: None,
+                last_update_unix: cached_usage.as_ref().map(|cache| cache.updated_unix),
+                last_fresh_unix: cached_usage
+                    .as_ref()
+                    .and_then(app_settings::UsageCache::fresh_or_updated_unix),
                 update_status: UpdateStatus::Idle,
                 last_update_check_unix: settings.last_update_check_unix,
                 taskbar_index: settings.taskbar_index,
@@ -2191,6 +2315,10 @@ pub fn run() {
                 is_snapped: false,
                 placement_override: settings.placement_override.clone(),
                 floating_card_opacity: settings.floating_card_opacity,
+                hide_until_hover: settings.hide_until_hover,
+                edge_display: settings.edge_display,
+                low_usage_alarm: settings.low_usage_alarm,
+                alarm: Default::default(),
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
@@ -2291,12 +2419,15 @@ pub fn run() {
 fn render_layered() {
     refresh_dpi();
     sync_custom_mirrors();
-    let (hwnd_val, active_theme, usage_data, runtime, mirror_hwnds, desktop_hwnds) = {
-        let state = lock_state();
-        let Some(state) = state.as_ref() else {
+    let (sounded, hwnd_val, active_theme, usage_data, runtime, mirror_hwnds, desktop_hwnds) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
             return;
         };
+        // Every render brings the alarm up to date first, so `alarm.*`
+        // always describes the usage being drawn.
         (
+            update_low_usage_alarm(state),
             state.hwnd,
             effective_theme_from_state(state),
             state.data.clone(),
@@ -2305,6 +2436,9 @@ fn render_layered() {
             state.desktop_hwnds.clone(),
         )
     };
+    if sounded {
+        low_usage_alarm::play_sound();
+    }
 
     // Theme rendering is the widget renderer. Startup and theme changes always
     // install Classic in memory when a selected theme cannot be loaded.
@@ -2312,6 +2446,7 @@ fn render_layered() {
     let hwnd = hwnd_val.to_hwnd();
     set_window_state_timer(hwnd, theme_has_floating_surface(&theme));
     let target_count = theme.surfaces.len();
+    let mut auto_hiding = Vec::new();
     for surface_index in 0..target_count {
         let regular_hwnd = if surface_index == 0 {
             hwnd
@@ -2382,6 +2517,35 @@ fn render_layered() {
         );
         positioned.placement.offset_x = placement.offset_x;
         positioned.placement.offset_y = placement.offset_y;
+        if let Some(edge) = positioned.placement.auto_hide_edge() {
+            let target = positioning::surface_target(&positioned, scale);
+            if let Some((rect, _)) = target {
+                native_interop::make_popup(target_hwnd, true);
+                let handle = theme_engine::render_surface_handle(
+                    &theme,
+                    surface_index,
+                    usage_data.as_ref(),
+                    surface_runtime,
+                    scale,
+                    edge,
+                );
+                let layout = auto_hide::layout(rect, edge, (handle.width, handle.height), scale);
+                let force_reveal = theme_engine::surface_force_reveal(
+                    &theme,
+                    surface_index,
+                    usage_data.as_ref(),
+                    surface_runtime,
+                );
+                auto_hide::present(target_hwnd, layout, scale, rendered, handle, force_reveal);
+                auto_hiding.push(target_hwnd);
+            }
+            auto_hide::show(
+                target_hwnd,
+                target.is_some()
+                    && !foreground_is_fullscreen_on_display(positioned.placement.reference.display),
+            );
+            continue;
+        }
         position_custom_theme(target_hwnd, &positioned, scale);
         if desktop_nested {
             unsafe {
@@ -2404,6 +2568,8 @@ fn render_layered() {
             let _ = ShowWindow(target, SW_HIDE);
         }
     }
+    auto_hide::retain(&auto_hiding);
+    auto_hide::schedule(hwnd);
 }
 fn theme_for_surface(theme: &ThemeDocument, surface_index: usize) -> ThemeDocument {
     let mut result = theme.clone();
@@ -2540,7 +2706,7 @@ fn do_poll_once(hwnd: HWND) {
         previous.as_ref(),
         force,
         |update| {
-            let cache_data = {
+            let (cache_data, cache_fresh) = {
                 let mut state = lock_state();
                 let Some(state) = state.as_mut() else {
                     return;
@@ -2549,19 +2715,12 @@ fn do_poll_once(hwnd: HWND) {
                 if state.providers != enabled_providers || state.accounts != accounts {
                     return;
                 }
-                let data = poller::merge_poll_progress(
-                    update,
-                    &state.data.clone().unwrap_or_default(),
-                    &accounts,
-                );
-                state.data = Some(data.clone());
-                state.last_poll_ok = true;
-                state.last_poll_failure = None;
-                data
+                let data = state.apply_progress(update, &accounts);
+                (data, state.last_fresh_unix)
             };
             // The dashboard runs separately and follows the same cache as the
             // widget. Publish before waiting for slower providers to finish.
-            if let Err(error) = app_settings::save_usage_cache(&cache_data, true) {
+            if let Err(error) = app_settings::save_usage_cache(&cache_data, true, cache_fresh) {
                 diagnose::log_error("unable to save partial usage cache", error);
             }
             unsafe {
@@ -2578,6 +2737,7 @@ fn do_poll_once(hwnd: HWND) {
             {
                 return;
             }
+            let polled_fresh = data.has_fresh_reading();
             let mut data = match state.as_ref().and_then(|s| s.data.as_ref()) {
                 Some(previous) => poller::carry_forward_failures(data, previous, enabled_providers),
                 None => data,
@@ -2593,6 +2753,7 @@ fn do_poll_once(hwnd: HWND) {
                 .map(|state| state.language)
                 .unwrap_or(LanguageId::English);
             let cache_data = data.clone();
+            let mut cache_fresh = None;
             if let Some(s) = state.as_mut() {
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
@@ -2601,9 +2762,14 @@ fn do_poll_once(hwnd: HWND) {
                     }
                 }
 
+                if polled_fresh {
+                    s.last_fresh_unix = Some(now_unix_secs());
+                }
+                cache_fresh = s.last_fresh_unix;
                 s.data = Some(data);
                 s.last_poll_ok = true;
                 s.last_poll_failure = None;
+                s.last_update_unix = Some(now_unix_secs());
 
                 // Recovered from errors — restore normal poll interval
                 if s.retry_count > 0 {
@@ -2620,7 +2786,7 @@ fn do_poll_once(hwnd: HWND) {
                 s.auth_watch_snapshot.clear();
             }
             drop(state);
-            match app_settings::save_usage_cache(&cache_data, true) {
+            match app_settings::save_usage_cache(&cache_data, true, cache_fresh) {
                 Ok(()) => diagnose::log_lazy(|| {
                     format!(
                         "usage cache saved: accounts={} elapsed_ms={}",
@@ -2679,7 +2845,7 @@ fn do_poll_once(hwnd: HWND) {
                 | poller::PollError::HttpStatus(_) => None,
             };
             // Distinguish auth-required errors from transient errors.
-            let (notify_auth_error, cache_data, cache_poll_ok) = {
+            let (notify_auth_error, cache_data, cache_poll_ok, cache_fresh) = {
                 let mut state = lock_state();
                 if state
                     .as_ref()
@@ -2753,12 +2919,13 @@ fn do_poll_once(hwnd: HWND) {
                     )
                     .0
                 });
-                (should_notify, cache_data, cache_poll_ok)
+                let cache_fresh = state.as_ref().and_then(|state| state.last_fresh_unix);
+                (should_notify, cache_data, cache_poll_ok, cache_fresh)
             };
             // Theme Studio is a separate process and follows this cache. A
             // transient failure with usable stale data remains displayable;
             // hard failures and failures without a reading stay errors.
-            let _ = app_settings::save_usage_cache(&cache_data, cache_poll_ok);
+            let _ = app_settings::save_usage_cache(&cache_data, cache_poll_ok, cache_fresh);
 
             if notify_auth_error {
                 let balloon = {
@@ -2900,6 +3067,9 @@ fn reload_external_settings(hwnd: HWND) {
             settings.tray_offset,
         );
         state.floating_card_opacity = settings.floating_card_opacity;
+        state.hide_until_hover = settings.hide_until_hover;
+        state.edge_display = settings.edge_display;
+        state.low_usage_alarm = settings.low_usage_alarm;
         state.lock_taskbar = settings.lock_taskbar;
         lock_enabled = state.lock_taskbar;
         apply_language_to_state(state, language_override);
@@ -3013,7 +3183,9 @@ fn tray_reposition_is_suppressed() -> bool {
     }
 }
 
+mod auto_hide;
 mod host_geometry;
+mod low_usage_alarm;
 mod message_loop;
 use host_geometry::*;
 use message_loop::wnd_proc;
@@ -3193,6 +3365,13 @@ mod poll_display_state_tests {
             ..Default::default()
         };
         [(ProviderId::Claude, usage)].into_iter().collect()
+    }
+
+    #[test]
+    fn cached_usage_switch_is_dev_only() {
+        let args = ["app".to_string(), "--show-cached-usage".to_string()];
+        assert_eq!(wants_cached_usage(&args), cfg!(debug_assertions));
+        assert!(!wants_cached_usage(&args[..1]));
     }
 
     #[test]

@@ -82,6 +82,16 @@ pub struct SettingsFile {
     pub lock_taskbar: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub placement_override: Option<PlacementOverride>,
+    /// Whether edge-docked widgets hide until hovered; `None` keeps the theme's choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hide_until_hover: Option<bool>,
+    /// Display index for edge-docked widgets; `None` keeps the theme's choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge_display: Option<usize>,
+    /// Sound an alarm and keep edge-docked widgets revealed while a shown
+    /// limit has 5% or less left.
+    #[serde(default = "default_true")]
+    pub low_usage_alarm: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +145,9 @@ impl Default for SettingsFile {
             floating_card_opacity: None,
             lock_taskbar: false,
             placement_override: None,
+            hide_until_hover: None,
+            edge_display: None,
+            low_usage_alarm: true,
         }
     }
 }
@@ -245,8 +258,31 @@ impl SettingsFile {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct UsageCache {
     pub updated_unix: u64,
+    /// When a poll last delivered at least one non-stale reading. Missing (outer
+    /// `None`) in caches written before this field existed; `null` (`Some(None)`)
+    /// means this build knows there has been no fresh reading.
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub fresh_unix: Option<Option<u64>>,
     pub poll_ok: bool,
     pub data: AppUsageData,
+}
+
+fn present_or_null<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<Option<u64>>, D::Error> {
+    Option::<u64>::deserialize(deserializer).map(Some)
+}
+
+impl UsageCache {
+    /// The time the figures were last really refreshed, for "updated N ago";
+    /// `None` when this build recorded that no reading was ever fresh.
+    pub fn fresh_or_updated_unix(&self) -> Option<u64> {
+        self.fresh_unix.unwrap_or(Some(self.updated_unix))
+    }
 }
 
 #[cfg(not(test))]
@@ -372,11 +408,19 @@ pub fn load_usage_cache() -> Option<UsageCache> {
     Some(cache)
 }
 
-pub fn save_usage_cache(data: &AppUsageData, poll_ok: bool) -> Result<(), String> {
+/// `fresh_unix` is the app's actual last-fresh time (decided from the incoming
+/// poll, not from the merged data); `None` is stored as `null` ("unknown").
+pub fn save_usage_cache(
+    data: &AppUsageData,
+    poll_ok: bool,
+    fresh_unix: Option<u64>,
+) -> Result<(), String> {
+    let now = now_unix();
     write_json_atomic(
         &usage_cache_path(),
         &UsageCache {
-            updated_unix: now_unix(),
+            updated_unix: now,
+            fresh_unix: Some(fresh_unix),
             poll_ok,
             data: data.clone(),
         },
@@ -445,6 +489,46 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_cache_stores_the_fresh_time_it_is_given() {
+        let data = AppUsageData::default();
+        save_usage_cache(&data, true, Some(1234)).unwrap();
+        let cache = load_usage_cache().unwrap();
+        assert_eq!(cache.fresh_or_updated_unix(), Some(1234));
+        save_usage_cache(&data, true, None).unwrap();
+        let cache = load_usage_cache().unwrap();
+        assert!(cache.updated_unix > 0);
+        assert_eq!(cache.fresh_or_updated_unix(), None);
+    }
+
+    #[test]
+    fn a_legacy_cache_without_the_field_falls_back_to_updated_unix() {
+        let old: UsageCache =
+            serde_json::from_str(r#"{"updated_unix":7,"poll_ok":true,"data":{}}"#).unwrap();
+        assert_eq!(old.fresh_or_updated_unix(), Some(7));
+        let explicit: UsageCache = serde_json::from_str(
+            r#"{"updated_unix":7,"fresh_unix":null,"poll_ok":true,"data":{}}"#,
+        )
+        .unwrap();
+        assert_eq!(explicit.fresh_or_updated_unix(), None);
+    }
+
+    #[test]
+    fn fresh_time_semantics_survive_a_serialize_reload() {
+        let legacy: UsageCache =
+            serde_json::from_str(r#"{"updated_unix":7,"poll_ok":true,"data":{}}"#).unwrap();
+        let json = serde_json::to_string(&legacy).unwrap();
+        let reloaded: UsageCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.fresh_or_updated_unix(), Some(7));
+        let unknown: UsageCache = serde_json::from_str(
+            r#"{"updated_unix":7,"fresh_unix":null,"poll_ok":true,"data":{}}"#,
+        )
+        .unwrap();
+        let json = serde_json::to_string(&unknown).unwrap();
+        let reloaded: UsageCache = serde_json::from_str(&json).unwrap();
+        assert_eq!(reloaded.fresh_or_updated_unix(), None);
+    }
+
+    #[test]
     fn taskbar_lock_is_opt_in_and_survives_settings_round_trip() {
         assert!(!decode_settings("{}").unwrap().lock_taskbar);
         for lock_taskbar in [false, true] {
@@ -455,6 +539,42 @@ mod tests {
             let decoded = decode_settings(&settings_json(&settings).to_string()).unwrap();
             assert_eq!(decoded.lock_taskbar, lock_taskbar);
         }
+    }
+
+    #[test]
+    fn edge_widget_preferences_are_optional_and_round_trip() {
+        let defaults = decode_settings("{}").unwrap();
+        assert_eq!(
+            (defaults.hide_until_hover, defaults.edge_display),
+            (None, None)
+        );
+        let json = settings_json(&defaults);
+        assert!(json.get("hide_until_hover").is_none() && json.get("edge_display").is_none());
+        let settings = SettingsFile {
+            hide_until_hover: Some(false),
+            edge_display: Some(1),
+            ..Default::default()
+        };
+        let decoded = decode_settings(&settings_json(&settings).to_string()).unwrap();
+        assert_eq!(
+            (decoded.hide_until_hover, decoded.edge_display),
+            (Some(false), Some(1))
+        );
+    }
+
+    #[test]
+    fn low_usage_alarm_defaults_on_and_round_trips_off() {
+        assert!(decode_settings("{}").unwrap().low_usage_alarm);
+        assert!(SettingsFile::default().low_usage_alarm);
+        let off = SettingsFile {
+            low_usage_alarm: false,
+            ..Default::default()
+        };
+        assert!(
+            !decode_settings(&settings_json(&off).to_string())
+                .unwrap()
+                .low_usage_alarm
+        );
     }
 
     #[test]

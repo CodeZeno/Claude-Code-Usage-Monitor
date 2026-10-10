@@ -117,6 +117,7 @@ pub(super) fn execute_mouse_action_source(
                 match effect {
                     MouseActionEffect::ShowDashboard => crate::dashboard::show(owner),
                     MouseActionEffect::ToggleDashboard => crate::dashboard::toggle(owner),
+                    MouseActionEffect::SnoozeAlarm => snooze_low_usage_alarm(owner),
                     MouseActionEffect::OpenUrl(url) => {
                         open_web_url(owner, &url, "mouse action URL could not be opened")
                     }

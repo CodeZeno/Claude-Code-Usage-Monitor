@@ -29,6 +29,8 @@ pub const TIMER_MOUSE_CLICK: usize = 6;
 pub const TIMER_TRAY_HOVER: usize = 7;
 pub const TIMER_CLOCK: usize = 8;
 pub const TIMER_TRAY_REPOSITION: usize = 9;
+pub const TIMER_AUTO_HIDE: usize = 10;
+pub const TIMER_ALARM_SNOOZE: usize = 11;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;
@@ -92,6 +94,17 @@ pub struct DisplayMonitor {
 pub struct DesktopHost {
     pub parent: HWND,
     pub insert_after: HWND,
+}
+
+/// The display a surface placed on `index` really lands on: the first one when
+/// that display is no longer connected. The runtime and the settings screen
+/// share this, so the screen shows where the widget actually is.
+pub fn display_or_first(index: usize, count: usize) -> usize {
+    if index < count {
+        index
+    } else {
+        0
+    }
 }
 
 pub fn find_monitors() -> Vec<DisplayMonitor> {

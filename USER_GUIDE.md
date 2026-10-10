@@ -10,6 +10,7 @@ The instructions below use the app's English labels.
 - [Duplicate and customise a built-in theme](#duplicate-and-customise-a-built-in-theme)
 - [Choose providers and refresh usage](#choose-providers-and-refresh-usage)
 - [Show used or remaining allowance](#show-used-or-remaining-allowance)
+- [Use the Top Bar](#use-the-top-bar)
 - [Windows VM testing for developers](#windows-vm-testing-for-developers)
 
 ## Open the dashboard
@@ -107,11 +108,107 @@ support both directions. Custom themes need to support this setting too; a
 theme that always displays consumed usage may stay unchanged. See the
 [theme binding notes](README.md#usage) if you are editing usage expressions.
 
+## Use the Top Bar
+
+The **Top Bar** built-in theme is a flat card at the top centre of a monitor,
+white in Windows light mode and near-black in dark mode. It hides behind a slim
+tab until you rest the pointer on that tab, then slides down. It slides back up
+shortly after the pointer leaves. Holding the mouse button, for example while
+dragging a window to the top of the screen, never opens it. The tab turns
+amber or red when a shown limit reaches 70% or 90%.
+
+Each enabled provider gets a block, left to right, with one cell per limit: its
+usage, a bar, and the time until it resets. A limit at 70% or more sits on an
+amber pill, and at 90% or more on a red one. Claude also shows its Fable weekly
+cap when the API reports one. The right end shows a green **Live** pill with
+how long ago the figures were refreshed, or an amber **Stale** pill.
+
+![Top Bar in Windows light mode with three providers](docs/images/top-bar-light.png)
+
+![Top Bar in Windows dark mode with two providers](docs/images/top-bar-dark.png)
+
+1. Choose **Top Bar** under **Settings > Appearance > Active theme**.
+2. Under **Settings > Display**, use **Hide until hover** to keep the bar
+   always visible instead (**Use theme setting** hands the choice back to the
+   theme), and **Widget display** to choose its monitor.
+
+Right-click the open bar for the menu, or double-click it to open the dashboard.
+
+### Alarm at 5% remaining
+
+When a limit has 5% or less left, the app plays an alarm once and marks that
+limit with a solid red pill wherever the theme shows it. The alarm does not
+depend on the theme: a quota the active theme does not show can still hold the
+bar open, and **Snooze 1h** dismisses it.
+
+![Top Bar with the 5-hour limit in alarm](docs/images/top-bar-alarm.png)
+
+What the alarm covers:
+
+- For every enabled provider and every account, the headline windows exactly
+  as the poller fills them (the session or five-hour, weekly and monthly
+  slots: the same numbers the bars show), plus Claude model caps under the
+  existing unambiguous `model.<slug>` rule.
+- Sub-quotas a poller does not surface as a headline window, for example
+  Copilot's metered Chat and Completions or Antigravity's non-preferred model
+  groups, are out of scope.
+- The sound plays at most once a minute, even when several limits cross. A
+  limit crossing sooner still holds the bar open and ends a snooze, silently.
+- A crossing clears when a good reading shows the quota above 5% remaining, or
+  when its reset time has passed by more than 5 minutes (a grace for a slightly
+  fast clock). A fresh low reading always counts, but a stale one kept from
+  a failed poll never starts a crossing and only keeps one until its reset time
+  has passed by more than 5 minutes. A reading without a reset time keeps the
+  last one seen. Turning the alarm or a provider off and on
+  again forgets it on purpose, so a still-low quota alarms again (the once a
+  minute sound limit still applies).
+- Known limit: two Claude caps that share a model name have no stable model
+  shortcut, so such a cap clears at its reset.
+
+The sound is the bundled **warning pulse**. Only if that cannot be played does
+the app fall back to **Alarm 1** from your Windows sound scheme, or **Critical
+Stop** if the scheme has none. With a scheme that has neither, such as **No
+Sounds**, the alarm stays silent, and it is silent whenever Windows itself is
+muted. While the limit stays that low, the Top Bar stays down even with **Hide until hover** on. It hides
+normally again once no limit is that low, for example after the reset. The
+alarm counts what is left, whichever way **Usage direction** shows it.
+
+- To let the bar hide while you keep working, click **Snooze 1h** on the bar,
+  or right-click it and choose **Snooze alarm (1 hour)**. Another limit
+  reaching 5% during the snooze alarms again at once.
+- To turn the alarm off, use **Alarm at 5% remaining** under
+  **Settings > Display**. It is on by default.
+
+### Theme authors
+
+Any floating root docked to a monitor's top or bottom edge can hide the same
+way with **Hide until hover** in Theme Studio's **Positioning** section. In the
+theme file this is `"auto_hide": true` in the root's `placement`. Optional
+`handle_color` and `handle_background` expressions return the tab's accent and
+fill as `#RRGGBB` or `#RRGGBBAA` text, and a non-zero `force_reveal` expression
+keeps the surface down, for example `"force_reveal": "alarm.active"`.
+
+- Any colour in a theme can be such an expression, for example
+  `if(system.dark, "#19191C", "#FFFFFF")` to follow Windows light and dark mode.
+- `alarm.active` is 1 while any limit has 5% or less left and the alarm is
+  not snoozed; `alarm.snoozed` and `alarm.enabled` report the snooze and the
+  setting. Each limit also has `.alarm`, such as `claude.five_hour.alarm` or
+  `claude.model.fable.alarm`, which marks the quota wherever the theme shows
+  it. A quota stays counted until it recovers or resets, not while it is
+  hidden by a theme or account switch (see the contract above).
+- The `snooze_alarm()` mouse action does what **Snooze alarm (1 hour)** does,
+  for a button rendered with `alarm.active`.
+- Text templates can use the `countdown` format (`<1m`, `14m`, `2h 14m`,
+  `3d 4h`), and `data.updated.seconds` gives the time since usage was last
+  refreshed (`data.updated.available` is 0 until it is known). Themes using
+  either refresh once a minute.
+
 ## Claude extra limits in custom themes
 
 Claude may report extra quotas in its usage API, including model-specific caps.
-These are available to custom themes. Built-in themes and the existing session,
-weekly, and headline bindings retain their current behaviour.
+These are available to custom themes. Built-in themes other than Top Bar, and
+the existing session, weekly, and headline bindings, retain their current
+behaviour.
 
 After refreshing Claude usage, open the text editor's **Provider values** list or
 the expression editor's **Variables** panel and look under **Claude Code**.

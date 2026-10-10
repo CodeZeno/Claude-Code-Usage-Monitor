@@ -189,6 +189,11 @@ impl AppUsageData {
             .map(|(provider, usage)| (*provider, usage))
     }
 
+    /// At least one reading was fetched this poll rather than carried forward.
+    pub fn has_fresh_reading(&self) -> bool {
+        self.all_usage().any(|usage| !usage.stale)
+    }
+
     pub fn all_usage(&self) -> impl Iterator<Item = &UsageData> {
         self.providers.values().chain(
             self.accounts

@@ -406,10 +406,16 @@ pub(super) fn segment_count_expression_control(
     edit_clicked
 }
 
-pub(super) fn paint_control(ui: &mut egui::Ui, label: &str, paint: &mut Paint) {
+pub(super) fn paint_control(
+    ui: &mut egui::Ui,
+    label: &str,
+    paint: &mut Paint,
+    context: &DataContext,
+) {
     labeled(ui, label, |ui| {
         let width = inspector_control_width(ui);
-        crate::ui::components::color_picker::color_string_field(ui, &mut paint.color, width);
+        let shown = display_color(&paint.color, context).map(|c| [c.r, c.g, c.b, c.a]);
+        crate::ui::components::color_picker::color_string_field(ui, &mut paint.color, width, shown);
     });
 }
 
@@ -628,10 +634,12 @@ pub(super) fn appearance_inspector(
     }
     match &mut object.background {
         LayerBackground::None => {}
-        LayerBackground::Colour { colour } => paint_control(ui, language.text("Colour"), colour),
+        LayerBackground::Colour { colour } => {
+            paint_control(ui, language.text("Colour"), colour, context)
+        }
         LayerBackground::Gradient { start, end, angle } => {
-            paint_control(ui, language.text("Start"), start);
-            paint_control(ui, language.text("End"), end);
+            paint_control(ui, language.text("Start"), start, context);
+            paint_control(ui, language.text("End"), end, context);
             if numeric_expression_control(
                 ui,
                 id.with("background-gradient-angle"),
@@ -693,7 +701,12 @@ pub(super) fn appearance_inspector(
         });
     }
     if let Some(border) = &mut object.border {
-        paint_control(ui, language.text("Border colour"), &mut border.color);
+        paint_control(
+            ui,
+            language.text("Border colour"),
+            &mut border.color,
+            context,
+        );
         if numeric_expression_control(
             ui,
             id.with("border-width"),
@@ -987,7 +1000,7 @@ pub(super) fn content_inspector(
                         }
                     });
             });
-            paint_control(ui, language.text("Colour"), color);
+            paint_control(ui, language.text("Colour"), color, context);
         }
         SceneContent::Progress {
             value,
@@ -1031,8 +1044,8 @@ pub(super) fn content_inspector(
                         }
                     });
             });
-            paint_control(ui, language.text("Fill"), fill);
-            paint_control(ui, language.text("Track"), track);
+            paint_control(ui, language.text("Fill"), fill, context);
+            paint_control(ui, language.text("Track"), track, context);
             if numeric_expression_control(
                 ui,
                 id.with("radius"),

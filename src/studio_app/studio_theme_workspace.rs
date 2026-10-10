@@ -525,6 +525,11 @@ impl StudioApp {
         context
     }
 
+    /// Preview data for colour expressions in thumbnails and pickers.
+    pub(super) fn color_preview_context(&self, surface_index: usize) -> DataContext {
+        self.expression_context(Selection::Surface(surface_index))
+    }
+
     pub(super) fn scene_tree(&mut self, ui: &mut egui::Ui, read_only: bool) {
         let language = self.language();
         self.hovered_scene_item = None;
@@ -592,6 +597,7 @@ impl StudioApp {
                                 None,
                                 !read_only,
                                 language,
+                                &|| self.color_preview_context(surface_index),
                             )
                         });
                         if responses.name_changed {
@@ -630,6 +636,7 @@ impl StudioApp {
                                 Some(is_open),
                                 !read_only,
                                 language,
+                                &|| self.color_preview_context(surface_index),
                             )
                         });
                         if responses.name_changed {
@@ -787,6 +794,7 @@ impl StudioApp {
                     Some(is_open),
                     !read_only,
                     language,
+                    &|| self.color_preview_context(surface),
                 )
             });
             let selection = Selection::Object(surface, index);
@@ -841,6 +849,7 @@ impl StudioApp {
                 None,
                 !read_only,
                 language,
+                &|| self.color_preview_context(surface),
             )
         });
         if responses.name_changed {
@@ -1306,6 +1315,8 @@ impl StudioApp {
             ui.make_persistent_id(("root-object-controls", surface.id.clone()));
         let placement_controls_id =
             ui.make_persistent_id(("placement-expression-controls", surface.id.clone()));
+        let hide_override = self.settings.hide_until_hover;
+        let mut clear_override = false;
         let mut requested_expression = None;
         let mut requested_text_template = false;
         let mut requested_asset = false;
@@ -1462,6 +1473,28 @@ impl StudioApp {
                 });
                 surface.placement.surface_horizontal = Some(surface_horizontal);
                 surface.placement.surface_vertical = Some(surface_vertical);
+                // Only floating roots docked to a top or bottom edge can hide.
+                if surface.placement.edge().is_some() {
+                    toggle_labeled_control(
+                        ui,
+                        language.text("Hide until hover"),
+                        &mut surface.placement.auto_hide,
+                        language,
+                    );
+                    // The Dashboard's choice wins over this toggle until cleared.
+                    if let Some(forced) = hide_override {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.weak(format!(
+                                "{}: {}",
+                                language.text("Overridden in Settings"),
+                                language.text(if forced { "Enabled" } else { "Disabled" })
+                            ));
+                            if ui.button(language.text("Use theme setting")).clicked() {
+                                clear_override = true;
+                            }
+                        });
+                    }
+                }
                 for (label, field, value) in [
                     (
                         language.text("Height"),
@@ -1564,6 +1597,9 @@ impl StudioApp {
         }
         if requested_asset {
             self.open_asset_picker(Selection::Surface(index), &surface.background);
+        }
+        if clear_override && studio_settings::clear_hide_override(&mut self.settings) {
+            self.save_settings();
         }
         let changed = before != serde_json::to_string(&surface).unwrap_or_default();
         if changed {

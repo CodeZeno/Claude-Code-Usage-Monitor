@@ -123,6 +123,17 @@ impl StudioApp {
                             .changed();
                     },
                 );
+                match self
+                    .theme
+                    .edge_surface()
+                    .map(|surface| surface.placement.clone())
+                {
+                    Some(placement) => {
+                        changed |= edge_settings(ui, &mut self.settings, &placement, language);
+                    }
+                    // The alarm's sound works with every theme.
+                    None => changed |= alarm_setting(ui, &mut self.settings, language),
+                }
                 setting_separator(ui);
                 setting_row(
                     ui,
@@ -205,6 +216,110 @@ impl StudioApp {
             self.page = Page::Studio;
         }
     }
+}
+
+/// The choices for "Hide until hover": the theme's own setting, or forced on or off.
+const HIDE_CHOICES: [Option<bool>; 3] = [None, Some(true), Some(false)];
+
+/// Record the Dashboard's hiding choice. `None` hands the decision back to the theme.
+fn choose_hide(settings: &mut SettingsFile, choice: Option<bool>) -> bool {
+    let changed = settings.hide_until_hover != choice;
+    settings.hide_until_hover = choice;
+    changed
+}
+
+/// Give hiding back to the theme, as the Studio's "Use theme setting" does.
+pub(super) fn clear_hide_override(settings: &mut SettingsFile) -> bool {
+    choose_hide(settings, None)
+}
+
+/// The display the widget really sits on, which is what the selector shows.
+fn shown_display(saved: Option<usize>, authored: usize, count: usize) -> usize {
+    native_interop::display_or_first(saved.unwrap_or(authored), count)
+}
+
+/// An explicit display choice is always saved, even when it equals what the
+/// selector already showed for a display that has gone.
+fn choose_display(settings: &mut SettingsFile, index: usize) -> bool {
+    settings.edge_display = Some(index);
+    true
+}
+
+/// Hiding and monitor choice for the active theme's edge-docked surfaces.
+/// Settings hold them because built-in themes are read-only.
+fn edge_settings(
+    ui: &mut egui::Ui,
+    settings: &mut SettingsFile,
+    placement: &Placement,
+    language: LanguageId,
+) -> bool {
+    let mut changed = false;
+    setting_separator(ui);
+    setting_row(
+        ui,
+        language.text("Hide until hover"),
+        language.text("Keep edge-docked widgets tucked away until you point at them"),
+        |ui| {
+            let name = |choice: Option<bool>| match choice {
+                None => language.text("Use theme setting"),
+                Some(true) => language.text("Enabled"),
+                Some(false) => language.text("Disabled"),
+            };
+            Dropdown::from_id_salt("hide_until_hover")
+                .width(220.0)
+                .selected_text(name(settings.hide_until_hover))
+                .show_ui(ui, |ui| {
+                    for choice in HIDE_CHOICES {
+                        let selected = settings.hide_until_hover == choice;
+                        if dropdown_selectable_label(ui, selected, name(choice)).clicked() {
+                            changed |= choose_hide(settings, choice);
+                        }
+                    }
+                });
+        },
+    );
+    changed |= alarm_setting(ui, settings, language);
+    setting_separator(ui);
+    setting_row(
+        ui,
+        language.text("Widget display"),
+        language.text("Monitor used by edge-docked widgets"),
+        |ui| {
+            let count = native_interop::find_monitors().len().max(1);
+            let name = |index: usize| format!("{} {}", language.text("Display"), index + 1);
+            let display = shown_display(settings.edge_display, placement.reference.display, count);
+            Dropdown::from_id_salt("edge_display")
+                .width(220.0)
+                .selected_text(name(display))
+                .show_ui(ui, |ui| {
+                    for index in 0..count {
+                        // Clicking the value on show still saves it, so a
+                        // saved display that is gone can be settled.
+                        if dropdown_selectable_label(ui, display == index, name(index)).clicked() {
+                            changed |= choose_display(settings, index);
+                        }
+                    }
+                });
+        },
+    );
+    changed
+}
+
+fn alarm_setting(ui: &mut egui::Ui, settings: &mut SettingsFile, language: LanguageId) -> bool {
+    setting_separator(ui);
+    let mut changed = false;
+    setting_row(
+        ui,
+        language.text("Alarm at 5% remaining"),
+        language.text("Sound once and keep edge-docked widgets open while a limit is almost spent"),
+        |ui| {
+            changed = Toggle::new(&mut settings.low_usage_alarm)
+                .labels(language.text("Enabled"), language.text("Disabled"))
+                .show(ui)
+                .changed();
+        },
+    );
+    changed
 }
 
 fn account_settings(
@@ -337,5 +452,52 @@ mod account_status_tests {
             account_error_message(PollError::HttpStatus(503), LanguageId::English)
                 .contains("Service Unavailable")
         );
+    }
+}
+
+#[cfg(test)]
+mod edge_setting_tests {
+    use super::*;
+
+    #[test]
+    fn the_dashboard_can_hand_hiding_back_to_the_theme_and_the_theme_wins_again() {
+        let mut theme: crate::theme_engine::ThemeDocument =
+            serde_json::from_str(include_str!("../themes/top-bar.json")).unwrap();
+        theme.prepare_runtime();
+        let authored = theme.surfaces[0].placement.auto_hide;
+        assert!(authored, "the Top Bar hides by itself");
+        let mut settings = SettingsFile::default();
+        let effective = |settings: &SettingsFile| {
+            let mut theme = theme.clone();
+            theme.apply_edge_preferences(settings.hide_until_hover, None);
+            theme.surfaces[0].placement.auto_hide
+        };
+        assert_eq!(effective(&settings), authored);
+        // Forced off, then forced on, then back to the theme's own.
+        assert!(choose_hide(&mut settings, Some(false)));
+        assert!(!effective(&settings));
+        assert!(!choose_hide(&mut settings, Some(false)), "nothing to save");
+        assert!(choose_hide(&mut settings, Some(true)));
+        assert!(effective(&settings));
+        assert!(choose_hide(&mut settings, Some(false)));
+        assert!(clear_hide_override(&mut settings));
+        assert_eq!(settings.hide_until_hover, None);
+        assert_eq!(effective(&settings), authored);
+        assert!(!clear_hide_override(&mut settings), "already the theme's");
+    }
+
+    #[test]
+    fn a_saved_display_that_is_gone_shows_where_the_widget_is_and_a_click_settles_it() {
+        // Two displays connected; the saved third is gone. The runtime puts the
+        // widget on the first, and so does the selector.
+        assert_eq!(shown_display(Some(2), 0, 2), 0);
+        assert_eq!(shown_display(None, 3, 2), 0);
+        assert_eq!(shown_display(Some(1), 0, 2), 1);
+        assert_eq!(shown_display(None, 0, 1), 0);
+        let mut settings = SettingsFile::default();
+        settings.edge_display = Some(2);
+        // Clicking the display it already shows still saves it.
+        assert!(choose_display(&mut settings, 0));
+        assert_eq!(settings.edge_display, Some(0));
     }
 }
