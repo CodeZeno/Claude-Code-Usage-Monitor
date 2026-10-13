@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -8,9 +8,12 @@ use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::Graphics::Gdi::*;
+use windows::Win32::System::Diagnostics::Debug::IsDebuggerPresent;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
 use windows::Win32::System::Registry::*;
-use windows::Win32::System::Threading::{CreateMutexW, WaitForSingleObject};
+use windows::Win32::System::Threading::{
+    CreateMutexW, GetCurrentProcess, TerminateProcess, WaitForSingleObject,
+};
 use windows::Win32::UI::Accessibility::HWINEVENTHOOK;
 use windows::Win32::UI::Controls::WM_MOUSELEAVE;
 use windows::Win32::UI::HiDpi::*;
@@ -235,6 +238,43 @@ const TASKBAR_WATCH_INTERVAL_SECS: u64 = 2;
 
 const TASKBAR_COLLISION_REPOSITION: usize = 2;
 
+/// How long the UI thread may stay unresponsive before the hang watchdog treats
+/// the widget as wedged and replaces it with a fresh process. Long enough that a
+/// slow repaint or a busy shell never costs a relaunch.
+const UI_HANG_RECOVERY_SECS: u64 = 30;
+
+/// Consecutive unanswered probes required on top of that delay. Elapsed time
+/// alone would also count a system sleep that began while a probe was failing,
+/// and relaunch on wake after a single missed probe on either side of it.
+const UI_HANG_MIN_SILENT_PROBES: u32 = 10;
+
+/// How long a single liveness probe waits for the UI thread to answer.
+const UI_PROBE_TIMEOUT_MS: u32 = 1_000;
+
+/// Environment counter of back-to-back hang relaunches. A replacement that
+/// freezes in turn, behind an explorer.exe that stays hung for instance, is
+/// given twice as long as the previous one before the next attempt, instead of
+/// being replaced every half minute for as long as the cause lasts.
+const ENV_HANG_RELAUNCHES: &str = "CCUM_HANG_RELAUNCHES";
+
+/// A hang relaunch only extends the streak when the replacement freezes within
+/// this long of being started; past it, the next hang starts over at 30 s.
+const HANG_STREAK_WINDOW_SECS: u64 = 600;
+
+/// Cap on the doubling: 30 s, then 1, 2, 4 and at most 8 minutes.
+const HANG_BACKOFF_MAX_DOUBLINGS: u32 = 4;
+
+/// Main window handle published for the hang watchdog outside of `STATE`.
+///
+/// The hang watchdog has to diagnose a wedged UI thread even when that thread
+/// is wedged while holding the state mutex, so it never takes that lock. Written
+/// once, right after the window is created.
+static PRIMARY_HWND: AtomicIsize = AtomicIsize::new(0);
+
+/// Set by the first watchdog that commits to a relaunch, so the surface and hang
+/// watchdogs cannot both spawn a replacement in the same instant.
+static RELAUNCH_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+
 static SUPPRESS_TRAY_REPOSITION_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 /// Current system DPI (96 = 100% scaling, 144 = 150%, 192 = 200%, etc.)
@@ -388,7 +428,8 @@ const ENV_RELAUNCH: &str = "CCUM_RELAUNCH";
 /// the child so it can detect a relaunch storm.
 const ENV_LAST_RELAUNCH_UNIX: &str = "CCUM_LAST_RELAUNCH_UNIX";
 
-/// Relaunch the widget as a fresh process after explorer.exe has restarted.
+/// Relaunch the widget as a fresh process after explorer.exe has restarted, or
+/// once its UI thread has stopped answering (see `spawn_ui_hang_watchdog`).
 ///
 /// When the shell restarts it destroys our embedded child window outright (the
 /// window is gone, not merely orphaned - `IsWindow` returns false) and leaves
@@ -398,6 +439,24 @@ const ENV_LAST_RELAUNCH_UNIX: &str = "CCUM_LAST_RELAUNCH_UNIX";
 /// via `ENV_RELAUNCH` so it waits for this instance's single-instance mutex to
 /// be released before taking over (see the guard in `run`).
 fn relaunch_self() {
+    relaunch_self_for(RelaunchCause::ShellRestart);
+}
+
+/// What prompted a relaunch, which decides how the old process steps aside.
+#[derive(Clone, Copy)]
+enum RelaunchCause {
+    /// explorer.exe restarted and took a shell-hosted surface with it.
+    ShellRestart,
+    /// The UI thread stopped answering. `streak` counts the hang relaunches
+    /// that led straight up to this one.
+    UiHang { streak: u32 },
+}
+
+fn relaunch_self_for(cause: RelaunchCause) {
+    if RELAUNCH_IN_PROGRESS.swap(true, Ordering::AcqRel) {
+        return;
+    }
+
     // Back off if we are relaunching very soon after the relaunch that spawned
     // us: that signals the shell is crash-looping, not a one-off restart.
     let now = now_unix_secs();
@@ -414,25 +473,168 @@ fn relaunch_self() {
         Ok(exe) => exe,
         Err(error) => {
             diagnose::log_error("watchdog: unable to resolve current executable", error);
+            RELAUNCH_IN_PROGRESS.store(false, Ordering::Release);
             return;
         }
     };
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    match std::process::Command::new(exe)
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    // Without this the replacement truncates the log on startup and takes the
+    // reason for its own relaunch with it - the one entry worth reading after
+    // the widget has recovered on its own. Diagnostics switched on from the
+    // dashboard leave no flag on the command line, and --diagnose-append is
+    // only read alongside --diagnose, so both are carried over.
+    if diagnose::is_enabled() {
+        for flag in ["--diagnose", "--diagnose-append"] {
+            if !args.iter().any(|arg| arg == flag) {
+                args.push(flag.to_string());
+            }
+        }
+    }
+    let mut command = std::process::Command::new(exe);
+    command
         .args(&args)
         .env(ENV_RELAUNCH, "1")
         .env(ENV_LAST_RELAUNCH_UNIX, now.to_string())
-        .spawn()
-    {
+        .env_remove(ENV_HANG_RELAUNCHES);
+    if let RelaunchCause::UiHang { streak } = cause {
+        command.env(ENV_HANG_RELAUNCHES, streak.saturating_add(1).to_string());
+    }
+    match command.spawn() {
         Ok(_) => {
             diagnose::log("watchdog: relaunched fresh instance, exiting old one");
+            if matches!(cause, RelaunchCause::UiHang { .. }) {
+                // ExitProcess runs DLL detach code after terminating the other
+                // threads, and deadlocks if one of them held a lock that code
+                // needs; with the UI thread wedged in an unknown call, the
+                // state of our threads is exactly what we do not know.
+                // TerminateProcess skips that teardown, and nothing left here
+                // needs it: the log is flushed line by line.
+                unsafe {
+                    let _ = TerminateProcess(GetCurrentProcess(), 0);
+                }
+            }
             std::process::exit(0);
         }
         Err(error) => {
             diagnose::log_error("watchdog: unable to spawn relaunched instance", error);
+            RELAUNCH_IN_PROGRESS.store(false, Ordering::Release);
         }
     }
+}
+
+/// Ask the UI thread to acknowledge an empty message.
+///
+/// The hang watchdog runs on its own thread, so `SendMessageTimeoutW` here is
+/// answered by the window's owning thread: it comes back at once while the
+/// message loop is pumping, and times out once that loop is parked inside a
+/// call that never returns.
+///
+/// The probe is sent every cycle rather than gated behind `IsHungAppWindow`,
+/// which stayed false while the UI thread of a taskbar-embedded widget was
+/// suspended, and only turned true once a frozen widget had been orphaned.
+fn ui_thread_responds(hwnd: HWND) -> bool {
+    unsafe {
+        // A destroyed window belongs to the surface watchdog, not this one;
+        // calling it responsive keeps the two verdicts from overlapping.
+        if !IsWindow(Some(hwnd)).as_bool() {
+            return true;
+        }
+        let mut acknowledged = 0usize;
+        SendMessageTimeoutW(
+            hwnd,
+            WM_NULL,
+            WPARAM(0),
+            LPARAM(0),
+            SMTO_ABORTIFHUNG,
+            UI_PROBE_TIMEOUT_MS,
+            Some(&mut acknowledged),
+        )
+        .0 != 0
+    }
+}
+
+/// Relaunch the widget once its UI thread stops answering messages.
+///
+/// A UI thread parked in a call that never returns keeps every window handle
+/// valid and every parent alive, so the surface watchdog sees nothing wrong
+/// while the widget stops drawing and stops polling - in the case that prompted
+/// this, for well over an hour. The probe runs on its own thread and never
+/// takes the state mutex: a UI thread wedged while holding that lock is
+/// precisely what it has to survive, and the surface watchdog does take it.
+fn spawn_ui_hang_watchdog() {
+    std::thread::spawn(move || {
+        let mut silence: Option<UiSilence> = None;
+        loop {
+            std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
+            // Stepping through the UI thread in a debugger leaves it as silent
+            // as a wedged one, and a relaunch would end the debugging session.
+            if unsafe { IsDebuggerPresent() }.as_bool() {
+                silence = None;
+                continue;
+            }
+            let primary = SendHwnd(PRIMARY_HWND.load(Ordering::Relaxed)).to_hwnd();
+            if primary.is_invalid() || ui_thread_responds(primary) {
+                silence = None;
+                continue;
+            }
+            let current = silence.get_or_insert_with(|| UiSilence {
+                since: Instant::now(),
+                silent_probes: 0,
+                streak: hang_relaunch_streak(
+                    std::env::var(ENV_HANG_RELAUNCHES).ok().as_deref(),
+                    std::env::var(ENV_LAST_RELAUNCH_UNIX).ok().as_deref(),
+                    now_unix_secs(),
+                ),
+            });
+            current.silent_probes = current.silent_probes.saturating_add(1);
+            let delay = hang_recovery_delay(current.streak);
+            // Elapsed time rather than a cycle count alone: a probe that times
+            // out makes its own cycle longer than the sleep interval.
+            if current.silent_probes >= UI_HANG_MIN_SILENT_PROBES
+                && current.since.elapsed() >= delay
+            {
+                let streak = current.streak;
+                diagnose::log(format!(
+                    "watchdog: UI thread stopped answering for {}s -> relaunching",
+                    delay.as_secs()
+                ));
+                silence = None;
+                relaunch_self_for(RelaunchCause::UiHang { streak });
+            }
+        }
+    });
+}
+
+/// An unbroken run of unanswered probes, with the streak it is measured against.
+struct UiSilence {
+    since: Instant,
+    silent_probes: u32,
+    streak: u32,
+}
+
+/// Back-to-back hang relaunches leading up to this process, read from the
+/// variables its parent set when relaunching it. A process that has been
+/// running past HANG_STREAK_WINDOW_SECS starts a fresh streak.
+fn hang_relaunch_streak(
+    hang_relaunches: Option<&str>,
+    last_relaunch_unix: Option<&str>,
+    now_unix: u64,
+) -> u32 {
+    let started = last_relaunch_unix
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(0);
+    if started == 0 || now_unix.saturating_sub(started) >= HANG_STREAK_WINDOW_SECS {
+        return 0;
+    }
+    hang_relaunches
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Silence tolerated before a relaunch, doubled for each back-to-back hang.
+fn hang_recovery_delay(streak: u32) -> Duration {
+    Duration::from_secs(UI_HANG_RECOVERY_SECS << streak.min(HANG_BACKOFF_MAX_DOUBLINGS))
 }
 
 /// Detect explorer.exe restarts and recover from them.
@@ -2169,6 +2371,7 @@ pub fn run() {
         }
 
         diagnose::log(format!("main window created hwnd={:?}", hwnd));
+        PRIMARY_HWND.store(SendHwnd::from_hwnd(hwnd).0, Ordering::Relaxed);
 
         let is_dark = theme::is_dark_mode();
         {
@@ -2276,6 +2479,7 @@ pub fn run() {
         // (WM_TIMER included), so a timer would never fire again.
         taskbar_collision::spawn_reader();
         spawn_taskbar_watchdog();
+        spawn_ui_hang_watchdog();
 
         // Initial poll
         if !no_poll {
@@ -3055,6 +3259,119 @@ mod placement_tests;
 
 #[cfg(test)]
 mod layered_window_tests;
+
+#[cfg(test)]
+mod ui_hang_watchdog_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+
+    struct WindowThread {
+        hwnd: SendHwnd,
+        thread_id: u32,
+        release: mpsc::Sender<()>,
+        handle: std::thread::JoinHandle<()>,
+    }
+
+    /// Own a message-only window on a thread of its own. A pumping thread runs
+    /// a message loop until WM_QUIT; a wedged one blocks without ever pumping
+    /// until released, which is how a stuck UI thread looks from outside.
+    fn spawn_window_thread(pumping: bool) -> WindowThread {
+        let (ready_tx, ready_rx) = mpsc::channel();
+        let (release, release_rx) = mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || unsafe {
+            let class = native_interop::wide_str("STATIC");
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                PCWSTR::from_raw(class.as_ptr()),
+                PCWSTR::null(),
+                WINDOW_STYLE::default(),
+                0,
+                0,
+                0,
+                0,
+                Some(HWND_MESSAGE),
+                None,
+                None,
+                None,
+            )
+            .expect("create isolated message-only test window");
+            let ready = (SendHwnd::from_hwnd(hwnd), GetCurrentThreadId());
+            if pumping {
+                // Report ready from inside the loop, so a probe can never land
+                // between the handshake and the first GetMessageW.
+                PostThreadMessageW(ready.1, WM_APP, WPARAM(0), LPARAM(0))
+                    .expect("queue the readiness marker");
+                let mut msg = MSG::default();
+                while GetMessageW(&mut msg, None, 0, 0).as_bool() {
+                    if msg.message == WM_APP {
+                        ready_tx.send(ready).expect("hand the test window back");
+                    }
+                    DispatchMessageW(&msg);
+                }
+            } else {
+                ready_tx.send(ready).expect("hand the test window back");
+                let _ = release_rx.recv();
+            }
+            let _ = DestroyWindow(hwnd);
+        });
+        let (hwnd, thread_id) = ready_rx.recv().expect("test window created");
+        WindowThread {
+            hwnd,
+            thread_id,
+            release,
+            handle,
+        }
+    }
+
+    #[test]
+    fn hang_probe_tells_a_pumping_ui_thread_from_a_wedged_one() {
+        let pumping = spawn_window_thread(true);
+        let wedged = spawn_window_thread(false);
+
+        assert!(ui_thread_responds(pumping.hwnd.to_hwnd()));
+        assert!(!ui_thread_responds(wedged.hwnd.to_hwnd()));
+
+        wedged.release.send(()).expect("release the wedged thread");
+        wedged.handle.join().expect("wedged thread exits");
+        unsafe {
+            PostThreadMessageW(pumping.thread_id, WM_QUIT, WPARAM(0), LPARAM(0))
+                .expect("stop the pumping thread");
+        }
+        pumping.handle.join().expect("pumping thread exits");
+    }
+
+    #[test]
+    fn hang_probe_leaves_a_destroyed_window_to_the_surface_watchdog() {
+        let gone = spawn_window_thread(false);
+        let hwnd = gone.hwnd;
+        gone.release.send(()).expect("release the window thread");
+        gone.handle.join().expect("window thread exits");
+
+        assert!(ui_thread_responds(hwnd.to_hwnd()));
+    }
+
+    #[test]
+    fn back_to_back_hang_relaunches_double_the_tolerated_silence() {
+        assert_eq!(hang_recovery_delay(0), Duration::from_secs(30));
+        assert_eq!(hang_recovery_delay(1), Duration::from_secs(60));
+        assert_eq!(hang_recovery_delay(4), Duration::from_secs(480));
+        assert_eq!(hang_recovery_delay(9), Duration::from_secs(480));
+    }
+
+    #[test]
+    fn a_hang_streak_only_carries_over_while_the_replacement_is_fresh() {
+        let now = 1_000_000;
+        let fresh = (now - 60).to_string();
+        let stale = (now - 600).to_string();
+
+        assert_eq!(hang_relaunch_streak(Some("2"), Some(&fresh), now), 2);
+        assert_eq!(hang_relaunch_streak(Some("2"), Some(&stale), now), 0);
+        assert_eq!(hang_relaunch_streak(None, Some(&fresh), now), 0);
+        assert_eq!(hang_relaunch_streak(Some("2"), None, now), 0);
+        assert_eq!(hang_relaunch_streak(Some("garbage"), Some(&fresh), now), 0);
+    }
+}
 
 #[cfg(test)]
 mod language_menu_tests {
