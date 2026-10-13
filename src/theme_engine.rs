@@ -21,6 +21,7 @@ use crate::providers::{ProviderId, ProviderSet, PROVIDER_DESCRIPTORS};
 pub const THEME_SCHEMA_VERSION: u32 = 1;
 pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
 pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
+pub const COMPACT_FLUENT_PACE_THEME_ID: &str = "compact-fluent-pace";
 pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 
@@ -42,13 +43,29 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
 /// Bundled starting points are copied into the managed library only when they
 /// are missing. Their ids are deliberately excluded from `is_builtin_theme_id`
 /// so users can edit, rename, export, or delete them in Theme Studio.
-const BUNDLED_EDITABLE_THEME_SOURCES: &[(&str, &str)] = &[(
-    MINECRAFT_THEME_ID,
-    include_str!(concat!(env!("OUT_DIR"), "/minecraft-codex.json")),
-)];
-const BUNDLED_EDITABLE_INSTALL_MARKER: &str = ".minecraft-theme-installed";
+struct BundledEditableTheme {
+    id: &'static str,
+    source: &'static str,
+    install_marker: &'static str,
+    assets: &'static [(&'static str, &'static [u8])],
+}
 
-const BUNDLED_THEME_ASSETS: &[(&str, &[u8])] = &[
+const BUNDLED_EDITABLE_THEMES: &[BundledEditableTheme] = &[
+    BundledEditableTheme {
+        id: MINECRAFT_THEME_ID,
+        source: include_str!(concat!(env!("OUT_DIR"), "/minecraft-codex.json")),
+        install_marker: ".minecraft-theme-installed",
+        assets: MINECRAFT_THEME_ASSETS,
+    },
+    BundledEditableTheme {
+        id: COMPACT_FLUENT_PACE_THEME_ID,
+        source: include_str!(concat!(env!("OUT_DIR"), "/compact-fluent-pace.json")),
+        install_marker: ".compact-fluent-pace-theme-installed",
+        assets: COMPACT_FLUENT_PACE_ASSETS,
+    },
+];
+
+const MINECRAFT_THEME_ASSETS: &[(&str, &[u8])] = &[
     (
         "minecraft-empty.png",
         include_bytes!("themes/assets/minecraft-empty.png"),
@@ -56,6 +73,85 @@ const BUNDLED_THEME_ASSETS: &[(&str, &[u8])] = &[
     (
         "minecraft-full.png",
         include_bytes!("themes/assets/minecraft-full.png"),
+    ),
+];
+
+const COMPACT_FLUENT_PACE_ASSETS: &[(&str, &[u8])] = &[
+    (
+        "pace-lucide-LICENSE.txt",
+        include_bytes!("themes/assets/pace-lucide-LICENSE.txt"),
+    ),
+    (
+        "pace-lucide-claude-under-dark.png",
+        include_bytes!("themes/assets/pace-lucide-claude-under-dark.png"),
+    ),
+    (
+        "pace-lucide-claude-on-dark.png",
+        include_bytes!("themes/assets/pace-lucide-claude-on-dark.png"),
+    ),
+    (
+        "pace-lucide-claude-over-dark.png",
+        include_bytes!("themes/assets/pace-lucide-claude-over-dark.png"),
+    ),
+    (
+        "pace-lucide-claude-under-light.png",
+        include_bytes!("themes/assets/pace-lucide-claude-under-light.png"),
+    ),
+    (
+        "pace-lucide-claude-on-light.png",
+        include_bytes!("themes/assets/pace-lucide-claude-on-light.png"),
+    ),
+    (
+        "pace-lucide-claude-over-light.png",
+        include_bytes!("themes/assets/pace-lucide-claude-over-light.png"),
+    ),
+    (
+        "pace-lucide-codex-under-dark.png",
+        include_bytes!("themes/assets/pace-lucide-codex-under-dark.png"),
+    ),
+    (
+        "pace-lucide-codex-on-dark.png",
+        include_bytes!("themes/assets/pace-lucide-codex-on-dark.png"),
+    ),
+    (
+        "pace-lucide-codex-over-dark.png",
+        include_bytes!("themes/assets/pace-lucide-codex-over-dark.png"),
+    ),
+    (
+        "pace-lucide-codex-under-light.png",
+        include_bytes!("themes/assets/pace-lucide-codex-under-light.png"),
+    ),
+    (
+        "pace-lucide-codex-on-light.png",
+        include_bytes!("themes/assets/pace-lucide-codex-on-light.png"),
+    ),
+    (
+        "pace-lucide-codex-over-light.png",
+        include_bytes!("themes/assets/pace-lucide-codex-over-light.png"),
+    ),
+    (
+        "pace-lucide-copilot-under-dark.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-under-dark.png"),
+    ),
+    (
+        "pace-lucide-copilot-on-dark.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-on-dark.png"),
+    ),
+    (
+        "pace-lucide-copilot-over-dark.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-over-dark.png"),
+    ),
+    (
+        "pace-lucide-copilot-under-light.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-under-light.png"),
+    ),
+    (
+        "pace-lucide-copilot-on-light.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-on-light.png"),
+    ),
+    (
+        "pace-lucide-copilot-over-light.png",
+        include_bytes!("themes/assets/pace-lucide-copilot-over-light.png"),
     ),
 ];
 
@@ -2875,3 +2971,6 @@ fn safe_file_stem(id: &str) -> String {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod pace_theme_tests;
