@@ -68,6 +68,7 @@ pub enum ContextMenuAction {
     ToggleAntigravityExternal,
     ToggleStartup,
     ToggleTaskbarLock,
+    ToggleShowPace,
     ToggleWidget,
     /// Accepted only so menus saved by older versions can be loaded and
     /// cleaned up. New menus cannot create or execute this legacy action.
@@ -325,6 +326,7 @@ pub fn rendered_label(
         "Check for updates" => language.text("Check for updates"),
         "Lock in taskbar" => language.text("Lock in taskbar"),
         "Show widget" => language.text("Show widget"),
+        "Show pace" => language.text("Show pace"),
         _ => label,
     };
     crate::theme_engine::format_template(translated, context)
@@ -457,6 +459,7 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 Action::ToggleStartup,
             ),
             ContextMenuItem::action("lock-taskbar", "Lock in taskbar", Action::ToggleTaskbarLock),
+            ContextMenuItem::action("show-pace", "Show pace", Action::ToggleShowPace),
             ContextMenuItem::submenu("language", "Language", languages),
             ContextMenuItem::separator("settings-separator"),
             ContextMenuItem::action(
@@ -718,6 +721,19 @@ mod tests {
         assert!(menu.validate().is_empty());
         assert!(menu.items.iter().any(|item| item.id == "refresh"));
         assert!(menu.items.iter().any(|item| item.id == "update-frequency"));
+        let settings = menu.items.iter().find(|item| item.id == "settings").unwrap();
+        let ContextMenuItemKind::Submenu { items } = &settings.kind else {
+            panic!("Settings must be a submenu");
+        };
+        assert!(items.iter().any(|item| {
+            item.label == "Show pace"
+                && matches!(
+                    &item.kind,
+                    ContextMenuItemKind::Action {
+                        action: ContextMenuAction::ToggleShowPace
+                    }
+                )
+        }));
         assert!(serde_json::to_string(&menu)
             .unwrap()
             .contains("provider-opencode"));

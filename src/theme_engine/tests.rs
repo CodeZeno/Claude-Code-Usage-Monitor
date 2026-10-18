@@ -3495,3 +3495,216 @@ fn missing_antigravity_external_pool_draws_an_empty_gauge() {
     assert_eq!(value("antigravity.gemini.weekly.display"), 0.0);
     assert_eq!(value("antigravity.external.session.display"), 0.0);
 }
+
+#[test]
+fn pace_expected_used_rejects_resets_outside_the_window() {
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for length in [FIVE_HOURS, WEEK] {
+        let half = expected_used(now + length / 2, length).unwrap();
+        assert!((half - 50.0).abs() < 0.1, "{half}");
+        assert_eq!(expected_used(SystemTime::UNIX_EPOCH, length), None);
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(60), length),
+            None
+        );
+    }
+    assert_eq!(expected_used(now + FIVE_HOURS, Duration::ZERO), None);
+}
+
+#[test]
+fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    let section = |length: Duration, elapsed_quarters: u32| UsageSection {
+        available: true,
+        percentage: 90.0,
+        resets_at: Some(now + length * (4 - elapsed_quarters) / 4),
+    };
+    for elapsed_quarters in [1, 2] {
+        let provider_usage = UsageData {
+            session: section(FIVE_HOURS, elapsed_quarters),
+            weekly: section(WEEK, elapsed_quarters),
+            external_pool: Some(Box::new(UsageData {
+                session: section(FIVE_HOURS, 4 - elapsed_quarters),
+                weekly: section(WEEK, 4 - elapsed_quarters),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let usage = AppUsageData::from_iter(
+            [ProviderId::Claude, ProviderId::Codex, ProviderId::Antigravity]
+                .into_iter()
+                .map(|provider| (provider, provider_usage.clone())),
+        );
+        for countdown in [false, true] {
+            let context = DataContext::from_usage_with_runtime(
+                Some(&usage),
+                &Canvas::default(),
+                ThemeRuntime::default().with_countdown(countdown),
+            );
+            for name in ["claude", "codex", "antigravity.gemini", "antigravity.external"] {
+                let expected = if name == "antigravity.external" {
+                    (4 - elapsed_quarters) as f64 * 25.0
+                } else {
+                    elapsed_quarters as f64 * 25.0
+                };
+                for window in ["session", "five_hour", "weekly"] {
+                    let base = format!("{name}.{window}");
+                    assert_eq!(
+                        context.get(&format!("{base}.expected_available")),
+                        Some(1.0)
+                    );
+                    let used = context.get(&format!("{base}.expected")).unwrap();
+                    let display = context.get(&format!("{base}.expected_display")).unwrap();
+                    assert!((used - expected).abs() < 0.1, "{base}: {used}");
+                    assert!(
+                        (display - if countdown { 100.0 - expected } else { expected }).abs() < 0.1,
+                        "{base}: {display}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pace_bindings_hide_missing_windows_and_reset_times() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for countdown in [false, true] {
+        for (available, resets_at) in [
+            (true, None),
+            (false, Some(now + Duration::from_secs(60))),
+            (true, Some(SystemTime::UNIX_EPOCH)),
+            (true, Some(now + WEEK + Duration::from_secs(60))),
+        ] {
+            let section = UsageSection {
+                available,
+                percentage: 25.0,
+                resets_at,
+            };
+            let usage = UsageData {
+                session: section.clone(),
+                weekly: section,
+                ..Default::default()
+            };
+            let mut context = DataContext::default();
+            for data in [None, Some(&usage)] {
+                context.insert_provider("claude", data, false, countdown);
+                for window in ["session", "five_hour", "weekly"] {
+                    assert_eq!(
+                        context.get(&format!("claude.{window}.expected_available")),
+                        Some(0.0)
+                    );
+                    assert_eq!(
+                        context.get(&format!("claude.{window}.expected")),
+                        Some(0.0)
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn show_pace_binding_follows_the_setting() {
+    let defaults = crate::app_settings::SettingsFile::default();
+    assert!(defaults.show_pace);
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert_eq!(context.get("display.show_pace"), Some(1.0));
+    for show_pace in [false, true] {
+        let mut settings = crate::app_settings::SettingsFile::default();
+        settings.show_pace = show_pace;
+        let runtime = ThemeRuntime::from_providers(settings.enabled_providers())
+            .with_show_pace(settings.show_pace);
+        let context = DataContext::from_usage_with_runtime(None, &Canvas::default(), runtime);
+        assert_eq!(context.get("display.show_pace"), Some(show_pace as u8 as f64));
+    }
+}
+
+#[test]
+fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    let children = &theme.surfaces[0].children;
+    for window in ["session", "weekly"] {
+        assert!(children
+            .iter()
+            .any(|object| object.id == format!("claude-{window}-segments-dark-pace")));
+    }
+    let ticks = children
+        .iter()
+        .enumerate()
+        .filter(|(_, object)| object.id.ends_with("-pace"))
+        .collect::<Vec<_>>();
+    assert_eq!(ticks.len(), 24);
+    for (index, tick) in ticks {
+        let gauge = &children[index - 1];
+        assert_eq!(tick.id, format!("{}-pace", gauge.id));
+        assert!(matches!(&gauge.content, SceneContent::Progress { .. }));
+        assert!(matches!(&tick.content, SceneContent::None));
+        assert_eq!(tick.parent, gauge.parent);
+        assert_eq!(tick.render.0, gauge.render.0);
+        let binding = tick
+            .visibility
+            .0
+            .strip_prefix("(100) * ")
+            .unwrap()
+            .strip_suffix(".expected_available * display.show_pace")
+            .unwrap();
+        let LayerBackground::Colour { colour } = &tick.background else {
+            panic!("{} must have a colour background", tick.id);
+        };
+        assert!(parse_color(&colour.color).is_some());
+        let expected_colour = if tick.id.ends_with("-dark-pace") {
+            "#FFFFFFFF"
+        } else {
+            "#1A1A1AFF"
+        };
+        assert_eq!(colour.color, expected_colour);
+        let mut context = DataContext::from_usage(None, &Canvas::default());
+        for count in 1..=ProviderId::ALL.len() {
+            context.insert("providers.count", count as f64);
+            let start = evaluate(&gauge.x.0, &context).unwrap();
+            let end = start + evaluate(&gauge.width.0, &context).unwrap();
+            assert_eq!(evaluate(&tick.width.0, &context).unwrap(), 1.0);
+            assert_eq!(
+                evaluate(&tick.y.0, &context).unwrap(),
+                evaluate(&gauge.y.0, &context).unwrap() - 1.0
+            );
+            assert_eq!(
+                evaluate(&tick.height.0, &context).unwrap(),
+                evaluate(&gauge.height.0, &context).unwrap() + 2.0
+            );
+            assert_eq!(evaluate(&colour.opacity.0, &context).unwrap(), 0.9);
+            for available in [0.0, 1.0] {
+                context.insert(&format!("{binding}.expected_available"), available);
+                for show_pace in [0.0, 1.0] {
+                    context.insert("display.show_pace", show_pace);
+                    assert_eq!(
+                        evaluate(&tick.visibility.0, &context).unwrap(),
+                        available * show_pace * 100.0
+                    );
+                }
+            }
+            for expected in [-10.0, 0.0, 0.1, 25.0, 50.0, 99.9, 100.0, 110.0] {
+                context.insert(&format!("{binding}.expected_display"), expected);
+                let x = evaluate(&tick.x.0, &context).unwrap();
+                assert!(x >= start && x + 1.0 <= end, "{}: {x}", tick.id);
+                assert_eq!(x.fract(), 0.0);
+                if expected <= 0.0 {
+                    assert_eq!(x, start);
+                } else if expected >= 100.0 {
+                    assert_eq!(x + 1.0, end);
+                }
+            }
+        }
+    }
+}
