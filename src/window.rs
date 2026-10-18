@@ -138,6 +138,7 @@ struct AppState {
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
+    show_pace: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -208,6 +209,7 @@ const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_LOCK_TASKBAR: u16 = 21;
+const IDM_SHOW_PACE: u16 = 22;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 100;
 const IDM_LANG_FIRST: u16 = 101;
@@ -793,6 +795,7 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_show_pace(state.show_pace)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
         .with_antigravity_pools(
@@ -1030,6 +1033,7 @@ fn save_state_settings() {
         persisted.show_antigravity_gemini = Some(antigravity_on && s.show_antigravity_gemini);
         persisted.show_antigravity_external = Some(antigravity_on && s.show_antigravity_external);
         persisted.custom_theme_enabled = s.custom_theme_enabled;
+        persisted.show_pace = s.show_pace;
         persisted.active_theme_path = s
             .active_theme_path
             .as_ref()
@@ -2607,6 +2611,7 @@ pub fn run() {
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
+                show_pace: settings.show_pace,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -3426,6 +3431,7 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
+        state.show_pace = settings.show_pace;
         dual_mode = state.show_antigravity_gemini
             && state.show_antigravity_external
             && state.providers.contains(ProviderId::Antigravity);

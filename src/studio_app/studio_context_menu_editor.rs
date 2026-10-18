@@ -325,6 +325,7 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
         ContextMenuAction::ToggleAntigravityExternal => "toggle_antigravity_external()".into(),
         ContextMenuAction::ToggleStartup => "toggle_startup()".into(),
         ContextMenuAction::ToggleTaskbarLock => "toggle_taskbar_lock()".into(),
+        ContextMenuAction::ToggleShowPace => "toggle_show_pace()".into(),
         ContextMenuAction::ToggleWidget => "toggle_widget()".into(),
         ContextMenuAction::LegacyResetPosition => String::new(),
         ContextMenuAction::SetLanguage { language } => {
@@ -352,6 +353,7 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         ("refresh", ContextMenuAction::Refresh),
         ("toggle_startup", ContextMenuAction::ToggleStartup),
         ("toggle_taskbar_lock", ContextMenuAction::ToggleTaskbarLock),
+        ("toggle_show_pace", ContextMenuAction::ToggleShowPace),
         ("toggle_widget", ContextMenuAction::ToggleWidget),
         ("check_for_updates", ContextMenuAction::CheckForUpdates),
         (

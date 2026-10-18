@@ -1008,6 +1008,7 @@ fn context_menu_action_scripts_round_trip_every_action_kind() {
         },
         ContextMenuAction::ToggleStartup,
         ContextMenuAction::ToggleTaskbarLock,
+        ContextMenuAction::ToggleShowPace,
         ContextMenuAction::ToggleWidget,
         ContextMenuAction::SetLanguage {
             language: "en-US".into(),

@@ -1347,6 +1347,7 @@ pub struct ThemeRuntime {
     /// the `.display` values and summaries using them follow this; `.percentage`
     /// always means consumption so severity thresholds keep their meaning.
     pub countdown: bool,
+    pub show_pace: bool,
     pub surface_nest: SurfaceNest,
     pub floating_card_opacity: u8,
     pub antigravity_gemini_enabled: bool,
@@ -1364,6 +1365,7 @@ impl Default for ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            show_pace: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: true,
@@ -1398,6 +1400,7 @@ impl ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            show_pace: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: agy,
@@ -1447,6 +1450,11 @@ impl ThemeRuntime {
         self
     }
 
+    pub fn with_show_pace(mut self, show_pace: bool) -> Self {
+        self.show_pace = show_pace;
+        self
+    }
+
     /// Supply the selected native host's 96-DPI logical dimensions. Theme
     /// expressions consume these as `host.width` and `host.height`.
     pub fn with_host_dimensions(mut self, width: u32, height: u32) -> Self {
@@ -1466,6 +1474,19 @@ impl ThemeRuntime {
     pub fn provider_enabled(self, provider: ProviderId) -> bool {
         self.providers.contains(provider)
     }
+}
+
+const FIVE_HOURS: std::time::Duration = std::time::Duration::from_secs(5 * 3600);
+const WEEK: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+
+/// Percent of a window of `length` that has passed by now, given when it
+/// resets; `None` when the reset is not within one window from now.
+fn expected_used(resets_at: std::time::SystemTime, length: std::time::Duration) -> Option<f64> {
+    let left = resets_at
+        .duration_since(std::time::SystemTime::now())
+        .ok()?;
+    (!length.is_zero() && left <= length)
+        .then(|| (1.0 - left.as_secs_f64() / length.as_secs_f64()) * 100.0)
 }
 
 impl DataContext {
@@ -1544,6 +1565,7 @@ impl DataContext {
             );
         }
         context.insert("display.countdown", runtime.countdown as u8 as f64);
+        context.insert("display.show_pace", runtime.show_pace as u8 as f64);
         context.insert(
             "antigravity.gemini.enabled",
             runtime.antigravity_gemini_enabled as u8 as f64,
@@ -1738,6 +1760,26 @@ impl DataContext {
             display(weekly)
         };
         self.insert(&format!("{name}.weekly.display"), shown_weekly);
+        // Pace: the share a window would have spent by now at an even rate.
+        // `expected_display` follows the countdown setting like `display`.
+        let five_hour_section = usage.filter(|usage| usage.session.available).map(|usage| &usage.session);
+        let weekly_section = usage.filter(|usage| usage.weekly.available).map(|usage| &usage.weekly);
+        let session_section = if use_codex_session_fallback {
+            weekly_section.map(|section| (section, WEEK))
+        } else {
+            five_hour_section.map(|section| (section, FIVE_HOURS))
+        };
+        for (window, section) in [
+            ("session", session_section),
+            ("five_hour", five_hour_section.map(|section| (section, FIVE_HOURS))),
+            ("weekly", weekly_section.map(|section| (section, WEEK))),
+        ] {
+            let expected = section.and_then(|(section, length)| expected_used(section.resets_at?, length));
+            self.insert(&format!("{name}.{window}.expected_available"), expected.is_some() as u8 as f64);
+            let expected = expected.unwrap_or(0.0);
+            self.insert(&format!("{name}.{window}.expected"), expected);
+            self.insert(&format!("{name}.{window}.expected_display"), display(expected));
+        }
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
         self.insert_string(&format!("{name}.monthly.label"), "30d");
         if let Some(monthly) = monthly {

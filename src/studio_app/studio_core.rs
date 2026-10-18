@@ -29,6 +29,7 @@ impl StudioApp {
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
+            .with_show_pace(self.settings.show_pace)
             .with_antigravity_pools(
                 self.settings.antigravity_gemini_enabled(),
                 self.settings.antigravity_external_enabled(),

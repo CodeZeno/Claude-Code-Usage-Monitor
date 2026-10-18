@@ -773,6 +773,17 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 IDM_LOCK_TASKBAR => {
                     toggle_taskbar_lock(hwnd);
                 }
+                IDM_SHOW_PACE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_pace = !s.show_pace;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
