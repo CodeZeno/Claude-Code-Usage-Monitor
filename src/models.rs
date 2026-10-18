@@ -6,12 +6,27 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::providers::ProviderId;
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct UsageSection {
     /// The provider reported this window, even if unused and without a reset time.
     pub available: bool,
     pub percentage: f64,
     pub resets_at: Option<SystemTime>,
+}
+
+impl Serialize for UsageSection {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // An absent window carries no figure: external cache readers that only
+        // look at `percentage` must see "unknown", not 0% used.
+        let mut map = serializer.serialize_map(Some(3))?;
+        map.serialize_entry("available", &self.available)?;
+        map.serialize_entry("percentage", &self.available.then_some(self.percentage))?;
+        map.serialize_entry("resets_at", &self.resets_at)?;
+        map.end()
+    }
 }
 
 impl<'de> Deserialize<'de> for UsageSection {
@@ -22,17 +37,18 @@ impl<'de> Deserialize<'de> for UsageSection {
         #[derive(Deserialize)]
         struct StoredSection {
             available: Option<bool>,
-            percentage: f64,
+            percentage: Option<f64>,
             resets_at: Option<SystemTime>,
         }
         let stored = StoredSection::deserialize(deserializer)?;
+        let percentage = stored.percentage.unwrap_or(0.0);
         Ok(Self {
             // Older caches lost the distinction between an idle window and an
             // absent one. Preserve evidence of presence until a fresh poll.
             available: stored
                 .available
-                .unwrap_or(stored.resets_at.is_some() || stored.percentage != 0.0),
-            percentage: stored.percentage,
+                .unwrap_or(stored.resets_at.is_some() || percentage != 0.0),
+            percentage,
             resets_at: stored.resets_at,
         })
     }
@@ -463,5 +479,14 @@ mod tests {
         );
         assert!(decoded.get(ProviderId::Antigravity).is_none());
         assert!(decoded.get(ProviderId::OpenCode).is_none());
+    }
+
+    #[test]
+    fn absent_window_is_cached_without_a_percentage() {
+        let section = UsageSection::default();
+        let json = serde_json::to_value(&section).unwrap();
+        assert!(json["percentage"].is_null(), "readers must not see 0% for an absent window");
+        let decoded: UsageSection = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded, section);
     }
 }

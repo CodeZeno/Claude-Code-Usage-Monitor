@@ -468,3 +468,227 @@ fn all_failed_providers_can_carry_their_previous_readings() {
     assert_eq!(claude.session.percentage, 21.0);
     assert!(claude.stale, "the carried reading must be marked stale");
 }
+
+#[test]
+fn antigravity_gemini_weekly_reset_projection_tests() {
+    use std::time::{Duration, SystemTime};
+
+    fn format_iso8601_for_test(time: SystemTime) -> String {
+        let secs = time
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let days = secs / 86400;
+        let rem = secs % 86400;
+        let hours = rem / 3600;
+        let minutes = (rem % 3600) / 60;
+        let seconds = rem % 60;
+        let mut year = 1970;
+        let mut d = days;
+        loop {
+            let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+            let y_days = if leap { 366 } else { 365 };
+            if d < y_days {
+                let mut month = 1;
+                let month_days = [
+                    31,
+                    if leap { 29 } else { 28 },
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                    31,
+                    30,
+                    31,
+                    30,
+                    31,
+                ];
+                for &m_len in &month_days {
+                    if d < m_len {
+                        return format!(
+                            "{year:04}-{month:02}-{:02}T{hours:02}:{minutes:02}:{seconds:02}Z",
+                            d + 1
+                        );
+                    }
+                    d -= m_len;
+                    month += 1;
+                }
+            }
+            d -= y_days;
+            year += 1;
+        }
+    }
+
+    let now = SystemTime::now();
+
+    // 1. A weekly reset that is close is reported as-is: the API's resetTime is
+    //    authoritative and no "+6 days" projection is applied.
+    let reset_16h = now + Duration::from_secs(16 * 3600);
+    let reset_iso_16h = format_iso8601_for_test(reset_16h);
+    let bucket_json = serde_json::json!({
+        "bucketId": "gemini-weekly",
+        "displayName": "Weekly Limit",
+        "window": "weekly",
+        "resetTime": reset_iso_16h,
+        "remainingFraction": 0.80
+    });
+    let bucket: antigravity::AntigravityQuotaSummaryBucket =
+        serde_json::from_value(bucket_json).unwrap();
+    let section = antigravity::antigravity_section_from_summary_bucket(&bucket)
+        .expect("section exists");
+    assert!((section.percentage - 20.0).abs() < 0.001);
+    let reported_reset = section.resets_at.expect("reset exists");
+    let diff = reported_reset
+        .duration_since(reset_16h)
+        .unwrap_or_else(|e| e.duration());
+    assert!(diff < Duration::from_secs(2), "close weekly reset must not be projected");
+
+    // 2. gemini-weekly with reset in the past (-1 hour)
+    let reset_past = now - Duration::from_secs(3600);
+    let reset_iso_past = format_iso8601_for_test(reset_past);
+    let bucket_past_json = serde_json::json!({
+        "bucketId": "gemini-weekly",
+        "window": "weekly",
+        "resetTime": reset_iso_past,
+        "remainingFraction": 0.80
+    });
+    let bucket_past: antigravity::AntigravityQuotaSummaryBucket =
+        serde_json::from_value(bucket_past_json).unwrap();
+    let section_past = antigravity::antigravity_section_from_summary_bucket(&bucket_past)
+        .expect("section exists");
+    let past_reset = section_past.resets_at.expect("reset exists");
+    let diff_past = past_reset
+        .duration_since(reset_past)
+        .unwrap_or_else(|e| e.duration());
+    assert!(diff_past < Duration::from_secs(2), "Past reset must not have +6d added");
+
+    // 3. 3p-weekly with reset in 16 hours (MUST NOT have +6d added)
+    let bucket_3p_json = serde_json::json!({
+        "bucketId": "3p-weekly",
+        "window": "weekly",
+        "resetTime": reset_iso_16h,
+        "remainingFraction": 0.50
+    });
+    let bucket_3p: antigravity::AntigravityQuotaSummaryBucket =
+        serde_json::from_value(bucket_3p_json).unwrap();
+    let section_3p = antigravity::antigravity_section_from_summary_bucket(&bucket_3p)
+        .expect("section exists");
+    let reset_3p = section_3p.resets_at.expect("reset exists");
+    let diff_3p = reset_3p
+        .duration_since(reset_16h)
+        .unwrap_or_else(|e| e.duration());
+    assert!(diff_3p < Duration::from_secs(2), "3p-weekly must not have +6d added");
+}
+
+#[test]
+fn antigravity_models_quota_extracts_gemini_and_external_correctly() {
+    let models_json = r#"{
+        "models": {
+            "gemini-2.5-flash": {
+                "quotaInfo": {
+                    "remainingFraction": 0.66,
+                    "resetTime": "2026-10-17T16:00:00Z"
+                }
+            },
+            "gemini-3-flash": {
+                "quotaInfo": {
+                    "remainingFraction": 0.80,
+                    "resetTime": "2026-10-17T16:00:00Z"
+                }
+            },
+            "claude-sonnet-4-6": {
+                "quotaInfo": {
+                    "remainingFraction": 0.02,
+                    "resetTime": "2099-10-22T18:00:00Z"
+                }
+            }
+        }
+    }"#;
+    let resp: antigravity::AntigravityModelsResponse = serde_json::from_str(models_json).unwrap();
+    let gemini = antigravity::best_gemini_model_quota(&resp).expect("gemini quota exists");
+    assert!((gemini.percentage - 34.0).abs() < 0.001);
+
+}
+
+#[test]
+fn antigravity_first_summary_wins_and_model_quotas_are_only_a_last_resort() {
+    use antigravity::AntigravitySource::{Models, Summary};
+    use std::cell::RefCell;
+
+    let with_session = |percentage| UsageData {
+        session: UsageSection {
+            available: true,
+            percentage,
+            resets_at: None,
+        },
+        ..Default::default()
+    };
+    let endpoints = ["a", "b", "c"];
+
+    // A weekly-only summary is final: the next endpoint's model quota must not
+    // fill its 5h window, and later endpoints are not asked at all.
+    let asked = RefCell::new(Vec::new());
+    let data = antigravity::select_antigravity_usage(&endpoints, |url| {
+        asked.borrow_mut().push(url.to_string());
+        match url {
+            "a" => Err(PollError::RequestFailed),
+            "b" => Ok((UsageData::default(), Summary)),
+            _ => Ok((with_session(80.0), Models)),
+        }
+    })
+    .unwrap();
+    assert!(!data.session.available);
+    assert_eq!(*asked.borrow(), ["a", "b"]);
+
+    // Without any summary the model quota is used.
+    let data = antigravity::select_antigravity_usage(&endpoints, |url| match url {
+        "a" => Ok((with_session(30.0), Models)),
+        _ => Err(PollError::RequestFailed),
+    })
+    .unwrap();
+    assert!((data.session.percentage - 30.0).abs() < 0.001);
+}
+
+#[test]
+fn antigravity_model_fallback_reports_only_gemini_models() {
+    let models: antigravity::AntigravityModelsResponse = serde_json::from_str(
+        r#"{"models":{
+            "gemini-3-pro":{"quotaInfo":{"remainingFraction":0.9}},
+            "claude-opus-4-6-thinking":{"quotaInfo":{"remainingFraction":0.1}},
+            "gpt-oss-120b-medium":{"quotaInfo":{"remainingFraction":0.5}},
+            "imagen-4":{"quotaInfo":{"remainingFraction":0.0}}
+        }}"#,
+    )
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_models(&models).expect("usage");
+    assert!((usage.session.percentage - 10.0).abs() < 0.001, "Gemini pool must ignore Claude/GPT/image models");
+}
+
+#[test]
+fn antigravity_summary_does_not_guess_pools_by_position() {
+    // An unnamed group with 3p-* buckets is the external pool, never Gemini.
+    let response: antigravity::AntigravityQuotaSummaryResponse = serde_json::from_str(
+        r#"{"groups":[{"buckets":[
+            {"bucketId":"3p-weekly","window":"weekly","remainingFraction":0.4},
+            {"bucketId":"3p-5h","window":"5h","remainingFraction":1}
+        ]}]}"#,
+    )
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_summary(response).expect("usage");
+    assert!(!usage.session.available && !usage.weekly.available, "Gemini pool must stay empty");
+}
+
+#[test]
+fn antigravity_summary_without_windows_is_an_answer_not_a_failure() {
+    let response: antigravity::AntigravityQuotaSummaryResponse = serde_json::from_str(
+        r#"{"groups":[{"displayName":"Gemini models","buckets":[]}]}"#,
+    )
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_summary(response).expect("authoritative");
+    assert!(!usage.session.available && !usage.weekly.available);
+
+    let empty: antigravity::AntigravityQuotaSummaryResponse =
+        serde_json::from_str(r#"{"groups":[]}"#).unwrap();
+    assert!(antigravity::antigravity_usage_from_summary(empty).is_some());
+}
