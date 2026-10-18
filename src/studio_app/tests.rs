@@ -436,7 +436,12 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         update_status: crate::dashboard::UpdateStatus::Idle,
         diagnostics: studio_diagnostics::DiagnosticsView::new(),
         page: Page::Studio,
-        settings: SettingsFile::default(),
+        // Pin English so UI text assertions do not follow the system language.
+        settings: {
+            let mut settings = SettingsFile::default();
+            settings.language = Some("en-US".into());
+            settings
+        },
         synced_poll_interval_ms: SettingsFile::default().poll_interval_ms,
         synced_taskbar_lock: false,
         poll_interval_editor_generation: 0,
