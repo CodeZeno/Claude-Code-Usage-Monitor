@@ -655,7 +655,8 @@ fn poll_display_state(
         && data.is_some_and(|data| data.iter().any(|(_, usage)| usage.stale));
     (
         last_poll_ok || has_usable_stale_data,
-        retry_count > 0 && !has_usable_stale_data,
+        // A partial-failure retry after an overall success is not an error.
+        !last_poll_ok && retry_count > 0 && !has_usable_stale_data,
     )
 }
 
@@ -2647,6 +2648,36 @@ fn scheduled_poll_needed() -> bool {
         })
 }
 
+// Successful polls still retry failed accounts, including unselected accounts
+// with carried stale data. Providers without account profiles signal failure
+// by omitting their fresh reading.
+fn partial_poll_retry_delay_ms(
+    data: &AppUsageData,
+    enabled: ProviderSet,
+    accounts: &crate::accounts::AccountSettings,
+    retry_count: u32,
+    interval_ms: u32,
+    cooldown_ms: u32,
+) -> Option<u32> {
+    let needs_retry = enabled.iter().any(|provider| {
+        if accounts.get(provider).is_some() {
+            data.accounts.iter().any(|account| {
+                account.provider == provider
+                    && account.profile.enabled
+                    && account.error.is_some()
+                    && account.usage.as_ref().is_none_or(|usage| usage.stale)
+            })
+        } else {
+            data.get(provider).is_none_or(|usage| usage.stale)
+        }
+    });
+    needs_retry.then(|| {
+        let backoff =
+            RETRY_BASE_MS.saturating_mul(1u32.checked_shl(retry_count).unwrap_or(u32::MAX));
+        backoff.min(interval_ms).max(cooldown_ms).min(0x7fff_ffff)
+    })
+}
+
 fn do_poll_once(hwnd: HWND) {
     let poll_started = Instant::now();
     let (enabled_providers, accounts, previous, force) = {
@@ -2732,12 +2763,26 @@ fn do_poll_once(hwnd: HWND) {
                     }
                 }
 
+                let retry_ms = partial_poll_retry_delay_ms(
+                    &data,
+                    enabled_providers,
+                    &accounts,
+                    s.retry_count,
+                    s.poll_interval_ms,
+                    poller::retry_delay_ms(0, poll_started),
+                );
                 s.data = Some(data);
                 s.last_poll_ok = true;
                 s.last_poll_failure = None;
 
-                // Recovered from errors — restore normal poll interval
-                if s.retry_count > 0 {
+                // Retry partial failures; restore the normal interval after recovery.
+                if let Some(retry_ms) = retry_ms {
+                    s.retry_count = s.retry_count.saturating_add(1);
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
+                        SetTimer(Some(hwnd), TIMER_POLL, retry_ms, None);
+                    }
+                } else if s.retry_count > 0 {
                     s.retry_count = 0;
                     let interval = s.poll_interval_ms;
                     unsafe {
@@ -2927,7 +2972,7 @@ fn schedule_countdown_timer() {
     }
 
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if s.data.as_ref().is_some_and(poller::app_is_past_reset) {
+    if s.retry_count == 0 && s.data.as_ref().is_some_and(poller::app_is_past_reset) {
         unsafe {
             SetTimer(Some(hwnd), TIMER_RESET_POLL, 5_000, None);
         }
@@ -3210,6 +3255,115 @@ mod placement_tests;
 mod layered_window_tests;
 
 #[cfg(test)]
+mod partial_poll_retry_tests {
+    use super::*;
+    use crate::accounts::{AccountProfile, AccountSettings};
+    use crate::models::{AccountUsage, UsageData};
+
+    fn partial_data() -> AppUsageData {
+        let mut data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+        data.accounts.push(AccountUsage {
+            provider: ProviderId::Claude,
+            profile: AccountProfile::default(),
+            source_signature: String::new(),
+            source_path: None,
+            usage: None,
+            error: Some(poller::PollError::HttpStatus(429)),
+            selected: false,
+        });
+        data
+    }
+
+    #[test]
+    fn overall_success_with_failed_account_retries_with_backoff_and_cooldown() {
+        let data = partial_data();
+        assert!(!data.is_empty(), "another provider made the poll successful");
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        for (count, interval, cooldown, expected) in [
+            (0, 900_000, 0, 30_000),
+            (1, 900_000, 0, 60_000),
+            (2, 900_000, 0, 120_000),
+            (10, 900_000, 0, 900_000),
+            (u32::MAX, 900_000, 0, 900_000),
+            (0, 900_000, 120_000, 120_000),
+            (0, 60_000, 120_000, 120_000),
+        ] {
+            assert_eq!(
+                partial_poll_retry_delay_ms(&data, enabled, &accounts, count, interval, cooldown),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn stale_failed_accounts_retry_and_healthy_accounts_restore_normal_polling() {
+        let mut data = partial_data();
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        data.accounts[0].usage = Some(UsageData {
+            stale: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 0),
+            Some(60_000)
+        );
+        data.accounts[0].usage.as_mut().unwrap().stale = false;
+        data.accounts[0].error = None;
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 120_000),
+            None
+        );
+    }
+
+    #[test]
+    fn disabled_accounts_and_providers_do_not_trigger_retries() {
+        let mut data = partial_data();
+        let accounts = AccountSettings::default();
+        assert_eq!(
+            partial_poll_retry_delay_ms(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Codex]),
+                &accounts,
+                0,
+                900_000,
+                0,
+            ),
+            None
+        );
+        data.accounts[0].profile.enabled = false;
+        assert_eq!(
+            partial_poll_retry_delay_ms(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]),
+                &accounts,
+                0,
+                900_000,
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn failed_provider_without_profiles_also_retries() {
+        let data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+        assert_eq!(
+            partial_poll_retry_delay_ms(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Codex, ProviderId::Cursor]),
+                &AccountSettings::default(),
+                0,
+                900_000,
+                0,
+            ),
+            Some(30_000)
+        );
+    }
+}
+
+#[cfg(test)]
 mod language_menu_tests {
     use super::*;
 
@@ -3388,6 +3542,7 @@ mod poll_display_state_tests {
         let stale = cached_usage(true);
 
         assert_eq!(poll_display_state(false, 1, false, None), (false, true));
+        assert_eq!(poll_display_state(true, 1, false, None), (true, false));
         assert_eq!(
             poll_display_state(false, 1, false, Some(&fresh)),
             (false, true)
