@@ -406,6 +406,32 @@
           }
         },
         {
+          "id": "claude-session-segments-dark-pace",
+          "name": "dark Claude Code 5-hour segments pace tick",
+          "render": "system.dark",
+          "visibility": "(100) * claude.session.expected_available * display.show_pace",
+          "parent": "claude-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "claude-session-value-dark",
           "name": "dark Claude Code 5-hour value",
           "render": "system.dark",
@@ -471,6 +497,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-session-segments-light-pace",
+          "name": "light Claude Code 5-hour segments pace tick",
+          "render": "1 - system.dark",
+          "visibility": "(100) * claude.session.expected_available * display.show_pace",
+          "parent": "claude-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -542,6 +594,32 @@
           }
         },
         {
+          "id": "claude-weekly-segments-dark-pace",
+          "name": "dark Claude Code 7-day segments pace tick",
+          "render": "system.dark",
+          "visibility": "(100) * claude.weekly.expected_available * display.show_pace",
+          "parent": "claude-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "claude-weekly-value-dark",
           "name": "dark Claude Code 7-day value",
           "render": "(system.dark) && !claude.credits.available",
@@ -607,6 +685,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-weekly-segments-light-pace",
+          "name": "light Claude Code 7-day segments pace tick",
+          "render": "1 - system.dark",
+          "visibility": "(100) * claude.weekly.expected_available * display.show_pace",
+          "parent": "claude-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -852,6 +956,32 @@
           }
         },
         {
+          "id": "codex-session-segments-dark-pace",
+          "name": "dark Codex 5-hour segments pace tick",
+          "render": "system.dark",
+          "visibility": "(100) * codex.five_hour.expected_available * display.show_pace",
+          "parent": "codex-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.five_hour.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "codex-session-value-dark",
           "name": "dark Codex 5-hour value",
           "render": "system.dark",
@@ -917,6 +1047,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-session-segments-light-pace",
+          "name": "light Codex 5-hour segments pace tick",
+          "render": "1 - system.dark",
+          "visibility": "(100) * codex.five_hour.expected_available * display.show_pace",
+          "parent": "codex-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.five_hour.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -988,6 +1144,32 @@
           }
         },
         {
+          "id": "codex-weekly-segments-dark-pace",
+          "name": "dark Codex 7-day segments pace tick",
+          "render": "system.dark",
+          "visibility": "(100) * codex.weekly.expected_available * display.show_pace",
+          "parent": "codex-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "codex-weekly-value-dark",
           "name": "dark Codex 7-day value",
           "render": "(system.dark) && !codex.credits.available",
@@ -1053,6 +1235,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-weekly-segments-light-pace",
+          "name": "light Codex 7-day segments pace tick",
+          "render": "1 - system.dark",
+          "visibility": "(100) * codex.weekly.expected_available * display.show_pace",
+          "parent": "codex-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1144,6 +1352,32 @@
           }
         },
         {
+          "id": "antigravity-session-gemini-solo-dark-pace",
+          "name": "dark Antigravity Gemini solo session segments pace tick",
+          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-session-gemini-solo-light",
           "name": "light Antigravity Gemini solo session segments",
           "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
@@ -1176,6 +1410,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-gemini-solo-light-pace",
+          "name": "light Antigravity Gemini solo session segments pace tick",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1214,6 +1474,32 @@
           }
         },
         {
+          "id": "antigravity-session-external-solo-dark-pace",
+          "name": "dark Antigravity External solo session segments pace tick",
+          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-session-external-solo-light",
           "name": "light Antigravity External solo session segments",
           "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
@@ -1246,6 +1532,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-external-solo-light-pace",
+          "name": "light Antigravity External solo session segments pace tick",
+          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1284,6 +1596,32 @@
           }
         },
         {
+          "id": "antigravity-session-gemini-dual-dark-pace",
+          "name": "dark Antigravity Gemini dual session segments pace tick",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-session-gemini-dual-light",
           "name": "light Antigravity Gemini dual session segments",
           "render": "(1 - system.dark) && antigravity.dual_mode",
@@ -1316,6 +1654,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-gemini-dual-light-pace",
+          "name": "light Antigravity Gemini dual session segments pace tick",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
+          "y": "(11) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1354,6 +1718,32 @@
           }
         },
         {
+          "id": "antigravity-session-external-dual-dark-pace",
+          "name": "dark Antigravity External dual session segments pace tick",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
+          "y": "(16) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-session-external-dual-light",
           "name": "light Antigravity External dual session segments",
           "render": "(1 - system.dark) && antigravity.dual_mode",
@@ -1386,6 +1776,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-external-dual-light-pace",
+          "name": "light Antigravity External dual session segments pace tick",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
+          "y": "(16) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1556,6 +1972,32 @@
           }
         },
         {
+          "id": "antigravity-weekly-gemini-solo-dark-pace",
+          "name": "dark Antigravity Gemini solo weekly segments pace tick",
+          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-weekly-gemini-solo-light",
           "name": "light Antigravity Gemini solo weekly segments",
           "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
@@ -1588,6 +2030,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-solo-light-pace",
+          "name": "light Antigravity Gemini solo weekly segments pace tick",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1626,6 +2094,32 @@
           }
         },
         {
+          "id": "antigravity-weekly-external-solo-dark-pace",
+          "name": "dark Antigravity External solo weekly segments pace tick",
+          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-weekly-external-solo-light",
           "name": "light Antigravity External solo weekly segments",
           "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
@@ -1658,6 +2152,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-solo-light-pace",
+          "name": "light Antigravity External solo weekly segments pace tick",
+          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(9) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1696,6 +2216,32 @@
           }
         },
         {
+          "id": "antigravity-weekly-gemini-dual-dark-pace",
+          "name": "dark Antigravity Gemini dual weekly segments pace tick",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-weekly-gemini-dual-light",
           "name": "light Antigravity Gemini dual weekly segments",
           "render": "(1 - system.dark) && antigravity.dual_mode",
@@ -1728,6 +2274,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-dual-light-pace",
+          "name": "light Antigravity Gemini dual weekly segments pace tick",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
+          "y": "(27) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
@@ -1766,6 +2338,32 @@
           }
         },
         {
+          "id": "antigravity-weekly-external-dual-dark-pace",
+          "name": "dark Antigravity External dual weekly segments pace tick",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
+          "y": "(32) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
           "id": "antigravity-weekly-external-dual-light",
           "name": "light Antigravity External dual weekly segments",
           "render": "(1 - system.dark) && antigravity.dual_mode",
@@ -1798,6 +2396,32 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-dual-light-pace",
+          "name": "light Antigravity External dual weekly segments pace tick",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "parent": "antigravity-provider",
+          "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
+          "y": "(32) - 1",
+          "width": "1",
+          "height": "(4) + 2",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
           }
         },
         {
