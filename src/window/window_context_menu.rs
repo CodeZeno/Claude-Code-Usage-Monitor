@@ -149,6 +149,7 @@ pub(super) fn context_menu_action_flags(
         ContextMenuAction::ToggleAntigravityExternal => state.show_antigravity_external,
         ContextMenuAction::ToggleStartup => is_startup_enabled(),
         ContextMenuAction::ToggleTaskbarLock => state.lock_taskbar,
+        ContextMenuAction::ToggleShowPace => state.show_pace,
         ContextMenuAction::ToggleWidget => state
             .active_theme
             .as_ref()
@@ -273,6 +274,7 @@ pub(super) fn execute_context_menu_action(
         ContextMenuAction::ToggleAntigravityExternal => Some(IDM_PROVIDER_ANTIGRAVITY_EXTERNAL),
         ContextMenuAction::ToggleStartup => Some(IDM_START_WITH_WINDOWS),
         ContextMenuAction::ToggleTaskbarLock => Some(IDM_LOCK_TASKBAR),
+        ContextMenuAction::ToggleShowPace => Some(IDM_SHOW_PACE),
         ContextMenuAction::SetLanguage { language } => {
             if language.eq_ignore_ascii_case("system") {
                 Some(IDM_LANG_SYSTEM)
