@@ -29,6 +29,11 @@ impl StudioApp {
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
+            .with_antigravity_pools(
+                self.settings.antigravity_gemini_enabled(),
+                self.settings.antigravity_external_enabled(),
+                1.0,
+            )
     }
 
     pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {

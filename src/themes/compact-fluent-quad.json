@@ -1109,9 +1109,9 @@
           }
         },
         {
-          "id": "antigravity-session-segments-dark",
-          "name": "dark Antigravity 5-hour segments",
-          "render": "system.dark",
+          "id": "antigravity-session-gemini-solo-dark",
+          "name": "dark Antigravity Gemini solo session segments",
+          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
           "y": "11",
@@ -1127,7 +1127,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.session.display",
+            "value": "antigravity.gemini.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00D2B4FF",
@@ -1144,42 +1144,9 @@
           }
         },
         {
-          "id": "antigravity-session-value-dark",
-          "name": "dark Antigravity 5-hour value",
-          "render": "system.dark",
-          "visibility": "100",
-          "parent": "antigravity-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
-          "width": "62",
-          "height": "13",
-          "background": {
-            "type": "none"
-          },
-          "border": null,
-          "corner_radius": "0",
-          "layout": "freeform",
-          "align": "start",
-          "gap": "0",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#5EEAD4FF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "antigravity-session-segments-light",
-          "name": "light Antigravity 5-hour segments",
-          "render": "1 - system.dark",
+          "id": "antigravity-session-gemini-solo-light",
+          "name": "light Antigravity Gemini solo session segments",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
           "y": "11",
@@ -1195,7 +1162,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.session.display",
+            "value": "antigravity.gemini.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00A896FF",
@@ -1212,45 +1179,12 @@
           }
         },
         {
-          "id": "antigravity-session-value-light",
-          "name": "light Antigravity 5-hour value",
-          "render": "1 - system.dark",
+          "id": "antigravity-session-external-solo-dark",
+          "name": "dark Antigravity External solo session segments",
+          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
-          "width": "62",
-          "height": "13",
-          "background": {
-            "type": "none"
-          },
-          "border": null,
-          "corner_radius": "0",
-          "layout": "freeform",
-          "align": "start",
-          "gap": "0",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#007A6CFF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "antigravity-weekly-segments-dark",
-          "name": "dark Antigravity 7-day segments",
-          "render": "system.dark",
-          "visibility": "100",
-          "parent": "antigravity-provider",
-          "y": "27",
+          "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1263,7 +1197,77 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.weekly.display",
+            "value": "antigravity.external.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6EB4C8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-external-solo-light",
+          "name": "light Antigravity External solo session segments",
+          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "11",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A8B9EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-gemini-dual-dark",
+          "name": "dark Antigravity Gemini dual session segments",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "11",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.gemini.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00D2B4FF",
@@ -1280,47 +1284,14 @@
           }
         },
         {
-          "id": "antigravity-weekly-value-dark",
-          "name": "dark Antigravity 7-day value",
-          "render": "system.dark",
+          "id": "antigravity-session-gemini-dual-light",
+          "name": "light Antigravity Gemini dual session segments",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "25",
-          "width": "62",
-          "height": "13",
-          "background": {
-            "type": "none"
-          },
-          "border": null,
-          "corner_radius": "0",
-          "layout": "freeform",
-          "align": "start",
-          "gap": "0",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#5EEAD4FF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "antigravity-weekly-segments-light",
-          "name": "light Antigravity 7-day segments",
-          "render": "1 - system.dark",
-          "visibility": "100",
-          "parent": "antigravity-provider",
-          "y": "27",
+          "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "9",
+          "height": "4",
           "background": {
             "type": "none"
           },
@@ -1331,7 +1302,7 @@
           "gap": "0",
           "content": {
             "type": "progress",
-            "value": "antigravity.weekly.display",
+            "value": "antigravity.gemini.session.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#00A896FF",
@@ -1348,9 +1319,491 @@
           }
         },
         {
-          "id": "antigravity-weekly-value-light",
-          "name": "light Antigravity 7-day value",
-          "render": "1 - system.dark",
+          "id": "antigravity-session-external-dual-dark",
+          "name": "dark Antigravity External dual session segments",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "16",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6EB4C8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-external-dual-light",
+          "name": "light Antigravity External dual session segments",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "16",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A8B9EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-session-gemini-value-dark",
+          "name": "dark Antigravity Gemini session value",
+          "render": "system.dark && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.gemini.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5EEAD4FF",
+              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-gemini-value-light",
+          "name": "light Antigravity Gemini session value",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.gemini.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#007A6CFF",
+              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-external-value-dark",
+          "name": "dark Antigravity External session value",
+          "render": "system.dark && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.external.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#98D0E0FF",
+              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-session-external-value-light",
+          "name": "light Antigravity External session value",
+          "render": "(1 - system.dark) && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.external.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2D6F82FF",
+              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-solo-dark",
+          "name": "dark Antigravity Gemini solo weekly segments",
+          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.gemini.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00D2B4FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-solo-light",
+          "name": "light Antigravity Gemini solo weekly segments",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.gemini.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00A896FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-solo-dark",
+          "name": "dark Antigravity External solo weekly segments",
+          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6EB4C8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-solo-light",
+          "name": "light Antigravity External solo weekly segments",
+          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A8B9EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-dual-dark",
+          "name": "dark Antigravity Gemini dual weekly segments",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.gemini.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00D2B4FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-dual-light",
+          "name": "light Antigravity Gemini dual weekly segments",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.gemini.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#00A896FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-dual-dark",
+          "name": "dark Antigravity External dual weekly segments",
+          "render": "system.dark && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "32",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6EB4C8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-dual-light",
+          "name": "light Antigravity External dual weekly segments",
+          "render": "(1 - system.dark) && antigravity.dual_mode",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "y": "32",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "4",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "antigravity.external.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A8B9EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-value-dark",
+          "name": "dark Antigravity Gemini weekly value",
+          "render": "system.dark && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1367,7 +1820,40 @@
           "gap": "0",
           "content": {
             "type": "text",
-            "template": "{antigravity.weekly.display:usage_line}",
+            "template": "{antigravity.gemini.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5EEAD4FF",
+              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-gemini-value-light",
+          "name": "light Antigravity Gemini weekly value",
+          "render": "(1 - system.dark) && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.gemini.weekly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1376,7 +1862,73 @@
             "align": "left",
             "color": {
               "color": "#007A6CFF",
-              "opacity": "1"
+              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-value-dark",
+          "name": "dark Antigravity External weekly value",
+          "render": "system.dark && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.external.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#98D0E0FF",
+              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+            }
+          }
+        },
+        {
+          "id": "antigravity-weekly-external-value-light",
+          "name": "light Antigravity External weekly value",
+          "render": "(1 - system.dark) && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "visibility": "100",
+          "parent": "antigravity-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{antigravity.external.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2D6F82FF",
+              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
             }
           }
         },

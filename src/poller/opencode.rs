@@ -126,6 +126,7 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         monthly: usage.monthly.as_ref().map(section_from_window),
         credits: None,
         stale: false,
+        ..Default::default()
     })
 }
 

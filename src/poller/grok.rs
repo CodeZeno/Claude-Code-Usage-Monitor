@@ -298,6 +298,7 @@ fn grok_usage_from_billing(response: GrokBillingResponse) -> Option<UsageData> {
         monthly: monthly_period.then_some(window),
         credits: grok_credits(&config, response.on_demand_enabled),
         stale: false,
+        ..Default::default()
     })
 }
 

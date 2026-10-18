@@ -29,11 +29,11 @@ use crate::diagnose;
 use crate::localization::{self, LanguageId, Strings};
 use crate::models::AppUsageData;
 use crate::native_interop::{
-    self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL,
-    TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION, TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE,
-    WM_APP_DISABLE_DIAGNOSTICS, WM_APP_ENABLE_DIAGNOSTICS, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT,
-    WM_APP_REFRESH_NOW, WM_APP_SETTINGS_UPDATED, WM_APP_TASKBAR_COLLISION, WM_APP_TRAY,
-    WM_APP_USAGE_UPDATED,
+    self, TIMER_CLOCK, TIMER_COUNTDOWN, TIMER_CROSSFADE_ANIM, TIMER_CROSSFADE_SCHEDULE,
+    TIMER_MOUSE_CLICK, TIMER_POLL, TIMER_RESET_POLL, TIMER_TRAY_HOVER, TIMER_TRAY_REPOSITION,
+    TIMER_UPDATE_CHECK, TIMER_WINDOW_STATE, WM_APP_DISABLE_DIAGNOSTICS,
+    WM_APP_ENABLE_DIAGNOSTICS, WM_APP_OPEN_DASHBOARD, WM_APP_QUIT, WM_APP_REFRESH_NOW,
+    WM_APP_SETTINGS_UPDATED, WM_APP_TASKBAR_COLLISION, WM_APP_TRAY, WM_APP_USAGE_UPDATED,
 };
 use crate::poller;
 use crate::providers::{ProviderId, ProviderSet};
@@ -94,6 +94,11 @@ struct AppState {
     install_channel: InstallChannel,
 
     providers: ProviderSet,
+    pub(super) show_antigravity_gemini: bool,
+    pub(super) show_antigravity_external: bool,
+    crossfade_opacity: f64,
+    crossfade_anim_start: Option<Instant>,
+    crossfade_target_opacity: f64,
     accounts: crate::accounts::AccountSettings,
 
     data: Option<AppUsageData>,
@@ -205,6 +210,9 @@ const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 100;
 const IDM_LANG_FIRST: u16 = 101;
 const IDM_DASHBOARD: u16 = 71;
+// 62 stays the whole-provider Antigravity toggle used by saved custom menus.
+pub(super) const IDM_PROVIDER_ANTIGRAVITY_GEMINI: u16 = 68;
+pub(super) const IDM_PROVIDER_ANTIGRAVITY_EXTERNAL: u16 = 67;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -620,6 +628,11 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_countdown(state.usage_countdown)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
+        .with_antigravity_pools(
+            state.show_antigravity_gemini,
+            state.show_antigravity_external,
+            state.crossfade_opacity,
+        )
 }
 
 /// A transient outage can keep presenting the last real reading while its
@@ -836,6 +849,11 @@ fn save_state_settings() {
             .map(|language| language.code().to_string());
         persisted.last_update_check_unix = s.last_update_check_unix;
         persisted.set_enabled_providers(s.providers);
+        // Pool flags are only meaningful while Antigravity is enabled; persisting
+        // them as on for a disabled provider would re-enable it on the next load.
+        let antigravity_on = s.providers.contains(ProviderId::Antigravity);
+        persisted.show_antigravity_gemini = Some(antigravity_on && s.show_antigravity_gemini);
+        persisted.show_antigravity_external = Some(antigravity_on && s.show_antigravity_external);
         persisted.custom_theme_enabled = s.custom_theme_enabled;
         persisted.active_theme_path = s
             .active_theme_path
@@ -874,11 +892,23 @@ pub(super) fn toggle_taskbar_lock(hwnd: HWND) {
     diagnose::log(format!("taskbar lock toggled: {enabled}"));
 }
 
+#[cfg(test)]
 fn tray_usage_summary_lines(
     data: &AppUsageData,
     providers: ProviderSet,
     language: LanguageId,
     countdown: bool,
+) -> Vec<String> {
+    tray_usage_summary_lines_with_pools(data, providers, language, countdown, true, true)
+}
+
+fn tray_usage_summary_lines_with_pools(
+    data: &AppUsageData,
+    providers: ProviderSet,
+    language: LanguageId,
+    countdown: bool,
+    show_antigravity_gemini: bool,
+    show_antigravity_external: bool,
 ) -> Vec<String> {
     let strings = language.strings();
     let shown = |percentage: f64| {
@@ -888,16 +918,75 @@ fn tray_usage_summary_lines(
             percentage
         }
     };
-    providers
-        .iter()
-        .filter_map(|provider| {
-            let usage = data.get(provider)?;
+    let window_text = |section: &crate::models::UsageSection| {
+        if section.available {
+            format!("{:.0}%", shown(section.percentage))
+        } else {
+            "--".to_string()
+        }
+    };
+    let mut lines = Vec::new();
+    for provider in providers.iter() {
+        if provider == ProviderId::Antigravity {
+            let base_name = language.text(provider.descriptor().display_name);
+            let acct = data.selected_account_name(provider);
+            if show_antigravity_gemini {
+                if let Some(usage) = data.get(provider) {
+                    let weekly_label = usage
+                        .weekly_label
+                        .as_deref()
+                        .unwrap_or(strings.weekly_window);
+                    let label = match acct {
+                        Some(name) => format!("{base_name} (Gemini, {name})"),
+                        None => format!("{base_name} (Gemini)"),
+                    };
+                    lines.push(format!(
+                        "{} {}: {} | {}: {}",
+                        label,
+                        strings.session_window,
+                        window_text(&usage.session),
+                        weekly_label,
+                        window_text(&usage.weekly),
+                    ));
+                }
+            }
+            if show_antigravity_external {
+                if data.get(provider).is_some() && data.antigravity_external().is_none() {
+                    let label = match acct {
+                        Some(name) => format!("{base_name} (Claude/GPT, {name})"),
+                        None => format!("{base_name} (Claude/GPT)"),
+                    };
+                    lines.push(format!("{label}: --"));
+                }
+                if let Some(usage) = data.antigravity_external() {
+                    let weekly_label = usage
+                        .weekly_label
+                        .as_deref()
+                        .unwrap_or(strings.weekly_window);
+                    let label = match acct {
+                        Some(name) => format!("{base_name} (Claude/GPT, {name})"),
+                        None => format!("{base_name} (Claude/GPT)"),
+                    };
+                    lines.push(format!(
+                        "{} {}: {} | {}: {}",
+                        label,
+                        strings.session_window,
+                        window_text(&usage.session),
+                        weekly_label,
+                        window_text(&usage.weekly),
+                    ));
+                }
+            }
+        } else {
+            let Some(usage) = data.get(provider) else {
+                continue;
+            };
             let descriptor = provider.descriptor();
             let weekly_label = usage
                 .weekly_label
                 .as_deref()
                 .unwrap_or(strings.weekly_window);
-            Some(format!(
+            lines.push(format!(
                 "{} {}: {:.0}% | {}: {:.0}%",
                 match data.selected_account_name(provider) {
                     Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
@@ -907,9 +996,10 @@ fn tray_usage_summary_lines(
                 shown(usage.session.percentage),
                 weekly_label,
                 shown(usage.weekly.percentage),
-            ))
-        })
-        .collect()
+            ));
+        }
+    }
+    lines
 }
 
 fn tray_usage_summary_from_state() -> Option<String> {
@@ -927,11 +1017,13 @@ fn tray_usage_summary_from_state() -> Option<String> {
     if !state.last_poll_ok {
         return None;
     }
-    let lines = tray_usage_summary_lines(
+    let lines = tray_usage_summary_lines_with_pools(
         state.data.as_ref()?,
         state.providers,
         state.language,
         state.usage_countdown,
+        state.show_antigravity_gemini,
+        state.show_antigravity_external,
     );
     (!lines.is_empty()).then(|| lines.join("\n"))
 }
@@ -2184,6 +2276,11 @@ pub fn run() {
                 language,
                 install_channel,
                 providers: settings.enabled_providers(),
+                show_antigravity_gemini: settings.antigravity_gemini_enabled(),
+                show_antigravity_external: settings.antigravity_external_enabled(),
+                crossfade_opacity: 1.0,
+                crossfade_anim_start: None,
+                crossfade_target_opacity: 1.0,
                 accounts: settings.accounts.clone(),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -2253,6 +2350,17 @@ pub fn run() {
         render_layered();
         schedule_countdown_timer();
         schedule_clock_timer();
+        let startup_dual_mode = {
+            let state = lock_state();
+            state.as_ref().is_some_and(|s| {
+                s.show_antigravity_gemini
+                    && s.show_antigravity_external
+                    && s.providers.contains(ProviderId::Antigravity)
+            })
+        };
+        if startup_dual_mode {
+            arm_crossfade_schedule(hwnd);
+        }
 
         if open_dashboard_on_start {
             crate::dashboard::show(hwnd);
@@ -2896,12 +3004,36 @@ fn check_language_change() {
     }
 }
 
+pub(super) fn arm_crossfade_schedule(hwnd: HWND) {
+    let now_ms = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as u64,
+        Err(_) => 0,
+    };
+    let cycle_pos_ms = now_ms % 20_000;
+    // Cycle: [0..8000) Gemini hold, [8000..10000) Fade to External,
+    // [10000..18000) External hold, [18000..20000) Fade to Gemini
+    let delay_ms = if cycle_pos_ms < 8_000 {
+        8_000 - cycle_pos_ms
+    } else if cycle_pos_ms < 10_000 {
+        1
+    } else if cycle_pos_ms < 18_000 {
+        18_000 - cycle_pos_ms
+    } else {
+        1
+    };
+    unsafe {
+        let _ = SetTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE, delay_ms as u32, None);
+    }
+}
+
 fn reload_external_settings(hwnd: HWND) {
     let settings = load_settings();
     let language_override = settings.language.as_deref().and_then(LanguageId::from_code);
     let theme_path = settings.active_theme_path.as_ref().map(PathBuf::from);
     let providers_changed;
     let lock_enabled;
+    let antigravity_changed;
+    let dual_mode;
     {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
@@ -2909,6 +3041,12 @@ fn reload_external_settings(hwnd: HWND) {
         };
         providers_changed =
             state.providers != settings.enabled_providers() || state.accounts != settings.accounts;
+        let gemini_enabled = settings.antigravity_gemini_enabled();
+        let external_enabled = settings.antigravity_external_enabled();
+        antigravity_changed = state.show_antigravity_gemini != gemini_enabled
+            || state.show_antigravity_external != external_enabled;
+        state.show_antigravity_gemini = gemini_enabled;
+        state.show_antigravity_external = external_enabled;
         state.accounts = settings.accounts.clone();
         if let Some(data) = state.data.as_mut() {
             data.select_accounts(&settings.accounts);
@@ -2916,6 +3054,18 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
+        dual_mode = state.show_antigravity_gemini
+            && state.show_antigravity_external
+            && state.providers.contains(ProviderId::Antigravity);
+        if !dual_mode {
+            unsafe {
+                let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_ANIM);
+            }
+            state.crossfade_opacity = 1.0;
+            state.crossfade_anim_start = None;
+            state.crossfade_target_opacity = 1.0;
+        }
         update_configured_placement(
             state,
             settings.placement_override,
@@ -2926,6 +3076,9 @@ fn reload_external_settings(hwnd: HWND) {
         state.lock_taskbar = settings.lock_taskbar;
         lock_enabled = state.lock_taskbar;
         apply_language_to_state(state, language_override);
+    }
+    if dual_mode && (antigravity_changed || providers_changed) {
+        arm_crossfade_schedule(hwnd);
     }
     unsafe {
         SetTimer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);

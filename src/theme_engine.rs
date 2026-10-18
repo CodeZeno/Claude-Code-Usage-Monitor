@@ -1324,7 +1324,7 @@ pub struct DataContext {
 /// Runtime environment used by theme expressions and layout. Provider state is
 /// deliberately independent of polling availability so a temporary provider
 /// error never causes the widget to jump or resize.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThemeRuntime {
     providers: ProviderSet,
     pub poll_ok: bool,
@@ -1336,6 +1336,9 @@ pub struct ThemeRuntime {
     pub countdown: bool,
     pub surface_nest: SurfaceNest,
     pub floating_card_opacity: u8,
+    pub antigravity_gemini_enabled: bool,
+    pub antigravity_external_enabled: bool,
+    pub crossfade_opacity: f64,
     host_width: u32,
     host_height: u32,
 }
@@ -1350,6 +1353,9 @@ impl Default for ThemeRuntime {
             countdown: false,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
+            antigravity_gemini_enabled: true,
+            antigravity_external_enabled: false,
+            crossfade_opacity: 1.0,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1372,6 +1378,7 @@ impl ThemeRuntime {
     }
 
     pub fn from_providers(providers: ProviderSet) -> Self {
+        let agy = providers.contains(ProviderId::Antigravity);
         Self {
             providers,
             poll_ok: true,
@@ -1380,9 +1387,24 @@ impl ThemeRuntime {
             countdown: false,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
+            antigravity_gemini_enabled: agy,
+            antigravity_external_enabled: false,
+            crossfade_opacity: 1.0,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
+    }
+
+    pub fn with_antigravity_pools(
+        mut self,
+        gemini: bool,
+        external: bool,
+        crossfade_opacity: f64,
+    ) -> Self {
+        self.antigravity_gemini_enabled = gemini;
+        self.antigravity_external_enabled = external;
+        self.crossfade_opacity = crossfade_opacity;
+        self
     }
 
     pub fn with_nest(mut self, nest: SurfaceNest) -> Self {
@@ -1509,6 +1531,20 @@ impl DataContext {
             );
         }
         context.insert("display.countdown", runtime.countdown as u8 as f64);
+        context.insert(
+            "antigravity.gemini.enabled",
+            runtime.antigravity_gemini_enabled as u8 as f64,
+        );
+        context.insert(
+            "antigravity.external.enabled",
+            runtime.antigravity_external_enabled as u8 as f64,
+        );
+        let agy_dual_mode = runtime.antigravity_gemini_enabled && runtime.antigravity_external_enabled;
+        context.insert("antigravity.dual_mode", agy_dual_mode as u8 as f64);
+        context.insert(
+            "antigravity.crossfade_opacity",
+            runtime.crossfade_opacity.clamp(0.0, 1.0),
+        );
         if let Some(data) = data {
             for account in &data.accounts {
                 let key = format!(
@@ -1551,6 +1587,22 @@ impl DataContext {
                     runtime.countdown,
                 );
             }
+            if let Some(agy) = data.get(ProviderId::Antigravity) {
+                // Antigravity answered this poll; pool-level gaps are "no limit
+                // data" ("--"), not a provider error.
+                context.insert("antigravity.reported", 1.0);
+                context.insert_provider("antigravity.gemini", Some(agy), false, runtime.countdown);
+                // A missing external pool stays empty ("--"); never show Gemini figures in its place.
+                context.insert_provider(
+                    "antigravity.external",
+                    agy.external_pool.as_deref(),
+                    false,
+                    runtime.countdown,
+                );
+            } else {
+                context.insert_provider("antigravity.gemini", None, false, runtime.countdown);
+                context.insert_provider("antigravity.external", None, false, runtime.countdown);
+            }
             let active = ProviderId::ALL
                 .into_iter()
                 .find_map(|provider| data.get(provider).map(|usage| (provider, usage)));
@@ -1569,6 +1621,8 @@ impl DataContext {
                     runtime.countdown,
                 );
             }
+            context.insert_provider("antigravity.gemini", None, false, runtime.countdown);
+            context.insert_provider("antigravity.external", None, false, runtime.countdown);
             context.insert_provider("active", None, false, runtime.countdown);
         }
         context
@@ -1612,15 +1666,56 @@ impl DataContext {
         } else {
             five_hour
         };
+        let (session_available, weekly_available) = usage
+            .map(|usage| {
+                (
+                    usage.session.available || use_codex_session_fallback,
+                    usage.weekly.available,
+                )
+            })
+            .unwrap_or((false, false));
+        self.insert(
+            &format!("{name}.session.available"),
+            session_available as u8 as f64,
+        );
+        self.insert(
+            &format!("{name}.five_hour.available"),
+            usage.is_some_and(|usage| usage.session.available) as u8 as f64,
+        );
+        self.insert(
+            &format!("{name}.weekly.available"),
+            weekly_available as u8 as f64,
+        );
         self.insert(&format!("{name}.session.percentage"), session);
         self.insert(&format!("{name}.session.remaining"), 100.0 - session);
-        self.insert(&format!("{name}.session.display"), display(session));
+        // An Antigravity pool window that was not reported draws an empty
+        // gauge in either usage direction instead of a full "remaining" one.
+        let shown_session = if name.starts_with("antigravity") && !(session_available) {
+            0.0
+        } else {
+            display(session)
+        };
+        self.insert(&format!("{name}.session.display"), shown_session);
         self.insert(&format!("{name}.five_hour.percentage"), five_hour);
         self.insert(&format!("{name}.five_hour.remaining"), 100.0 - five_hour);
-        self.insert(&format!("{name}.five_hour.display"), display(five_hour));
+        // An Antigravity pool window that was not reported draws an empty
+        // gauge in either usage direction instead of a full "remaining" one.
+        let shown_five_hour = if name.starts_with("antigravity") && !(usage.is_some_and(|usage| usage.session.available)) {
+            0.0
+        } else {
+            display(five_hour)
+        };
+        self.insert(&format!("{name}.five_hour.display"), shown_five_hour);
         self.insert(&format!("{name}.weekly.percentage"), weekly);
         self.insert(&format!("{name}.weekly.remaining"), 100.0 - weekly);
-        self.insert(&format!("{name}.weekly.display"), display(weekly));
+        // An Antigravity pool window that was not reported draws an empty
+        // gauge in either usage direction instead of a full "remaining" one.
+        let shown_weekly = if name.starts_with("antigravity") && !(weekly_available) {
+            0.0
+        } else {
+            display(weekly)
+        };
+        self.insert(&format!("{name}.weekly.display"), shown_weekly);
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
         self.insert_string(&format!("{name}.monthly.label"), "30d");
         if let Some(monthly) = monthly {

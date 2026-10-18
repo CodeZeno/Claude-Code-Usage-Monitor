@@ -330,8 +330,8 @@ pub(super) fn select_antigravity_usage(
 
     for base_url in endpoints {
         match fetch(base_url) {
-            // A quota summary names every window it has; it is authoritative,
-            // so later endpoints are neither asked nor merged.
+            // A quota summary names every window it has; it is authoritative
+            // for both pools, so later endpoints are neither asked nor merged.
             Ok((data, AntigravitySource::Summary)) => return Ok(data),
             // Model quotas do not name their window; keep them only as a last
             // resort in case no endpoint answers with a summary.
@@ -380,8 +380,8 @@ pub(super) fn fetch_antigravity_usage_from_endpoint(
     };
 
     // Per-model quotas do not say which window (5h or weekly) they belong to,
-    // so when the summary answered it is used alone and the models request is
-    // skipped.
+    // so when the summary answered, both pools are taken from it alone and the
+    // models request is skipped.
     if let Some(data) = summary_result {
         return Ok((data, AntigravitySource::Summary));
     }
@@ -395,7 +395,8 @@ pub(super) fn fetch_antigravity_usage_from_endpoint(
     }
 }
 
-/// Fallback when the quota summary is unavailable: Gemini models only.
+/// Fallback when the quota summary is unavailable: keep the two pools apart,
+/// Gemini models in the primary pool and Claude/GPT models in the external one.
 pub(super) fn antigravity_usage_from_models(models: &AntigravityModelsResponse) -> Option<UsageData> {
     let gemini = best_gemini_model_quota(models);
     // Claude/GPT model quotas do not say whether they are the 5h or the weekly
@@ -617,11 +618,19 @@ pub(super) fn antigravity_usage_from_summary(
         gemini_usage = other_groups.pop();
     }
 
-    // The external "Claude and GPT models" group is recognised only so it is
-    // never shown as the Gemini pool.
-    match gemini_usage {
-        Some(gemini) => Some(gemini),
-        None => answered.then(UsageData::default),
+    if let Some(mut gemini) = gemini_usage {
+        if let Some(external) = external_usage {
+            gemini.external_pool = Some(Box::new(external));
+        }
+        Some(gemini)
+    } else if let Some(external) = external_usage {
+        let mut gemini = UsageData::default();
+        gemini.session.available = false;
+        gemini.weekly.available = false;
+        gemini.external_pool = Some(Box::new(external));
+        Some(gemini)
+    } else {
+        answered.then(UsageData::default)
     }
 }
 

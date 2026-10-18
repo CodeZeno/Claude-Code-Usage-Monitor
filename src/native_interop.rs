@@ -29,6 +29,8 @@ pub const TIMER_MOUSE_CLICK: usize = 6;
 pub const TIMER_TRAY_HOVER: usize = 7;
 pub const TIMER_CLOCK: usize = 8;
 pub const TIMER_TRAY_REPOSITION: usize = 9;
+pub const TIMER_CROSSFADE_SCHEDULE: usize = 14;
+pub const TIMER_CROSSFADE_ANIM: usize = 15;
 
 // Custom messages
 pub const WM_APP: u32 = 0x8000;

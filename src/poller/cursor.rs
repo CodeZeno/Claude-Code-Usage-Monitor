@@ -235,6 +235,7 @@ fn cursor_usage_from_summary(response: CursorUsageSummaryResponse) -> Option<Usa
         monthly: None,
         credits: None,
         stale: false,
+        ..Default::default()
     })
 }
 

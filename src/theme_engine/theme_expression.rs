@@ -517,6 +517,8 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
                 | "claude"
                 | "codex"
                 | "antigravity"
+                | "antigravity.gemini"
+                | "antigravity.external"
                 | "opencode"
                 | "cursor"
                 | "grok"
@@ -530,11 +532,25 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
     {
         return None;
     }
-    let scoped_error = context.get(&format!("{provider}.has_error"));
+    let scoped_error = context.get(&format!("{provider}.has_error")).or_else(|| {
+        if provider.starts_with("antigravity.") {
+            context.get("antigravity.has_error")
+        } else {
+            None
+        }
+    });
     if scoped_error.is_none() && context.get("data.loading").unwrap_or(0.0) != 0.0 {
         return Some("--".into());
     }
     let available = context.get(&format!("{provider}.available")).unwrap_or(0.0) != 0.0;
+    // A pool Antigravity did not report, while Antigravity itself answered, is
+    // "no limit data", not an error.
+    if provider.starts_with("antigravity")
+        && context.get("antigravity.reported").unwrap_or(0.0) != 0.0
+        && (!available || context.get(&format!("{provider}.{window}.available")) == Some(0.0))
+    {
+        return Some("--".into());
+    }
     if scoped_error == Some(0.0) && !available {
         return Some("--".into());
     }
@@ -547,6 +563,13 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
         return Some("!".into());
     }
     if dynamic.is_some() && context.get(&format!("{base}.available")) == Some(0.0) {
+        return Some("--".into());
+    }
+    // An Antigravity pool may report one window but not the other; an absent
+    // window is "no limit data", not 0% used.
+    if provider.starts_with("antigravity")
+        && context.get(&format!("{provider}.{window}.available")) == Some(0.0)
+    {
         return Some("--".into());
     }
     let percentage = context

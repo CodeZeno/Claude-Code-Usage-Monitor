@@ -321,6 +321,8 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
         ContextMenuAction::ToggleProvider { provider } => {
             format!("toggle_provider({})", provider.descriptor().key)
         }
+        ContextMenuAction::ToggleAntigravityGemini => "toggle_antigravity_gemini()".into(),
+        ContextMenuAction::ToggleAntigravityExternal => "toggle_antigravity_external()".into(),
         ContextMenuAction::ToggleStartup => "toggle_startup()".into(),
         ContextMenuAction::ToggleTaskbarLock => "toggle_taskbar_lock()".into(),
         ContextMenuAction::ToggleWidget => "toggle_widget()".into(),
@@ -352,6 +354,8 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         ("toggle_taskbar_lock", ContextMenuAction::ToggleTaskbarLock),
         ("toggle_widget", ContextMenuAction::ToggleWidget),
         ("check_for_updates", ContextMenuAction::CheckForUpdates),
+        ("toggle_antigravity_gemini", ContextMenuAction::ToggleAntigravityGemini),
+        ("toggle_antigravity_external", ContextMenuAction::ToggleAntigravityExternal),
         ("exit", ContextMenuAction::Exit),
     ] {
         if script == format!("{name}()") {

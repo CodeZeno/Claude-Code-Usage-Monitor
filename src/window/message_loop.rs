@@ -127,6 +127,73 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     position_at_taskbar();
                     render_layered();
                 }
+                TIMER_CROSSFADE_SCHEDULE => {
+                    let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                    let mut state = lock_state();
+                    if let Some(s) = state.as_mut() {
+                        if s.show_antigravity_gemini
+                            && s.show_antigravity_external
+                            && s.providers.contains(ProviderId::Antigravity)
+                        {
+                            s.crossfade_target_opacity = if s.crossfade_opacity > 0.5 { 0.0 } else { 1.0 };
+                            s.crossfade_anim_start = Some(Instant::now());
+                            unsafe {
+                                let _ = SetTimer(Some(hwnd), TIMER_CROSSFADE_ANIM, 30, None);
+                            }
+                        }
+                    }
+                }
+                TIMER_CROSSFADE_ANIM => {
+                    let (completed, _op) = {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            if !s.show_antigravity_gemini
+                                || !s.show_antigravity_external
+                                || !s.providers.contains(ProviderId::Antigravity)
+                            {
+                                (true, 1.0)
+                            } else if let Some(start) = s.crossfade_anim_start {
+                                let elapsed = start.elapsed().as_secs_f64();
+                                let progress = (elapsed / 2.0).clamp(0.0, 1.0);
+                                // Smoothstep ease-in-out: 3*p^2 - 2*p^3
+                                let t = progress * progress * (3.0 - 2.0 * progress);
+                                let start_op = if s.crossfade_target_opacity == 0.0 { 1.0 } else { 0.0 };
+                                let current_op = start_op + (s.crossfade_target_opacity - start_op) * t;
+                                s.crossfade_opacity = current_op;
+                                if progress >= 1.0 {
+                                    s.crossfade_opacity = s.crossfade_target_opacity;
+                                    s.crossfade_anim_start = None;
+                                    (true, s.crossfade_opacity)
+                                } else {
+                                    (false, current_op)
+                                }
+                            } else {
+                                (true, s.crossfade_opacity)
+                            }
+                        } else {
+                            (true, 1.0)
+                        }
+                    };
+                    render_layered();
+                    if completed {
+                        unsafe {
+                            let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_ANIM);
+                        }
+                        let dual_mode = {
+                            let state = lock_state();
+                            state.as_ref().is_some_and(|s| {
+                                s.show_antigravity_gemini
+                                    && s.show_antigravity_external
+                                    && s.providers.contains(ProviderId::Antigravity)
+                            })
+                        };
+                        if dual_mode {
+                            unsafe {
+                                let _ = SetTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE, 8_000, None);
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
             LRESULT(0)
@@ -793,14 +860,101 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     // Reset the poll timer with the new interval
                     SetTimer(Some(hwnd), TIMER_POLL, new_interval, None);
                 }
+                IDM_PROVIDER_ANTIGRAVITY_GEMINI | IDM_PROVIDER_ANTIGRAVITY_EXTERNAL => {
+                    let mut should_reposition = false;
+                    let mut dual_mode = false;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let is_gemini = id == IDM_PROVIDER_ANTIGRAVITY_GEMINI;
+                            let current = if is_gemini {
+                                s.show_antigravity_gemini
+                            } else {
+                                s.show_antigravity_external
+                            };
+                            let other = if is_gemini {
+                                s.show_antigravity_external
+                            } else {
+                                s.show_antigravity_gemini
+                            };
+                            let target = !current;
+                            // Guard: cannot disable both if Antigravity is the only active provider
+                            if !target
+                                && !other
+                                && s.providers.len() <= 1
+                                && s.providers.contains(ProviderId::Antigravity)
+                            {
+                                // Keep at least one provider active
+                            } else {
+                                if is_gemini {
+                                    s.show_antigravity_gemini = target;
+                                } else {
+                                    s.show_antigravity_external = target;
+                                }
+                                if !target && !other {
+                                    s.providers.set(ProviderId::Antigravity, false);
+                                    should_reposition = true;
+                                } else if !s.providers.contains(ProviderId::Antigravity) {
+                                    s.providers.set(ProviderId::Antigravity, true);
+                                    should_reposition = true;
+                                }
+                                dual_mode = s.show_antigravity_gemini
+                                    && s.show_antigravity_external
+                                    && s.providers.contains(ProviderId::Antigravity);
+                                if !dual_mode {
+                                    unsafe {
+                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_ANIM);
+                                    }
+                                    s.crossfade_opacity = 1.0;
+                                    s.crossfade_anim_start = None;
+                                    s.crossfade_target_opacity = 1.0;
+                                }
+                            }
+                        }
+                    }
+                    if dual_mode {
+                        arm_crossfade_schedule(hwnd);
+                    }
+                    save_state_settings();
+                    if should_reposition {
+                        position_at_taskbar();
+                    }
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                    request_poll(hwnd);
+                }
                 id if ProviderId::from_native_menu_command_id(id).is_some() => {
+                    let mut dual_mode = false;
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             let provider = ProviderId::from_native_menu_command_id(id)
                                 .expect("provider menu command was matched above");
                             s.providers.toggle(provider);
+                            if provider == ProviderId::Antigravity {
+                                if s.providers.contains(ProviderId::Antigravity) {
+                                    if !s.show_antigravity_gemini && !s.show_antigravity_external {
+                                        s.show_antigravity_gemini = true;
+                                        s.show_antigravity_external = true;
+                                    }
+                                } else {
+                                    unsafe {
+                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_ANIM);
+                                    }
+                                    s.crossfade_opacity = 1.0;
+                                    s.crossfade_anim_start = None;
+                                    s.crossfade_target_opacity = 1.0;
+                                }
+                            }
+                            dual_mode = s.show_antigravity_gemini
+                                && s.show_antigravity_external
+                                && s.providers.contains(ProviderId::Antigravity);
                         }
+                    }
+                    if dual_mode {
+                        arm_crossfade_schedule(hwnd);
                     }
                     save_state_settings();
                     position_at_taskbar();

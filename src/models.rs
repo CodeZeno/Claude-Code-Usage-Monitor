@@ -86,6 +86,9 @@ pub struct UsageData {
     /// Additional API quotas, exposed only through opt-in theme bindings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limits: Vec<UsageLimit>,
+    /// Secondary quota pool for providers with multiple distinct allowances (e.g. Antigravity External Models).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub external_pool: Option<Box<UsageData>>,
     /// True when this reading was carried over from an earlier poll because
     /// the provider failed this cycle. The figures are real, just not current.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -106,10 +109,15 @@ pub struct UsageLimit {
 
 impl UsageData {
     pub fn sections(&self) -> impl Iterator<Item = &UsageSection> {
+        let external_sections: Box<dyn Iterator<Item = &UsageSection>> = match &self.external_pool {
+            Some(pool) => Box::new(pool.sections()),
+            None => Box::new(std::iter::empty()),
+        };
         [&self.session, &self.weekly]
             .into_iter()
             .chain(self.monthly.iter())
             .chain(self.limits.iter().map(|limit| &limit.usage))
+            .chain(external_sections)
     }
 }
 
@@ -189,6 +197,11 @@ impl AppUsageData {
 
     pub fn get(&self, provider: ProviderId) -> Option<&UsageData> {
         self.providers.get(&provider)
+    }
+
+    pub fn antigravity_external(&self) -> Option<&UsageData> {
+        self.get(ProviderId::Antigravity)
+            .and_then(|u| u.external_pool.as_deref())
     }
 
     pub fn insert(&mut self, provider: ProviderId, usage: UsageData) -> Option<UsageData> {
@@ -313,7 +326,18 @@ impl Serialize for AppUsageData {
     {
         let mut map = serializer.serialize_map(None)?;
         for (provider, usage) in &self.providers {
-            map.serialize_entry(provider.descriptor().cache_key, usage)?;
+            if *provider == ProviderId::Antigravity {
+                map.serialize_entry("antigravity_gemini", usage)?;
+                if let Some(external) = &usage.external_pool {
+                    map.serialize_entry("antigravity_external", external.as_ref())?;
+                    // Legacy alias for limits.py compatibility (mirrors external pool)
+                    map.serialize_entry("antigravity", external.as_ref())?;
+                }
+                // Without an external pool the legacy key is left out rather than
+                // filled with Gemini figures, so readers never mistake one pool for the other.
+            } else {
+                map.serialize_entry(provider.descriptor().cache_key, usage)?;
+            }
         }
         if !self.accounts.is_empty() {
             map.serialize_entry("accounts", &self.accounts)?;
@@ -334,6 +358,11 @@ impl<'de> Deserialize<'de> for AppUsageData {
             .transpose()
             .map_err(serde::de::Error::custom)?
             .unwrap_or_default();
+
+        let gemini_val = values.remove("antigravity_gemini");
+        let external_val = values.remove("antigravity_external");
+        let legacy_agy_val = values.remove("antigravity");
+
         let mut data: Self = values
             .into_iter()
             .filter_map(|(key, usage)| {
@@ -343,6 +372,23 @@ impl<'de> Deserialize<'de> for AppUsageData {
                     .map(|provider| (provider, usage))
             })
             .collect();
+
+        let agy_usage = gemini_val
+            .and_then(|v| serde_json::from_value::<Option<UsageData>>(v).ok().flatten())
+            .or_else(|| {
+                legacy_agy_val
+                    .and_then(|v| serde_json::from_value::<Option<UsageData>>(v).ok().flatten())
+            });
+
+        if let Some(mut agy) = agy_usage {
+            if let Some(ext) = external_val
+                .and_then(|v| serde_json::from_value::<Option<UsageData>>(v).ok().flatten())
+            {
+                agy.external_pool = Some(Box::new(ext));
+            }
+            data.insert(ProviderId::Antigravity, agy);
+        }
+
         data.accounts = accounts;
         Ok(data)
     }
@@ -479,6 +525,69 @@ mod tests {
         );
         assert!(decoded.get(ProviderId::Antigravity).is_none());
         assert!(decoded.get(ProviderId::OpenCode).is_none());
+    }
+
+    #[test]
+    fn usage_cache_antigravity_dual_pools_roundtrip_and_legacy_compatibility() {
+        let mut gemini_usage = UsageData {
+            session: UsageSection {
+                available: true,
+                percentage: 15.0,
+                resets_at: None,
+            },
+            weekly: UsageSection {
+                available: true,
+                percentage: 30.0,
+                resets_at: None,
+            },
+            ..Default::default()
+        };
+        let external_usage = UsageData {
+            session: UsageSection {
+                available: true,
+                percentage: 60.0,
+                resets_at: None,
+            },
+            weekly: UsageSection {
+                available: true,
+                percentage: 80.0,
+                resets_at: None,
+            },
+            ..Default::default()
+        };
+        gemini_usage.external_pool = Some(Box::new(external_usage));
+
+        let mut data = AppUsageData::default();
+        data.insert(ProviderId::Antigravity, gemini_usage);
+
+        let json = serde_json::to_value(&data).unwrap();
+        // Check keys: antigravity_gemini, antigravity_external, and legacy antigravity mirror
+        assert_eq!(json["antigravity_gemini"]["session"]["percentage"], 15.0);
+        assert_eq!(json["antigravity_external"]["session"]["percentage"], 60.0);
+        assert_eq!(json["antigravity"]["session"]["percentage"], 60.0);
+
+        // Deserialization round-trip
+        let decoded: AppUsageData = serde_json::from_value(json).unwrap();
+        let agy = decoded.get(ProviderId::Antigravity).expect("Antigravity present");
+        assert_eq!(agy.session.percentage, 15.0);
+        let ext = decoded.antigravity_external().expect("External pool present");
+        assert_eq!(ext.session.percentage, 60.0);
+        assert_eq!(ext.weekly.percentage, 80.0);
+
+        // Test section chaining:
+        let section_percentages: Vec<f64> = agy.sections().map(|s| s.percentage).collect();
+        assert_eq!(section_percentages, vec![15.0, 30.0, 60.0, 80.0]);
+    }
+
+    #[test]
+    fn usage_cache_omits_legacy_antigravity_key_without_external_pool() {
+        let mut data = AppUsageData::default();
+        data.insert(ProviderId::Antigravity, UsageData::default());
+        let json = serde_json::to_value(&data).unwrap();
+        assert!(json.get("antigravity_gemini").is_some());
+        // `antigravity` means the external pool; Gemini figures must never fill it.
+        assert!(json.get("antigravity").is_none());
+        assert!(json.get("antigravity_external").is_none());
     }
 
     #[test]

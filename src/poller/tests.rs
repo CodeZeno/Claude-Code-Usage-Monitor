@@ -13,6 +13,7 @@ fn usage_with_session_percent(percentage: f64) -> UsageData {
         monthly: None,
         credits: None,
         stale: false,
+        ..Default::default()
     }
 }
 
@@ -663,6 +664,8 @@ fn antigravity_model_fallback_reports_only_gemini_models() {
     .unwrap();
     let usage = antigravity::antigravity_usage_from_models(&models).expect("usage");
     assert!((usage.session.percentage - 10.0).abs() < 0.001, "Gemini pool must ignore Claude/GPT/image models");
+    // Model quotas do not name their window, so the external pool is not guessed.
+    assert!(usage.external_pool.is_none());
 }
 
 #[test]
@@ -677,6 +680,8 @@ fn antigravity_summary_does_not_guess_pools_by_position() {
     .unwrap();
     let usage = antigravity::antigravity_usage_from_summary(response).expect("usage");
     assert!(!usage.session.available && !usage.weekly.available, "Gemini pool must stay empty");
+    let external = usage.external_pool.expect("external pool");
+    assert!((external.weekly.percentage - 60.0).abs() < 0.001);
 }
 
 #[test]
@@ -687,8 +692,45 @@ fn antigravity_summary_without_windows_is_an_answer_not_a_failure() {
     .unwrap();
     let usage = antigravity::antigravity_usage_from_summary(response).expect("authoritative");
     assert!(!usage.session.available && !usage.weekly.available);
+    assert!(usage.external_pool.is_none());
 
     let empty: antigravity::AntigravityQuotaSummaryResponse =
         serde_json::from_str(r#"{"groups":[]}"#).unwrap();
     assert!(antigravity::antigravity_usage_from_summary(empty).is_some());
+}
+
+#[test]
+fn antigravity_extracts_both_gemini_and_external_groups_from_summary() {
+    let summary = serde_json::from_str(
+        r#"{
+        "groups": [
+            {
+                "displayName": "Claude and GPT models",
+                "buckets": [
+                    {"window": "5h", "remainingFraction": 0.4},
+                    {"window": "weekly", "remainingFraction": 0.2}
+                ]
+            },
+            {
+                "displayName": "Gemini Models",
+                "buckets": [
+                    {"window": "5h", "remainingFraction": 0.85},
+                    {"window": "weekly", "remainingFraction": 0.70}
+                ]
+            }
+        ]
+    }"#,
+    )
+    .unwrap();
+    let data = super::antigravity::antigravity_usage_from_summary(summary).unwrap();
+    assert!(data.session.available);
+    assert!((data.session.percentage - 15.0).abs() < 1e-4);
+    assert!(data.weekly.available);
+    assert!((data.weekly.percentage - 30.0).abs() < 1e-4);
+
+    let ext = data.external_pool.as_deref().expect("external pool extracted");
+    assert!(ext.session.available);
+    assert!((ext.session.percentage - 60.0).abs() < 1e-4);
+    assert!(ext.weekly.available);
+    assert!((ext.weekly.percentage - 80.0).abs() < 1e-4);
 }

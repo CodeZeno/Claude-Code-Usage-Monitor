@@ -262,6 +262,7 @@ fn copilot_usage_from_user(response: CopilotUserResponse) -> Option<UsageData> {
         monthly: Some(window),
         credits: None,
         stale: false,
+        ..Default::default()
     })
 }
 

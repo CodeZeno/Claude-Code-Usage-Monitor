@@ -399,6 +399,7 @@ fn studio_preview_uses_cached_poll_failure_state_instead_of_stale_values() {
             monthly: None,
             credits: None,
             stale: false,
+            ..Default::default()
         },
     )]));
     app.usage_poll_ok = false;

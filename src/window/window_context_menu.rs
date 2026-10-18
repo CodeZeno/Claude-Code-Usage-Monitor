@@ -145,6 +145,8 @@ pub(super) fn context_menu_action_flags(
             state.poll_interval_ms == seconds.saturating_mul(1_000)
         }
         ContextMenuAction::ToggleProvider { provider } => state.providers.contains(*provider),
+        ContextMenuAction::ToggleAntigravityGemini => state.show_antigravity_gemini,
+        ContextMenuAction::ToggleAntigravityExternal => state.show_antigravity_external,
         ContextMenuAction::ToggleStartup => is_startup_enabled(),
         ContextMenuAction::ToggleTaskbarLock => state.lock_taskbar,
         ContextMenuAction::ToggleWidget => state
@@ -267,6 +269,8 @@ pub(super) fn execute_context_menu_action(
         ContextMenuAction::ToggleProvider { provider } => {
             Some(provider.descriptor().native_menu_command_id)
         }
+        ContextMenuAction::ToggleAntigravityGemini => Some(IDM_PROVIDER_ANTIGRAVITY_GEMINI),
+        ContextMenuAction::ToggleAntigravityExternal => Some(IDM_PROVIDER_ANTIGRAVITY_EXTERNAL),
         ContextMenuAction::ToggleStartup => Some(IDM_START_WITH_WINDOWS),
         ContextMenuAction::ToggleTaskbarLock => Some(IDM_LOCK_TASKBAR),
         ContextMenuAction::SetLanguage { language } => {
