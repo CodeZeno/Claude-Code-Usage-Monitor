@@ -2648,9 +2648,16 @@ fn scheduled_poll_needed() -> bool {
         })
 }
 
-// Successful polls still retry failed accounts, including unselected accounts
-// with carried stale data. Providers without account profiles signal failure
-// by omitting their fresh reading.
+fn is_partial_poll_retry_error(error: poller::PollError) -> bool {
+    matches!(
+        error,
+        poller::PollError::NetworkError | poller::PollError::HttpStatus(429 | 500..=599)
+    )
+}
+
+// Successful polls retry only transient account failures, including unselected
+// accounts with carried stale data. Missing or stale readings alone do not
+// establish that a failure is transient.
 fn partial_poll_retry_delay_ms(
     data: &AppUsageData,
     enabled: ProviderSet,
@@ -2664,11 +2671,12 @@ fn partial_poll_retry_delay_ms(
             data.accounts.iter().any(|account| {
                 account.provider == provider
                     && account.profile.enabled
-                    && account.error.is_some()
+                    && account.error.is_some_and(is_partial_poll_retry_error)
                     && account.usage.as_ref().is_none_or(|usage| usage.stale)
             })
         } else {
-            data.get(provider).is_none_or(|usage| usage.stale)
+            // Providers without profiles do not retain their last error.
+            false
         }
     });
     needs_retry.then(|| {
@@ -3297,6 +3305,60 @@ mod partial_poll_retry_tests {
     }
 
     #[test]
+    fn only_transient_account_failures_trigger_partial_retries() {
+        use poller::PollError;
+
+        let mut data = partial_data();
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        for (error, expected) in [
+            (PollError::NoCredentials, None),
+            (PollError::AuthRequired, None),
+            (PollError::TokenExpired, None),
+            (PollError::RequestFailed, None),
+            (PollError::UnexpectedResponse, None),
+            (PollError::HttpStatus(400), None),
+            (PollError::HttpStatus(401), None),
+            (PollError::HttpStatus(403), None),
+            (PollError::HttpStatus(404), None),
+            (PollError::HttpStatus(408), None),
+            (PollError::HttpStatus(499), None),
+            (PollError::HttpStatus(600), None),
+            (PollError::HttpStatus(429), Some(30_000)),
+            (PollError::HttpStatus(500), Some(30_000)),
+            (PollError::HttpStatus(503), Some(30_000)),
+            (PollError::HttpStatus(599), Some(30_000)),
+            (PollError::NetworkError, Some(30_000)),
+        ] {
+            data.accounts[0].error = Some(error);
+            assert_eq!(
+                partial_poll_retry_delay_ms(&data, enabled, &accounts, 0, 900_000, 0),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn permanent_account_failure_does_not_keep_reset_polling_in_backoff() {
+        let mut data = partial_data();
+        data.accounts[0].error = Some(poller::PollError::NoCredentials);
+        let mut healthy = UsageData::default();
+        healthy.session.available = true;
+        healthy.session.resets_at = Some(std::time::UNIX_EPOCH);
+        data.insert(ProviderId::Codex, healthy);
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+
+        // None takes the success path that clears retry_count, allowing the
+        // countdown timer to schedule the five-second reset poll again.
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &AccountSettings::default(), 3, 900_000, 0),
+            None
+        );
+        assert!(poller::app_is_past_reset(&data));
+    }
+
+    #[test]
     fn stale_failed_accounts_retry_and_healthy_accounts_restore_normal_polling() {
         let mut data = partial_data();
         let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
@@ -3347,18 +3409,24 @@ mod partial_poll_retry_tests {
     }
 
     #[test]
-    fn failed_provider_without_profiles_also_retries() {
-        let data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+    fn missing_or_stale_provider_without_error_does_not_retry() {
+        let mut data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+        let enabled = ProviderSet::from_enabled([ProviderId::Codex, ProviderId::Cursor]);
+        let accounts = AccountSettings::default();
         assert_eq!(
-            partial_poll_retry_delay_ms(
-                &data,
-                ProviderSet::from_enabled([ProviderId::Codex, ProviderId::Cursor]),
-                &AccountSettings::default(),
-                0,
-                900_000,
-                0,
-            ),
-            Some(30_000)
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 0, 900_000, 0),
+            None
+        );
+        data.insert(
+            ProviderId::Cursor,
+            UsageData {
+                stale: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 120_000),
+            None
         );
     }
 }
