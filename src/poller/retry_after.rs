@@ -202,7 +202,11 @@ fn log_http(target: &str, note: &str, response: &Result<HttpResponse, ureq::Erro
         Err(ureq::Error::StatusCode(status)) => status.to_string(),
         Err(_) => "failed".to_string(),
     };
-    let note = if note.is_empty() { String::new() } else { format!(" ({note})") };
+    let note = if note.is_empty() {
+        String::new()
+    } else {
+        format!(" ({note})")
+    };
     crate::diagnose::log(format!("http {target}{note} -> {outcome}"));
 }
 
@@ -336,8 +340,13 @@ mod tests {
         state
             .handle(request("first"), |_| Ok(response(429, Some("900"))))
             .unwrap();
-        state.cooldowns.lock().unwrap().get_mut(&key).unwrap().received =
-            Instant::now() - Duration::from_secs(59);
+        state
+            .cooldowns
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .received = Instant::now() - Duration::from_secs(59);
         assert!(matches!(
             with_manual_refresh(true, || state.handle(request("first"), |_| {
                 panic!("manual refresh sent within the first minute")
@@ -345,10 +354,17 @@ mod tests {
             Err(ureq::Error::StatusCode(429))
         ));
 
-        state.cooldowns.lock().unwrap().get_mut(&key).unwrap().received =
-            Instant::now() - Duration::from_secs(61);
+        state
+            .cooldowns
+            .lock()
+            .unwrap()
+            .get_mut(&key)
+            .unwrap()
+            .received = Instant::now() - Duration::from_secs(61);
         assert!(matches!(
-            state.handle(request("first"), |_| panic!("automatic poll bypassed cooldown")),
+            state.handle(request("first"), |_| panic!(
+                "automatic poll bypassed cooldown"
+            )),
             Err(ureq::Error::StatusCode(429))
         ));
         let mut sent = 0;
@@ -375,8 +391,13 @@ mod tests {
             state
                 .handle(request("first"), |_| Ok(response(status, Some("900"))))
                 .unwrap();
-            state.cooldowns.lock().unwrap().get_mut(&key).unwrap().received =
-                Instant::now() - Duration::from_secs(61);
+            state
+                .cooldowns
+                .lock()
+                .unwrap()
+                .get_mut(&key)
+                .unwrap()
+                .received = Instant::now() - Duration::from_secs(61);
             with_manual_refresh(true, || {
                 let result = state.handle(request("first"), |_| Ok(response(status, None)));
                 assert_eq!(result.unwrap().status().as_u16(), status);

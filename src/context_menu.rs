@@ -721,7 +721,11 @@ mod tests {
         assert!(menu.validate().is_empty());
         assert!(menu.items.iter().any(|item| item.id == "refresh"));
         assert!(menu.items.iter().any(|item| item.id == "update-frequency"));
-        let settings = menu.items.iter().find(|item| item.id == "settings").unwrap();
+        let settings = menu
+            .items
+            .iter()
+            .find(|item| item.id == "settings")
+            .unwrap();
         let ContextMenuItemKind::Submenu { items } = &settings.kind else {
             panic!("Settings must be a submenu");
         };

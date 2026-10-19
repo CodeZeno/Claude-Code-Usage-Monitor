@@ -3540,7 +3540,10 @@ mod partial_poll_retry_tests {
     #[test]
     fn overall_success_with_failed_account_retries_with_backoff_and_cooldown() {
         let data = partial_data();
-        assert!(!data.is_empty(), "another provider made the poll successful");
+        assert!(
+            !data.is_empty(),
+            "another provider made the poll successful"
+        );
         let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
         let accounts = AccountSettings::default();
         for (count, interval, cooldown, expected) in [
