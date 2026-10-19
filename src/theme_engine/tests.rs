@@ -3505,8 +3505,10 @@ fn pace_expected_used_rejects_resets_outside_the_window() {
         let half = expected_used(now + length / 2, length).unwrap();
         assert!((half - 50.0).abs() < 0.1, "{half}");
         assert_eq!(expected_used(SystemTime::UNIX_EPOCH, length), None);
+        // A reset reported slightly past the window start still ticks at 0.
+        assert_eq!(expected_used(now + length + Duration::from_secs(30), length), Some(0.0));
         assert_eq!(
-            expected_used(now + length + Duration::from_secs(60), length),
+            expected_used(now + length + Duration::from_secs(300), length),
             None
         );
     }
@@ -3582,7 +3584,7 @@ fn pace_bindings_hide_missing_windows_and_reset_times() {
             (true, None),
             (false, Some(now + Duration::from_secs(60))),
             (true, Some(SystemTime::UNIX_EPOCH)),
-            (true, Some(now + WEEK + Duration::from_secs(60))),
+            (true, Some(now + WEEK + Duration::from_secs(300))),
         ] {
             let section = UsageSection {
                 available,
