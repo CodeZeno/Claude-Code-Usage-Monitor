@@ -1485,8 +1485,10 @@ fn expected_used(resets_at: std::time::SystemTime, length: std::time::Duration) 
     let left = resets_at
         .duration_since(std::time::SystemTime::now())
         .ok()?;
-    (!length.is_zero() && left <= length)
-        .then(|| (1.0 - left.as_secs_f64() / length.as_secs_f64()) * 100.0)
+    // A minute of slack for poll latency right after a reset.
+    (!length.is_zero() && left <= length + std::time::Duration::from_secs(60)).then(|| {
+        (1.0 - left.min(length).as_secs_f64() / length.as_secs_f64()) * 100.0
+    })
 }
 
 impl DataContext {
