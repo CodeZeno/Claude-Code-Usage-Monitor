@@ -167,10 +167,10 @@ where
                     )
                 });
                 for _ in 0..if paused_error.is_some() { 0 } else { 2 } {
-                    result = match &target.path {
+                    result = retry_after::with_manual_refresh(force, || match &target.path {
                         Err(_) => Err(PollError::NoCredentials),
                         Ok(path) => poll(target.provider, path.as_deref()),
-                    };
+                    });
                     let current_signature = target.signature();
                     if signature == current_signature {
                         break;

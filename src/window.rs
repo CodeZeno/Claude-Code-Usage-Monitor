@@ -100,6 +100,9 @@ struct AppState {
     pub(super) show_antigravity_gemini: bool,
     pub(super) show_antigravity_external: bool,
     crossfade_opacity: f64,
+    antigravity_hovered: bool,
+    crossfade_animation: Option<CrossfadeAnimation>,
+    pub(super) antigravity_tile_rect: Option<(f64, f64, f64, f64)>,
     accounts: crate::accounts::AccountSettings,
 
     data: Option<AppUsageData>,
@@ -137,6 +140,7 @@ struct AppState {
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
+    show_pace: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -207,6 +211,7 @@ const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_LOCK_TASKBAR: u16 = 21;
+const IDM_SHOW_PACE: u16 = 22;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 100;
 const IDM_LANG_FIRST: u16 = 101;
@@ -859,6 +864,7 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_show_pace(state.show_pace)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
         .with_antigravity_pools(
@@ -888,7 +894,8 @@ fn poll_display_state(
         && data.is_some_and(|data| data.iter().any(|(_, usage)| usage.stale));
     (
         last_poll_ok || has_usable_stale_data,
-        retry_count > 0 && !has_usable_stale_data,
+        // A partial-failure retry after an overall success is not an error.
+        !last_poll_ok && retry_count > 0 && !has_usable_stale_data,
     )
 }
 
@@ -1088,6 +1095,7 @@ fn save_state_settings() {
         persisted.show_antigravity_gemini = Some(antigravity_on && s.show_antigravity_gemini);
         persisted.show_antigravity_external = Some(antigravity_on && s.show_antigravity_external);
         persisted.custom_theme_enabled = s.custom_theme_enabled;
+        persisted.show_pace = s.show_pace;
         persisted.active_theme_path = s
             .active_theme_path
             .as_ref()
@@ -1922,6 +1930,7 @@ fn replace_active_theme(state: &mut AppState, loaded: ThemeDocument, path: Optio
         clear_auto_ejection(state);
     }
     state.active_theme = Some(loaded);
+    state.antigravity_tile_rect = None;
     if path.is_some() {
         state.active_theme_path = path;
     }
@@ -2446,7 +2455,8 @@ pub fn run() {
         let initial_runtime = ThemeRuntime::from_providers(settings.enabled_providers())
             .with_poll_state(false, false)
             .with_language(language)
-            .with_countdown(settings.usage_countdown);
+            .with_countdown(settings.usage_countdown)
+            .with_show_pace(settings.show_pace);
         let (initial_width, initial_height) = active_theme
             .as_ref()
             .map(|theme| {
@@ -2513,6 +2523,9 @@ pub fn run() {
                 show_antigravity_gemini: settings.antigravity_gemini_enabled(),
                 show_antigravity_external: settings.antigravity_external_enabled(),
                 crossfade_opacity: 1.0,
+                antigravity_hovered: false,
+                crossfade_animation: None,
+                antigravity_tile_rect: None,
                 accounts: settings.accounts.clone(),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -2546,6 +2559,7 @@ pub fn run() {
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
+                show_pace: settings.show_pace,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -2581,17 +2595,6 @@ pub fn run() {
         // Initial render using the presenter selected by the surface nest.
         schedule_countdown_timer();
         schedule_clock_timer();
-        let startup_dual_mode = {
-            let state = lock_state();
-            state.as_ref().is_some_and(|s| {
-                s.show_antigravity_gemini
-                    && s.show_antigravity_external
-                    && s.providers.contains(ProviderId::Antigravity)
-            })
-        };
-        if startup_dual_mode {
-            arm_crossfade_schedule(hwnd);
-        }
         render_layered();
 
         if open_dashboard_on_start {
@@ -2686,6 +2689,24 @@ fn render_layered() {
         };
         let surface = &theme.surfaces[surface_index];
         let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
+        if surface_index == 0 {
+            let needs_rect = lock_state()
+                .as_ref()
+                .map(|s| s.antigravity_tile_rect.is_none())
+                .unwrap_or(false);
+            if needs_rect {
+                let tile_rect = theme_engine::object_bounds(
+                    &theme,
+                    0,
+                    usage_data.as_ref(),
+                    surface_runtime,
+                    mouse::ANTIGRAVITY_HOVER_OBJECT,
+                );
+                if let Some(state) = lock_state().as_mut() {
+                    state.antigravity_tile_rect = tile_rect;
+                }
+            }
+        }
         let nest = surface
             .placement
             .nest
@@ -2880,6 +2901,44 @@ fn scheduled_poll_needed() -> bool {
         })
 }
 
+fn is_partial_poll_retry_error(error: poller::PollError) -> bool {
+    matches!(
+        error,
+        poller::PollError::NetworkError | poller::PollError::HttpStatus(429 | 500..=599)
+    )
+}
+
+// Successful polls retry only transient account failures, including unselected
+// accounts with carried stale data. Missing or stale readings alone do not
+// establish that a failure is transient.
+fn partial_poll_retry_delay_ms(
+    data: &AppUsageData,
+    enabled: ProviderSet,
+    accounts: &crate::accounts::AccountSettings,
+    retry_count: u32,
+    interval_ms: u32,
+    cooldown_ms: u32,
+) -> Option<u32> {
+    let needs_retry = enabled.iter().any(|provider| {
+        if accounts.get(provider).is_some() {
+            data.accounts.iter().any(|account| {
+                account.provider == provider
+                    && account.profile.enabled
+                    && account.error.is_some_and(is_partial_poll_retry_error)
+                    && account.usage.as_ref().is_none_or(|usage| usage.stale)
+            })
+        } else {
+            // Providers without profiles do not retain their last error.
+            false
+        }
+    });
+    needs_retry.then(|| {
+        let backoff =
+            RETRY_BASE_MS.saturating_mul(1u32.checked_shl(retry_count).unwrap_or(u32::MAX));
+        backoff.min(interval_ms).max(cooldown_ms).min(0x7fff_ffff)
+    })
+}
+
 fn do_poll_once(hwnd: HWND) {
     let poll_started = Instant::now();
     let (enabled_providers, accounts, previous, force) = {
@@ -2965,12 +3024,26 @@ fn do_poll_once(hwnd: HWND) {
                     }
                 }
 
+                let retry_ms = partial_poll_retry_delay_ms(
+                    &data,
+                    enabled_providers,
+                    &accounts,
+                    s.retry_count,
+                    s.poll_interval_ms,
+                    poller::retry_delay_ms(0, poll_started),
+                );
                 s.data = Some(data);
                 s.last_poll_ok = true;
                 s.last_poll_failure = None;
 
-                // Recovered from errors — restore normal poll interval
-                if s.retry_count > 0 {
+                // Retry partial failures; restore the normal interval after recovery.
+                if let Some(retry_ms) = retry_ms {
+                    s.retry_count = s.retry_count.saturating_add(1);
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_RESET_POLL);
+                        SetTimer(Some(hwnd), TIMER_POLL, retry_ms, None);
+                    }
+                } else if s.retry_count > 0 {
                     s.retry_count = 0;
                     let interval = s.poll_interval_ms;
                     unsafe {
@@ -3160,7 +3233,7 @@ fn schedule_countdown_timer() {
     }
 
     // If a reset time has passed, poll every 5s to pick up fresh data
-    if s.data.as_ref().is_some_and(poller::app_is_past_reset) {
+    if s.retry_count == 0 && s.data.as_ref().is_some_and(poller::app_is_past_reset) {
         unsafe {
             SetTimer(Some(hwnd), TIMER_RESET_POLL, 5_000, None);
         }
@@ -3237,43 +3310,117 @@ fn check_language_change() {
     }
 }
 
-/// All widget surfaces use the same wall-clock phase, including after a
-/// settings change or a delayed timer following sleep.
-fn antigravity_crossfade_frame(now_ms: u64) -> (f64, u32) {
-    let phase = now_ms % 20_000;
-    let smooth = |elapsed: u64| {
-        let t = elapsed as f64 / 2_000.0;
-        t * t * (3.0 - 2.0 * t)
-    };
-    match phase {
-        0..8_000 => (1.0, (8_000 - phase) as u32),
-        8_000..10_000 => (1.0 - smooth(phase - 8_000), 30),
-        10_000..18_000 => (0.0, (18_000 - phase) as u32),
-        _ => (smooth(phase - 18_000), 30),
+const ANTIGRAVITY_CROSSFADE_DURATION_MS: u64 = 70;
+const ANTIGRAVITY_CROSSFADE_TICK_MS: u32 = 16;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CrossfadeAnimation {
+    pub(super) start_opacity: f64,
+    pub(super) target_opacity: f64,
+    pub(super) start_time: std::time::Instant,
+    pub(super) duration: std::time::Duration,
+    pub(super) last_rendered: std::time::Instant,
+}
+
+impl CrossfadeAnimation {
+    pub(super) fn new(
+        start_opacity: f64,
+        target_opacity: f64,
+        duration: std::time::Duration,
+    ) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            start_opacity,
+            target_opacity,
+            start_time: now,
+            duration,
+            last_rendered: now,
+        }
+    }
+
+    pub(super) fn current_opacity(&self) -> (f64, bool) {
+        let elapsed = self.start_time.elapsed();
+        if elapsed >= self.duration || self.duration.is_zero() {
+            (self.target_opacity, false)
+        } else {
+            let progress = elapsed.as_secs_f64() / self.duration.as_secs_f64();
+            let opacity =
+                self.start_opacity + (self.target_opacity - self.start_opacity) * progress;
+            (opacity, true)
+        }
     }
 }
 
-pub(super) fn arm_crossfade_schedule(hwnd: HWND) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    let (opacity, delay_ms) = antigravity_crossfade_frame(now_ms);
-    let mut state = lock_state();
-    let dual_mode = state.as_ref().is_some_and(|state| {
-        state.show_antigravity_gemini
-            && state.show_antigravity_external
-            && state.providers.contains(ProviderId::Antigravity)
-    });
-    if let Some(state) = state.as_mut() {
-        state.crossfade_opacity = if dual_mode { opacity } else { 1.0 };
-    }
-    unsafe {
-        if dual_mode {
-            let _ = SetTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE, delay_ms, None);
+pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
+    let (should_render, still_animating) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let Some(mut anim) = state.crossfade_animation else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
+        {
+            return;
+        }
+        let (opacity, more) = anim.current_opacity();
+        state.crossfade_opacity = opacity;
+        anim.last_rendered = now;
+        if more {
+            state.crossfade_animation = Some(anim);
         } else {
+            state.crossfade_opacity = anim.target_opacity;
+            state.crossfade_animation = None;
+        }
+        (true, more)
+    };
+    if !still_animating {
+        unsafe {
             let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
         }
+    }
+    if should_render {
+        render_layered();
+    }
+}
+
+/// Starts the crossfade when the cursor enters or leaves the Antigravity tile.
+pub(super) fn set_antigravity_hover(hwnd: HWND, hovered: bool) {
+    let mut should_animate = false;
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        // Dual mode fades Gemini to Claude/GPT; a single pool fades to the
+        // hidden one.
+        let any_pool = (state.show_antigravity_gemini || state.show_antigravity_external)
+            && state.providers.contains(ProviderId::Antigravity);
+        if state.antigravity_hovered != hovered {
+            state.antigravity_hovered = hovered;
+            if any_pool {
+                let target = if hovered { 0.0 } else { 1.0 };
+                state.crossfade_animation = Some(CrossfadeAnimation::new(
+                    state.crossfade_opacity,
+                    target,
+                    std::time::Duration::from_millis(ANTIGRAVITY_CROSSFADE_DURATION_MS),
+                ));
+                should_animate = true;
+            }
+        }
+    }
+    if should_animate {
+        unsafe {
+            let _ = SetTimer(
+                Some(hwnd),
+                TIMER_CROSSFADE_SCHEDULE,
+                ANTIGRAVITY_CROSSFADE_TICK_MS,
+                None,
+            );
+        }
+        render_layered();
     }
 }
 
@@ -3283,8 +3430,6 @@ fn reload_external_settings(hwnd: HWND) {
     let theme_path = settings.active_theme_path.as_ref().map(PathBuf::from);
     let providers_changed;
     let lock_enabled;
-    let antigravity_changed;
-    let dual_mode;
     {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
@@ -3294,8 +3439,6 @@ fn reload_external_settings(hwnd: HWND) {
             state.providers != settings.enabled_providers() || state.accounts != settings.accounts;
         let gemini_enabled = settings.antigravity_gemini_enabled();
         let external_enabled = settings.antigravity_external_enabled();
-        antigravity_changed = state.show_antigravity_gemini != gemini_enabled
-            || state.show_antigravity_external != external_enabled;
         state.show_antigravity_gemini = gemini_enabled;
         state.show_antigravity_external = external_enabled;
         state.accounts = settings.accounts.clone();
@@ -3305,15 +3448,18 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
-        dual_mode = state.show_antigravity_gemini
-            && state.show_antigravity_external
+        state.show_pace = settings.show_pace;
+        let any_pool = (state.show_antigravity_gemini || state.show_antigravity_external)
             && state.providers.contains(ProviderId::Antigravity);
-        if !dual_mode {
+        if !any_pool {
             unsafe {
                 let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
             }
+            state.antigravity_hovered = false;
             state.crossfade_opacity = 1.0;
+            state.crossfade_animation = None;
         }
+        state.antigravity_tile_rect = None;
         update_configured_placement(
             state,
             settings.placement_override,
@@ -3324,9 +3470,6 @@ fn reload_external_settings(hwnd: HWND) {
         state.lock_taskbar = settings.lock_taskbar;
         lock_enabled = state.lock_taskbar;
         apply_language_to_state(state, language_override);
-    }
-    if dual_mode && (antigravity_changed || providers_changed) {
-        arm_crossfade_schedule(hwnd);
     }
     unsafe {
         SetTimer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);
@@ -3457,6 +3600,177 @@ mod placement_tests;
 #[cfg(test)]
 mod layered_window_tests;
 
+#[cfg(test)]
+mod partial_poll_retry_tests {
+    use super::*;
+    use crate::accounts::{AccountProfile, AccountSettings};
+    use crate::models::{AccountUsage, UsageData};
+
+    fn partial_data() -> AppUsageData {
+        let mut data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+        data.accounts.push(AccountUsage {
+            provider: ProviderId::Claude,
+            profile: AccountProfile::default(),
+            source_signature: String::new(),
+            source_path: None,
+            usage: None,
+            error: Some(poller::PollError::HttpStatus(429)),
+            selected: false,
+        });
+        data
+    }
+
+    #[test]
+    fn overall_success_with_failed_account_retries_with_backoff_and_cooldown() {
+        let data = partial_data();
+        assert!(
+            !data.is_empty(),
+            "another provider made the poll successful"
+        );
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        for (count, interval, cooldown, expected) in [
+            (0, 900_000, 0, 30_000),
+            (1, 900_000, 0, 60_000),
+            (2, 900_000, 0, 120_000),
+            (10, 900_000, 0, 900_000),
+            (u32::MAX, 900_000, 0, 900_000),
+            (0, 900_000, 120_000, 120_000),
+            (0, 60_000, 120_000, 120_000),
+        ] {
+            assert_eq!(
+                partial_poll_retry_delay_ms(&data, enabled, &accounts, count, interval, cooldown),
+                Some(expected)
+            );
+        }
+    }
+
+    #[test]
+    fn only_transient_account_failures_trigger_partial_retries() {
+        use poller::PollError;
+
+        let mut data = partial_data();
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        for (error, expected) in [
+            (PollError::NoCredentials, None),
+            (PollError::AuthRequired, None),
+            (PollError::TokenExpired, None),
+            (PollError::RequestFailed, None),
+            (PollError::UnexpectedResponse, None),
+            (PollError::HttpStatus(400), None),
+            (PollError::HttpStatus(401), None),
+            (PollError::HttpStatus(403), None),
+            (PollError::HttpStatus(404), None),
+            (PollError::HttpStatus(408), None),
+            (PollError::HttpStatus(499), None),
+            (PollError::HttpStatus(600), None),
+            (PollError::HttpStatus(429), Some(30_000)),
+            (PollError::HttpStatus(500), Some(30_000)),
+            (PollError::HttpStatus(503), Some(30_000)),
+            (PollError::HttpStatus(599), Some(30_000)),
+            (PollError::NetworkError, Some(30_000)),
+        ] {
+            data.accounts[0].error = Some(error);
+            assert_eq!(
+                partial_poll_retry_delay_ms(&data, enabled, &accounts, 0, 900_000, 0),
+                expected,
+                "{error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn permanent_account_failure_does_not_keep_reset_polling_in_backoff() {
+        let mut data = partial_data();
+        data.accounts[0].error = Some(poller::PollError::NoCredentials);
+        let mut healthy = UsageData::default();
+        healthy.session.available = true;
+        healthy.session.resets_at = Some(std::time::UNIX_EPOCH);
+        data.insert(ProviderId::Codex, healthy);
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+
+        // None takes the success path that clears retry_count, allowing the
+        // countdown timer to schedule the five-second reset poll again.
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &AccountSettings::default(), 3, 900_000, 0),
+            None
+        );
+        assert!(poller::app_is_past_reset(&data));
+    }
+
+    #[test]
+    fn stale_failed_accounts_retry_and_healthy_accounts_restore_normal_polling() {
+        let mut data = partial_data();
+        let enabled = ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]);
+        let accounts = AccountSettings::default();
+        data.accounts[0].usage = Some(UsageData {
+            stale: true,
+            ..Default::default()
+        });
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 0),
+            Some(60_000)
+        );
+        data.accounts[0].usage.as_mut().unwrap().stale = false;
+        data.accounts[0].error = None;
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 120_000),
+            None
+        );
+    }
+
+    #[test]
+    fn disabled_accounts_and_providers_do_not_trigger_retries() {
+        let mut data = partial_data();
+        let accounts = AccountSettings::default();
+        assert_eq!(
+            partial_poll_retry_delay_ms(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Codex]),
+                &accounts,
+                0,
+                900_000,
+                0,
+            ),
+            None
+        );
+        data.accounts[0].profile.enabled = false;
+        assert_eq!(
+            partial_poll_retry_delay_ms(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Claude, ProviderId::Codex]),
+                &accounts,
+                0,
+                900_000,
+                0,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn missing_or_stale_provider_without_error_does_not_retry() {
+        let mut data = AppUsageData::from_iter([(ProviderId::Codex, UsageData::default())]);
+        let enabled = ProviderSet::from_enabled([ProviderId::Codex, ProviderId::Cursor]);
+        let accounts = AccountSettings::default();
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 0, 900_000, 0),
+            None
+        );
+        data.insert(
+            ProviderId::Cursor,
+            UsageData {
+                stale: true,
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            partial_poll_retry_delay_ms(&data, enabled, &accounts, 1, 900_000, 120_000),
+            None
+        );
+    }
+}
 #[cfg(test)]
 mod ui_hang_watchdog_tests {
     use super::*;
@@ -3789,6 +4103,7 @@ mod poll_display_state_tests {
         let stale = cached_usage(true);
 
         assert_eq!(poll_display_state(false, 1, false, None), (false, true));
+        assert_eq!(poll_display_state(true, 1, false, None), (true, false));
         assert_eq!(
             poll_display_state(false, 1, false, Some(&fresh)),
             (false, true)
@@ -3844,25 +4159,24 @@ mod credential_watch_worker_tests {
 
 #[cfg(test)]
 mod antigravity_crossfade_tests {
-    use super::antigravity_crossfade_frame;
+    use super::CrossfadeAnimation;
+    use std::time::Duration;
 
     #[test]
-    fn pool_crossfade_follows_the_same_phase_after_startup_sleep_and_rearming() {
-        for cycle in [0, 20_000, 180_000] {
-            for (phase, opacity, delay) in [
-                (0, 1.0, 8_000),
-                (7_000, 1.0, 1_000),
-                (8_000, 1.0, 30),
-                (9_000, 0.5, 30),
-                (10_000, 0.0, 8_000),
-                (17_000, 0.0, 1_000),
-                (18_000, 0.0, 30),
-                (19_000, 0.5, 30),
-            ] {
-                assert_eq!(antigravity_crossfade_frame(cycle + phase), (opacity, delay));
-            }
-        }
-        let before_wrap = antigravity_crossfade_frame(19_999).0;
-        assert!((1.0 - before_wrap).abs() < 0.000_001);
+    fn crossfade_animation_interpolates_and_completes() {
+        let anim = CrossfadeAnimation::new(1.0, 0.0, Duration::from_millis(0));
+        let (opacity, more) = anim.current_opacity();
+        assert_eq!(opacity, 0.0);
+        assert!(!more);
+
+        let anim = CrossfadeAnimation::new(0.0, 1.0, Duration::from_secs(10));
+        let (opacity, more) = anim.current_opacity();
+        assert!(opacity < 0.1);
+        assert!(more);
+
+        let anim_return = CrossfadeAnimation::new(0.0, 1.0, Duration::from_millis(0));
+        let (opacity, more) = anim_return.current_opacity();
+        assert_eq!(opacity, 1.0);
+        assert!(!more);
     }
 }

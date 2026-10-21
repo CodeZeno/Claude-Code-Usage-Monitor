@@ -485,7 +485,61 @@ fn templates_apply_numeric_character_formats() {
         format_template("Used {claude.session.percentage:0.0}%", &context),
         "Used 73.5%"
     );
-    assert_eq!(format_template("{reset:duration_short}", &context), "4d");
+    assert_eq!(format_template("{reset:duration_short}", &context), "5d");
+}
+
+#[test]
+fn duration_short_precision_scale_and_half_steps() {
+    let mut context = DataContext::default();
+    context.insert_string("i18n.day_suffix", "д");
+    context.insert_string("i18n.hour_suffix", "ч");
+    context.insert_string("i18n.minute_suffix", "м");
+    context.insert_string("i18n.second_suffix", "с");
+    context.insert_string("i18n.now", "сейчас");
+
+    let check = |secs: f64, expected: &str, ctx: &DataContext| {
+        let mut c = ctx.clone();
+        c.insert("val", secs);
+        assert_eq!(format_template("{val:duration_short}", &c), expected);
+    };
+
+    // Minutes under 1 hour (< 3600s)
+    check(3580.0, "59м", &context); // 59m 40s must clamp to 59m, never 60m
+    check(3300.0, "55м", &context);
+    check(2700.0, "45м", &context);
+    check(900.0, "15м", &context);
+    check(60.0, "1м", &context);
+
+    // Hours under 10 hours (1h .. 10h): 0.5 step rounding with dot
+    check(3600.0, "1ч", &context);
+    check(3900.0, "1ч", &context); // 1h 05m -> 1ч
+    check(5400.0, "1.5ч", &context); // 1h 30m -> 1.5ч
+    check(7800.0, "2ч", &context); // 2h 10m -> 2ч
+    check(9300.0, "2.5ч", &context); // 2h 35m -> 2.5ч
+    check(10500.0, "3ч", &context); // 2h 55m -> 3ч
+    check(34200.0, "9.5ч", &context); // 9h 30m -> 9.5ч
+
+    // Hours >= 10 hours: integer math rounding
+    check(36000.0, "10ч", &context);
+    check(43200.0, "12ч", &context);
+    check(66300.0, "18ч", &context); // 18h 25m -> 18ч
+    check(85500.0, "1д", &context); // 23h 45m -> rolls over to 1д
+
+    // Days < 10 days: 0.5 step rounding with dot
+    check(86400.0, "1д", &context);
+    check(129600.0, "1.5д", &context); // 1d 12h -> 1.5д
+    check(216000.0, "2.5д", &context); // 2d 12h -> 2.5д
+    check(532800.0, "6д", &context); // 6d 4h -> strictly 6д
+    check(565200.0, "6.5д", &context); // 6d 13h -> 6.5д
+    check(604800.0, "7д", &context); // 7d -> 7д
+
+    // Days >= 10 days: integer math rounding
+    check(892800.0, "10д", &context); // 10d 8h -> 10д
+    check(1036800.0, "12д", &context); // 12d -> 12д
+
+    // Seconds and now
+    check(45.0, "45с", &context);
+    check(0.0, "сейчас", &context);
 }
 
 #[test]
@@ -3314,6 +3368,49 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
         assert!(!find_render("antigravity-session-external-value-dark"));
     }
 
+    // 1b. Solo Gemini while hovered: the hidden external pool fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, false, 0.0);
+        let mut context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        context.insert("system.dark", 1.0);
+        let find_render = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(!find_render("antigravity-session-gemini-solo-dark"));
+        assert!(find_render("antigravity-session-external-solo-dark"));
+        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(find_render("antigravity-session-external-value-dark"));
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            1.0
+        );
+    }
+
+    // 1c. Solo External while hovered: Gemini fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(false, true, 0.0);
+        let context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        assert_eq!(
+            evaluate("antigravity.gemini.opacity", &context).unwrap(),
+            1.0
+        );
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            0.0
+        );
+    }
+
     // 2. Solo External
     {
         let runtime =
@@ -3376,7 +3473,28 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
         assert!(find_render("antigravity-session-gemini-value-dark"));
         assert!(!find_render("antigravity-session-external-value-dark"));
 
-        // At opacity 0.5 (Mid-transition)
+        // Sequential cross-dissolve: at 0.75 Gemini is fading down, External not yet visible
+        let runtime_gemini_fade =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, true, 0.75);
+        let mut context_gemini_fade = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            runtime_gemini_fade,
+        );
+        context_gemini_fade.insert("system.dark", 1.0);
+        let find_render_gf = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context_gemini_fade).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(find_render_gf("antigravity-session-gemini-value-dark"));
+        assert!(!find_render_gf("antigravity-session-external-value-dark"));
+
+        // At opacity 0.5 (Mid-transition clean dip: zero overlap to avoid glyph jitter)
         let runtime_mid =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 0.5);
@@ -3391,8 +3509,29 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_mid).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(find_render_mid("antigravity-session-gemini-value-dark"));
-        assert!(find_render_mid("antigravity-session-external-value-dark"));
+        assert!(!find_render_mid("antigravity-session-gemini-value-dark"));
+        assert!(!find_render_mid("antigravity-session-external-value-dark"));
+
+        // At 0.25 External is fading up, Gemini is hidden
+        let runtime_ext_fade =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, true, 0.25);
+        let mut context_ext_fade = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            runtime_ext_fade,
+        );
+        context_ext_fade.insert("system.dark", 1.0);
+        let find_render_ef = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context_ext_fade).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(!find_render_ef("antigravity-session-gemini-value-dark"));
+        assert!(find_render_ef("antigravity-session-external-value-dark"));
 
         // At opacity 0.0 (External holding)
         let runtime_ext =
@@ -3439,4 +3578,245 @@ fn missing_antigravity_external_pool_draws_an_empty_gauge() {
     assert_eq!(value("antigravity.gemini.session.display"), 75.0);
     assert_eq!(value("antigravity.gemini.weekly.display"), 0.0);
     assert_eq!(value("antigravity.external.session.display"), 0.0);
+}
+
+#[test]
+fn pace_expected_used_rejects_resets_outside_the_window() {
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for length in [FIVE_HOURS, WEEK] {
+        let half = expected_used(now + length / 2, length).unwrap();
+        assert!((half - 50.0).abs() < 0.1, "{half}");
+        assert_eq!(expected_used(SystemTime::UNIX_EPOCH, length), None);
+        // A reset reported slightly past the window start still ticks at 0.
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(30), length),
+            Some(0.0)
+        );
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(300), length),
+            None
+        );
+    }
+    assert_eq!(expected_used(now + FIVE_HOURS, Duration::ZERO), None);
+}
+
+#[test]
+fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    let section = |length: Duration, elapsed_quarters: u32| UsageSection {
+        available: true,
+        percentage: 90.0,
+        resets_at: Some(now + length * (4 - elapsed_quarters) / 4),
+    };
+    for elapsed_quarters in [1, 2] {
+        let provider_usage = UsageData {
+            session: section(FIVE_HOURS, elapsed_quarters),
+            weekly: section(WEEK, elapsed_quarters),
+            external_pool: Some(Box::new(UsageData {
+                session: section(FIVE_HOURS, 4 - elapsed_quarters),
+                weekly: section(WEEK, 4 - elapsed_quarters),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let usage = AppUsageData::from_iter(
+            [
+                ProviderId::Claude,
+                ProviderId::Codex,
+                ProviderId::Antigravity,
+            ]
+            .into_iter()
+            .map(|provider| (provider, provider_usage.clone())),
+        );
+        for countdown in [false, true] {
+            let context = DataContext::from_usage_with_runtime(
+                Some(&usage),
+                &Canvas::default(),
+                ThemeRuntime::default().with_countdown(countdown),
+            );
+            for name in [
+                "claude",
+                "codex",
+                "antigravity.gemini",
+                "antigravity.external",
+            ] {
+                let expected = if name == "antigravity.external" {
+                    (4 - elapsed_quarters) as f64 * 25.0
+                } else {
+                    elapsed_quarters as f64 * 25.0
+                };
+                for window in ["session", "five_hour", "weekly"] {
+                    let base = format!("{name}.{window}");
+                    assert_eq!(
+                        context.get(&format!("{base}.expected_available")),
+                        Some(1.0)
+                    );
+                    let used = context.get(&format!("{base}.expected")).unwrap();
+                    let display = context.get(&format!("{base}.expected_display")).unwrap();
+                    assert!((used - expected).abs() < 0.1, "{base}: {used}");
+                    assert!(
+                        (display
+                            - if countdown {
+                                100.0 - expected
+                            } else {
+                                expected
+                            })
+                        .abs()
+                            < 0.1,
+                        "{base}: {display}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pace_bindings_hide_missing_windows_and_reset_times() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for countdown in [false, true] {
+        for (available, resets_at) in [
+            (true, None),
+            (false, Some(now + Duration::from_secs(60))),
+            (true, Some(SystemTime::UNIX_EPOCH)),
+            (true, Some(now + WEEK + Duration::from_secs(300))),
+        ] {
+            let section = UsageSection {
+                available,
+                percentage: 25.0,
+                resets_at,
+            };
+            let usage = UsageData {
+                session: section.clone(),
+                weekly: section,
+                ..Default::default()
+            };
+            let mut context = DataContext::default();
+            for data in [None, Some(&usage)] {
+                context.insert_provider("claude", data, false, countdown);
+                for window in ["session", "five_hour", "weekly"] {
+                    assert_eq!(
+                        context.get(&format!("claude.{window}.expected_available")),
+                        Some(0.0)
+                    );
+                    assert_eq!(context.get(&format!("claude.{window}.expected")), Some(0.0));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn show_pace_binding_follows_the_setting() {
+    let defaults = crate::app_settings::SettingsFile::default();
+    assert!(defaults.show_pace);
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert_eq!(context.get("display.show_pace"), Some(1.0));
+    for show_pace in [false, true] {
+        let mut settings = crate::app_settings::SettingsFile::default();
+        settings.show_pace = show_pace;
+        let runtime = ThemeRuntime::from_providers(settings.enabled_providers())
+            .with_show_pace(settings.show_pace);
+        let context = DataContext::from_usage_with_runtime(None, &Canvas::default(), runtime);
+        assert_eq!(
+            context.get("display.show_pace"),
+            Some(show_pace as u8 as f64)
+        );
+    }
+}
+
+#[test]
+fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    let children = &theme.surfaces[0].children;
+    for window in ["session", "weekly"] {
+        assert!(children
+            .iter()
+            .any(|object| object.id == format!("claude-{window}-segments-dark-pace")));
+    }
+    let ticks = children
+        .iter()
+        .enumerate()
+        .filter(|(_, object)| object.id.ends_with("-pace"))
+        .collect::<Vec<_>>();
+    assert_eq!(ticks.len(), 24);
+    for (index, tick) in ticks {
+        let gauge = &children[index - 1];
+        assert_eq!(tick.id, format!("{}-pace", gauge.id));
+        assert!(matches!(&gauge.content, SceneContent::Progress { .. }));
+        assert!(matches!(&tick.content, SceneContent::None));
+        assert_eq!(tick.parent, gauge.parent);
+        assert_eq!(tick.render.0, gauge.render.0);
+        let stripped = tick
+            .visibility
+            .0
+            .strip_prefix("(100) * ")
+            .unwrap();
+        let stripped = stripped
+            .strip_suffix(" * antigravity.gemini.opacity")
+            .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))
+            .unwrap_or(stripped);
+        let binding = stripped
+            .strip_suffix(".expected_available * display.show_pace")
+            .unwrap();
+        let LayerBackground::Colour { colour } = &tick.background else {
+            panic!("{} must have a colour background", tick.id);
+        };
+        assert!(parse_color(&colour.color).is_some());
+        let expected_colour = if tick.id.ends_with("-dark-pace") {
+            "#FFFFFFFF"
+        } else {
+            "#1A1A1AFF"
+        };
+        assert_eq!(colour.color, expected_colour);
+        let mut context = DataContext::from_usage(None, &Canvas::default());
+        context.insert("antigravity.gemini.opacity", 1.0);
+        context.insert("antigravity.external.opacity", 1.0);
+        for count in 1..=ProviderId::ALL.len() {
+            context.insert("providers.count", count as f64);
+            let start = evaluate(&gauge.x.0, &context).unwrap();
+            let end = start + evaluate(&gauge.width.0, &context).unwrap();
+            assert_eq!(evaluate(&tick.width.0, &context).unwrap(), 1.0);
+            assert_eq!(
+                evaluate(&tick.y.0, &context).unwrap(),
+                evaluate(&gauge.y.0, &context).unwrap() - 1.0
+            );
+            assert_eq!(
+                evaluate(&tick.height.0, &context).unwrap(),
+                evaluate(&gauge.height.0, &context).unwrap() + 2.0
+            );
+            assert_eq!(evaluate(&colour.opacity.0, &context).unwrap(), 0.9);
+            for available in [0.0, 1.0] {
+                context.insert(&format!("{binding}.expected_available"), available);
+                for show_pace in [0.0, 1.0] {
+                    context.insert("display.show_pace", show_pace);
+                    assert_eq!(
+                        evaluate(&tick.visibility.0, &context).unwrap(),
+                        available * show_pace * 100.0
+                    );
+                }
+            }
+            for expected in [-10.0, 0.0, 0.1, 25.0, 50.0, 99.9, 100.0, 110.0] {
+                context.insert(&format!("{binding}.expected_display"), expected);
+                let x = evaluate(&tick.x.0, &context).unwrap();
+                assert!(x >= start && x + 1.0 <= end, "{}: {x}", tick.id);
+                assert_eq!(x.fract(), 0.0);
+                if expected <= 0.0 {
+                    assert_eq!(x, start);
+                } else if expected >= 100.0 {
+                    assert_eq!(x + 1.0, end);
+                }
+            }
+        }
+    }
 }

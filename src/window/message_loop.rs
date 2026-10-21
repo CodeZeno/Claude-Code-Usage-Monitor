@@ -128,8 +128,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     render_layered();
                 }
                 TIMER_CROSSFADE_SCHEDULE => {
-                    arm_crossfade_schedule(hwnd);
-                    render_layered();
+                    tick_antigravity_crossfade(hwnd, false);
                 }
                 _ => {}
             }
@@ -141,6 +140,9 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_APP_USAGE_UPDATED => {
+            if let Some(state) = lock_state().as_mut() {
+                state.antigravity_tile_rect = None;
+            }
             check_theme_change();
             check_language_change();
             render_layered();
@@ -779,6 +781,17 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 IDM_LOCK_TASKBAR => {
                     toggle_taskbar_lock(hwnd);
                 }
+                IDM_SHOW_PACE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_pace = !s.show_pace;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
@@ -799,7 +812,6 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 IDM_PROVIDER_ANTIGRAVITY_GEMINI | IDM_PROVIDER_ANTIGRAVITY_EXTERNAL => {
                     let mut should_reposition = false;
-                    let mut dual_mode = false;
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -835,20 +847,20 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.providers.set(ProviderId::Antigravity, true);
                                     should_reposition = true;
                                 }
-                                dual_mode = s.show_antigravity_gemini
-                                    && s.show_antigravity_external
+                                let any_pool = (s.show_antigravity_gemini
+                                    || s.show_antigravity_external)
                                     && s.providers.contains(ProviderId::Antigravity);
-                                if !dual_mode {
+                                s.antigravity_tile_rect = None;
+                                if !any_pool {
                                     unsafe {
                                         let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
                                     }
+                                    s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
+                                    s.crossfade_animation = None;
                                 }
                             }
                         }
-                    }
-                    if dual_mode {
-                        arm_crossfade_schedule(hwnd);
                     }
                     save_state_settings();
                     if should_reposition {
@@ -859,29 +871,29 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     request_poll(hwnd);
                 }
                 id if ProviderId::from_native_menu_command_id(id).is_some() => {
-                    let mut dual_mode = false;
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             let provider = ProviderId::from_native_menu_command_id(id)
                                 .expect("provider menu command was matched above");
                             let changed = s.providers.toggle(provider);
+                            // Tile widths depend on the provider count.
+                            s.antigravity_tile_rect = None;
                             if provider == ProviderId::Antigravity && changed {
                                 let enabled = s.providers.contains(ProviderId::Antigravity);
                                 s.show_antigravity_gemini = enabled;
                                 s.show_antigravity_external = enabled;
                                 if !enabled {
-                                    let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    unsafe {
+                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    }
+                                    s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
+                                    s.crossfade_animation = None;
+                                    s.antigravity_tile_rect = None;
                                 }
                             }
-                            dual_mode = s.show_antigravity_gemini
-                                && s.show_antigravity_external
-                                && s.providers.contains(ProviderId::Antigravity);
                         }
-                    }
-                    if dual_mode {
-                        arm_crossfade_schedule(hwnd);
                     }
                     save_state_settings();
                     position_at_taskbar();
