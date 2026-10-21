@@ -3368,6 +3368,49 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
         assert!(!find_render("antigravity-session-external-value-dark"));
     }
 
+    // 1b. Solo Gemini while hovered: the hidden external pool fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, false, 0.0);
+        let mut context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        context.insert("system.dark", 1.0);
+        let find_render = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(!find_render("antigravity-session-gemini-solo-dark"));
+        assert!(find_render("antigravity-session-external-solo-dark"));
+        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(find_render("antigravity-session-external-value-dark"));
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            1.0
+        );
+    }
+
+    // 1c. Solo External while hovered: Gemini fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(false, true, 0.0);
+        let context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        assert_eq!(
+            evaluate("antigravity.gemini.opacity", &context).unwrap(),
+            1.0
+        );
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            0.0
+        );
+    }
+
     // 2. Solo External
     {
         let runtime =
@@ -3430,7 +3473,28 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
         assert!(find_render("antigravity-session-gemini-value-dark"));
         assert!(!find_render("antigravity-session-external-value-dark"));
 
-        // At opacity 0.5 (Mid-transition)
+        // Sequential cross-dissolve: at 0.75 Gemini is fading down, External not yet visible
+        let runtime_gemini_fade =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, true, 0.75);
+        let mut context_gemini_fade = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            runtime_gemini_fade,
+        );
+        context_gemini_fade.insert("system.dark", 1.0);
+        let find_render_gf = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context_gemini_fade).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(find_render_gf("antigravity-session-gemini-value-dark"));
+        assert!(!find_render_gf("antigravity-session-external-value-dark"));
+
+        // At opacity 0.5 (Mid-transition clean dip: zero overlap to avoid glyph jitter)
         let runtime_mid =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 0.5);
@@ -3445,8 +3509,29 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_mid).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(find_render_mid("antigravity-session-gemini-value-dark"));
-        assert!(find_render_mid("antigravity-session-external-value-dark"));
+        assert!(!find_render_mid("antigravity-session-gemini-value-dark"));
+        assert!(!find_render_mid("antigravity-session-external-value-dark"));
+
+        // At 0.25 External is fading up, Gemini is hidden
+        let runtime_ext_fade =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, true, 0.25);
+        let mut context_ext_fade = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            runtime_ext_fade,
+        );
+        context_ext_fade.insert("system.dark", 1.0);
+        let find_render_ef = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context_ext_fade).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(!find_render_ef("antigravity-session-gemini-value-dark"));
+        assert!(find_render_ef("antigravity-session-external-value-dark"));
 
         // At opacity 0.0 (External holding)
         let runtime_ext =
@@ -3672,11 +3757,16 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         assert!(matches!(&tick.content, SceneContent::None));
         assert_eq!(tick.parent, gauge.parent);
         assert_eq!(tick.render.0, gauge.render.0);
-        let binding = tick
+        let stripped = tick
             .visibility
             .0
             .strip_prefix("(100) * ")
-            .unwrap()
+            .unwrap();
+        let stripped = stripped
+            .strip_suffix(" * antigravity.gemini.opacity")
+            .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))
+            .unwrap_or(stripped);
+        let binding = stripped
             .strip_suffix(".expected_available * display.show_pace")
             .unwrap();
         let LayerBackground::Colour { colour } = &tick.background else {
@@ -3690,6 +3780,8 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         };
         assert_eq!(colour.color, expected_colour);
         let mut context = DataContext::from_usage(None, &Canvas::default());
+        context.insert("antigravity.gemini.opacity", 1.0);
+        context.insert("antigravity.external.opacity", 1.0);
         for count in 1..=ProviderId::ALL.len() {
             context.insert("providers.count", count as f64);
             let start = evaluate(&gauge.x.0, &context).unwrap();
