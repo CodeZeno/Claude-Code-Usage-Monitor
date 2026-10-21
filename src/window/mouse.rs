@@ -195,11 +195,36 @@ pub(super) fn dispatch_double_click(hwnd: HWND, surface_index: usize, object_id:
     let _ = hwnd;
 }
 
+/// Theme object whose hover reveals the Antigravity Claude/GPT pool.
+pub(super) const ANTIGRAVITY_HOVER_OBJECT: &str = "antigravity-provider";
+
+fn antigravity_hover_at(hwnd: HWND, lparam: LPARAM) -> bool {
+    let state = lock_state();
+    let Some(state) = state.as_ref() else {
+        return false;
+    };
+    if surface_index_for_window(state, hwnd) != Some(0) {
+        return false;
+    }
+    let Some(rect) = state.antigravity_tile_rect else {
+        return false;
+    };
+    let Some(theme) = state.active_theme.as_ref() else {
+        return false;
+    };
+    let scale = theme_surface_scale(theme, 0).max(0.01);
+    let (x, y) = mouse_client_point(lparam);
+    let lx = x / scale;
+    let ly = y / scale;
+    lx >= rect.0 && lx < rect.0 + rect.2 && ly >= rect.1 && ly < rect.1 + rect.3
+}
+
 pub(super) fn update_mouse_hover(hwnd: HWND, lparam: LPARAM) {
     track_mouse_hover_with(hwnd, widget_tooltip::visible_for(hwnd), |tracking| unsafe {
         TrackMouseEvent(tracking)
     });
-    for _ in 0..4 {
+    set_antigravity_hover(hwnd, antigravity_hover_at(hwnd, lparam));
+    super::tick_antigravity_crossfade(hwnd, true);    for _ in 0..4 {
         let target = mouse_target_at(hwnd, lparam);
         let previous = {
             let mut state = lock_state();
@@ -261,7 +286,7 @@ fn track_mouse_hover_with(
 
 pub(super) fn clear_mouse_hover(hwnd: HWND) {
     widget_tooltip::hide_for(hwnd);
-    let previous = {
+    set_antigravity_hover(hwnd, false);    let previous = {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
             return;

@@ -1578,10 +1578,30 @@ impl DataContext {
         let agy_dual_mode =
             runtime.antigravity_gemini_enabled && runtime.antigravity_external_enabled;
         context.insert("antigravity.dual_mode", agy_dual_mode as u8 as f64);
-        context.insert(
-            "antigravity.crossfade_opacity",
-            runtime.crossfade_opacity.clamp(0.0, 1.0),
-        );
+        let crossfade = runtime.crossfade_opacity.clamp(0.0, 1.0);
+        context.insert("antigravity.crossfade_opacity", crossfade);
+        let gemini_opacity = if crossfade > 0.5 {
+            (crossfade - 0.5) * 2.0
+        } else {
+            0.0
+        };
+        let external_opacity = if crossfade < 0.5 {
+            (0.5 - crossfade) * 2.0
+        } else {
+            0.0
+        };
+        // crossfade 1.0 shows the primary pool: Gemini in dual mode, otherwise
+        // the single enabled pool; hover fades toward the other one.
+        let (gemini_opacity, external_opacity) = match (
+            runtime.antigravity_gemini_enabled,
+            runtime.antigravity_external_enabled,
+        ) {
+            (false, true) => (external_opacity, gemini_opacity),
+            (false, false) => (0.0, 0.0),
+            _ => (gemini_opacity, external_opacity),
+        };
+        context.insert("antigravity.gemini.opacity", gemini_opacity);
+        context.insert("antigravity.external.opacity", external_opacity);
         if let Some(data) = data {
             for account in &data.accounts {
                 let key = format!(
