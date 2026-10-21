@@ -1319,8 +1319,8 @@
         {
           "id": "antigravity-session-gemini-solo-dark",
           "name": "dark Antigravity Gemini solo session segments",
-          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1354,8 +1354,8 @@
         {
           "id": "antigravity-session-gemini-solo-dark-pace",
           "name": "dark Antigravity Gemini solo session segments pace tick",
-          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
           "y": "(11) - 1",
@@ -1380,8 +1380,8 @@
         {
           "id": "antigravity-session-gemini-solo-light",
           "name": "light Antigravity Gemini solo session segments",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1415,8 +1415,8 @@
         {
           "id": "antigravity-session-gemini-solo-light-pace",
           "name": "light Antigravity Gemini solo session segments pace tick",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
           "y": "(11) - 1",
@@ -1441,8 +1441,8 @@
         {
           "id": "antigravity-session-external-solo-dark",
           "name": "dark Antigravity External solo session segments",
-          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1476,8 +1476,8 @@
         {
           "id": "antigravity-session-external-solo-dark-pace",
           "name": "dark Antigravity External solo session segments pace tick",
-          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
           "y": "(11) - 1",
@@ -1502,8 +1502,8 @@
         {
           "id": "antigravity-session-external-solo-light",
           "name": "light Antigravity External solo session segments",
-          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "y": "11",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1537,8 +1537,8 @@
         {
           "id": "antigravity-session-external-solo-light-pace",
           "name": "light Antigravity External solo session segments pace tick",
-          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
           "y": "(11) - 1",
@@ -1807,7 +1807,7 @@
         {
           "id": "antigravity-session-gemini-value-dark",
           "name": "dark Antigravity Gemini session value",
-          "render": "system.dark && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "render": "system.dark && antigravity.gemini.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1833,14 +1833,14 @@
             "align": "left",
             "color": {
               "color": "#5EEAD4FF",
-              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.gemini.opacity"
             }
           }
         },
         {
           "id": "antigravity-session-gemini-value-light",
           "name": "light Antigravity Gemini session value",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "render": "(1 - system.dark) && antigravity.gemini.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1866,14 +1866,14 @@
             "align": "left",
             "color": {
               "color": "#007A6CFF",
-              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.gemini.opacity"
             }
           }
         },
         {
           "id": "antigravity-session-external-value-dark",
           "name": "dark Antigravity External session value",
-          "render": "system.dark && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "render": "system.dark && antigravity.external.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1899,14 +1899,14 @@
             "align": "left",
             "color": {
               "color": "#98D0E0FF",
-              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.external.opacity"
             }
           }
         },
         {
           "id": "antigravity-session-external-value-light",
           "name": "light Antigravity External session value",
-          "render": "(1 - system.dark) && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "render": "(1 - system.dark) && antigravity.external.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1932,15 +1932,15 @@
             "align": "left",
             "color": {
               "color": "#2D6F82FF",
-              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.external.opacity"
             }
           }
         },
         {
           "id": "antigravity-weekly-gemini-solo-dark",
           "name": "dark Antigravity Gemini solo weekly segments",
-          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "y": "27",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1974,8 +1974,8 @@
         {
           "id": "antigravity-weekly-gemini-solo-dark-pace",
           "name": "dark Antigravity Gemini solo weekly segments pace tick",
-          "render": "system.dark && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
           "y": "(27) - 1",
@@ -2000,8 +2000,8 @@
         {
           "id": "antigravity-weekly-gemini-solo-light",
           "name": "light Antigravity Gemini solo weekly segments",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "y": "27",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -2035,8 +2035,8 @@
         {
           "id": "antigravity-weekly-gemini-solo-light-pace",
           "name": "light Antigravity Gemini solo weekly segments pace tick",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
+          "visibility": "(100) * antigravity.gemini.weekly.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.weekly.expected_display, 0, 100) / 100)",
           "y": "(27) - 1",
@@ -2061,8 +2061,8 @@
         {
           "id": "antigravity-weekly-external-solo-dark",
           "name": "dark Antigravity External solo weekly segments",
-          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "y": "27",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -2096,8 +2096,8 @@
         {
           "id": "antigravity-weekly-external-solo-dark-pace",
           "name": "dark Antigravity External solo weekly segments pace tick",
-          "render": "system.dark && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "render": "system.dark && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
           "y": "(27) - 1",
@@ -2122,8 +2122,8 @@
         {
           "id": "antigravity-weekly-external-solo-light",
           "name": "light Antigravity External solo weekly segments",
-          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "100",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "y": "27",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -2157,8 +2157,8 @@
         {
           "id": "antigravity-weekly-external-solo-light-pace",
           "name": "light Antigravity External solo weekly segments pace tick",
-          "render": "(1 - system.dark) && antigravity.external.enabled && !antigravity.dual_mode",
-          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace",
+          "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
+          "visibility": "(100) * antigravity.external.weekly.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.weekly.expected_display, 0, 100) / 100)",
           "y": "(27) - 1",
@@ -2427,7 +2427,7 @@
         {
           "id": "antigravity-weekly-gemini-value-dark",
           "name": "dark Antigravity Gemini weekly value",
-          "render": "system.dark && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "render": "system.dark && antigravity.gemini.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -2453,14 +2453,14 @@
             "align": "left",
             "color": {
               "color": "#5EEAD4FF",
-              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.gemini.opacity"
             }
           }
         },
         {
           "id": "antigravity-weekly-gemini-value-light",
           "name": "light Antigravity Gemini weekly value",
-          "render": "(1 - system.dark) && antigravity.gemini.enabled && (!antigravity.dual_mode || antigravity.crossfade_opacity > 0.01)",
+          "render": "(1 - system.dark) && antigravity.gemini.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -2486,14 +2486,14 @@
             "align": "left",
             "color": {
               "color": "#007A6CFF",
-              "opacity": "if(antigravity.dual_mode, antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.gemini.opacity"
             }
           }
         },
         {
           "id": "antigravity-weekly-external-value-dark",
           "name": "dark Antigravity External weekly value",
-          "render": "system.dark && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "render": "system.dark && antigravity.external.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -2519,14 +2519,14 @@
             "align": "left",
             "color": {
               "color": "#98D0E0FF",
-              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.external.opacity"
             }
           }
         },
         {
           "id": "antigravity-weekly-external-value-light",
           "name": "light Antigravity External weekly value",
-          "render": "(1 - system.dark) && antigravity.external.enabled && (!antigravity.dual_mode || (1.0 - antigravity.crossfade_opacity) > 0.01)",
+          "render": "(1 - system.dark) && antigravity.external.opacity > 0.01",
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -2552,7 +2552,7 @@
             "align": "left",
             "color": {
               "color": "#2D6F82FF",
-              "opacity": "if(antigravity.dual_mode, 1.0 - antigravity.crossfade_opacity, 1.0)"
+              "opacity": "antigravity.external.opacity"
             }
           }
         },
