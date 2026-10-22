@@ -49,15 +49,40 @@ pub(super) fn data_directories() -> Vec<PathBuf> {
     )
 }
 
-/// MSIX redirects the Store application's roaming data into its package.
-/// Keep the ordinary install first and discovery deterministic for machines
-/// with both installations. Missing config files remain watchable candidates.
+/// Recent Store installs move their data out of the MSIX package into
+/// LocalAppData/Claude-Data. Prefer that layout over the legacy package data,
+/// while retaining the ordinary install and deterministic discovery order.
 fn data_directories_in(roaming: Option<&Path>, local: Option<&Path>) -> Vec<PathBuf> {
     let mut paths: Vec<_> = roaming
         .map(|path| path.join("Claude"))
         .into_iter()
         .collect();
     if let Some(local) = local {
+        let mut migrated: Vec<_> = std::fs::read_dir(local.join("Claude-Data"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+            .filter(|entry| {
+                entry.file_name().to_str().is_some_and(|name| {
+                    name.strip_prefix("claude_").is_some_and(|publisher| {
+                        publisher.len() == 13
+                            && publisher
+                                .bytes()
+                                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                    })
+                })
+            })
+            .map(|entry| entry.path())
+            .collect();
+        migrated.sort_by_key(|path| {
+            (
+                path.file_name()
+                    .is_none_or(|name| name != "claude_pzs8sxrjxfjjc"),
+                path.clone(),
+            )
+        });
+        paths.extend(migrated);
         let mut packages: Vec<_> = std::fs::read_dir(local.join("Packages"))
             .into_iter()
             .flatten()
@@ -542,6 +567,39 @@ fn decrypt_with_key(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn discovers_migrated_store_data_before_legacy_package_data() {
+        let root = tempfile::tempdir().unwrap();
+        let roaming = root.path().join("Roaming");
+        let local = root.path().join("Local");
+        let migrated = local.join("Claude-Data");
+        let legacy = local.join("Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude");
+        for name in [
+            "claude_aaaaaaaaaaaaa",
+            "claude_pzs8sxrjxfjjc",
+            "claude_short",
+            "other_pzs8sxrjxfjjc",
+        ] {
+            std::fs::create_dir_all(migrated.join(name)).unwrap();
+        }
+        std::fs::create_dir_all(&legacy).unwrap();
+        std::fs::write(migrated.join("claude_bbbbbbbbbbbbb"), "").unwrap();
+        let paths = data_directories_in(Some(&roaming), Some(&local));
+        assert_eq!(
+            paths,
+            vec![
+                roaming.join("Claude"),
+                migrated.join("claude_pzs8sxrjxfjjc"),
+                migrated.join("claude_aaaaaaaaaaaaa"),
+                legacy,
+            ]
+        );
+        assert_eq!(
+            local_state_path(&paths[1].join("config.json")),
+            paths[1].join("Local State")
+        );
+    }
 
     #[test]
     fn discovers_regular_and_store_installs_in_stable_order() {
