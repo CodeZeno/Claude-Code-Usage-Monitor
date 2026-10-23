@@ -1653,6 +1653,12 @@ impl DataContext {
             .unwrap_or("7d")
             .to_string();
         self.insert_string(&format!("{name}.weekly.label"), weekly_label);
+        let session_label = usage
+            .and_then(|usage| usage.session_label.as_deref())
+            .or_else(|| self.get_string("i18n.session_window"))
+            .unwrap_or("5h")
+            .to_string();
+        self.insert_string(&format!("{name}.session.label"), session_label);
         let (five_hour, weekly) = usage
             .map(|usage| (usage.session.percentage, usage.weekly.percentage))
             .unwrap_or((0.0, 0.0));

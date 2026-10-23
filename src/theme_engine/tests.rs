@@ -1042,6 +1042,22 @@ fn provider_specific_long_window_labels_are_available_to_templates() {
 }
 
 #[test]
+fn provider_specific_session_window_labels_are_available_to_templates() {
+    // Cursor reports a seven-day included-usage window rather than the default
+    // five-hour session, so themes can show the real period length.
+    let usage = crate::models::AppUsageData::from_iter([(
+        ProviderId::Cursor,
+        crate::models::UsageData {
+            session_label: Some("7d".into()),
+            ..Default::default()
+        },
+    )]);
+    let context = DataContext::from_usage(Some(&usage), &Canvas::default());
+    assert_eq!(format_template("{cursor.session.label}", &context), "7d");
+    assert_eq!(format_template("{claude.session.label}", &context), "5h");
+}
+
+#[test]
 fn opencode_monthly_window_is_available_to_templates_when_present() {
     let reset = std::time::SystemTime::now() + std::time::Duration::from_secs(1_713_621);
     let usage = crate::models::AppUsageData::from_iter([(

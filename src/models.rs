@@ -74,6 +74,10 @@ pub struct CreditsSection {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageData {
     pub session: UsageSection,
+    /// Short label for the session window length (e.g. "5h", "7d"), when the
+    /// provider reports a period different from the default session window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_label: Option<String>,
     pub weekly: UsageSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_label: Option<String>,

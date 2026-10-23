@@ -1169,6 +1169,10 @@ fn tray_usage_summary_lines_with_pools(
                         .weekly_label
                         .as_deref()
                         .unwrap_or(strings.weekly_window);
+                    let session_label = usage
+                        .session_label
+                        .as_deref()
+                        .unwrap_or(strings.session_window);
                     let label = match acct {
                         Some(name) => format!("{base_name} (Gemini, {name})"),
                         None => format!("{base_name} (Gemini)"),
@@ -1176,7 +1180,7 @@ fn tray_usage_summary_lines_with_pools(
                     lines.push(format!(
                         "{} {}: {} | {}: {}",
                         label,
-                        strings.session_window,
+                        session_label,
                         window_text(&usage.session),
                         weekly_label,
                         window_text(&usage.weekly),
@@ -1196,6 +1200,10 @@ fn tray_usage_summary_lines_with_pools(
                         .weekly_label
                         .as_deref()
                         .unwrap_or(strings.weekly_window);
+                    let session_label = usage
+                        .session_label
+                        .as_deref()
+                        .unwrap_or(strings.session_window);
                     let label = match acct {
                         Some(name) => format!("{base_name} (Claude/GPT, {name})"),
                         None => format!("{base_name} (Claude/GPT)"),
@@ -1203,7 +1211,7 @@ fn tray_usage_summary_lines_with_pools(
                     lines.push(format!(
                         "{} {}: {} | {}: {}",
                         label,
-                        strings.session_window,
+                        session_label,
                         window_text(&usage.session),
                         weekly_label,
                         window_text(&usage.weekly),
@@ -1219,13 +1227,17 @@ fn tray_usage_summary_lines_with_pools(
                 .weekly_label
                 .as_deref()
                 .unwrap_or(strings.weekly_window);
+            let session_label = usage
+                .session_label
+                .as_deref()
+                .unwrap_or(strings.session_window);
             lines.push(format!(
                 "{} {}: {:.0}% | {}: {:.0}%",
                 match data.selected_account_name(provider) {
                     Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
                     None => language.text(descriptor.display_name).to_string(),
                 },
-                strings.session_window,
+                session_label,
                 shown(usage.session.percentage),
                 weekly_label,
                 shown(usage.weekly.percentage),
@@ -3757,6 +3769,24 @@ mod tray_usage_summary_tests {
                 false,
             ),
             ["OpenCode 5h: 30% | 30d: 40%"]
+        );
+    }
+
+    #[test]
+    fn tray_summary_prefers_the_reported_session_window_label() {
+        // Cursor's included-usage window is not the default five-hour session.
+        let mut data = usage(7.1, 0.0, Some("API"));
+        data.session_label = Some("7d".into());
+        let data = [(ProviderId::Cursor, data)].into_iter().collect();
+
+        assert_eq!(
+            tray_usage_summary_lines(
+                &data,
+                ProviderSet::from_enabled([ProviderId::Cursor]),
+                LanguageId::English,
+                false,
+            ),
+            ["Cursor 7d: 7% | API: 0%"]
         );
     }
 }
