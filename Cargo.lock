@@ -1306,9 +1306,9 @@ checksum = "f9f8bd3e56ce4dfc153cf470fffbfa98c7620958b312ca5c3a4b8d5181fd13c6"
 
 [[package]]
 name = "lucide-icons"
-version = "1.56.0"
+version = "1.60.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4552cf191819f6f7248622942c9f37596f35deb140c66e6b2876d5fcc5bdb39"
+checksum = "d28b647b816d4f17063221670b56c70b269330a1be3b317564ce1e94301c65df"
 
 [[package]]
 name = "memchr"
