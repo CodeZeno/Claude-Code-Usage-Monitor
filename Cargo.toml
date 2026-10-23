@@ -26,7 +26,7 @@ serde_json = "1"
 semver = "1"
 httpdate = "1"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
-eframe = { version = "0.36", default-features = false, features = ["glow"] }
+eframe = { version = "0.37", default-features = false, features = ["glow"] }
 lucide-icons = "1.30"
 raw-window-handle = "0.6"
 egui-directx11 = { version = "=0.13.0", path = "vendor/egui-directx11" }
@@ -67,7 +67,7 @@ features = [
 tempfile = "3"
 
 [build-dependencies]
-epaint_default_fonts = "0.36"
+epaint_default_fonts = "0.37"
 heck = "0.5"
 lucide-icons = "1.30"
 oxifont-subset = "0.2.2"
