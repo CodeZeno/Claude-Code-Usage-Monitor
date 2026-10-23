@@ -62,6 +62,7 @@ pub(crate) fn provider_mark_glyph(provider: ProviderId) -> char {
         ProviderId::Cursor => '\u{f005}',
         ProviderId::Grok => '\u{f006}',
         ProviderId::Copilot => '\u{f007}',
+        ProviderId::OpenRouter => '\u{f008}',
     }
 }
 

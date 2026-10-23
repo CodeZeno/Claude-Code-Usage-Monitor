@@ -622,6 +622,13 @@ struct StudioApp {
     context_menu_dirty: bool,
     context_menu_selection: Option<Vec<usize>>,
     delete_context_menu_confirmation: Option<(PathBuf, String)>,
+    openrouter_key_buffer: String,
+    openrouter_connection_status: Option<String>,
+    openrouter_testing: bool,
+    openrouter_test_pending: Option<
+        std::sync::Arc<std::sync::Mutex<Option<Result<(f64, f64), crate::poller::PollError>>>>,
+    >,
+    openrouter_test_label: Option<String>,
 }
 
 mod studio_assets;

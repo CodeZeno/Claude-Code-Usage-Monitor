@@ -892,14 +892,12 @@ fn starter_theme_round_trips_and_validates() {
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
     // 1.4.9 palette follows the taskbar mode without runtime recolouring:
-    // five providers over two windows in two modes, plus Grok and Copilot,
-    // which fill only the long-window row, plus a credit overlay on that row
-    // for the three providers that report credits, plus the two eight-segment
-    // Fable layers.
-    assert_eq!(
-        segments,
-        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2]].concat()
-    );
+    // five providers over two windows in two modes, plus Grok, Copilot and
+    // OpenRouter, which fill only the long-window row, plus a credit overlay
+    // on that row for the four providers that report credits, plus the two
+    // eight-segment Fable layers.
+    // The Fable layers sit just before OpenRouter now that OpenRouter is last.
+    assert_eq!(segments, [vec![10; 30], vec![8; 2], vec![10; 4]].concat());
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -1833,7 +1831,7 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
-            725,
+            827,
             2,
         ),
     ] {
@@ -2027,7 +2025,7 @@ fn classic_vertical_stacks_enabled_providers_and_preserves_tray_roots() {
         for host_width in [46, 62, 100] {
             let runtime =
                 ThemeRuntime::from_providers(providers).with_host_dimensions(host_width, 1440);
-            let width = (host_width - 2).min(62);
+            let width = (host_width - 2).min(92);
             let provider_height = |provider| match provider {
                 ProviderId::Grok | ProviderId::Copilot => 42,
                 _ => 64,
@@ -2161,19 +2159,36 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
             UsageData {
                 session: section.clone(),
                 weekly: section.clone(),
-                limits: (provider == ProviderId::Claude)
-                    .then(|| UsageLimit {
-                        key: "weekly_scoped_fable".into(),
-                        kind: "weekly_scoped".into(),
-                        label: "Fable".into(),
-                        model: Some("Fable".into()),
-                        model_id: None,
-                        scope: None,
-                        is_active: true,
-                        usage: section.clone(),
-                    })
-                    .into_iter()
-                    .collect(),
+                limits: {
+                    let mut limits: Vec<UsageLimit> = (provider == ProviderId::Claude)
+                        .then(|| UsageLimit {
+                            key: "weekly_scoped_fable".into(),
+                            kind: "weekly_scoped".into(),
+                            label: "Fable".into(),
+                            model: Some("Fable".into()),
+                            model_id: None,
+                            scope: None,
+                            is_active: true,
+                            usage: section.clone(),
+                        })
+                        .into_iter()
+                        .collect();
+                    // The OpenRouter column draws one line per window.
+                    for key in ["daily", "long", "account"] {
+                        limits.push(UsageLimit {
+                            key: key.into(),
+                            kind: key.into(),
+                            label: "1d".into(),
+                            model: None,
+                            model_id: None,
+                            scope: (key == "account")
+                                .then(|| serde_json::json!({ "remaining_pct": 25.0 })),
+                            is_active: true,
+                            usage: section.clone(),
+                        });
+                    }
+                    limits
+                },
                 credits: Some(CreditsSection {
                     percentage: 25.0,
                     remaining: 24.1,
@@ -2199,7 +2214,9 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
         );
         for object in &theme.surfaces[0].children {
             match &object.content {
-                SceneContent::Progress { value, .. } => {
+                // The balance bar intentionally shows the remaining fraction,
+                // so it does not follow the global count-up/count-down flip.
+                SceneContent::Progress { value, .. } if !value.0.contains("remaining_pct") => {
                     assert_eq!(
                         evaluate(&value.0, &context).unwrap(),
                         expected,
