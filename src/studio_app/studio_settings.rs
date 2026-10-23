@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use super::*;
 use crate::providers::ProviderId;
 
@@ -5,6 +7,7 @@ impl StudioApp {
     pub(super) fn settings_page(&mut self, ui: &mut egui::Ui) {
         let language = self.language();
         let mut changed = false;
+        let mut budget_changed = false;
         let mut requested_theme = None;
         let mut open_theme_studio = false;
         let themes = self.available_themes();
@@ -96,6 +99,283 @@ impl StudioApp {
                                 self.owner,
                             );
                         });
+                    }
+                    if descriptor.id == ProviderId::OpenRouter {
+                        let provider_enabled = self.settings.provider_enabled(descriptor.id);
+                        let key_stored = crate::secret_store::read_secret(
+                            crate::poller::openrouter::MANAGEMENT_KEY_TARGET,
+                        )
+                        .ok()
+                        .flatten()
+                        .is_some();
+                        let mut connection_refresh = false;
+                        egui::CollapsingHeader::new(language.text("Connection"))
+                            .default_open(provider_enabled && !key_stored)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(language.text("Management key"));
+                                    ui.add(
+                                        egui::TextEdit::singleline(
+                                            &mut self.openrouter_key_buffer,
+                                        )
+                                        .password(true)
+                                        .desired_width(200.0),
+                                    );
+                                    if ui.button(language.text("Save")).clicked() {
+                                        match crate::secret_store::write_secret(
+                                            crate::poller::openrouter::MANAGEMENT_KEY_TARGET,
+                                            self.openrouter_key_buffer.trim(),
+                                        ) {
+                                            Ok(()) => {
+                                                self.openrouter_key_buffer.clear();
+                                                connection_refresh = true;
+                                                self.openrouter_connection_status = Some(
+                                                    language
+                                                        .text("Credential stored in Windows Credential Manager")
+                                                        .to_string(),
+                                                );
+                                            }
+                                            Err(err) => {
+                                                self.openrouter_connection_status =
+                                                    Some(err.to_string());
+                                            }
+                                        }
+                                    }
+                                    if ui.button(language.text("Test")).clicked() {
+                                        let test_key =
+                                            if !self.openrouter_key_buffer.trim().is_empty() {
+                                                self.openrouter_key_buffer.trim().to_string()
+                                            } else {
+                                                crate::secret_store::read_secret(
+                                                    crate::poller::openrouter::MANAGEMENT_KEY_TARGET,
+                                                )
+                                                .ok()
+                                                .flatten()
+                                                .unwrap_or_default()
+                                            };
+                                        if !test_key.is_empty() {
+                                            let result_slot: Arc<
+                                                Mutex<
+                                                    Option<
+                                                        Result<
+                                                            (f64, f64),
+                                                            crate::poller::PollError,
+                                                        >,
+                                                    >,
+                                                >,
+                                            > = Arc::new(Mutex::new(None));
+                                            self.openrouter_test_pending =
+                                                Some(result_slot.clone());
+                                            self.openrouter_testing = true;
+                                            self.openrouter_test_label = None;
+                                            let ctx = ui.ctx().clone();
+                                            std::thread::spawn(move || {
+                                                let outcome = crate::poller::openrouter::probe_management_key(&test_key);
+                                                if let Ok(mut guard) = result_slot.lock() {
+                                                    *guard = Some(outcome);
+                                                }
+                                                ctx.request_repaint();
+                                            });
+                                        }
+                                    }
+                                    if ui.button(language.text("Remove stored key")).clicked() {
+                                        let _ = crate::secret_store::delete_secret(
+                                            crate::poller::openrouter::MANAGEMENT_KEY_TARGET,
+                                        );
+                                        connection_refresh = true;
+                                        self.openrouter_connection_status = None;
+                                        self.openrouter_test_label = None;
+                                    }
+                                });
+
+                                // Poll test result each frame. Clone the Arc so the
+                                // temporary borrow of openrouter_test_pending ends
+                                // before we write to it.
+                                if self.openrouter_testing {
+                                    if let Some(arc) = self.openrouter_test_pending.clone() {
+                                        if let Ok(mut guard) = arc.try_lock() {
+                                            if let Some(result) = guard.take() {
+                                                drop(guard);
+                                                self.openrouter_testing = false;
+                                                self.openrouter_test_pending = None;
+                                                self.openrouter_test_label =
+                                                    Some(match result {
+                                                        Ok((credits, usage)) => format!(
+                                                            "{} · {} ${:.2} · ${:.2} {}",
+                                                            language.text("Connected"),
+                                                            language.text("BALANCE"),
+                                                            credits,
+                                                            usage,
+                                                            language.text("USED"),
+                                                        ),
+                                                        Err(err) => err.message(language),
+                                                    });
+                                            }
+                                        }
+                                    }
+                                }
+
+                                if self.openrouter_testing {
+                                    ui.weak(language.text("Testing..."));
+                                } else if let Some(ref label) = self.openrouter_test_label.clone()
+                                {
+                                    ui.label(label);
+                                }
+
+                                if key_stored {
+                                    ui.weak(language.text(
+                                        "Credential stored in Windows Credential Manager",
+                                    ));
+                                } else {
+                                    ui.weak(language.text(
+                                        "No key configured. Create a Management API key on OpenRouter and paste it here.",
+                                    ));
+                                }
+
+                                if ui
+                                    .button(language.text("Get OpenRouter management key"))
+                                    .clicked()
+                                {
+                                    crate::native_interop::open_web_url(
+                                        None,
+                                        "https://openrouter.ai/settings/management-keys",
+                                    );
+                                }
+                            });
+                        if connection_refresh {
+                            self.request_refresh();
+                        }
+
+                        let period_key = |period: app_settings::BudgetPeriod| match period {
+                            app_settings::BudgetPeriod::Daily => "Daily",
+                            app_settings::BudgetPeriod::Weekly => "Weekly",
+                            app_settings::BudgetPeriod::Monthly => "Monthly",
+                        };
+                        egui::CollapsingHeader::new(language.text("Budget"))
+                            .default_open(false)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(language.text("Cap amount"));
+                                    let mut amount =
+                                        self.settings.openrouter_budget_amount.unwrap_or(0.0);
+                                    let response = NumberField::new(&mut amount)
+                                        .range(0.0..=1_000_000.0)
+                                        .speed(1.0)
+                                        .prefix("$")
+                                        .show(ui, 110.0);
+                                    let enter = ui.input(|input| input.key_pressed(egui::Key::Enter));
+                                    if response.changed() {
+                                        self.settings.openrouter_budget_amount =
+                                            (amount > 0.0).then_some(amount);
+                                        changed = true;
+                                    }
+                                    // Enter (or ending a drag / leaving the field) recalculates
+                                    // the displayed cap right away with the current periods.
+                                    if response.drag_stopped()
+                                        || response.lost_focus()
+                                        || (enter && response.changed())
+                                    {
+                                        budget_changed = true;
+                                    }
+                                    ui.weak(language.text("0 turns the spending cap off"));
+                                });
+                                for (label, field) in [
+                                    ("Cap period", &mut self.settings.openrouter_budget_period),
+                                    ("Monitor period", &mut self.settings.openrouter_monitor_period),
+                                ] {
+                                    ui.horizontal(|ui| {
+                                        ui.label(language.text(label));
+                                        let selected = language.text(period_key(*field));
+                                        let salt = if label == "Cap period" {
+                                            "openrouter_budget_period"
+                                        } else {
+                                            "openrouter_monitor_period"
+                                        };
+                                        let mut picked = false;
+                                        Dropdown::from_id_salt(salt)
+                                            .width(150.0)
+                                            .selected_text(selected)
+                                            .show_ui(ui, |ui| {
+                                                for period in [
+                                                    app_settings::BudgetPeriod::Daily,
+                                                    app_settings::BudgetPeriod::Weekly,
+                                                    app_settings::BudgetPeriod::Monthly,
+                                                ] {
+                                                    picked |= dropdown_selectable_value(
+                                                        ui,
+                                                        field,
+                                                        period,
+                                                        language.text(period_key(period)),
+                                                    )
+                                                    .changed();
+                                                }
+                                            });
+                                        if picked {
+                                            changed = true;
+                                            budget_changed = true;
+                                        }
+                                    });
+                                }
+                                if ui
+                                    .checkbox(
+                                        &mut self.settings.openrouter_show_cap,
+                                        language.text("Show cap in the monitor"),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                    budget_changed = true;
+                                }
+                                ui.horizontal(|ui| {
+                                    ui.label(language.text("Monthly credits deposit"));
+                                    let mut deposit =
+                                        self.settings.openrouter_monthly_deposit.unwrap_or(0.0);
+                                    let response = NumberField::new(&mut deposit)
+                                        .range(0.0..=1_000_000.0)
+                                        .speed(1.0)
+                                        .prefix("$")
+                                        .show(ui, 110.0);
+                                    let enter =
+                                        ui.input(|input| input.key_pressed(egui::Key::Enter));
+                                    if response.changed() {
+                                        self.settings.openrouter_monthly_deposit =
+                                            (deposit > 0.0).then_some(deposit);
+                                        changed = true;
+                                    }
+                                    if response.drag_stopped()
+                                        || response.lost_focus()
+                                        || (enter && response.changed())
+                                    {
+                                        budget_changed = true;
+                                    }
+                                    ui.weak(language.text("0 uses the accumulated account balance"));
+                                });
+                                if ui
+                                    .checkbox(
+                                        &mut self.settings.openrouter_show_deposit,
+                                        language.text("Show credits deposit in the monitor"),
+                                    )
+                                    .changed()
+                                {
+                                    changed = true;
+                                    budget_changed = true;
+                                }
+                                ui.add_space(4.0);
+                                let reset_time = crate::theme_engine::local_time_of_utc_midnight();
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(
+                                            language
+                                                .text(
+                                                    "OpenRouter counts daily spend in UTC: the day rolls over at 00:00 UTC, which is {time} on this device, so the daily value starts over then.",
+                                                )
+                                                .replace("{time}", &reset_time),
+                                        )
+                                        .weak(),
+                                    )
+                                    .wrap(),
+                                );
+                            });
                     }
                 }
             });
@@ -197,6 +477,9 @@ impl StudioApp {
             }
             self.preview_dirty = true;
             self.save_settings();
+        }
+        if budget_changed {
+            self.request_refresh();
         }
         if let Some(path) = requested_theme {
             self.request_activate_theme(path);
