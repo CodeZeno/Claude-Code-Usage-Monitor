@@ -838,3 +838,41 @@ fn failed_antigravity_poll_preserves_and_marks_both_pools_stale() {
         "stale external resets must not cause a poll loop"
     );
 }
+
+#[test]
+fn antigravity_summary_exposes_every_group_and_window_as_limits() {
+    let summary = serde_json::from_value(serde_json::json!({
+        "groups": [
+            {"displayName": "Gemini 4 Argon",
+             "buckets": [{"bucketId": "gemini-4-argon", "window": "weekly", "remainingFraction": 0.9}]},
+            {"displayName": "Claude and GPT models",
+             "buckets": [{"window": "5h", "remainingFraction": 0.4},
+                         {"window": "weekly", "remainingFraction": 0.2}]},
+            {"displayName": "Gemini Models",
+             "buckets": [{"window": "5h", "remainingFraction": 0.85},
+                         {"window": "weekly", "remainingFraction": 0.70}]}
+        ]
+    }))
+    .unwrap();
+    let data = super::antigravity::antigravity_usage_from_summary(summary).unwrap();
+
+    // Argon comes first but has its own pool; the main pool stays "Gemini Models".
+    assert!((data.session.percentage - 15.0).abs() < 1e-4);
+    assert!((data.weekly.percentage - 30.0).abs() < 1e-4);
+
+    let keys: Vec<&str> = data.limits.iter().map(|limit| limit.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "gemini_4_argon_weekly",
+            "claude_and_gpt_models_session",
+            "claude_and_gpt_models_weekly",
+            "gemini_models_session",
+            "gemini_models_weekly",
+        ]
+    );
+    let argon = &data.limits[0];
+    assert_eq!(argon.kind, "weekly");
+    assert_eq!(argon.model_id.as_deref(), Some("gemini-4-argon"));
+    assert!((argon.usage.percentage - 10.0).abs() < 1e-4);
+}
