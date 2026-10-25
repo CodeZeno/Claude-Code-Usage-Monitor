@@ -1653,6 +1653,57 @@ impl DataContext {
         // that has been spent so warning thresholds keep working, while
         // `display` follows the countdown setting.
         self.insert_limits(name, usage, countdown);
+        // Daily / long-window spend for the two-line OpenRouter display. Always
+        // bound (0 when absent) so themes validate without live usage.
+        self.insert(
+            &format!("{name}.daily.display"),
+            limit_display(usage, "daily", countdown),
+        );
+        self.insert(
+            &format!("{name}.daily.spent_usd"),
+            limit_scope_value(usage, "daily", "usage_usd"),
+        );
+        self.insert(
+            &format!("{name}.daily.cap_usd"),
+            limit_scope_value(usage, "daily", "cap_usd"),
+        );
+        self.insert(
+            &format!("{name}.long.display"),
+            limit_display(usage, "long", countdown),
+        );
+        self.insert(
+            &format!("{name}.long.spent_usd"),
+            limit_scope_value(usage, "long", "usage_usd"),
+        );
+        self.insert(
+            &format!("{name}.long.cap_usd"),
+            limit_scope_value(usage, "long", "cap_usd"),
+        );
+        self.insert(
+            &format!("{name}.long.show_cap"),
+            limit_scope_value(usage, "long", "show_cap"),
+        );
+        self.insert_string(
+            &format!("{name}.long.label"),
+            limit_label(usage, "long").as_deref().unwrap_or("30d"),
+        );
+        // Account balance (line 1). Always bound so themes validate without usage.
+        self.insert(
+            &format!("{name}.account.remaining_pct"),
+            limit_scope_value(usage, "account", "remaining_pct"),
+        );
+        self.insert(
+            &format!("{name}.account.balance_usd"),
+            limit_scope_value(usage, "account", "balance_usd"),
+        );
+        self.insert(
+            &format!("{name}.account.total_usd"),
+            limit_scope_value(usage, "account", "total_usd"),
+        );
+        self.insert(
+            &format!("{name}.account.show_deposit"),
+            limit_scope_value(usage, "account", "show_deposit"),
+        );
         let display = |percentage: f64| {
             if countdown {
                 100.0 - percentage
@@ -1782,6 +1833,12 @@ impl DataContext {
         self.insert(
             &format!("{name}.credits.balance"),
             credits.map(|credits| credits.remaining).unwrap_or(0.0),
+        );
+        self.insert(
+            &format!("{name}.credits.spent"),
+            credits
+                .map(|credits| (credits.total - credits.remaining).max(0.0))
+                .unwrap_or(0.0),
         );
         self.insert(
             &format!("{name}.credits.total"),
@@ -2045,6 +2102,58 @@ fn set_mouse_property_expression(
         MouseActionProperty::Height => &mut object.height,
         MouseActionProperty::Rotation => &mut object.rotation,
     } = expression;
+}
+
+fn limit_display(usage: Option<&crate::models::UsageData>, key: &str, countdown: bool) -> f64 {
+    let percentage = usage
+        .and_then(|usage| usage.limits.iter().find(|limit| limit.key == key))
+        .map(|limit| limit.usage.percentage)
+        .unwrap_or(0.0);
+    if countdown {
+        100.0 - percentage
+    } else {
+        percentage
+    }
+}
+
+fn limit_scope_value(usage: Option<&crate::models::UsageData>, key: &str, field: &str) -> f64 {
+    usage
+        .and_then(|usage| usage.limits.iter().find(|limit| limit.key == key))
+        .and_then(|limit| limit.scope.as_ref())
+        .and_then(|scope| scope.get(field))
+        .and_then(serde_json::Value::as_f64)
+        .unwrap_or(0.0)
+}
+
+fn limit_label(usage: Option<&crate::models::UsageData>, key: &str) -> Option<String> {
+    usage
+        .and_then(|usage| usage.limits.iter().find(|limit| limit.key == key))
+        .map(|limit| limit.label.clone())
+        .filter(|label| !label.is_empty())
+}
+
+/// Local clock time matching OpenRouter's 00:00 UTC daily reset (e.g. "21:00"
+/// for UTC-3). Keeps the settings hint correct on any device timezone.
+pub fn local_time_of_utc_midnight() -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|value| value.as_secs_f64())
+        .unwrap_or(0.0);
+    let (Some(local), Some(utc)) = (
+        theme_datetime::timestamp_parts(now, true),
+        theme_datetime::timestamp_parts(now, false),
+    ) else {
+        return "00:00".into();
+    };
+    let mut offset = i32::from(local.hour) * 60 + i32::from(local.minute)
+        - (i32::from(utc.hour) * 60 + i32::from(utc.minute));
+    if offset > 12 * 60 {
+        offset -= 24 * 60;
+    } else if offset < -12 * 60 {
+        offset += 24 * 60;
+    }
+    let reset = ((offset % (24 * 60)) + 24 * 60) % (24 * 60);
+    format!("{:02}:{:02}", reset / 60, reset % 60)
 }
 
 pub fn validate_mouse_action_script(

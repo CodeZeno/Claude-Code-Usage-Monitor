@@ -73,6 +73,12 @@ In the default theme, left-click a provider tray icon to show or hide the widget
 | Grok Build | Run `grok login` in the Grok Build CLI, then enable Grok in **Providers**. The signed-in session is detected automatically. |
 | GitHub Copilot | Sign in with the Copilot CLI (`copilot`, then `/login`) or the GitHub CLI (`gh auth login`), then enable Copilot in **Providers**. The stored login is detected automatically. |
 
+For OpenRouter, create a Management API key at `https://openrouter.ai/settings/management-keys`,
+then paste it in **Settings → Providers → OpenRouter → Connection** and press **Test** to verify
+the connection. The key is stored securely in Windows Credential Manager and never written to
+`settings.json`. The environment variable `OPENROUTER_MANAGEMENT_KEY` still works as a fallback
+if you prefer not to use the credential store.
+
 For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
 
 ```json

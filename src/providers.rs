@@ -16,6 +16,7 @@ pub enum ProviderId {
     Cursor = 4,
     Grok = 5,
     Copilot = 6,
+    OpenRouter = 7,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,7 +35,7 @@ pub struct ProviderDescriptor {
     pub default_enabled: bool,
 }
 
-pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
+pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 8] = [
     ProviderDescriptor {
         id: ProviderId::Claude,
         key: "claude",
@@ -98,10 +99,19 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         native_menu_command_id: 66,
         default_enabled: false,
     },
+    ProviderDescriptor {
+        id: ProviderId::OpenRouter,
+        key: "openrouter",
+        cache_key: "openrouter",
+        display_name: "OpenRouter",
+        settings_description: "Collect usage from OpenRouter",
+        native_menu_command_id: 69,
+        default_enabled: false,
+    },
 ];
 
 impl ProviderId {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Claude,
         Self::Codex,
         Self::Antigravity,
@@ -109,6 +119,7 @@ impl ProviderId {
         Self::Cursor,
         Self::Grok,
         Self::Copilot,
+        Self::OpenRouter,
     ];
 
     pub const fn descriptor(self) -> &'static ProviderDescriptor {
@@ -253,6 +264,64 @@ mod tests {
             assert_eq!(
                 ProviderId::from_native_menu_command_id(descriptor.native_menu_command_id),
                 Some(descriptor.id)
+            );
+        }
+    }
+
+    #[test]
+    fn provider_menu_command_ids_are_unique_and_do_not_collide_with_static_commands() {
+        use crate::window::{
+            IDM_DASHBOARD, IDM_FREQ_15MIN, IDM_FREQ_1HOUR, IDM_FREQ_1MIN, IDM_FREQ_5MIN,
+            IDM_LANG_FIRST, IDM_LANG_SYSTEM, IDM_LOCK_TASKBAR, IDM_PROVIDER_ANTIGRAVITY_EXTERNAL,
+            IDM_PROVIDER_ANTIGRAVITY_GEMINI, IDM_START_WITH_WINDOWS, IDM_VERSION_ACTION,
+        };
+
+        let ids: Vec<u16> = PROVIDER_DESCRIPTORS
+            .iter()
+            .map(|d| d.native_menu_command_id)
+            .collect();
+
+        // All ids must be pairwise unique.
+        for i in 0..ids.len() {
+            for j in (i + 1)..ids.len() {
+                assert_ne!(
+                    ids[i], ids[j],
+                    "providers '{}' and '{}' share native_menu_command_id {}",
+                    PROVIDER_DESCRIPTORS[i].key, PROVIDER_DESCRIPTORS[j].key, ids[i]
+                );
+            }
+        }
+
+        // No id may collide with a reserved static command id.
+        let reserved: &[u16] = &[
+            1, // WM_COMMAND refresh (posted directly)
+            2, // WM_COMMAND exit (posted directly)
+            IDM_FREQ_1MIN,
+            IDM_FREQ_5MIN,
+            IDM_FREQ_15MIN,
+            IDM_FREQ_1HOUR,
+            IDM_START_WITH_WINDOWS,
+            IDM_LOCK_TASKBAR,
+            IDM_VERSION_ACTION,
+            IDM_PROVIDER_ANTIGRAVITY_GEMINI,
+            IDM_PROVIDER_ANTIGRAVITY_EXTERNAL,
+            IDM_DASHBOARD,
+            IDM_LANG_SYSTEM,
+        ];
+
+        for &id in &ids {
+            for &res in reserved {
+                assert_ne!(
+                    id, res,
+                    "provider native_menu_command_id {} collides with a reserved static command id",
+                    id
+                );
+            }
+            assert!(
+                id < IDM_LANG_FIRST,
+                "provider native_menu_command_id {} falls in the language id range (>= {})",
+                id,
+                IDM_LANG_FIRST
             );
         }
     }

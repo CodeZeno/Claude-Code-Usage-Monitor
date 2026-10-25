@@ -202,19 +202,19 @@ fn perform_update_action(hwnd: HWND) {
 const RETRY_BASE_MS: u32 = 30_000; // 30 seconds
 
 // Menu item IDs for update frequency
-const IDM_FREQ_1MIN: u16 = 10;
-const IDM_FREQ_5MIN: u16 = 11;
-const IDM_FREQ_15MIN: u16 = 12;
-const IDM_FREQ_1HOUR: u16 = 13;
-const IDM_START_WITH_WINDOWS: u16 = 20;
-const IDM_LOCK_TASKBAR: u16 = 21;
-const IDM_VERSION_ACTION: u16 = 31;
-const IDM_LANG_SYSTEM: u16 = 100;
-const IDM_LANG_FIRST: u16 = 101;
-const IDM_DASHBOARD: u16 = 71;
+pub(crate) const IDM_FREQ_1MIN: u16 = 10;
+pub(crate) const IDM_FREQ_5MIN: u16 = 11;
+pub(crate) const IDM_FREQ_15MIN: u16 = 12;
+pub(crate) const IDM_FREQ_1HOUR: u16 = 13;
+pub(crate) const IDM_START_WITH_WINDOWS: u16 = 20;
+pub(crate) const IDM_LOCK_TASKBAR: u16 = 21;
+pub(crate) const IDM_VERSION_ACTION: u16 = 31;
+pub(crate) const IDM_LANG_SYSTEM: u16 = 100;
+pub(crate) const IDM_LANG_FIRST: u16 = 101;
+pub(crate) const IDM_DASHBOARD: u16 = 71;
 // 62 stays the whole-provider Antigravity toggle used by saved custom menus.
-pub(super) const IDM_PROVIDER_ANTIGRAVITY_GEMINI: u16 = 68;
-pub(super) const IDM_PROVIDER_ANTIGRAVITY_EXTERNAL: u16 = 67;
+pub(crate) const IDM_PROVIDER_ANTIGRAVITY_GEMINI: u16 = 68;
+pub(crate) const IDM_PROVIDER_ANTIGRAVITY_EXTERNAL: u16 = 67;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -3458,9 +3458,10 @@ fn reload_external_settings(hwnd: HWND) {
         // previously ejected widget so the lock takes effect at once.
         redock_locked_widget(hwnd);
     }
-    if providers_changed {
-        request_poll(hwnd);
-    }
+    // The OpenRouter budget, cap and deposit are baked into the poll result, so
+    // any settings edit needs a re-poll - not just provider visibility changes.
+    // `request_poll` coalesces while a poll is in flight.
+    request_poll(hwnd);
     sync_tray_icon(hwnd);
     position_at_taskbar();
     render_layered();

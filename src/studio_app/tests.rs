@@ -492,6 +492,11 @@ fn app_with_surfaces(surfaces: Vec<SceneObject>) -> StudioApp {
         context_menu_dirty: false,
         context_menu_selection: None,
         delete_context_menu_confirmation: None,
+        openrouter_key_buffer: String::new(),
+        openrouter_connection_status: None,
+        openrouter_testing: false,
+        openrouter_test_pending: None,
+        openrouter_test_label: None,
     }
 }
 

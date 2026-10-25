@@ -23,6 +23,27 @@ pub const POLL_1_HOUR: u32 = POLL_1_HOUR_SECONDS * 1_000;
 // SetTimer clamps longer intervals to USER_TIMER_MAXIMUM (i32::MAX ms).
 pub const MAX_POLL_MINUTES: u32 = i32::MAX as u32 / POLL_1_MIN;
 
+/// Period used for the OpenRouter budget amount and its monitoring window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BudgetPeriod {
+    Daily,
+    Weekly,
+    #[default]
+    Monthly,
+}
+
+impl BudgetPeriod {
+    /// Days covered by one period, given the days in the current calendar month.
+    pub fn days(self, month_days: u32) -> f64 {
+        match self {
+            BudgetPeriod::Daily => 1.0,
+            BudgetPeriod::Weekly => 7.0,
+            BudgetPeriod::Monthly => f64::from(month_days),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SettingsFile {
     #[serde(default)]
@@ -66,6 +87,30 @@ pub struct SettingsFile {
     show_grok: bool,
     #[serde(default)]
     show_copilot: bool,
+    #[serde(default)]
+    show_openrouter: bool,
+    /// Personal spending cap (USD). When set, OpenRouter's gauge measures spend
+    /// against this cap, converted from `openrouter_budget_period` to the
+    /// `openrouter_monitor_period` window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openrouter_budget_amount: Option<f64>,
+    /// Period the budget amount is defined for (the "rate").
+    #[serde(default)]
+    pub openrouter_budget_period: BudgetPeriod,
+    /// Period the OpenRouter gauge displays and measures spend for.
+    #[serde(default)]
+    pub openrouter_monitor_period: BudgetPeriod,
+    /// Whether the OpenRouter display shows the cap next to the spend.
+    #[serde(default)]
+    pub openrouter_show_cap: bool,
+    /// Credits manually entered as added in the current month (USD). When set,
+    /// the balance line shows what is left of this deposit, not the lifetime
+    /// account balance (the OpenRouter API has no per-month deposit endpoint).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openrouter_monthly_deposit: Option<f64>,
+    /// Whether the balance line also prints the monthly deposit next to it.
+    #[serde(default)]
+    pub openrouter_show_deposit: bool,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
     /// Show what is left of each allowance instead of what has been spent, so
@@ -137,6 +182,13 @@ impl Default for SettingsFile {
             show_cursor: false,
             show_grok: false,
             show_copilot: false,
+            show_openrouter: false,
+            openrouter_budget_amount: None,
+            openrouter_budget_period: BudgetPeriod::Monthly,
+            openrouter_monitor_period: BudgetPeriod::Monthly,
+            openrouter_show_cap: false,
+            openrouter_monthly_deposit: None,
+            openrouter_show_deposit: false,
             custom_theme_enabled: true,
             usage_countdown: false,
             active_theme_path: None,
@@ -235,6 +287,7 @@ impl SettingsFile {
             ProviderId::Cursor => self.show_cursor,
             ProviderId::Grok => self.show_grok,
             ProviderId::Copilot => self.show_copilot,
+            ProviderId::OpenRouter => self.show_openrouter,
         }
     }
 
@@ -283,6 +336,7 @@ impl SettingsFile {
             ProviderId::Cursor => self.show_cursor = enabled,
             ProviderId::Grok => self.show_grok = enabled,
             ProviderId::Copilot => self.show_copilot = enabled,
+            ProviderId::OpenRouter => self.show_openrouter = enabled,
         }
     }
 
