@@ -3462,7 +3462,8 @@ pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
     };
     if !still_animating {
         unsafe {
-            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);        }
+            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+        }
     }
     if should_render {
         render_layered();

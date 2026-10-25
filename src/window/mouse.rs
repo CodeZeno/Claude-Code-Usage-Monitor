@@ -224,7 +224,8 @@ pub(super) fn update_mouse_hover(hwnd: HWND, lparam: LPARAM) {
         TrackMouseEvent(tracking)
     });
     set_antigravity_hover(hwnd, antigravity_hover_at(hwnd, lparam));
-    super::tick_antigravity_crossfade(hwnd, true);    for _ in 0..4 {
+    super::tick_antigravity_crossfade(hwnd, true);
+    for _ in 0..4 {
         let target = mouse_target_at(hwnd, lparam);
         let previous = {
             let mut state = lock_state();
@@ -286,7 +287,8 @@ fn track_mouse_hover_with(
 
 pub(super) fn clear_mouse_hover(hwnd: HWND) {
     widget_tooltip::hide_for(hwnd);
-    set_antigravity_hover(hwnd, false);    let previous = {
+    set_antigravity_hover(hwnd, false);
+    let previous = {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
             return;
