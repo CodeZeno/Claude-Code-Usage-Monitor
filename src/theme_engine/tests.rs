@@ -3844,11 +3844,7 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         assert!(matches!(&tick.content, SceneContent::None));
         assert_eq!(tick.parent, gauge.parent);
         assert_eq!(tick.render.0, gauge.render.0);
-        let stripped = tick
-            .visibility
-            .0
-            .strip_prefix("(100) * ")
-            .unwrap();
+        let stripped = tick.visibility.0.strip_prefix("(100) * ").unwrap();
         let stripped = stripped
             .strip_suffix(" * antigravity.gemini.opacity")
             .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))

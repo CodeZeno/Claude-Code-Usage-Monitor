@@ -883,7 +883,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 if !enabled {
                                     let _ =
                                         kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-                                    s.antigravity_hovered = false;                                    s.crossfade_opacity = 1.0;
+                                    s.antigravity_hovered = false;
+                                    s.crossfade_opacity = 1.0;
                                     s.crossfade_animation = None;
                                     s.antigravity_tile_rect = None;
                                 }
