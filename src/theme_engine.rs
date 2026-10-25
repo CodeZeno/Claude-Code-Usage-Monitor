@@ -1486,9 +1486,8 @@ fn expected_used(resets_at: std::time::SystemTime, length: std::time::Duration) 
         .duration_since(std::time::SystemTime::now())
         .ok()?;
     // A minute of slack for poll latency right after a reset.
-    (!length.is_zero() && left <= length + std::time::Duration::from_secs(60)).then(|| {
-        (1.0 - left.min(length).as_secs_f64() / length.as_secs_f64()) * 100.0
-    })
+    (!length.is_zero() && left <= length + std::time::Duration::from_secs(60))
+        .then(|| (1.0 - left.min(length).as_secs_f64() / length.as_secs_f64()) * 100.0)
 }
 
 impl DataContext {
@@ -1764,8 +1763,12 @@ impl DataContext {
         self.insert(&format!("{name}.weekly.display"), shown_weekly);
         // Pace: the share a window would have spent by now at an even rate.
         // `expected_display` follows the countdown setting like `display`.
-        let five_hour_section = usage.filter(|usage| usage.session.available).map(|usage| &usage.session);
-        let weekly_section = usage.filter(|usage| usage.weekly.available).map(|usage| &usage.weekly);
+        let five_hour_section = usage
+            .filter(|usage| usage.session.available)
+            .map(|usage| &usage.session);
+        let weekly_section = usage
+            .filter(|usage| usage.weekly.available)
+            .map(|usage| &usage.weekly);
         let session_section = if use_codex_session_fallback {
             weekly_section.map(|section| (section, WEEK))
         } else {
@@ -1773,14 +1776,24 @@ impl DataContext {
         };
         for (window, section) in [
             ("session", session_section),
-            ("five_hour", five_hour_section.map(|section| (section, FIVE_HOURS))),
+            (
+                "five_hour",
+                five_hour_section.map(|section| (section, FIVE_HOURS)),
+            ),
             ("weekly", weekly_section.map(|section| (section, WEEK))),
         ] {
-            let expected = section.and_then(|(section, length)| expected_used(section.resets_at?, length));
-            self.insert(&format!("{name}.{window}.expected_available"), expected.is_some() as u8 as f64);
+            let expected =
+                section.and_then(|(section, length)| expected_used(section.resets_at?, length));
+            self.insert(
+                &format!("{name}.{window}.expected_available"),
+                expected.is_some() as u8 as f64,
+            );
             let expected = expected.unwrap_or(0.0);
             self.insert(&format!("{name}.{window}.expected"), expected);
-            self.insert(&format!("{name}.{window}.expected_display"), display(expected));
+            self.insert(
+                &format!("{name}.{window}.expected_display"),
+                display(expected),
+            );
         }
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
         self.insert_string(&format!("{name}.monthly.label"), "30d");

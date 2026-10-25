@@ -3592,7 +3592,10 @@ fn pace_expected_used_rejects_resets_outside_the_window() {
         assert!((half - 50.0).abs() < 0.1, "{half}");
         assert_eq!(expected_used(SystemTime::UNIX_EPOCH, length), None);
         // A reset reported slightly past the window start still ticks at 0.
-        assert_eq!(expected_used(now + length + Duration::from_secs(30), length), Some(0.0));
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(30), length),
+            Some(0.0)
+        );
         assert_eq!(
             expected_used(now + length + Duration::from_secs(300), length),
             None
@@ -3624,9 +3627,13 @@ fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
             ..Default::default()
         };
         let usage = AppUsageData::from_iter(
-            [ProviderId::Claude, ProviderId::Codex, ProviderId::Antigravity]
-                .into_iter()
-                .map(|provider| (provider, provider_usage.clone())),
+            [
+                ProviderId::Claude,
+                ProviderId::Codex,
+                ProviderId::Antigravity,
+            ]
+            .into_iter()
+            .map(|provider| (provider, provider_usage.clone())),
         );
         for countdown in [false, true] {
             let context = DataContext::from_usage_with_runtime(
@@ -3634,7 +3641,12 @@ fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
                 &Canvas::default(),
                 ThemeRuntime::default().with_countdown(countdown),
             );
-            for name in ["claude", "codex", "antigravity.gemini", "antigravity.external"] {
+            for name in [
+                "claude",
+                "codex",
+                "antigravity.gemini",
+                "antigravity.external",
+            ] {
                 let expected = if name == "antigravity.external" {
                     (4 - elapsed_quarters) as f64 * 25.0
                 } else {
@@ -3650,7 +3662,14 @@ fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
                     let display = context.get(&format!("{base}.expected_display")).unwrap();
                     assert!((used - expected).abs() < 0.1, "{base}: {used}");
                     assert!(
-                        (display - if countdown { 100.0 - expected } else { expected }).abs() < 0.1,
+                        (display
+                            - if countdown {
+                                100.0 - expected
+                            } else {
+                                expected
+                            })
+                        .abs()
+                            < 0.1,
                         "{base}: {display}"
                     );
                 }
@@ -3690,10 +3709,7 @@ fn pace_bindings_hide_missing_windows_and_reset_times() {
                         context.get(&format!("claude.{window}.expected_available")),
                         Some(0.0)
                     );
-                    assert_eq!(
-                        context.get(&format!("claude.{window}.expected")),
-                        Some(0.0)
-                    );
+                    assert_eq!(context.get(&format!("claude.{window}.expected")), Some(0.0));
                 }
             }
         }
@@ -3712,7 +3728,10 @@ fn show_pace_binding_follows_the_setting() {
         let runtime = ThemeRuntime::from_providers(settings.enabled_providers())
             .with_show_pace(settings.show_pace);
         let context = DataContext::from_usage_with_runtime(None, &Canvas::default(), runtime);
-        assert_eq!(context.get("display.show_pace"), Some(show_pace as u8 as f64));
+        assert_eq!(
+            context.get("display.show_pace"),
+            Some(show_pace as u8 as f64)
+        );
     }
 }
 
