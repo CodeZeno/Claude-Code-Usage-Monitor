@@ -114,12 +114,29 @@ pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
     let source = credentials.source.clone();
     if is_token_expired(credentials.expires_at) {
         cli_refresh_token(&source);
-        credentials = read_credentials_from_source(&source).ok_or(PollError::TokenExpired)?;
-        if is_token_expired(credentials.expires_at) {
-            return Err(PollError::TokenExpired);
-        }
+        credentials = read_credentials_from_source(&source)
+            .filter(|refreshed| !is_token_expired(refreshed.expires_at))
+            .or_else(|| fresh_desktop_credentials_for_default_path(path, &source))
+            .ok_or(PollError::TokenExpired)?;
     }
     fetch_usage_with_fallback(&credentials.access_token)
+}
+
+/// A stale CLI token the CLI could not refresh does not end the search for the
+/// default profile: the desktop app keeps its own cache fresh while it runs.
+fn fresh_desktop_credentials_for_default_path(
+    path: &Path,
+    stale: &CredentialSource,
+) -> Option<Credentials> {
+    if matches!(stale, CredentialSource::DesktopApp(_)) {
+        return None;
+    }
+    let credentials = desktop_credentials_for_default_path(path)?;
+    if is_token_expired(credentials.expires_at) {
+        return None;
+    }
+    diagnose::log("stale CLI token replaced by the Claude desktop app token cache");
+    Some(credentials)
 }
 
 /// The desktop app's token, but only for a profile that points at the default
