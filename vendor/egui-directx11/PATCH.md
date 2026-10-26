@@ -4,8 +4,8 @@ Source: https://github.com/NekomaruQwQ/egui-directx11
 Commit: 38201f9b9620a26c3e3740775fcaf24487f1dde1 (MIT OR Apache-2.0).
 Only the library, licenses, shaders and shader compilation script are vendored.
 
-- Use egui 0.36 without default fonts; the application supplies its font subsets.
-- Consume egui 0.36's ordered batches of updates for each texture.
+- Use egui 0.37 without default fonts; the application supplies its font subsets.
+- Consume egui 0.37's ordered batches of updates for each texture.
 - Apply pixels_per_point once (it already includes user zoom).
 - Clamp scissor rectangles to the render target.
 - Apply texture frees after drawing, including empty frames.
