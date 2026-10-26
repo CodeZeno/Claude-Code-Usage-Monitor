@@ -502,10 +502,7 @@ mod tests {
             egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
-        let shapes = vec![ClippedShape {
-            clip_rect: egui::Rect::EVERYTHING,
-            shape: Shape::mesh(mesh),
-        }];
+        let shapes = vec![ClippedShape::new(egui::Rect::EVERYTHING, Shape::mesh(mesh))];
         let read_pixel = |x: usize, y: usize| -> [u8; 4] {
             unsafe {
                 immediate.CopyResource(&readback, &texture);

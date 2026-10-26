@@ -311,7 +311,7 @@ fn context_menu_preview_submenu_opens_on_hover() {
             },
         );
     });
-    let unrelated_popup_id = egui::Id::new("unrelated-dropdown-popup");
+    let unrelated_popup_id = egui::Id::unique("unrelated-dropdown-popup");
     egui::Popup::open_id(&context, unrelated_popup_id);
     collapse_context_menu_preview_on_outside_click(
         &context,
