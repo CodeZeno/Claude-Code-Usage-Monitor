@@ -36,6 +36,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
     lparam: LPARAM,
 ) -> LRESULT {
     match msg {
+        WM_MOUSEHOVER => {
+            widget_tooltip::show(hwnd);
+            LRESULT(0)
+        }
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
@@ -45,23 +49,14 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_ERASEBKGND => LRESULT(1),
         WM_DISPLAYCHANGE | WM_DPICHANGED_MSG | WM_SETTINGCHANGE => {
-            refresh_theme_host_geometry();
             if msg == WM_DPICHANGED_MSG {
-                let new_dpi = (wparam.0 & 0xFFFF) as u32;
-                CURRENT_DPI.store(new_dpi, Ordering::Relaxed);
+                CURRENT_DPI.store((wparam.0 & 0xFFFF) as u32, Ordering::Relaxed);
             }
             if msg == WM_SETTINGCHANGE {
                 check_theme_change();
                 check_language_change();
             }
-            refresh_dpi();
-            // Restore an auto-ejected Taskbar host across monitor/DPI changes.
-            if lock_state().as_ref().is_some_and(taskbar_lock_applies) {
-                redock_locked_widget(hwnd);
-            }
-            position_at_taskbar();
-            render_layered();
-            sync_tray_icon(hwnd);
+            lifecycle::schedule_reconcile(controller_for(hwnd));
             LRESULT(0)
         }
         WM_TIMER => {
@@ -106,7 +101,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     sync_theme_window_visibility();
                 }
                 TIMER_MOUSE_CLICK => {
-                    let _ = KillTimer(Some(hwnd), TIMER_MOUSE_CLICK);
+                    let _ = kill_controller_timer(Some(hwnd), TIMER_MOUSE_CLICK);
                     let pending = lock_state()
                         .as_mut()
                         .and_then(|state| state.pending_mouse_click.take());
@@ -121,11 +116,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 TIMER_TRAY_HOVER => {
                     clear_tray_mouse_hover_if_left(hwnd);
                 }
+                widget_tooltip::REFRESH_TIMER => widget_tooltip::refresh(),
                 TIMER_TRAY_REPOSITION => {
-                    let _ = KillTimer(Some(hwnd), TIMER_TRAY_REPOSITION);
-                    refresh_theme_host_geometry();
-                    position_at_taskbar();
-                    render_layered();
+                    let _ = kill_controller_timer(Some(hwnd), TIMER_TRAY_REPOSITION);
+                    lifecycle::reconcile_surfaces();
                 }
                 TIMER_CROSSFADE_SCHEDULE => {
                     arm_crossfade_schedule(hwnd);
@@ -174,11 +168,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_APP_OPEN_DASHBOARD => {
-            crate::dashboard::show(hwnd);
+            crate::dashboard::show(controller_for(hwnd));
             LRESULT(0)
         }
-        WM_APP_QUIT => {
-            let _ = DestroyWindow(hwnd);
+        WM_CLOSE | WM_APP_QUIT => {
+            let _ = PostMessageW(Some(controller_for(hwnd)), WM_CLOSE, WPARAM(0), LPARAM(0));
             LRESULT(0)
         }
         native_interop::WM_APP_UPDATE_ACTION => {
@@ -196,6 +190,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
         WM_SETCURSOR if set_surface_cursor(hwnd) => LRESULT(1),
         WM_SETCURSOR => DefWindowProcW(hwnd, msg, wparam, lparam),
         WM_LBUTTONDOWN => {
+            widget_tooltip::hide();
             unsafe {
                 let _ = SetCapture(hwnd);
             }
@@ -384,12 +379,14 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_LBUTTONDBLCLK => {
+            widget_tooltip::hide();
             if let Some((surface, object)) = mouse_target_at(hwnd, lparam) {
                 dispatch_double_click(hwnd, surface, object);
             }
             LRESULT(0)
         }
         WM_RBUTTONUP => {
+            widget_tooltip::hide();
             if let Some((surface, object)) = mouse_target_at(hwnd, lparam) {
                 let _ = dispatch_mouse_event(surface, &object, MouseEventKind::RightClick);
             }
@@ -468,8 +465,12 @@ pub(super) unsafe extern "system" fn wnd_proc(
 
                 if let Some((target_idx, taskbar, free_dock_slot)) = target_dock {
                     let displays = native_interop::find_monitors();
-                    let handle =
-                        unsafe { MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) };
+                    let Some(handle) =
+                        native_interop::monitor_for_taskbar(&taskbars, &displays, taskbar.hwnd)
+                    else {
+                        render_layered();
+                        return LRESULT(0);
+                    };
                     let Some(monitor_index) =
                         positioning::monitor_index_for_handle(&displays, handle)
                     else {
@@ -749,7 +750,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             let id = wparam.0 as u16;
             match id {
                 IDM_DASHBOARD => {
-                    crate::dashboard::show(hwnd);
+                    crate::dashboard::show(controller_for(hwnd));
                 }
                 1 => {
                     {
@@ -763,15 +764,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 IDM_VERSION_ACTION => perform_update_action(hwnd),
                 2 => {
-                    let hook = {
-                        let state = lock_state();
-                        state.as_ref().and_then(|s| s.win_event_hook)
-                    };
-                    if let Some(h) = hook {
-                        native_interop::unhook_win_event(h.to_hook());
-                    }
-                    crate::dashboard::close_existing();
-                    let _ = DestroyWindow(hwnd);
+                    let _ =
+                        PostMessageW(Some(controller_for(hwnd)), WM_CLOSE, WPARAM(0), LPARAM(0));
                 }
                 IDM_START_WITH_WINDOWS => {
                     set_startup_enabled(!is_startup_enabled());
@@ -795,7 +789,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     }
                     save_state_settings();
                     // Reset the poll timer with the new interval
-                    SetTimer(Some(hwnd), TIMER_POLL, new_interval, None);
+                    set_controller_timer(Some(hwnd), TIMER_POLL, new_interval, None);
                 }
                 IDM_PROVIDER_ANTIGRAVITY_GEMINI | IDM_PROVIDER_ANTIGRAVITY_EXTERNAL => {
                     let mut should_reposition = false;
@@ -840,7 +834,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     && s.providers.contains(ProviderId::Antigravity);
                                 if !dual_mode {
                                     unsafe {
-                                        let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                        let _ = kill_controller_timer(
+                                            Some(hwnd),
+                                            TIMER_CROSSFADE_SCHEDULE,
+                                        );
                                     }
                                     s.crossfade_opacity = 1.0;
                                 }
@@ -871,7 +868,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 s.show_antigravity_gemini = enabled;
                                 s.show_antigravity_external = enabled;
                                 if !enabled {
-                                    let _ = KillTimer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    let _ =
+                                        kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
                                     s.crossfade_opacity = 1.0;
                                 }
                             }
@@ -913,7 +911,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             // call has re-entered our window procedure. Return before taking
             // STATE, opening windows, or calling back into Explorer.
             if let Err(error) = PostMessageW(
-                Some(hwnd),
+                Some(controller_for(hwnd)),
                 native_interop::WM_APP_TRAY_DISPATCH,
                 wparam,
                 lparam,
@@ -958,7 +956,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 &root_id,
                                 MouseEventKind::DoubleClick,
                             ) {
-                                crate::dashboard::show(hwnd);
+                                crate::dashboard::show(controller_for(hwnd));
                             }
                             return LRESULT(0);
                         }
@@ -970,7 +968,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             ) {
                                 dispatch_double_click(hwnd, surface_index, root_id);
                             } else {
-                                crate::dashboard::show(hwnd);
+                                crate::dashboard::show(controller_for(hwnd));
                             }
                             return LRESULT(0);
                         }
@@ -990,7 +988,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
             }
             match tray_icon::handle_message(lparam) {
                 tray_icon::TrayAction::OpenDashboard => {
-                    crate::dashboard::show(hwnd);
+                    crate::dashboard::show(controller_for(hwnd));
                 }
                 tray_icon::TrayAction::ShowContextMenu => {
                     show_context_menu_document(hwnd, None, None);
@@ -1000,35 +998,12 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         _ if msg == taskbar_created_message() => {
-            refresh_theme_host_geometry();
-            // Explorer discards notification icons when it restarts. Floating
-            // and tray-icon-only themes keep their owner HWND, so restore the
-            // registrations when the shell broadcasts its return.
             sync_tray_icon(hwnd);
-            render_layered();
+            lifecycle::schedule_reconcile(controller_for(hwnd));
             LRESULT(0)
         }
         WM_DESTROY => {
-            crate::dashboard::close_existing();
-            crate::desktop_compositor::clear();
-            let (hook, desktop_windows) = {
-                let mut state = lock_state();
-                match state.as_mut() {
-                    Some(state) => (
-                        state.win_event_hook,
-                        std::mem::take(&mut state.desktop_hwnds),
-                    ),
-                    None => (None, Vec::new()),
-                }
-            };
-            if let Some(h) = hook {
-                native_interop::unhook_win_event(h.to_hook());
-            }
-            for window in desktop_windows.into_iter().flatten() {
-                let _ = DestroyWindow(window.to_hwnd());
-            }
-            tray_icon::remove_all(hwnd);
-            PostQuitMessage(0);
+            lifecycle::surface_destroyed(hwnd);
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),

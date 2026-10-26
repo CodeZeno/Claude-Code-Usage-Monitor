@@ -245,31 +245,51 @@ pub(super) fn render_custom_window(
     }
 }
 
-pub(super) fn position_custom_theme(hwnd: HWND, theme: &ThemeDocument, scale: f64) {
-    position_custom_theme_internal(hwnd, theme, scale);
+pub(super) fn position_custom_theme(hwnd: HWND, theme: &ThemeDocument, scale: f64) -> bool {
+    position_custom_theme_internal(hwnd, theme, scale)
 }
 
-pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, scale: f64) {
+pub(super) fn position_custom_theme_internal(
+    hwnd: HWND,
+    theme: &ThemeDocument,
+    scale: f64,
+) -> bool {
     let is_dragging = {
         let state = lock_state();
         state.as_ref().is_some_and(|s| s.dragging)
     };
     if is_dragging {
-        return;
+        return true;
     }
     let taskbars = native_interop::find_taskbars();
     let displays = native_interop::find_monitors();
     let display_index = theme.placement.reference.display;
+    let is_primary_surface = lock_state().as_ref().is_some_and(|state| {
+        state.hwnd.to_hwnd() == hwnd
+            || state
+                .desktop_hwnds
+                .first()
+                .and_then(|window| *window)
+                .map(SendHwnd::to_hwnd)
+                == Some(hwnd)
+    });
+    if !is_primary_surface && display_index >= displays.len() {
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        return false;
+    }
     let selected_display = displays
         .get(display_index)
         .copied()
         .or_else(|| displays.first().copied());
     let Some(display) = selected_display else {
-        return;
+        unsafe {
+            let _ = ShowWindow(hwnd, SW_HIDE);
+        }
+        return false;
     };
-    let taskbar = taskbars.iter().find(|taskbar| unsafe {
-        MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
-    });
+    let taskbar = native_interop::taskbar_for_monitor(&taskbars, &displays, display.handle);
     let width = scaled_theme_dimension(theme.canvas.width.max(1), scale);
     let height = scaled_theme_dimension(theme.canvas.height.max(1), scale);
     let tray = taskbar
@@ -294,7 +314,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
             SurfaceNest::Taskbar => {
                 let Some(taskbar) = taskbar else {
                     let _ = ShowWindow(hwnd, SW_HIDE);
-                    return;
+                    return false;
                 };
                 native_interop::embed_as_child(hwnd, taskbar.hwnd);
                 ensure_tray_event_hook_for_taskbar(hwnd, taskbar.hwnd);
@@ -327,13 +347,13 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
                         SWP_NOACTIVATE,
                     );
                 } else {
-                    native_interop::make_popup(hwnd, false);
-                    let _ =
-                        SetWindowPos(hwnd, Some(HWND_BOTTOM), x, y, width, height, SWP_NOACTIVATE);
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    return false;
                 }
             }
             SurfaceNest::TrayIcon => {
                 let _ = ShowWindow(hwnd, SW_HIDE);
+                return false;
             }
             SurfaceNest::Floating | SurfaceNest::Auto => {
                 native_interop::make_popup(hwnd, true);
@@ -349,6 +369,7 @@ pub(super) fn position_custom_theme_internal(hwnd: HWND, theme: &ThemeDocument, 
             }
         }
     }
+    true
 }
 
 pub(super) fn sync_theme_window_visibility() {
@@ -372,6 +393,7 @@ pub(super) fn sync_theme_window_visibility() {
                 .collect::<Vec<_>>(),
         )
     };
+    let display_count = native_interop::find_monitors().len();
     unsafe {
         for (surface_index, surface) in theme.surfaces.iter().enumerate() {
             let nest = surface
@@ -389,13 +411,16 @@ pub(super) fn sync_theme_window_visibility() {
                 continue;
             }
             let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
-            let should_show =
-                theme_engine::surface_should_render(
+            let has_display =
+                surface_index == 0 || surface.placement.reference.display < display_count;
+            let should_show = has_display
+                && theme_engine::surface_should_render(
                     &theme,
                     surface_index,
                     data.as_ref(),
                     surface_runtime,
-                ) && !foreground_is_fullscreen_on_display(surface.placement.reference.display);
+                )
+                && !foreground_is_fullscreen_on_display(surface.placement.reference.display);
             if should_show == IsWindowVisible(hwnd).as_bool() {
                 continue;
             }
@@ -664,7 +689,7 @@ pub(super) fn schedule_tray_reposition(hwnd: HWND) {
     // geometry before updating the position, avoiding transient jumps and jitter.
     const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 80;
     unsafe {
-        let _ = SetTimer(
+        let _ = set_controller_timer(
             Some(hwnd),
             TIMER_TRAY_REPOSITION,
             TRAY_REPOSITION_TRAILING_DELAY_MS,

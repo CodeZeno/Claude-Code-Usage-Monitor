@@ -45,3 +45,37 @@ pub(crate) fn assert_tls_handshake(agent: ureq::Agent) {
     // The peer closes without a certificate: this must be an ordinary error.
     assert!(request.unwrap().is_err());
 }
+
+/// Opt-in network smoke check using the same trust settings as production.
+pub(crate) fn assert_https_certificate_validation(agent: ureq::Agent) {
+    let response = agent
+        .get("https://github.com/")
+        .config()
+        .proxy(None)
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .call()
+        .expect("a publicly trusted HTTPS certificate should be accepted");
+    assert_eq!(response.status(), 200);
+    drop(response);
+
+    for url in [
+        "https://self-signed.badssl.com/",
+        "https://expired.badssl.com/",
+        "https://wrong.host.badssl.com/",
+    ] {
+        let error = agent
+            .get(url)
+            .config()
+            .proxy(None)
+            .timeout_global(Some(Duration::from_secs(15)))
+            .build()
+            .call()
+            .expect_err("an invalid HTTPS certificate must be rejected");
+        // DNS failures and timeouts must not masquerade as certificate rejection.
+        assert!(
+            matches!(error, ureq::Error::NativeTls(_)),
+            "expected native TLS certificate rejection for {url}: {error:?}"
+        );
+    }
+}

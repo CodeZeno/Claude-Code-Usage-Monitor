@@ -78,6 +78,7 @@ static DESKTOP_HOST: Mutex<Option<(isize, isize)>> = Mutex::new(None);
 pub struct TaskbarWindow {
     pub hwnd: HWND,
     pub rect: RECT,
+    pub primary: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,7 +155,11 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
             if class_name == "Shell_TrayWnd" || class_name == "Shell_SecondaryTrayWnd" {
                 if let Some(rect) = get_taskbar_rect(hwnd) {
-                    taskbars.push(TaskbarWindow { hwnd, rect });
+                    taskbars.push(TaskbarWindow {
+                        hwnd,
+                        rect,
+                        primary: class_name == "Shell_TrayWnd",
+                    });
                 }
             }
         }
@@ -174,6 +179,88 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
         )
     });
     taskbars
+}
+
+/// Assign each taskbar to at most one display. Explorer can leave a secondary
+/// taskbar outside all monitors while removing a display. Never alias that
+/// window to the primary monitor. Off-screen auto-hide bars remain eligible on
+/// their nearest display, but only after visible candidates have been considered.
+pub fn taskbar_for_monitor<'a>(
+    taskbars: &'a [TaskbarWindow],
+    displays: &[DisplayMonitor],
+    monitor: HMONITOR,
+) -> Option<&'a TaskbarWindow> {
+    let display_index = displays
+        .iter()
+        .position(|display| display.handle == monitor)?;
+    taskbars
+        .iter()
+        .filter_map(|taskbar| {
+            let (owner, overlap) = taskbar_display(taskbar, displays)?;
+            (owner == display_index).then_some((taskbar, overlap))
+        })
+        .max_by_key(|(taskbar, overlap)| (taskbar.primary, *overlap))
+        .map(|(taskbar, _)| taskbar)
+}
+
+pub fn monitor_for_taskbar(
+    taskbars: &[TaskbarWindow],
+    displays: &[DisplayMonitor],
+    hwnd: HWND,
+) -> Option<HMONITOR> {
+    displays.iter().find_map(|display| {
+        taskbar_for_monitor(taskbars, displays, display.handle)
+            .filter(|taskbar| taskbar.hwnd == hwnd)
+            .map(|_| display.handle)
+    })
+}
+
+fn taskbar_display(taskbar: &TaskbarWindow, displays: &[DisplayMonitor]) -> Option<(usize, i64)> {
+    if taskbar.primary {
+        return displays
+            .iter()
+            .position(|display| display.primary)
+            .map(|index| (index, rect_overlap_area(taskbar.rect, displays[index].rect)));
+    }
+    let (index, overlap) = displays
+        .iter()
+        .enumerate()
+        .map(|(index, display)| (index, rect_overlap_area(taskbar.rect, display.rect)))
+        .max_by_key(|(_, area)| *area)?;
+    if overlap > 0 {
+        return Some((index, overlap));
+    }
+    // Use rectangle distance, not DEFAULTTOPRIMARY, for auto-hide fallbacks.
+    displays
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, display)| {
+            // At a shared corner both displays can be zero pixels away. Prefer
+            // the display aligned with the bar's edge, rather than enum order.
+            let horizontal = (i64::from(taskbar.rect.right.min(display.rect.right))
+                - i64::from(taskbar.rect.left.max(display.rect.left)))
+            .max(0);
+            let vertical = (i64::from(taskbar.rect.bottom.min(display.rect.bottom))
+                - i64::from(taskbar.rect.top.max(display.rect.top)))
+            .max(0);
+            (
+                rect_distance_squared(taskbar.rect, display.rect),
+                -(horizontal + vertical),
+            )
+        })
+        .map(|(index, _)| (index, 0))
+}
+
+fn rect_overlap_area(a: RECT, b: RECT) -> i64 {
+    let width = (i64::from(a.right.min(b.right)) - i64::from(a.left.max(b.left))).max(0);
+    let height = (i64::from(a.bottom.min(b.bottom)) - i64::from(a.top.max(b.top))).max(0);
+    width * height
+}
+
+fn rect_distance_squared(a: RECT, b: RECT) -> i128 {
+    let dx = (i128::from(a.left.max(b.left)) - i128::from(a.right.min(b.right))).max(0);
+    let dy = (i128::from(a.top.max(b.top)) - i128::from(a.bottom.min(b.bottom))).max(0);
+    dx * dx + dy * dy
 }
 
 /// Find a child window by class name

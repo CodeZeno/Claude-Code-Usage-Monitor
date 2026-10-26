@@ -6,6 +6,7 @@
     {
       "id": "main",
       "name": "Classic taskbar widget",
+      "tooltip": "usage_summary",
       "placement": {
         "reference": {
           "region": "system_tray",

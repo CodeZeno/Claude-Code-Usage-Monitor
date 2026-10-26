@@ -79,3 +79,23 @@ Dependabot. When the egui/eframe family changes, follow
 upstream source, reapply the text-only clipboard changes, and verify the feature
 graph. Review upstream security fixes for this copy explicitly: registry
 advisories and source allowlists do not validate locally modified source code.
+
+## HTTPS trust verification
+
+Both polling and update agents explicitly select native TLS with
+`RootCerts::PlatformVerifier`, using the Windows certificate store. ureq 3.5.0
+includes the [connector feature fix](https://github.com/algesten/ureq/pull/1204)
+needed for `native-tls-no-default`; this avoids bundling `webpki-root-certs`.
+
+The regular Rust tests verify that both production agents send a TLS ClientHello
+without panicking, using a local TCP listener. After TLS dependency changes, also
+run the opt-in certificate checks:
+
+```powershell
+cargo test configured_https_transport_validates_certificates -- --ignored
+```
+
+These tests require direct Internet access to GitHub and BadSSL (bypassing proxy
+settings). Each agent must accept GitHub's valid certificate and reject self-signed,
+expired, and mismatched-host certificates with a native TLS error. DNS failures or
+timeouts fail the check rather than counting as successful certificate rejection.

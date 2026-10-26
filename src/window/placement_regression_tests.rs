@@ -1,6 +1,6 @@
 use super::*;
 
-fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
+pub(super) fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> AppState {
     AppState {
         hwnd: SendHwnd::from_hwnd(HWND::default()),
         taskbar_hwnd: None,

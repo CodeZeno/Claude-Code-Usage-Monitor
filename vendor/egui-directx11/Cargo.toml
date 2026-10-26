@@ -16,7 +16,7 @@ targets = ["x86_64-pc-windows-msvc"]
 
 [dependencies]
 log = "0.4.33"
-egui = { version = "0.36", default-features = false }
+egui = { version = "0.37", default-features = false }
 windows = { version = "0.62.2", features = [
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Direct3D",

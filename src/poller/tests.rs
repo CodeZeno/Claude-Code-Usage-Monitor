@@ -61,6 +61,14 @@ fn configured_https_transport_does_not_panic() {
 }
 
 #[test]
+#[ignore = "requires direct Internet access to github.com and badssl.com"]
+fn configured_https_transport_validates_certificates() {
+    crate::https_test::assert_https_certificate_validation(
+        build_agent().expect("HTTP agent should build"),
+    );
+}
+
+#[test]
 fn stale_usage_does_not_trigger_reset_polling() {
     let mut usage = usage_with_session_percent(42.0);
     usage.session.resets_at = Some(UNIX_EPOCH);
@@ -837,4 +845,134 @@ fn failed_antigravity_poll_preserves_and_marks_both_pools_stale() {
         !app_is_past_reset(&cached),
         "stale external resets must not cause a poll loop"
     );
+}
+
+#[test]
+fn antigravity_summary_exposes_every_group_and_window_as_limits() {
+    let summary = serde_json::from_value(serde_json::json!({
+        "groups": [
+            {"displayName": "Gemini 4 Argon",
+             "buckets": [{"bucketId": "gemini-4-argon", "window": "weekly", "remainingFraction": 0.9}]},
+            {"displayName": "Claude and GPT models",
+             "buckets": [{"window": "5h", "remainingFraction": 0.4},
+                         {"window": "weekly", "remainingFraction": 0.2}]},
+            {"displayName": "Gemini Models",
+             "buckets": [{"window": "5h", "remainingFraction": 0.85},
+                         {"window": "weekly", "remainingFraction": 0.70}]}
+        ]
+    }))
+    .unwrap();
+    let data = super::antigravity::antigravity_usage_from_summary(summary).unwrap();
+
+    // Argon comes first but has its own pool; the main pool stays "Gemini Models".
+    assert!((data.session.percentage - 15.0).abs() < 1e-4);
+    assert!((data.weekly.percentage - 30.0).abs() < 1e-4);
+
+    let keys: Vec<&str> = data.limits.iter().map(|limit| limit.key.as_str()).collect();
+    assert_eq!(
+        keys,
+        [
+            "gemini_4_argon_weekly",
+            "claude_and_gpt_models_session",
+            "claude_and_gpt_models_weekly",
+            "gemini_models_session",
+            "gemini_models_weekly",
+        ]
+    );
+    let argon = &data.limits[0];
+    assert_eq!(argon.kind, "weekly");
+    assert_eq!(argon.model_id.as_deref(), Some("gemini-4-argon"));
+    assert!((argon.usage.percentage - 10.0).abs() < 1e-4);
+
+    // The cache and theme context must retain every limit alongside the two pools.
+    let app = AppUsageData::from_iter([(ProviderId::Antigravity, data)]);
+    let restored: AppUsageData =
+        serde_json::from_str(&serde_json::to_string(&app).unwrap()).unwrap();
+    assert_eq!(restored, app);
+    let context = crate::theme_engine::DataContext::from_usage(
+        Some(&restored),
+        &crate::theme_engine::Canvas::default(),
+    );
+    for (key, percentage) in [
+        ("gemini_4_argon_weekly", 10.0),
+        ("claude_and_gpt_models_session", 60.0),
+        ("claude_and_gpt_models_weekly", 80.0),
+        ("gemini_models_session", 15.0),
+        ("gemini_models_weekly", 30.0),
+    ] {
+        let value = context
+            .get(&format!("antigravity.limits.{key}.percentage"))
+            .expect("theme binding");
+        assert!((value - percentage).abs() < 1e-4, "{key}");
+    }
+}
+
+#[test]
+fn antigravity_argon_never_fills_the_main_pool_without_other_named_pools() {
+    for (identity, bucket_identity) in [
+        (
+            serde_json::json!({"displayName": "Gemini 4 Argon"}),
+            serde_json::json!({}),
+        ),
+        (
+            serde_json::json!({"description": "Gemini 4 ARGON models"}),
+            serde_json::json!({}),
+        ),
+        (
+            serde_json::json!({}),
+            serde_json::json!({"bucketId": "gemini-4-argon-weekly"}),
+        ),
+        (
+            serde_json::json!({}),
+            serde_json::json!({"displayName": "Gemini 4 Argon Weekly"}),
+        ),
+    ] {
+        for include_unknown in [false, true] {
+            let mut argon = identity.clone();
+            let mut bucket = bucket_identity.clone();
+            bucket["window"] = serde_json::json!("weekly");
+            bucket["remainingFraction"] = serde_json::json!(0.1);
+            argon["buckets"] = serde_json::json!([bucket]);
+            let mut groups = vec![argon];
+            if include_unknown {
+                groups.push(serde_json::json!({
+                    "displayName": "Unknown pool",
+                    "buckets": [{"window": "5h", "remainingFraction": 0.2}]
+                }));
+            }
+            let summary = serde_json::from_value(serde_json::json!({"groups": groups})).unwrap();
+            let usage = antigravity::antigravity_usage_from_summary(summary).unwrap();
+            assert!(
+                !usage.session.available && !usage.weekly.available,
+                "Argon and unrelated groups must not become the main Gemini pool: {identity}"
+            );
+            assert!(usage.external_pool.is_none());
+        }
+    }
+}
+
+#[test]
+fn antigravity_limits_skip_unusable_buckets_and_preserve_reported_windows() {
+    let summary = serde_json::from_value(serde_json::json!({"groups": [
+        {"displayName": " ", "buckets": [{"window": "5h", "remainingFraction": 0.1}]},
+        {"displayName": "Gemini Models", "buckets": [
+            {"window": "daily", "remainingFraction": 0.2},
+            {"window": "weekly"},
+            {"window": "5H", "remainingFraction": 1.5, "resetTime": "2099-01-01T00:00:00Z"},
+            {"window": "WEEKLY", "remainingFraction": -0.5}
+        ]}
+    ]}))
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_summary(summary).unwrap();
+    assert_eq!(usage.limits.len(), 2);
+    assert_eq!(usage.limits[0].key, "gemini_models_session");
+    assert_eq!(usage.limits[0].usage, usage.session);
+    assert_eq!(usage.limits[0].usage.percentage, 0.0);
+    assert_eq!(
+        usage.limits[0].usage.resets_at,
+        parse_iso8601(Some("2099-01-01T00:00:00Z"))
+    );
+    assert_eq!(usage.limits[1].key, "gemini_models_weekly");
+    assert_eq!(usage.limits[1].usage, usage.weekly);
+    assert_eq!(usage.limits[1].usage.percentage, 100.0);
 }

@@ -18,16 +18,12 @@ pub(super) fn refresh_theme_host_geometry() {
         let displays = native_interop::find_monitors();
         let taskbars = native_interop::find_taskbars();
         displays
-            .into_iter()
+            .iter()
             .map(|display| ThemeHostGeometry {
                 monitor: display.rect,
-                taskbar: taskbars
-                    .iter()
-                    .find(|taskbar| unsafe {
-                        MonitorFromWindow(taskbar.hwnd, MONITOR_DEFAULTTOPRIMARY) == display.handle
-                    })
+                taskbar: native_interop::taskbar_for_monitor(&taskbars, &displays, display.handle)
                     .map(|taskbar| taskbar.rect),
-                scale: monitor_scale(display),
+                scale: monitor_scale(*display),
             })
             .collect()
     });

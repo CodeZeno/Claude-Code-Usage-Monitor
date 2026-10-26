@@ -118,7 +118,7 @@ impl Dropdown {
         ui.painter()
             .galley(text_rect.min, galley, visuals.text_color());
         button_response.widget_info(|| {
-            let mut info = egui::WidgetInfo::new(egui::WidgetType::ComboBox);
+            let mut info = egui::WidgetInfo::new(egui::Role::ComboBox);
             info.enabled = ui.is_enabled();
             info.current_text_value = Some(current_text.clone());
             info

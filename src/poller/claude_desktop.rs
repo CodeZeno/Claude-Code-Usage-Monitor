@@ -49,45 +49,50 @@ pub(super) fn data_directories() -> Vec<PathBuf> {
     )
 }
 
-/// MSIX redirects the Store application's roaming data into its package.
-/// Keep the ordinary install first and discovery deterministic for machines
-/// with both installations. Missing config files remain watchable candidates.
+/// Prefer the migrated desktop data over legacy caches left behind by updates.
+/// Keep ordinary and MSIX paths for older installs, with deterministic discovery.
+/// Missing config files remain watchable candidates.
 fn data_directories_in(roaming: Option<&Path>, local: Option<&Path>) -> Vec<PathBuf> {
-    let mut paths: Vec<_> = roaming
-        .map(|path| path.join("Claude"))
-        .into_iter()
-        .collect();
+    let mut paths = local
+        .map(|path| publisher_directories_in(&path.join("Claude-Data"), "claude_"))
+        .unwrap_or_default();
+    paths.extend(roaming.map(|path| path.join("Claude")));
     if let Some(local) = local {
-        let mut packages: Vec<_> = std::fs::read_dir(local.join("Packages"))
-            .into_iter()
-            .flatten()
-            .flatten()
-            .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
-            .filter(|entry| {
-                entry.file_name().to_str().is_some_and(|name| {
-                    name.strip_prefix("Claude_").is_some_and(|publisher| {
-                        publisher.len() == 13
-                            && publisher
-                                .bytes()
-                                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
-                    })
-                })
-            })
-            .map(|entry| entry.path())
-            .collect();
-        packages.sort_by_key(|path| {
-            (
-                path.file_name()
-                    .is_none_or(|name| name != "Claude_pzs8sxrjxfjjc"),
-                path.clone(),
-            )
-        });
         paths.extend(
-            packages
+            publisher_directories_in(&local.join("Packages"), "Claude_")
                 .into_iter()
                 .map(|path| path.join("LocalCache").join("Roaming").join("Claude")),
         );
     }
+    paths
+}
+
+fn publisher_directories_in(root: &Path, prefix: &str) -> Vec<PathBuf> {
+    let mut paths: Vec<_> = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()))
+        .filter(|entry| {
+            entry.file_name().to_str().is_some_and(|name| {
+                name.strip_prefix(prefix).is_some_and(|publisher| {
+                    publisher.len() == 13
+                        && publisher
+                            .bytes()
+                            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit())
+                })
+            })
+        })
+        .map(|entry| entry.path())
+        .collect();
+    let preferred = format!("{prefix}pzs8sxrjxfjjc");
+    paths.sort_by_key(|path| {
+        (
+            path.file_name()
+                .is_none_or(|name| name != preferred.as_str()),
+            path.clone(),
+        )
+    });
     paths
 }
 
@@ -545,7 +550,8 @@ mod tests {
 
     #[test]
     fn discovers_regular_and_store_installs_in_stable_order() {
-        let root = crate::app_settings::app_data_directory();
+        let temporary = tempfile::tempdir().unwrap();
+        let root = temporary.path();
         let roaming = root.join("Roaming");
         let local = root.join("Local");
         let packages = local.join("Packages");
@@ -572,6 +578,46 @@ mod tests {
             vec![roaming.join("Claude")]
         );
         assert!(data_directories_in(None, None).is_empty());
+    }
+
+    #[test]
+    fn discovers_migrated_data_before_legacy_installs() {
+        let temporary = tempfile::tempdir().unwrap();
+        let roaming = temporary.path().join("Roaming");
+        let local = temporary.path().join("Local");
+        let migrated = local.join("Claude-Data");
+        for name in [
+            "claude_zzzzzzzzzzzzz",
+            "claude_aaaaaaaaaaaaa",
+            "claude_pzs8sxrjxfjjc",
+            "claude_short",
+            "claude_aaaaaaaaaaaaaa",
+            "claude_aaaaaaaaaaaaA",
+            "claude_aaaaaaaaaaaa-",
+            "claude_aaaaaaaaaaaaé",
+            "Claude_ccccccccccccc",
+            "other_pzs8sxrjxfjjc",
+        ] {
+            std::fs::create_dir_all(migrated.join(name)).unwrap();
+        }
+        std::fs::write(migrated.join("claude_bbbbbbbbbbbbb"), "").unwrap();
+        let expected = vec![
+            migrated.join("claude_pzs8sxrjxfjjc"),
+            migrated.join("claude_aaaaaaaaaaaaa"),
+            migrated.join("claude_zzzzzzzzzzzzz"),
+        ];
+        // Migrated-only installs do not require an old package directory or config.
+        assert_eq!(data_directories_in(None, Some(&local)), expected);
+        let legacy_store = local.join("Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude");
+        std::fs::create_dir_all(&legacy_store).unwrap();
+        let expected: Vec<_> = expected
+            .into_iter()
+            .chain([roaming.join("Claude"), legacy_store])
+            .collect();
+        assert_eq!(data_directories_in(Some(&roaming), Some(&local)), expected);
+        // Local State must be read alongside each discovered config.
+        let config = expected[0].join("config.json");
+        assert_eq!(local_state_path(&config), expected[0].join("Local State"));
     }
 
     #[test]

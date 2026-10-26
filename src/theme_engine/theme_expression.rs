@@ -605,26 +605,59 @@ pub(super) fn localized<'a>(context: &'a DataContext, name: &str, fallback: &'a 
     context.get_string(name).unwrap_or(fallback)
 }
 
+fn format_half_step(val: f64, suffix: &str) -> String {
+    let rounded = (val * 2.0).round() / 2.0;
+    if rounded.fract().abs() < 1e-4 {
+        format!("{:.0}{suffix}", rounded)
+    } else {
+        format!("{:.1}{suffix}", rounded)
+    }
+}
+
+pub(super) fn format_duration_short(seconds: u64, context: &DataContext) -> String {
+    let day_suffix = localized(context, "i18n.day_suffix", "d");
+    let hour_suffix = localized(context, "i18n.hour_suffix", "h");
+    let minute_suffix = localized(context, "i18n.minute_suffix", "m");
+    let second_suffix = localized(context, "i18n.second_suffix", "s");
+
+    if seconds >= 86_400 {
+        if seconds >= 864_000 {
+            // Round the remainder so even saturated template values cannot overflow.
+            let days = seconds / 86_400 + u64::from(seconds % 86_400 >= 43_200);
+            format!("{days}{day_suffix}")
+        } else {
+            let days = seconds as f64 / 86_400.0;
+            format_half_step(days, day_suffix)
+        }
+    } else if seconds >= 3_600 {
+        if seconds >= 36_000 {
+            let hours = (seconds + 1800) / 3600;
+            if hours >= 24 {
+                format!("1{day_suffix}")
+            } else {
+                format!("{hours}{hour_suffix}")
+            }
+        } else {
+            let hours = seconds as f64 / 3600.0;
+            format_half_step(hours, hour_suffix)
+        }
+    } else if seconds >= 60 {
+        let minutes = ((seconds + 30) / 60).min(59);
+        format!("{minutes}{minute_suffix}")
+    } else if seconds > 0 {
+        format!("{seconds}{second_suffix}")
+    } else {
+        localized(context, "i18n.now", "now").to_string()
+    }
+}
+
 pub(super) fn format_value(value: f64, format: &str, context: &DataContext) -> String {
     if let Some(value) = format_timestamp(value, format, context) {
         return value;
     }
     if format.eq_ignore_ascii_case("duration_short") {
         let seconds = value.max(0.0).round() as u64;
-        let days = seconds / 86_400;
-        let hours = seconds / 3_600;
-        let minutes = seconds / 60;
-        return if days > 0 {
-            format!("{days}{}", localized(context, "i18n.day_suffix", "d"))
-        } else if hours > 0 {
-            format!("{hours}{}", localized(context, "i18n.hour_suffix", "h"))
-        } else if minutes > 0 {
-            format!("{minutes}{}", localized(context, "i18n.minute_suffix", "m"))
-        } else if seconds > 0 {
-            format!("{seconds}{}", localized(context, "i18n.second_suffix", "s"))
-        } else {
-            localized(context, "i18n.now", "now").to_string()
-        };
+        return format_duration_short(seconds, context);
     }
     if format.eq_ignore_ascii_case("duration") {
         let seconds = value.max(0.0).round() as u64;

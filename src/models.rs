@@ -74,6 +74,10 @@ pub struct CreditsSection {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct UsageData {
     pub session: UsageSection,
+    /// Short label for the session window length (e.g. "5h", "7d"), when the
+    /// provider reports a period different from the default session window.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_label: Option<String>,
     pub weekly: UsageSection,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub weekly_label: Option<String>,
@@ -430,6 +434,23 @@ pub fn limit_slug(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_cache_preserves_session_labels_and_reads_older_caches() {
+        let usage = UsageData {
+            session_label: Some("7d".into()),
+            ..Default::default()
+        };
+        let mut json = serde_json::to_value(&usage).unwrap();
+        assert_eq!(json["session_label"], "7d");
+        assert_eq!(
+            serde_json::from_value::<UsageData>(json.clone()).unwrap(),
+            usage
+        );
+        json.as_object_mut().unwrap().remove("session_label");
+        let legacy: UsageData = serde_json::from_value(json).unwrap();
+        assert!(legacy.session_label.is_none());
+    }
 
     #[test]
     fn default_claude_cache_keeps_poll_results_until_source_changes() {

@@ -290,7 +290,12 @@ pub(super) fn execute_context_menu_action(
     };
     if let Some(command) = static_command {
         unsafe {
-            let _ = PostMessageW(Some(hwnd), WM_COMMAND, WPARAM(command as usize), LPARAM(0));
+            let _ = PostMessageW(
+                Some(controller_for(hwnd)),
+                WM_COMMAND,
+                WPARAM(command as usize),
+                LPARAM(0),
+            );
         }
         return;
     }

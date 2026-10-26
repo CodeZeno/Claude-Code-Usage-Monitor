@@ -569,18 +569,18 @@ fn resolve_windows_claude_path() -> String {
         }
     }
 
-    if let Some(bundled) = bundled_desktop_claude_path() {
+    if let Some(bundled) = bundled_desktop_claude_path(claude_desktop::data_directories()) {
         return bundled.to_string_lossy().into_owned();
     }
 
     "claude.cmd".to_string()
 }
 
-/// The desktop app ships its own Claude Code build under
-/// `%APPDATA%\Claude\claude-code\<version>\claude.exe`, which is the only
-/// Claude binary present when the standalone CLI was never installed.
-fn bundled_desktop_claude_path() -> Option<PathBuf> {
-    let mut candidates: Vec<PathBuf> = claude_desktop::data_directories()
+/// The desktop app ships `claude-code\<version>\claude.exe` under its data
+/// directory, including the migrated `%LOCALAPPDATA%\Claude-Data\claude_*`
+/// layout. This may be the only binary when the standalone CLI is absent.
+fn bundled_desktop_claude_path(data_directories: Vec<PathBuf>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = data_directories
         .into_iter()
         .flat_map(|path| {
             std::fs::read_dir(path.join("claude-code"))
@@ -1103,6 +1103,32 @@ mod tests {
         assert_eq!(poll_account(&path), Err(PollError::TokenExpired));
         std::fs::remove_file(path).unwrap();
         std::fs::remove_dir(directory).unwrap();
+    }
+
+    #[test]
+    fn finds_bundled_cli_in_migrated_desktop_data() {
+        let temporary = tempfile::tempdir().unwrap();
+        let legacy = temporary.path().join("Roaming/Claude");
+        let migrated = temporary
+            .path()
+            .join("Local/Claude-Data/claude_pzs8sxrjxfjjc");
+        let older = legacy.join("claude-code/2.1.9/claude.exe");
+        let newer = migrated.join("claude-code/2.1.10/claude.exe");
+        for path in [&older, &newer] {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        std::fs::create_dir_all(migrated.join("claude-code/2.1.11")).unwrap();
+        assert_eq!(
+            bundled_desktop_claude_path(vec![migrated.clone()]),
+            Some(newer.clone())
+        );
+        assert_eq!(
+            bundled_desktop_claude_path(vec![migrated.clone(), legacy]),
+            Some(newer.clone())
+        );
+        std::fs::remove_file(newer).unwrap();
+        assert_eq!(bundled_desktop_claude_path(vec![migrated]), None);
     }
 
     #[test]

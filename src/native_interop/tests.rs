@@ -3,6 +3,101 @@ use std::cell::RefCell;
 use windows::Win32::Foundation::LRESULT;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 
+fn monitor(index: isize, rect: RECT, primary: bool) -> DisplayMonitor {
+    DisplayMonitor {
+        handle: HMONITOR(index as *mut _),
+        rect,
+        primary,
+    }
+}
+
+fn taskbar(index: isize, rect: RECT, primary: bool) -> TaskbarWindow {
+    TaskbarWindow {
+        hwnd: HWND(index as *mut _),
+        rect,
+        primary,
+    }
+}
+
+fn rect(left: i32, top: i32, right: i32, bottom: i32) -> RECT {
+    RECT {
+        left,
+        top,
+        right,
+        bottom,
+    }
+}
+
+#[test]
+fn offscreen_secondary_never_displaces_the_main_taskbar() {
+    let displays = [monitor(1, rect(0, 0, 1920, 1080), true)];
+    let bars = [
+        taskbar(2, rect(-1920, -100, 0, -52), false),
+        taskbar(1, rect(0, 1032, 1920, 1080), true),
+    ];
+    for bars in [bars, [bars[1], bars[0]]] {
+        assert_eq!(
+            taskbar_for_monitor(&bars, &displays, displays[0].handle)
+                .unwrap()
+                .hwnd,
+            bars.iter().find(|bar| bar.primary).unwrap().hwnd
+        );
+        assert_eq!(
+            monitor_for_taskbar(&bars, &displays, HWND(2 as *mut _)),
+            None
+        );
+    }
+}
+
+#[test]
+fn secondary_taskbars_use_greatest_overlap_and_visible_candidates_win() {
+    let displays = [
+        monitor(1, rect(0, 0, 1920, 1080), true),
+        monitor(2, rect(-1920, -200, 0, 880), false),
+    ];
+    let bars = [
+        taskbar(3, rect(-1920, -248, 0, -200), false),
+        taskbar(2, rect(-1920, 832, 20, 880), false),
+        taskbar(1, rect(0, 1032, 1920, 1080), true),
+    ];
+    assert_eq!(
+        taskbar_for_monitor(&bars, &displays, displays[1].handle)
+            .unwrap()
+            .hwnd,
+        bars[1].hwnd
+    );
+    assert_eq!(
+        monitor_for_taskbar(&bars, &displays, bars[1].hwnd),
+        Some(displays[1].handle)
+    );
+    assert_eq!(monitor_for_taskbar(&bars, &displays, bars[0].hwnd), None);
+}
+
+#[test]
+fn offscreen_autohide_bar_is_a_fallback_for_its_nearest_display() {
+    let displays = [
+        monitor(1, rect(0, 0, 1920, 1080), true),
+        monitor(2, rect(-1920, 0, 0, 1080), false),
+    ];
+    let bars = [
+        taskbar(1, rect(0, 1078, 1920, 1126), true),
+        taskbar(2, rect(-1920, 1080, 0, 1128), false),
+    ];
+    assert_eq!(
+        taskbar_for_monitor(&bars, &displays, displays[1].handle)
+            .unwrap()
+            .hwnd,
+        bars[1].hwnd
+    );
+    assert_eq!(
+        taskbar_for_monitor(&bars, &displays[..1], displays[0].handle)
+            .unwrap()
+            .hwnd,
+        bars[0].hwnd
+    );
+    assert!(taskbar_for_monitor(&bars, &[], displays[0].handle).is_none());
+}
+
 #[test]
 fn browser_opener_rejects_non_web_targets_without_launching_them() {
     for target in [

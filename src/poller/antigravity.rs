@@ -9,12 +9,14 @@ use serde::Deserialize;
 
 use super::{build_agent, parse_iso8601, windows_credentials, PollError};
 use crate::diagnose;
-use crate::models::{UsageData, UsageSection};
+use crate::models::{limit_slug, UsageData, UsageLimit, UsageSection};
 
 const ANTIGRAVITY_CREDENTIAL_TARGET: &str = "gemini:antigravity";
 const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const EXPIRY_SKEW: Duration = Duration::from_secs(60);
-const ANTIGRAVITY_USER_AGENT: &str = "antigravity/2.24.0";
+// The daily summary returns the "Gemini 4 Argon" group only for the agy CLI
+// form of the UA; "antigravity", "antigravity/cli/0.0.1" and other forms omit it.
+const ANTIGRAVITY_USER_AGENT: &str = "antigravity/cli/1.4.0";
 const ANTIGRAVITY_ENDPOINTS: &[&str] = &[
     "https://daily-cloudcode-pa.googleapis.com",
     "https://cloudcode-pa.googleapis.com",
@@ -599,7 +601,15 @@ pub(super) fn antigravity_usage_from_summary(
     // failure to be papered over with model quotas or another endpoint.
     let answered = response.groups.is_some();
     let groups = response.groups.unwrap_or_default();
+    let limits = antigravity_limits_from_summary_groups(&groups);
     for group in groups {
+        // Argon has its own pool; it must not stand in for the main Gemini pool.
+        if is_antigravity_separate_gemini_group(&group) {
+            // Its presence also rules out assigning an unrelated sole group
+            // through the unnamed-pool fallback below.
+            has_named_pool = true;
+            continue;
+        }
         let is_gemini = is_antigravity_gemini_summary_group(&group);
         let is_external = is_antigravity_external_summary_group(&group);
         has_named_pool |= is_gemini || is_external;
@@ -625,20 +635,75 @@ pub(super) fn antigravity_usage_from_summary(
         gemini_usage = other_groups.pop();
     }
 
-    if let Some(mut gemini) = gemini_usage {
+    let mut usage = if let Some(mut gemini) = gemini_usage {
         if let Some(external) = external_usage {
             gemini.external_pool = Some(Box::new(external));
         }
-        Some(gemini)
+        gemini
     } else if let Some(external) = external_usage {
         let mut gemini = UsageData::default();
         gemini.session.available = false;
         gemini.weekly.available = false;
         gemini.external_pool = Some(Box::new(external));
-        Some(gemini)
+        gemini
+    } else if answered {
+        UsageData::default()
     } else {
-        answered.then(UsageData::default)
+        return None;
+    };
+    usage.limits = limits;
+    Some(usage)
+}
+
+pub(super) fn is_antigravity_separate_gemini_group(group: &AntigravityQuotaSummaryGroup) -> bool {
+    let is_argon = |value: Option<&str>| {
+        value.is_some_and(|value| value.to_ascii_lowercase().contains("argon"))
+    };
+    is_argon(group.display_name.as_deref())
+        || is_argon(group.description.as_deref())
+        || group.buckets.as_ref().is_some_and(|buckets| {
+            buckets.iter().any(|bucket| {
+                is_argon(bucket.bucket_id.as_deref()) || is_argon(bucket.display_name.as_deref())
+            })
+        })
+}
+
+// The main and external pools show two groups only; themes need every group
+// (e.g. "Gemini 4 Argon") and every window to show per-group quota.
+pub(super) fn antigravity_limits_from_summary_groups(
+    groups: &[AntigravityQuotaSummaryGroup],
+) -> Vec<UsageLimit> {
+    let mut limits = Vec::new();
+    for group in groups {
+        let Some(name) = group
+            .display_name
+            .as_deref()
+            .filter(|name| !name.trim().is_empty())
+        else {
+            continue;
+        };
+        for bucket in group.buckets.iter().flatten() {
+            let kind = match bucket.window.as_deref() {
+                Some(window) if window.eq_ignore_ascii_case("5h") => "session",
+                Some(window) if window.eq_ignore_ascii_case("weekly") => "weekly",
+                _ => continue,
+            };
+            let Some(usage) = antigravity_section_from_summary_bucket(bucket) else {
+                continue;
+            };
+            limits.push(UsageLimit {
+                key: format!("{}_{kind}", limit_slug(name)),
+                kind: kind.to_string(),
+                label: name.to_string(),
+                model: Some(name.to_string()),
+                model_id: bucket.bucket_id.clone(),
+                scope: None,
+                is_active: false,
+                usage,
+            });
+        }
     }
+    limits
 }
 
 pub(super) fn is_antigravity_external_summary_group(group: &AntigravityQuotaSummaryGroup) -> bool {
