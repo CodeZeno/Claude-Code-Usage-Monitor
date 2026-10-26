@@ -99,42 +99,32 @@ pub(super) fn poll_claude_code() -> Result<UsageData, PollError> {
 /// The one exception is a profile sitting on the default CLI path. That path
 /// is where the desktop app's Claude Code build would have logged in too, and
 /// the desktop app can leave `.credentials.json` present but tokenless once it
-/// takes the login over. Treating "no token there" as the end of the search
+/// takes the login over. Treating "no usable token there" as the end of the search
 /// hides a perfectly good desktop token, so the default path — and only the
 /// default path — falls through to the desktop app. A custom export stays
 /// pinned, so a multi-account setup can never borrow another account's token.
 pub(super) fn poll_account(path: &Path) -> Result<UsageData, PollError> {
-    let mut credentials =
+    let credentials =
         match read_credentials_from_source(&CredentialSource::Windows(path.to_path_buf())) {
             Some(credentials) => credentials,
             None => desktop_credentials_for_default_path(path).ok_or(PollError::NoCredentials)?,
         };
 
-    // Refresh against whichever source actually produced the token.
-    let source = credentials.source.clone();
-    if is_token_expired(credentials.expires_at) {
-        cli_refresh_token(&source);
-        credentials = read_credentials_from_source(&source)
-            .filter(|refreshed| !is_token_expired(refreshed.expires_at))
-            .or_else(|| fresh_desktop_credentials_for_default_path(path, &source))
-            .ok_or(PollError::TokenExpired)?;
-    }
+    let credentials = refresh_credentials(credentials)?;
     fetch_usage_with_fallback(&credentials.access_token)
 }
 
 /// A stale CLI token the CLI could not refresh does not end the search for the
 /// default profile: the desktop app keeps its own cache fresh while it runs.
-fn fresh_desktop_credentials_for_default_path(
-    path: &Path,
-    stale: &CredentialSource,
-) -> Option<Credentials> {
-    if matches!(stale, CredentialSource::DesktopApp(_)) {
+fn fresh_desktop_credentials_for_default_path(stale: &CredentialSource) -> Option<Credentials> {
+    let CredentialSource::Windows(path) = stale else {
         return None;
-    }
-    let credentials = desktop_credentials_for_default_path(path)?;
-    if is_token_expired(credentials.expires_at) {
-        return None;
-    }
+    };
+    let credentials = desktop_credentials_for_paths(
+        &desktop_fallback_paths(path),
+        true,
+        read_desktop_app_credentials,
+    )?;
     diagnose::log("stale CLI token replaced by the Claude desktop app token cache");
     Some(credentials)
 }
@@ -142,11 +132,24 @@ fn fresh_desktop_credentials_for_default_path(
 /// The desktop app's token, but only for a profile that points at the default
 /// CLI credentials path.
 fn desktop_credentials_for_default_path(path: &Path) -> Option<Credentials> {
-    let credentials = desktop_fallback_paths(path)
-        .iter()
-        .find_map(|path| read_desktop_app_credentials(path))?;
+    let credentials = desktop_credentials_for_paths(
+        &desktop_fallback_paths(path),
+        false,
+        read_desktop_app_credentials,
+    )?;
     diagnose::log("default profile fell back to the Claude desktop app token cache");
     Some(credentials)
+}
+
+fn desktop_credentials_for_paths(
+    paths: &[PathBuf],
+    fresh_only: bool,
+    mut read: impl FnMut(&Path) -> Option<Credentials>,
+) -> Option<Credentials> {
+    paths
+        .iter()
+        .filter_map(|path| read(path))
+        .find(|credentials| !fresh_only || !is_token_expired(credentials.expires_at))
 }
 
 fn desktop_fallback_paths(path: &Path) -> Vec<PathBuf> {
@@ -508,15 +511,30 @@ pub(super) fn credential_watch_snapshot(all_sources: bool) -> Vec<String> {
 }
 
 fn refresh_credentials(credentials: Credentials) -> Result<Credentials, PollError> {
+    refresh_credentials_with(
+        credentials,
+        cli_refresh_token,
+        read_credentials_from_source,
+        fresh_desktop_credentials_for_default_path,
+    )
+}
+
+fn refresh_credentials_with(
+    credentials: Credentials,
+    refresh: impl FnOnce(&CredentialSource),
+    read: impl FnOnce(&CredentialSource) -> Option<Credentials>,
+    fallback: impl FnOnce(&CredentialSource) -> Option<Credentials>,
+) -> Result<Credentials, PollError> {
     if !is_token_expired(credentials.expires_at) {
         return Ok(credentials);
     }
     let source = credentials.source;
-    cli_refresh_token(&source);
-    // An expired login is still a selected account. Do not replace it with
-    // another account found in Desktop or WSL when its refresh fails.
-    read_credentials_from_source(&source)
+    refresh(&source);
+    // Keep the selected source first. Only the default CLI path may borrow
+    // the desktop login; custom exports, desktop caches, and WSL stay pinned.
+    read(&source)
         .filter(|credentials| !is_token_expired(credentials.expires_at))
+        .or_else(|| fallback(&source))
         .ok_or(PollError::TokenExpired)
 }
 
@@ -1004,6 +1022,132 @@ mod tests {
             outcome.is_ok(),
             "the default profile should resolve usage from the desktop app, got {outcome:?}"
         );
+    }
+
+    #[test]
+    fn expired_cli_uses_desktop_only_after_refresh_fails() {
+        let source = CredentialSource::Windows(PathBuf::from("fixture/.credentials.json"));
+        let desktop = CredentialSource::DesktopApp(PathBuf::from("fixture/config.json"));
+        for refreshed_expiry in [None, Some(0), Some(i64::MAX)] {
+            let credentials = refresh_credentials_with(
+                Credentials {
+                    access_token: "expired-cli".into(),
+                    expires_at: Some(0),
+                    source: source.clone(),
+                },
+                |selected| assert_eq!(selected, &source),
+                |selected| {
+                    assert_eq!(selected, &source);
+                    refreshed_expiry.map(|expires_at| Credentials {
+                        access_token: "refreshed-cli".into(),
+                        expires_at: Some(expires_at),
+                        source: source.clone(),
+                    })
+                },
+                |selected| {
+                    assert_eq!(selected, &source);
+                    assert_ne!(refreshed_expiry, Some(i64::MAX));
+                    Some(Credentials {
+                        access_token: "fresh-desktop".into(),
+                        expires_at: Some(i64::MAX),
+                        source: desktop.clone(),
+                    })
+                },
+            )
+            .unwrap();
+            if refreshed_expiry == Some(i64::MAX) {
+                assert_eq!(credentials.source, source);
+                assert_eq!(credentials.access_token, "refreshed-cli");
+            } else {
+                assert_eq!(credentials.source, desktop);
+                assert_eq!(credentials.access_token, "fresh-desktop");
+            }
+        }
+    }
+
+    #[test]
+    fn fresh_cli_does_not_refresh_or_try_another_login() {
+        let credentials = refresh_credentials_with(
+            Credentials {
+                access_token: "fresh-cli".into(),
+                expires_at: Some(i64::MAX),
+                source: CredentialSource::Windows(PathBuf::from("fixture/.credentials.json")),
+            },
+            |_| panic!("a fresh token needs no refresh"),
+            |_| panic!("a fresh token needs no reread"),
+            |_| panic!("a fresh token needs no fallback"),
+        )
+        .unwrap();
+        assert_eq!(credentials.access_token, "fresh-cli");
+    }
+
+    #[test]
+    fn failed_refresh_without_a_desktop_token_stays_expired() {
+        for reread_expiry in [None, Some(0)] {
+            let source = CredentialSource::Windows(PathBuf::from("fixture/.credentials.json"));
+            let outcome = refresh_credentials_with(
+                Credentials {
+                    access_token: "expired-cli".into(),
+                    expires_at: Some(0),
+                    source: source.clone(),
+                },
+                |_| {},
+                |_| {
+                    reread_expiry.map(|expires_at| Credentials {
+                        access_token: "still-expired".into(),
+                        expires_at: Some(expires_at),
+                        source,
+                    })
+                },
+                |_| None,
+            );
+            assert!(matches!(outcome, Err(PollError::TokenExpired)));
+        }
+    }
+
+    #[test]
+    fn desktop_recovery_skips_missing_and_expired_installations() {
+        let paths: Vec<_> = ["missing.json", "expired.json", "fresh.json", "unused.json"]
+            .into_iter()
+            .map(PathBuf::from)
+            .collect();
+        let credentials = desktop_credentials_for_paths(&paths, true, |path| {
+            if path == paths[0] {
+                return None;
+            }
+            assert_ne!(path, paths[3], "stop once a fresh desktop login is found");
+            Some(Credentials {
+                access_token: "fixture-desktop".into(),
+                expires_at: Some(if path == paths[1] { 0 } else { i64::MAX }),
+                source: CredentialSource::DesktopApp(path.to_path_buf()),
+            })
+        })
+        .unwrap();
+        assert_eq!(
+            credentials.source,
+            CredentialSource::DesktopApp(paths[2].clone())
+        );
+        assert!(
+            desktop_credentials_for_paths(&paths, true, |path| Some(Credentials {
+                access_token: "expired-desktop".into(),
+                expires_at: Some(0),
+                source: CredentialSource::DesktopApp(path.to_path_buf()),
+            }))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn stale_custom_desktop_and_wsl_sources_stay_pinned() {
+        for source in [
+            CredentialSource::Windows(PathBuf::from("C:/claude-fallback-test/export.json")),
+            CredentialSource::DesktopApp(PathBuf::from("fixture/config.json")),
+            CredentialSource::Wsl {
+                distro: "fixture-distro".into(),
+            },
+        ] {
+            assert!(fresh_desktop_credentials_for_default_path(&source).is_none());
+        }
     }
 
     #[test]
