@@ -21,7 +21,7 @@
         "offset_x": 6,
         "offset_y": 0
       },
-      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18 + providers.claude.enabled * claude.model.fable.available * 96",
+      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18 + providers.claude.enabled * claude.model.fable.available * 96 + providers.codex.enabled * codex.dual_mode * 12",
       "height": "46",
       "background": {
         "type": "none"
@@ -64,7 +64,7 @@
           "render": "system.dark",
           "visibility": "100",
           "parent": "cursor-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -100,7 +100,7 @@
           "visibility": "100",
           "parent": "cursor-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "80",
           "height": "13",
           "background": {
@@ -132,7 +132,7 @@
           "render": "1 - system.dark",
           "visibility": "100",
           "parent": "cursor-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -168,7 +168,7 @@
           "visibility": "100",
           "parent": "cursor-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "80",
           "height": "13",
           "background": {
@@ -376,7 +376,7 @@
           "render": "system.dark",
           "visibility": "100",
           "parent": "claude-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -412,7 +412,7 @@
           "visibility": "(100) * claude.session.expected_available * display.show_pace",
           "parent": "claude-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -438,7 +438,7 @@
           "visibility": "100",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -470,7 +470,7 @@
           "render": "1 - system.dark",
           "visibility": "100",
           "parent": "claude-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -506,7 +506,7 @@
           "visibility": "(100) * claude.session.expected_available * display.show_pace",
           "parent": "claude-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -532,7 +532,7 @@
           "visibility": "100",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -772,7 +772,7 @@
           "render": "system.dark",
           "visibility": "100",
           "parent": "fable-provider",
-          "y": "11",
+          "y": "10",
           "width": "floor((90 + 1) / 11) * 11 - 1",
           "height": "9",
           "background": {
@@ -839,7 +839,7 @@
           "render": "1 - system.dark",
           "visibility": "100",
           "parent": "fable-provider",
-          "y": "11",
+          "y": "10",
           "width": "floor((90 + 1) / 11) * 11 - 1",
           "height": "9",
           "background": {
@@ -906,7 +906,7 @@
           "render": "providers.codex.enabled",
           "visibility": "100",
           "parent": "provider-row",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62 + (codex.dual_mode * 12)",
           "height": "46",
           "background": {
             "type": "none"
@@ -923,10 +923,10 @@
         {
           "id": "codex-session-segments-dark",
           "name": "dark Codex 5-hour segments",
-          "render": "system.dark",
+          "render": "(system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -958,11 +958,11 @@
         {
           "id": "codex-session-segments-dark-pace",
           "name": "dark Codex 5-hour segments pace tick",
-          "render": "system.dark",
+          "render": "(system.dark) && (!codex.dual_mode)",
           "visibility": "(100) * codex.five_hour.expected_available * display.show_pace",
           "parent": "codex-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.five_hour.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -984,11 +984,11 @@
         {
           "id": "codex-session-value-dark",
           "name": "dark Codex 5-hour value",
-          "render": "system.dark",
+          "render": "(system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -1017,10 +1017,10 @@
         {
           "id": "codex-session-segments-light",
           "name": "light Codex 5-hour segments",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1052,11 +1052,11 @@
         {
           "id": "codex-session-segments-light-pace",
           "name": "light Codex 5-hour segments pace tick",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && (!codex.dual_mode)",
           "visibility": "(100) * codex.five_hour.expected_available * display.show_pace",
           "parent": "codex-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.five_hour.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -1078,11 +1078,11 @@
         {
           "id": "codex-session-value-light",
           "name": "light Codex 5-hour value",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -1111,7 +1111,7 @@
         {
           "id": "codex-weekly-segments-dark",
           "name": "dark Codex 7-day segments",
-          "render": "system.dark",
+          "render": "(system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "y": "27",
@@ -1146,7 +1146,7 @@
         {
           "id": "codex-weekly-segments-dark-pace",
           "name": "dark Codex 7-day segments pace tick",
-          "render": "system.dark",
+          "render": "(system.dark) && (!codex.dual_mode)",
           "visibility": "(100) * codex.weekly.expected_available * display.show_pace",
           "parent": "codex-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.weekly.expected_display, 0, 100) / 100)",
@@ -1172,7 +1172,7 @@
         {
           "id": "codex-weekly-value-dark",
           "name": "dark Codex 7-day value",
-          "render": "(system.dark) && !codex.credits.available",
+          "render": "((system.dark) && !codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1205,7 +1205,7 @@
         {
           "id": "codex-weekly-segments-light",
           "name": "light Codex 7-day segments",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "y": "27",
@@ -1240,7 +1240,7 @@
         {
           "id": "codex-weekly-segments-light-pace",
           "name": "light Codex 7-day segments pace tick",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && (!codex.dual_mode)",
           "visibility": "(100) * codex.weekly.expected_available * display.show_pace",
           "parent": "codex-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(codex.weekly.expected_display, 0, 100) / 100)",
@@ -1266,7 +1266,7 @@
         {
           "id": "codex-weekly-value-light",
           "name": "light Codex 7-day value",
-          "render": "(1 - system.dark) && !codex.credits.available",
+          "render": "((1 - system.dark) && !codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -1322,7 +1322,7 @@
           "render": "system.dark && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
           "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1358,7 +1358,7 @@
           "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -1383,7 +1383,7 @@
           "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.gemini.opacity > 0.01",
           "visibility": "100 * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1419,7 +1419,7 @@
           "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace * antigravity.gemini.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -1444,7 +1444,7 @@
           "render": "system.dark && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
           "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1480,7 +1480,7 @@
           "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -1505,7 +1505,7 @@
           "render": "(1 - system.dark) && !antigravity.dual_mode && antigravity.external.opacity > 0.01",
           "visibility": "100 * antigravity.external.opacity",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -1541,7 +1541,7 @@
           "visibility": "(100) * antigravity.external.session.expected_available * display.show_pace * antigravity.external.opacity",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.external.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(9) + 2",
           "background": {
@@ -1566,7 +1566,7 @@
           "render": "system.dark && antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "4",
           "background": {
@@ -1602,7 +1602,7 @@
           "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(4) + 2",
           "background": {
@@ -1627,7 +1627,7 @@
           "render": "(1 - system.dark) && antigravity.dual_mode",
           "visibility": "100",
           "parent": "antigravity-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "4",
           "background": {
@@ -1663,7 +1663,7 @@
           "visibility": "(100) * antigravity.gemini.session.expected_available * display.show_pace",
           "parent": "antigravity-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(antigravity.gemini.session.expected_display, 0, 100) / 100)",
-          "y": "(11) - 1",
+          "y": "(10) - 1",
           "width": "1",
           "height": "(4) + 2",
           "background": {
@@ -1811,7 +1811,7 @@
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -1844,7 +1844,7 @@
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -1877,7 +1877,7 @@
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -1910,7 +1910,7 @@
           "visibility": "100",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -2582,7 +2582,7 @@
           "render": "system.dark",
           "visibility": "100",
           "parent": "opencode-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -2618,7 +2618,7 @@
           "visibility": "100",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -2650,7 +2650,7 @@
           "render": "1 - system.dark",
           "visibility": "100",
           "parent": "opencode-provider",
-          "y": "11",
+          "y": "10",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "9",
           "background": {
@@ -2686,7 +2686,7 @@
           "visibility": "100",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "9",
+          "y": "8",
           "width": "62",
           "height": "13",
           "background": {
@@ -2987,7 +2987,7 @@
         {
           "id": "codex-credits-segments-dark",
           "name": "dark codex credit overlay",
-          "render": "(system.dark) && codex.credits.available",
+          "render": "((system.dark) && codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "y": "27",
@@ -3022,7 +3022,7 @@
         {
           "id": "codex-credits-value-dark",
           "name": "dark codex credit balance",
-          "render": "(system.dark) && codex.credits.available",
+          "render": "((system.dark) && codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -3055,7 +3055,7 @@
         {
           "id": "codex-credits-segments-light",
           "name": "light codex credit overlay",
-          "render": "(1 - system.dark) && codex.credits.available",
+          "render": "((1 - system.dark) && codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "y": "27",
@@ -3090,7 +3090,7 @@
         {
           "id": "codex-credits-value-light",
           "name": "light codex credit balance",
-          "render": "(1 - system.dark) && codex.credits.available",
+          "render": "((1 - system.dark) && codex.credits.available) && (!codex.dual_mode)",
           "visibility": "100",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
@@ -3117,6 +3117,1318 @@
             "color": {
               "color": "#C77700FF",
               "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-main-marker-dark-normal",
+          "name": "dark Codex Main marker o (5h color)",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "7",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "o",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#60A5FAFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-marker-dark-hover",
+          "name": "dark Codex Main marker o (7d color)",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "7",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "o",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#3B82F6FF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-marker-light-normal",
+          "name": "light Codex Main marker o (5h color)",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "7",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "o",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2563EBFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-marker-light-hover",
+          "name": "light Codex Main marker o (7d color)",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "7",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "o",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1E40AFFF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-5h-dark-normal",
+          "name": "dark Codex Main 5h normal",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "8",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#3B82F6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-5h-dark-normal-pace",
+          "name": "dark Codex Main 5h normal pace tick",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.default.session.expected_available * display.show_pace * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.default.session.expected_display, 0, 100) / 100)",
+          "y": "7",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-main-5h-dark-hover",
+          "name": "dark Codex Main 5h hover",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "8",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#3B82F6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-5h-light-normal",
+          "name": "light Codex Main 5h normal",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "8",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2563EBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-5h-light-normal-pace",
+          "name": "light Codex Main 5h normal pace tick",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.default.session.expected_available * display.show_pace * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.default.session.expected_display, 0, 100) / 100)",
+          "y": "7",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-main-5h-light-hover",
+          "name": "light Codex Main 5h hover",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "8",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2563EBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-7d-dark-normal",
+          "name": "dark Codex Main 7d normal",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "16",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1D4ED8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#333333FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-7d-dark-hover",
+          "name": "dark Codex Main 7d hover",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "13",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1D4ED8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#333333FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-7d-dark-hover-pace",
+          "name": "dark Codex Main 7d hover pace tick",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.default.weekly.expected_available * display.show_pace * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.default.weekly.expected_display, 0, 100) / 100)",
+          "y": "12",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-main-7d-light-normal",
+          "name": "light Codex Main 7d normal",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "16",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1E40AFFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#999999FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-7d-light-hover",
+          "name": "light Codex Main 7d hover",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "13",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.default.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1E40AFFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#999999FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-main-7d-light-hover-pace",
+          "name": "light Codex Main 7d hover pace tick",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.default.weekly.expected_available * display.show_pace * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.default.weekly.expected_display, 0, 100) / 100)",
+          "y": "12",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-main-text-dark-normal",
+          "name": "dark Codex Main text 5h",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "7",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.default.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#60A5FAFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-text-dark-hover",
+          "name": "dark Codex Main text 7d",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "7",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.default.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#3B82F6FF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-text-light-normal",
+          "name": "light Codex Main text 5h",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "7",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.default.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2563EBFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-main-text-light-hover",
+          "name": "light Codex Main text 7d",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "7",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.default.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1E40AFFF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-marker-dark-normal",
+          "name": "dark Codex X marker x (5h color)",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "26",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "x",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#60A5FAFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-marker-dark-hover",
+          "name": "dark Codex X marker x (7d color)",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "26",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "x",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#3B82F6FF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-marker-light-normal",
+          "name": "light Codex X marker x (5h color)",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "26",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "x",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2563EBFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-marker-light-hover",
+          "name": "light Codex X marker x (7d color)",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "0",
+          "y": "26",
+          "width": "10",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "x",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1E40AFFF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-5h-dark-normal",
+          "name": "dark Codex X 5h normal",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#3B82F6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-5h-dark-normal-pace",
+          "name": "dark Codex X 5h normal pace tick",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.codex_x.session.expected_available * display.show_pace * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.codex_x.session.expected_display, 0, 100) / 100)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-x-5h-dark-hover",
+          "name": "dark Codex X 5h hover",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#3B82F6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-5h-light-normal",
+          "name": "light Codex X 5h normal",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2563EBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-5h-light-normal-pace",
+          "name": "light Codex X 5h normal pace tick",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.codex_x.session.expected_available * display.show_pace * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.codex_x.session.expected_display, 0, 100) / 100)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-x-5h-light-hover",
+          "name": "light Codex X 5h hover",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.session.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2563EBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-7d-dark-normal",
+          "name": "dark Codex X 7d normal",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "35",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1D4ED8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#333333FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-7d-dark-hover",
+          "name": "dark Codex X 7d hover",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "32",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1D4ED8FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#333333FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-7d-dark-hover-pace",
+          "name": "dark Codex X 7d hover pace tick",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.codex_x.weekly.expected_available * display.show_pace * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.codex_x.weekly.expected_display, 0, 100) / 100)",
+          "y": "31",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-x-7d-light-normal",
+          "name": "light Codex X 7d normal",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100 * codex.normal.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "35",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "3",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1E40AFFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#999999FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-7d-light-hover",
+          "name": "light Codex X 7d hover",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100 * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12",
+          "y": "32",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "6",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "accounts.codex.codex_x.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#1E40AFFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#999999FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-x-7d-light-hover-pace",
+          "name": "light Codex X 7d hover pace tick",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "(100) * accounts.codex.codex_x.weekly.expected_available * display.show_pace * codex.hover.opacity",
+          "parent": "codex-provider",
+          "x": "12 + round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(accounts.codex.codex_x.weekly.expected_display, 0, 100) / 100)",
+          "y": "31",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#1A1A1AFF",
+              "opacity": "0.9"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-x-text-dark-normal",
+          "name": "dark Codex X text 5h",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "26",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.codex_x.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#60A5FAFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-text-dark-hover",
+          "name": "dark Codex X text 7d",
+          "render": "(system.dark) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "26",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.codex_x.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#3B82F6FF",
+              "opacity": "codex.hover.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-text-light-normal",
+          "name": "light Codex X text 5h",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.normal.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "26",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.codex_x.session.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2563EBFF",
+              "opacity": "codex.normal.opacity"
+            }
+          }
+        },
+        {
+          "id": "codex-x-text-light-hover",
+          "name": "light Codex X text 7d",
+          "render": "((1 - system.dark)) && (codex.dual_mode) && (codex.hover.opacity > 0.01)",
+          "visibility": "100",
+          "parent": "codex-provider",
+          "x": "12 + ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "26",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{accounts.codex.codex_x.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1E40AFFF",
+              "opacity": "codex.hover.opacity"
             }
           }
         },

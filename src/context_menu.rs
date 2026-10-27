@@ -66,6 +66,8 @@ pub enum ContextMenuAction {
     },
     ToggleAntigravityGemini,
     ToggleAntigravityExternal,
+    ToggleCodexMain,
+    ToggleCodexX,
     ToggleStartup,
     ToggleTaskbarLock,
     ToggleShowPace,
@@ -312,6 +314,8 @@ pub fn rendered_label(
         "Exit" => language.text("Exit"),
         "Claude Code" => language.text("Claude Code"),
         "Codex" => language.text("Codex"),
+        "Codex (Main)" => language.text("Codex (Main)"),
+        "Codex X" => language.text("Codex X"),
         "Antigravity" => language.text("Antigravity"),
         "OpenCode" => language.text("OpenCode"),
         "Cursor" => language.text("Cursor"),
@@ -382,11 +386,14 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 },
             ),
             ContextMenuItem::action(
-                "provider-codex",
-                "Codex",
-                Action::ToggleProvider {
-                    provider: Provider::Codex,
-                },
+                "provider-codex-main",
+                "Codex (Main)",
+                Action::ToggleCodexMain,
+            ),
+            ContextMenuItem::action(
+                "provider-codex-x",
+                "Codex X",
+                Action::ToggleCodexX,
             ),
             ContextMenuItem::action(
                 "provider-antigravity-gemini",

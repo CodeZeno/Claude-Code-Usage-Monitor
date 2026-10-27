@@ -123,6 +123,15 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 TIMER_CROSSFADE_SCHEDULE => {
                     tick_antigravity_crossfade(hwnd, false);
+                    tick_codex_crossfade(hwnd, false);
+                    let any_animating = lock_state()
+                        .as_ref()
+                        .is_some_and(|s| s.crossfade_animation.is_some() || s.codex_crossfade_animation.is_some());
+                    if !any_animating {
+                        unsafe {
+                            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -136,6 +145,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
         WM_APP_USAGE_UPDATED => {
             if let Some(state) = lock_state().as_mut() {
                 state.antigravity_tile_rect = None;
+                state.codex_tile_rect = None;
             }
             check_theme_change();
             check_language_change();
@@ -845,17 +855,114 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     || s.show_antigravity_external)
                                     && s.providers.contains(ProviderId::Antigravity);
                                 s.antigravity_tile_rect = None;
+                                s.codex_tile_rect = None;
                                 if !any_pool {
-                                    unsafe {
-                                        let _ = kill_controller_timer(
-                                            Some(hwnd),
-                                            TIMER_CROSSFADE_SCHEDULE,
-                                        );
-                                    }
                                     s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
                                     s.crossfade_animation = None;
+                                    if s.codex_crossfade_animation.is_none() {
+                                        unsafe {
+                                            let _ = kill_controller_timer(
+                                                Some(hwnd),
+                                                TIMER_CROSSFADE_SCHEDULE,
+                                            );
+                                        }
+                                    }
                                 }
+                            }
+                        }
+                    }
+                    save_state_settings();
+                    if should_reposition {
+                        position_at_taskbar();
+                    }
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                    request_poll(hwnd);
+                }
+                IDM_PROVIDER_CODEX_MAIN | IDM_PROVIDER_CODEX_X => {
+                    let mut should_reposition = false;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let is_main = id == IDM_PROVIDER_CODEX_MAIN;
+                            let target_id = if is_main { "default" } else { "codex_x" };
+                            if is_main && !s.accounts.codex.profiles.iter().any(|p| p.id == "default") {
+                                s.accounts.codex.profiles.push(crate::accounts::AccountProfile {
+                                    id: "default".into(),
+                                    name: "Default".into(),
+                                    config_dir: String::new(),
+                                    credentials_path: String::new(),
+                                    enabled: true,
+                                });
+                                s.accounts.codex.used_ids.insert("default".into());
+                            } else if !is_main && !s.accounts.codex.profiles.iter().any(|p| p.id == "codex_x") {
+                                s.accounts.codex.profiles.push(crate::accounts::AccountProfile {
+                                    id: "codex_x".into(),
+                                    name: "Codex X".into(),
+                                    config_dir: "~/.codex_x".into(),
+                                    credentials_path: String::new(),
+                                    enabled: false,
+                                });
+                                s.accounts.codex.used_ids.insert("codex_x".into());
+                            }
+                            let mut main_enabled = s.providers.contains(ProviderId::Codex)
+                                && s.accounts
+                                    .codex
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "default")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(true);
+                            let mut x_enabled = s.providers.contains(ProviderId::Codex)
+                                && s.accounts
+                                    .codex
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "codex_x")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(false);
+                            let current = if is_main { main_enabled } else { x_enabled };
+                            let other = if is_main { x_enabled } else { main_enabled };
+                            let target = !current;
+                            if !target
+                                && !other
+                                && s.providers.len() <= 1
+                                && s.providers.contains(ProviderId::Codex)
+                            {
+                                // Keep at least one provider active
+                            } else {
+                                if let Some(p) = s
+                                    .accounts
+                                    .codex
+                                    .profiles
+                                    .iter_mut()
+                                    .find(|p| p.id == target_id)
+                                {
+                                    p.enabled = target;
+                                }
+                                if is_main {
+                                    main_enabled = target;
+                                } else {
+                                    x_enabled = target;
+                                }
+                                let any_codex = main_enabled || x_enabled;
+                                if !any_codex {
+                                    s.providers.set(ProviderId::Codex, false);
+                                    s.codex_hovered = false;
+                                    s.codex_crossfade_opacity = 0.0;
+                                    s.codex_crossfade_animation = None;
+                                    if s.crossfade_animation.is_none() {
+                                        unsafe {
+                                            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                        }
+                                    }
+                                    should_reposition = true;
+                                } else if !s.providers.contains(ProviderId::Codex) {
+                                    s.providers.set(ProviderId::Codex, true);
+                                    should_reposition = true;
+                                }
+                                s.codex_tile_rect = None;
                             }
                         }
                     }
@@ -876,17 +983,30 @@ pub(super) unsafe extern "system" fn wnd_proc(
                             let changed = s.providers.toggle(provider);
                             // Tile widths depend on the provider count.
                             s.antigravity_tile_rect = None;
+                            s.codex_tile_rect = None;
+                            if !s.providers.contains(ProviderId::Codex) {
+                                s.codex_hovered = false;
+                                s.codex_crossfade_opacity = 0.0;
+                                s.codex_crossfade_animation = None;
+                                if s.crossfade_animation.is_none() {
+                                    unsafe {
+                                        let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    }
+                                }
+                            }
                             if provider == ProviderId::Antigravity && changed {
                                 let enabled = s.providers.contains(ProviderId::Antigravity);
                                 s.show_antigravity_gemini = enabled;
                                 s.show_antigravity_external = enabled;
                                 if !enabled {
-                                    let _ =
-                                        kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
                                     s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
                                     s.crossfade_animation = None;
                                     s.antigravity_tile_rect = None;
+                                    if s.codex_crossfade_animation.is_none() {
+                                        let _ =
+                                            kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    }
                                 }
                             }
                         }

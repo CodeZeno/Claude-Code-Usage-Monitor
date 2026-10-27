@@ -3836,7 +3836,7 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         .enumerate()
         .filter(|(_, object)| object.id.ends_with("-pace"))
         .collect::<Vec<_>>();
-    assert_eq!(ticks.len(), 24);
+    assert_eq!(ticks.len(), 32);
     for (index, tick) in ticks {
         let gauge = &children[index - 1];
         assert_eq!(tick.id, format!("{}-pace", gauge.id));
@@ -3848,6 +3848,8 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         let stripped = stripped
             .strip_suffix(" * antigravity.gemini.opacity")
             .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))
+            .or_else(|| stripped.strip_suffix(" * codex.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * codex.hover.opacity"))
             .unwrap_or(stripped);
         let binding = stripped
             .strip_suffix(".expected_available * display.show_pace")
@@ -3856,7 +3858,7 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
             panic!("{} must have a colour background", tick.id);
         };
         assert!(parse_color(&colour.color).is_some());
-        let expected_colour = if tick.id.ends_with("-dark-pace") {
+        let expected_colour = if tick.id.ends_with("-dark-pace") || tick.id.contains("-dark-") {
             "#FFFFFFFF"
         } else {
             "#1A1A1AFF"
@@ -3865,6 +3867,8 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         let mut context = DataContext::from_usage(None, &Canvas::default());
         context.insert("antigravity.gemini.opacity", 1.0);
         context.insert("antigravity.external.opacity", 1.0);
+        context.insert("codex.normal.opacity", 1.0);
+        context.insert("codex.hover.opacity", 1.0);
         for count in 1..=ProviderId::ALL.len() {
             context.insert("providers.count", count as f64);
             let start = evaluate(&gauge.x.0, &context).unwrap();
@@ -3903,3 +3907,19 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         }
     }
 }
+
+#[test]
+fn codex_dual_mode_and_crossfade_context_variables() {
+    let runtime = ThemeRuntime::default().with_codex_state(true, true, true, 0.75);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("codex.hovered"), Some(1.0));
+    assert_eq!(ctx.get("codex.main.enabled"), Some(1.0));
+    assert_eq!(ctx.get("codex.x.enabled"), Some(1.0));
+    assert_eq!(ctx.get("codex.dual_mode"), Some(1.0));
+    assert_eq!(ctx.get("codex.crossfade_opacity"), Some(0.75));
+    assert_eq!(ctx.get("codex.normal.opacity"), Some(0.25));
+    assert_eq!(ctx.get("codex.hover.opacity"), Some(0.75));
+}
+
+

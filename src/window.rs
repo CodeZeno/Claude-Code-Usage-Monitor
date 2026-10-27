@@ -104,6 +104,10 @@ struct AppState {
     antigravity_hovered: bool,
     crossfade_animation: Option<CrossfadeAnimation>,
     pub(super) antigravity_tile_rect: Option<(f64, f64, f64, f64)>,
+    pub(super) codex_hovered: bool,
+    pub(super) codex_crossfade_opacity: f64,
+    pub(super) codex_crossfade_animation: Option<CrossfadeAnimation>,
+    pub(super) codex_tile_rect: Option<(f64, f64, f64, f64)>,
     accounts: crate::accounts::AccountSettings,
 
     data: Option<AppUsageData>,
@@ -220,6 +224,8 @@ const IDM_DASHBOARD: u16 = 71;
 // 62 stays the whole-provider Antigravity toggle used by saved custom menus.
 pub(super) const IDM_PROVIDER_ANTIGRAVITY_GEMINI: u16 = 68;
 pub(super) const IDM_PROVIDER_ANTIGRAVITY_EXTERNAL: u16 = 67;
+pub(super) const IDM_PROVIDER_CODEX_MAIN: u16 = 69;
+pub(super) const IDM_PROVIDER_CODEX_X: u16 = 70;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -806,6 +812,28 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
             state.show_antigravity_external,
             state.crossfade_opacity,
         )
+        .with_codex_state(
+            state.codex_hovered,
+            state.providers.contains(ProviderId::Codex)
+                && state
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "default")
+                    .map(|p| p.enabled)
+                    .unwrap_or(true),
+            state.providers.contains(ProviderId::Codex)
+                && state
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "codex_x")
+                    .map(|p| p.enabled)
+                    .unwrap_or(false),
+            state.codex_crossfade_opacity,
+        )
 }
 
 /// A transient outage can keep presenting the last real reading while its
@@ -1044,6 +1072,7 @@ fn save_state_settings() {
         persisted.placement_override = s.placement_override.clone();
         persisted.floating_card_opacity = s.floating_card_opacity;
         persisted.lock_taskbar = s.lock_taskbar;
+        persisted.accounts = s.accounts.clone();
         // The dashboard process owns its dimensions, so leave the freshly
         // loaded values unchanged when monitor actions persist settings.
         if let Err(error) = save_settings(&persisted) {
@@ -1925,6 +1954,7 @@ fn replace_active_theme(state: &mut AppState, loaded: ThemeDocument, path: Optio
     }
     state.active_theme = Some(loaded);
     state.antigravity_tile_rect = None;
+    state.codex_tile_rect = None;
     if path.is_some() {
         state.active_theme_path = path;
     }
@@ -2585,6 +2615,10 @@ pub fn run() {
                 antigravity_hovered: false,
                 crossfade_animation: None,
                 antigravity_tile_rect: None,
+                codex_hovered: false,
+                codex_crossfade_opacity: 0.0,
+                codex_crossfade_animation: None,
+                codex_tile_rect: None,
                 accounts: settings.accounts.clone(),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -2760,6 +2794,22 @@ fn render_layered() {
                 );
                 if let Some(state) = lock_state().as_mut() {
                     state.antigravity_tile_rect = tile_rect;
+                }
+            }
+            let needs_codex_rect = lock_state()
+                .as_ref()
+                .map(|s| s.codex_tile_rect.is_none())
+                .unwrap_or(false);
+            if needs_codex_rect {
+                let tile_rect = theme_engine::object_bounds(
+                    &theme,
+                    0,
+                    usage_data.as_ref(),
+                    surface_runtime,
+                    mouse::CODEX_HOVER_OBJECT,
+                );
+                if let Some(state) = lock_state().as_mut() {
+                    state.codex_tile_rect = tile_rect;
                 }
             }
         }
@@ -3378,6 +3428,7 @@ fn check_language_change() {
 }
 
 const ANTIGRAVITY_CROSSFADE_DURATION_MS: u64 = 70;
+const CODEX_CROSSFADE_DURATION_MS: u64 = 300;
 const ANTIGRAVITY_CROSSFADE_TICK_MS: u32 = 16;
 
 #[derive(Clone, Copy, Debug)]
@@ -3444,8 +3495,14 @@ pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
         (true, more)
     };
     if !still_animating {
-        unsafe {
-            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+        let any_animating = {
+            let state = lock_state();
+            state.as_ref().is_some_and(|s| s.crossfade_animation.is_some() || s.codex_crossfade_animation.is_some())
+        };
+        if !any_animating {
+            unsafe {
+                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+            }
         }
     }
     if should_render {
@@ -3453,7 +3510,99 @@ pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
     }
 }
 
-/// Starts the crossfade when the cursor enters or leaves the Antigravity tile.
+pub(super) fn tick_codex_crossfade(hwnd: HWND, throttle: bool) {
+    let (should_render, still_animating) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let Some(mut anim) = state.codex_crossfade_animation else {
+            return;
+        };
+        let now = std::time::Instant::now();
+        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
+        {
+            return;
+        }
+        let (opacity, more) = anim.current_opacity();
+        state.codex_crossfade_opacity = opacity;
+        anim.last_rendered = now;
+        if more {
+            state.codex_crossfade_animation = Some(anim);
+        } else {
+            state.codex_crossfade_opacity = anim.target_opacity;
+            state.codex_crossfade_animation = None;
+        }
+        (true, more)
+    };
+    if !still_animating {
+        let any_animating = {
+            let state = lock_state();
+            state.as_ref().is_some_and(|s| s.crossfade_animation.is_some() || s.codex_crossfade_animation.is_some())
+        };
+        if !any_animating {
+            unsafe {
+                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+            }
+        }
+    }
+    if should_render {
+        render_layered();
+    }
+}
+
+/// Updates the hover state when the cursor enters or leaves the Codex tile with a 300ms crossfade animation.
+pub(super) fn set_codex_hover(hwnd: HWND, hovered: bool) {
+    let mut should_animate = false;
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        let dual_codex = state.providers.contains(ProviderId::Codex)
+            && state
+                .accounts
+                .codex
+                .profiles
+                .iter()
+                .find(|p| p.id == "default")
+                .map(|p| p.enabled)
+                .unwrap_or(true)
+            && state
+                .accounts
+                .codex
+                .profiles
+                .iter()
+                .find(|p| p.id == "codex_x")
+                .map(|p| p.enabled)
+                .unwrap_or(false);
+
+        if state.codex_hovered != hovered {
+            state.codex_hovered = hovered;
+            if dual_codex {
+                let target = if hovered { 1.0 } else { 0.0 };
+                state.codex_crossfade_animation = Some(CrossfadeAnimation::new(
+                    state.codex_crossfade_opacity,
+                    target,
+                    std::time::Duration::from_millis(CODEX_CROSSFADE_DURATION_MS),
+                ));
+                should_animate = true;
+            }
+        }
+    }
+    if should_animate {
+        unsafe {
+            let _ = set_controller_timer(
+                Some(hwnd),
+                TIMER_CROSSFADE_SCHEDULE,
+                ANTIGRAVITY_CROSSFADE_TICK_MS,
+                None,
+            );
+        }
+        render_layered();
+    }
+}
+
 pub(super) fn set_antigravity_hover(hwnd: HWND, hovered: bool) {
     let mut should_animate = false;
     {
@@ -3519,14 +3668,23 @@ fn reload_external_settings(hwnd: HWND) {
         let any_pool = (state.show_antigravity_gemini || state.show_antigravity_external)
             && state.providers.contains(ProviderId::Antigravity);
         if !any_pool {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
             state.antigravity_hovered = false;
             state.crossfade_opacity = 1.0;
             state.crossfade_animation = None;
         }
+        let codex_active = state.providers.contains(ProviderId::Codex);
+        if !codex_active {
+            state.codex_hovered = false;
+            state.codex_crossfade_opacity = 0.0;
+            state.codex_crossfade_animation = None;
+        }
+        if !any_pool && !codex_active {
+            unsafe {
+                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+            }
+        }
         state.antigravity_tile_rect = None;
+        state.codex_tile_rect = None;
         update_configured_placement(
             state,
             settings.placement_override,
