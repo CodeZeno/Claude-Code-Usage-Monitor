@@ -573,6 +573,28 @@ pub(super) fn context_menu_preview_action_checked(
             settings.poll_interval_ms == seconds.saturating_mul(1_000)
         }
         ContextMenuAction::ToggleProvider { provider } => settings.provider_enabled(*provider),
+        ContextMenuAction::ToggleCodexMain => {
+            settings.provider_enabled(crate::providers::ProviderId::Codex)
+                && settings
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "default")
+                    .map(|p| p.enabled)
+                    .unwrap_or(true)
+        }
+        ContextMenuAction::ToggleCodexX => {
+            settings.provider_enabled(crate::providers::ProviderId::Codex)
+                && settings
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "codex_x")
+                    .map(|p| p.enabled)
+                    .unwrap_or(false)
+        }
         ContextMenuAction::ToggleStartup => startup_enabled,
         ContextMenuAction::ToggleTaskbarLock => settings.lock_taskbar,
         ContextMenuAction::ToggleShowPace => settings.show_pace,
