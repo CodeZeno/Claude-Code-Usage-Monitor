@@ -41,6 +41,15 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+        // DefWindowProc sends WM_MOUSEACTIVATE to a child's parent first. For a
+        // taskbar-hosted surface that is a synchronous call into Shell_TrayWnd
+        // on every button press; a hang dump caught Explorer's taskbar thread
+        // stuck in UI Automation while handling exactly that message (from a
+        // right-button press), with this thread waiting on it. The surface is
+        // never activated anyway, so answer here and keep Explorer out of it.
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        // Same parent forwarding: the surface has no use for them either.
+        WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_APPCOMMAND | WM_CONTEXTMENU => LRESULT(0),
         WM_PAINT => {
             let mut ps = PAINTSTRUCT::default();
             let _ = BeginPaint(hwnd, &mut ps);
@@ -187,8 +196,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
             schedule_auto_update_check(hwnd);
             LRESULT(0)
         }
-        WM_SETCURSOR if set_surface_cursor(hwnd) => LRESULT(1),
-        WM_SETCURSOR => DefWindowProcW(hwnd, msg, wparam, lparam),
+        WM_SETCURSOR => {
+            set_surface_cursor(hwnd);
+            LRESULT(1)
+        }
         WM_LBUTTONDOWN => {
             widget_tooltip::hide();
             unsafe {
@@ -1081,5 +1092,91 @@ mod tests {
         drop(state);
         worker.join().expect("tray callback test thread");
         result.expect("tray callbacks must return without waiting for STATE");
+    }
+
+    #[test]
+    fn hosted_surface_never_forwards_mouse_messages_to_its_parent() {
+        // Stands in for Shell_TrayWnd: DefWindowProc of a child forwards these
+        // to the parent synchronously, which in production is Explorer.
+        static FORWARDED: AtomicU32 = AtomicU32::new(0);
+        unsafe extern "system" fn parent_proc(
+            hwnd: HWND,
+            msg: u32,
+            wparam: WPARAM,
+            lparam: LPARAM,
+        ) -> LRESULT {
+            if matches!(
+                msg,
+                WM_MOUSEACTIVATE | WM_SETCURSOR | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_APPCOMMAND
+            ) {
+                FORWARDED.fetch_add(1, Ordering::SeqCst);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+
+        unsafe {
+            let class = native_interop::wide_str("ClaudeCodeUsageForwardingParentTest");
+            RegisterClassW(&WNDCLASSW {
+                lpfnWndProc: Some(parent_proc),
+                hInstance: GetModuleHandleW(PCWSTR::null()).unwrap().into(),
+                lpszClassName: PCWSTR(class.as_ptr()),
+                ..Default::default()
+            });
+            let parent = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                PCWSTR(class.as_ptr()),
+                PCWSTR::null(),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+            let child = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                windows::core::w!("STATIC"),
+                PCWSTR::null(),
+                WS_CHILD,
+                0,
+                0,
+                10,
+                10,
+                Some(parent),
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            // The harness observes forwarding when DefWindowProc handles it.
+            let press = LPARAM(((WM_RBUTTONDOWN as isize) << 16) | HTCLIENT as isize);
+            DefWindowProcW(child, WM_MOUSEACTIVATE, WPARAM(parent.0 as usize), press);
+            assert_eq!(FORWARDED.swap(0, Ordering::SeqCst), 1);
+
+            assert_eq!(
+                wnd_proc(child, WM_MOUSEACTIVATE, WPARAM(parent.0 as usize), press).0,
+                MA_NOACTIVATE as isize
+            );
+            let hover = LPARAM(((WM_MOUSEMOVE as isize) << 16) | HTCLIENT as isize);
+            assert_eq!(
+                wnd_proc(child, WM_SETCURSOR, WPARAM(child.0 as usize), hover).0,
+                1
+            );
+            for msg in [WM_MOUSEWHEEL, WM_MOUSEHWHEEL, WM_APPCOMMAND] {
+                assert_eq!(wnd_proc(child, msg, WPARAM(0), LPARAM(0)).0, 0);
+            }
+            let forwarded = FORWARDED.load(Ordering::SeqCst);
+            let _ = DestroyWindow(child);
+            let _ = DestroyWindow(parent);
+            assert_eq!(
+                forwarded, 0,
+                "surface forwarded a mouse message to its host"
+            );
+        }
     }
 }

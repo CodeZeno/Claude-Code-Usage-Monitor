@@ -138,7 +138,10 @@ pub(super) fn show(owner: HWND) {
         return;
     };
     unsafe {
-        let Ok(window) = create_window(owner) else {
+        // Owned by the controller, never the surface: a popup owned by a child
+        // is owned by its top-level ancestor, which for a taskbar-hosted
+        // surface would put this window in Explorer's Shell_TrayWnd owner chain.
+        let Ok(window) = create_window(controller) else {
             diagnose::log("unable to create widget tooltip");
             return;
         };

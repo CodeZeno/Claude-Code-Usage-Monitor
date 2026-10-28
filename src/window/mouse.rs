@@ -348,7 +348,19 @@ pub(super) fn clear_tray_mouse_hover_if_left(hwnd: HWND) {
     }
 }
 
-pub(super) unsafe fn set_surface_cursor(hwnd: HWND) -> bool {
+/// Answer WM_SETCURSOR without DefWindowProc. For a child surface it first
+/// sends WM_SETCURSOR to the parent, which for a taskbar-hosted surface is a
+/// synchronous call into Explorer on every mouse move.
+pub(super) unsafe fn set_surface_cursor(hwnd: HWND) {
+    let cursor = if surface_cursor_is_clickable(hwnd) {
+        IDC_HAND
+    } else {
+        IDC_ARROW
+    };
+    SetCursor(Some(LoadCursorW(None, cursor).unwrap_or_default()));
+}
+
+unsafe fn surface_cursor_is_clickable(hwnd: HWND) -> bool {
     let mut point = POINT::default();
     if GetCursorPos(&mut point).is_err() {
         return false;
@@ -359,18 +371,13 @@ pub(super) unsafe fn set_surface_cursor(hwnd: HWND) -> bool {
     let Some((surface, object)) = mouse_target_at(hwnd, LPARAM(packed as isize)) else {
         return false;
     };
-    let clickable = [
+    [
         MouseEventKind::Click,
         MouseEventKind::DoubleClick,
         MouseEventKind::RightClick,
     ]
     .into_iter()
-    .any(|event| mouse_handler_exists(surface, &object, event));
-    if clickable {
-        let cursor = LoadCursorW(None, IDC_HAND).unwrap_or_default();
-        SetCursor(Some(cursor));
-    }
-    clickable
+    .any(|event| mouse_handler_exists(surface, &object, event))
 }
 
 #[cfg(test)]
