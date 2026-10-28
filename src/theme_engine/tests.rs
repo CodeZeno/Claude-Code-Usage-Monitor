@@ -833,9 +833,9 @@ fn built_in_classic_uses_149_geometry() {
     assert_eq!(theme.name, "Classic v1");
     assert_eq!(theme.validate(), Vec::<String>::new());
     for (runtime, expected_width) in [
-        (ThemeRuntime::new(true, false, false), 217),
-        (ThemeRuntime::new(true, true, false), 285),
-        (ThemeRuntime::new(true, true, true), 375),
+        (ThemeRuntime::new(true, false, false), 235),
+        (ThemeRuntime::new(true, true, false), 321),
+        (ThemeRuntime::new(true, true, true), 429),
     ] {
         assert_eq!(
             resolve_surface_size(&theme, 0, None, runtime),
@@ -900,7 +900,7 @@ fn built_in_classic_adds_a_fable_column_when_the_limit_is_available() {
             Some(&usage),
             ThemeRuntime::new(true, false, false)
         ),
-        (310, 46)
+        (348, 46)
     );
     assert!(theme.surfaces[0]
         .children
@@ -1228,8 +1228,8 @@ fn opencode_monthly_window_is_available_to_templates_when_present() {
 fn starter_theme_renders_transparent_pixels_at_declared_size() {
     let theme = ThemeDocument::starter();
     let rendered = render_theme(&theme, None);
-    assert_eq!((rendered.width, rendered.height), (217, 46));
-    assert_eq!(rendered.pixels.len(), 217 * 46);
+    assert_eq!((rendered.width, rendered.height), (235, 46));
+    assert_eq!(rendered.pixels.len(), 235 * 46);
     assert!(rendered.pixels.iter().any(|pixel| pixel >> 24 > 0));
     assert_eq!(rendered.pixels[0] >> 24, 0);
     let track_alpha = (30..139)
@@ -1238,6 +1238,39 @@ fn starter_theme_renders_transparent_pixels_at_declared_size() {
     assert!(track_alpha.iter().filter(|alpha| **alpha == 0).count() >= 9);
     assert!(track_alpha.iter().filter(|alpha| **alpha > 0).count() >= 70);
     assert!(rendered.warnings.is_empty());
+}
+
+#[test]
+fn builtin_usage_text_boxes_fit_full_usage_lines() {
+    // GDI draws these labels with DT_END_ELLIPSIS. A 62px box clipped
+    // "12% · 59m" to "12% · 59..." once the percentage gained a second
+    // digit. Keep the value columns wide enough for the longest usage_line shape.
+    for json in [
+        include_str!("../themes/classic-usage-widget.json"),
+        include_str!("../themes/compact-fluent-quad.json"),
+    ] {
+        let theme: ThemeDocument = serde_json::from_str(json).unwrap();
+        for surface in &theme.surfaces {
+            for object in &surface.children {
+                let SceneContent::Text { template, .. } = &object.content else {
+                    continue;
+                };
+                if !template.contains(":usage_line}") {
+                    continue;
+                }
+                let min = if template.contains("Fable ") { 110 } else { 80 };
+                let Expression(expr) = &object.width;
+                let width: f64 = expr.parse().unwrap_or(0.0);
+                assert!(
+                    width >= min as f64,
+                    "{}: {} width {} must hold a full usage line (>= {min}px)",
+                    theme.id,
+                    object.id,
+                    width
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -1270,10 +1303,10 @@ fn theme_surfaces_rasterize_at_requested_dpi_scales() {
     let theme = ThemeDocument::starter();
     let runtime = ThemeRuntime::new(true, false, false);
     for (scale, width, height) in [
-        (1.0, 217, 46),
-        (1.25, 271, 58),
-        (1.5, 326, 69),
-        (2.0, 434, 92),
+        (1.0, 235, 46),
+        (1.25, 294, 58),
+        (1.5, 353, 69),
+        (2.0, 470, 92),
     ] {
         let rendered = render_theme_surface_with_runtime_at_scale(&theme, 0, None, runtime, scale);
         assert_eq!((rendered.width, rendered.height), (width, height));
@@ -1431,7 +1464,7 @@ fn compact_fluent_quad_adds_a_fable_column_when_the_limit_is_available() {
 
     assert_eq!(
         resolve_surface_size(&theme, 0, Some(&usage), runtime),
-        (base_width + 96, height)
+        (base_width + 116, height)
     );
     assert!(theme.surfaces[0]
         .children
@@ -1715,7 +1748,7 @@ fn invalid_render_scales_fall_back_to_one() {
             ThemeRuntime::default(),
             scale,
         );
-        assert_eq!((rendered.width, rendered.height), (217, 46));
+        assert_eq!((rendered.width, rendered.height), (235, 46));
     }
 }
 
@@ -1882,7 +1915,7 @@ fn render_collapses_layout_while_zero_visibility_keeps_space() {
     theme.surfaces[0].children[claude].visibility = 0.0.into();
     assert_eq!(
         resolve_object_bounds_with_runtime(&theme, 0, codex, None, runtime).map(|bounds| bounds.0),
-        Some(164.0)
+        Some(182.0)
     );
 
     theme.surfaces[0].children[claude].render = 0.0.into();
@@ -1945,36 +1978,36 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
             .unwrap()
     };
     for (runtime, width, segments) in [
-        (ThemeRuntime::new(true, false, false), 217, 10),
-        (ThemeRuntime::new(false, true, false), 217, 10),
-        (ThemeRuntime::new(false, false, true), 217, 10),
-        (ThemeRuntime::new(true, true, false), 285, 5),
-        (ThemeRuntime::new(true, false, true), 285, 5),
-        (ThemeRuntime::new(false, true, true), 285, 5),
-        (ThemeRuntime::new(true, true, true), 375, 4),
+        (ThemeRuntime::new(true, false, false), 235, 10),
+        (ThemeRuntime::new(false, true, false), 235, 10),
+        (ThemeRuntime::new(false, false, true), 235, 10),
+        (ThemeRuntime::new(true, true, false), 321, 5),
+        (ThemeRuntime::new(true, false, true), 321, 5),
+        (ThemeRuntime::new(false, true, true), 321, 5),
+        (ThemeRuntime::new(true, true, true), 429, 4),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::OpenCode])),
-            245,
+            263,
             10,
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Cursor])),
-            245,
+            263,
             10,
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Grok])),
-            217,
+            235,
             10,
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Copilot])),
-            217,
+            235,
             10,
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
-            725,
+            851,
             2,
         ),
     ] {
@@ -2022,7 +2055,7 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
             claude_and_antigravity,
         )
         .map(|bounds| bounds.0),
-        Some(164.0)
+        Some(182.0)
     );
 }
 
