@@ -3449,8 +3449,10 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(find_render("antigravity-session-gemini-solo-dark"));
         assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
         assert!(find_render("antigravity-session-gemini-value-dark"));
         assert!(!find_render("antigravity-session-external-value-dark"));
     }
@@ -3473,7 +3475,10 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
         };
         assert!(!find_render("antigravity-session-gemini-solo-dark"));
         assert!(find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
         assert!(find_render("antigravity-session-external-value-dark"));
         assert_eq!(
             evaluate("antigravity.external.opacity", &context).unwrap(),
@@ -3527,15 +3532,17 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(!find_render("antigravity-session-gemini-solo-dark"));
         assert!(find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
         assert!(!find_render("antigravity-session-gemini-value-dark"));
         assert!(find_render("antigravity-session-external-value-dark"));
     }
 
-    // 3. Dual Mode Crossfade
+    // 3. Dual Mode Crossfade (Variant A)
     {
-        // At opacity 1.0 (Gemini holding)
+        // At opacity 1.0 (Normal: Gemini 6px, External 3px, Gemini text)
         let runtime =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 1.0);
@@ -3555,72 +3562,20 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(!find_render("antigravity-session-gemini-solo-dark"));
         assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(find_render("antigravity-session-gemini-dual-dark"));
-        assert!(find_render("antigravity-session-external-dual-dark"));
-        assert!(find_render("antigravity-session-gemini-value-dark"));
-        assert!(!find_render("antigravity-session-external-value-dark"));
+        assert!(find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(find_render("antigravity-gemini-weekly-dark-normal"));
+        assert!(find_render("antigravity-external-5h-dark-normal"));
+        assert!(find_render("antigravity-external-weekly-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-gemini-weekly-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-weekly-dark-hover"));
+        assert!(find_render("antigravity-gemini-text-dark-normal"));
+        assert!(!find_render("antigravity-gemini-text-dark-hover"));
+        assert!(find_render("antigravity-external-text-dark-normal"));
+        assert!(!find_render("antigravity-external-text-dark-hover"));
 
-        // Sequential cross-dissolve: at 0.75 Gemini is fading down, External not yet visible
-        let runtime_gemini_fade =
-            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
-                .with_antigravity_pools(true, true, 0.75);
-        let mut context_gemini_fade = DataContext::from_usage_with_runtime(
-            Some(&usage),
-            &Canvas::default(),
-            runtime_gemini_fade,
-        );
-        context_gemini_fade.insert("system.dark", 1.0);
-        let find_render_gf = |id: &str| {
-            theme.surfaces[0]
-                .children
-                .iter()
-                .find(|o| o.id == id)
-                .map(|o| evaluate(&o.render.0, &context_gemini_fade).unwrap() != 0.0)
-                .unwrap_or(false)
-        };
-        assert!(find_render_gf("antigravity-session-gemini-value-dark"));
-        assert!(!find_render_gf("antigravity-session-external-value-dark"));
-
-        // At opacity 0.5 (Mid-transition clean dip: zero overlap to avoid glyph jitter)
-        let runtime_mid =
-            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
-                .with_antigravity_pools(true, true, 0.5);
-        let mut context_mid =
-            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime_mid);
-        context_mid.insert("system.dark", 1.0);
-        let find_render_mid = |id: &str| {
-            theme.surfaces[0]
-                .children
-                .iter()
-                .find(|o| o.id == id)
-                .map(|o| evaluate(&o.render.0, &context_mid).unwrap() != 0.0)
-                .unwrap_or(false)
-        };
-        assert!(!find_render_mid("antigravity-session-gemini-value-dark"));
-        assert!(!find_render_mid("antigravity-session-external-value-dark"));
-
-        // At 0.25 External is fading up, Gemini is hidden
-        let runtime_ext_fade =
-            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
-                .with_antigravity_pools(true, true, 0.25);
-        let mut context_ext_fade = DataContext::from_usage_with_runtime(
-            Some(&usage),
-            &Canvas::default(),
-            runtime_ext_fade,
-        );
-        context_ext_fade.insert("system.dark", 1.0);
-        let find_render_ef = |id: &str| {
-            theme.surfaces[0]
-                .children
-                .iter()
-                .find(|o| o.id == id)
-                .map(|o| evaluate(&o.render.0, &context_ext_fade).unwrap() != 0.0)
-                .unwrap_or(false)
-        };
-        assert!(!find_render_ef("antigravity-session-gemini-value-dark"));
-        assert!(find_render_ef("antigravity-session-external-value-dark"));
-
-        // At opacity 0.0 (External holding)
+        // At opacity 0.0 (Hover: Gemini 3px, External 6px, External text)
         let runtime_ext =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 0.0);
@@ -3635,8 +3590,18 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_ext).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(!find_render_ext("antigravity-session-gemini-value-dark"));
-        assert!(find_render_ext("antigravity-session-external-value-dark"));
+        assert!(!find_render_ext("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render_ext("antigravity-gemini-weekly-dark-normal"));
+        assert!(!find_render_ext("antigravity-external-5h-dark-normal"));
+        assert!(!find_render_ext("antigravity-external-weekly-dark-normal"));
+        assert!(find_render_ext("antigravity-gemini-5h-dark-hover"));
+        assert!(find_render_ext("antigravity-gemini-weekly-dark-hover"));
+        assert!(find_render_ext("antigravity-external-5h-dark-hover"));
+        assert!(find_render_ext("antigravity-external-weekly-dark-hover"));
+        assert!(!find_render_ext("antigravity-gemini-text-dark-normal"));
+        assert!(find_render_ext("antigravity-gemini-text-dark-hover"));
+        assert!(!find_render_ext("antigravity-external-text-dark-normal"));
+        assert!(find_render_ext("antigravity-external-text-dark-hover"));
     }
 }
 
@@ -3836,7 +3801,7 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         .enumerate()
         .filter(|(_, object)| object.id.ends_with("-pace"))
         .collect::<Vec<_>>();
-    assert_eq!(ticks.len(), 32);
+    assert_eq!(ticks.len(), 64);
     for (index, tick) in ticks {
         let gauge = &children[index - 1];
         assert_eq!(tick.id, format!("{}-pace", gauge.id));
@@ -3848,6 +3813,10 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         let stripped = stripped
             .strip_suffix(" * antigravity.gemini.opacity")
             .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))
+            .or_else(|| stripped.strip_suffix(" * antigravity.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * antigravity.hover.opacity"))
+            .or_else(|| stripped.strip_suffix(" * claude.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * claude.hover.opacity"))
             .or_else(|| stripped.strip_suffix(" * codex.normal.opacity"))
             .or_else(|| stripped.strip_suffix(" * codex.hover.opacity"))
             .unwrap_or(stripped);
@@ -3867,6 +3836,10 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
         let mut context = DataContext::from_usage(None, &Canvas::default());
         context.insert("antigravity.gemini.opacity", 1.0);
         context.insert("antigravity.external.opacity", 1.0);
+        context.insert("antigravity.normal.opacity", 1.0);
+        context.insert("antigravity.hover.opacity", 1.0);
+        context.insert("claude.normal.opacity", 1.0);
+        context.insert("claude.hover.opacity", 1.0);
         context.insert("codex.normal.opacity", 1.0);
         context.insert("codex.hover.opacity", 1.0);
         for count in 1..=ProviderId::ALL.len() {
@@ -3909,6 +3882,30 @@ fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
 }
 
 #[test]
+fn claude_dual_mode_and_crossfade_context_variables() {
+    let runtime = ThemeRuntime::default().with_claude_state(true, true, true, 0.75);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("claude.hovered"), Some(1.0));
+    assert_eq!(ctx.get("claude.main.enabled"), Some(1.0));
+    assert_eq!(ctx.get("claude.x.enabled"), Some(1.0));
+    assert_eq!(ctx.get("claude.dual_mode"), Some(1.0));
+    assert_eq!(ctx.get("claude.crossfade_opacity"), Some(0.75));
+    assert_eq!(ctx.get("claude.normal.opacity"), Some(0.25));
+    assert_eq!(ctx.get("claude.hover.opacity"), Some(0.75));
+}
+
+#[test]
+fn antigravity_normal_and_hover_opacity_context_variables() {
+    let runtime = ThemeRuntime::default().with_antigravity_pools(true, true, 0.3);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("antigravity.crossfade_opacity"), Some(0.3));
+    assert_eq!(ctx.get("antigravity.normal.opacity"), Some(0.3));
+    assert_eq!(ctx.get("antigravity.hover.opacity"), Some(0.7));
+}
+
+#[test]
 fn codex_dual_mode_and_crossfade_context_variables() {
     let runtime = ThemeRuntime::default().with_codex_state(true, true, true, 0.75);
     let canvas = Canvas::default();
@@ -3921,5 +3918,3 @@ fn codex_dual_mode_and_crossfade_context_variables() {
     assert_eq!(ctx.get("codex.normal.opacity"), Some(0.25));
     assert_eq!(ctx.get("codex.hover.opacity"), Some(0.75));
 }
-
-

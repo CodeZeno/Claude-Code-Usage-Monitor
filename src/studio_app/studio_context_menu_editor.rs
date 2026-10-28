@@ -323,6 +323,8 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
         }
         ContextMenuAction::ToggleAntigravityGemini => "toggle_antigravity_gemini()".into(),
         ContextMenuAction::ToggleAntigravityExternal => "toggle_antigravity_external()".into(),
+        ContextMenuAction::ToggleClaudeMain => "toggle_claude_main()".into(),
+        ContextMenuAction::ToggleClaudeX => "toggle_claude_x()".into(),
         ContextMenuAction::ToggleCodexMain => "toggle_codex_main()".into(),
         ContextMenuAction::ToggleCodexX => "toggle_codex_x()".into(),
         ContextMenuAction::ToggleStartup => "toggle_startup()".into(),
@@ -366,6 +368,8 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
             "toggle_antigravity_external",
             ContextMenuAction::ToggleAntigravityExternal,
         ),
+        ("toggle_claude_main", ContextMenuAction::ToggleClaudeMain),
+        ("toggle_claude_x", ContextMenuAction::ToggleClaudeX),
         ("toggle_codex_main", ContextMenuAction::ToggleCodexMain),
         ("toggle_codex_x", ContextMenuAction::ToggleCodexX),
         ("exit", ContextMenuAction::Exit),

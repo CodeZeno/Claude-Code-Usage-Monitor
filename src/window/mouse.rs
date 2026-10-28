@@ -197,7 +197,29 @@ pub(super) fn dispatch_double_click(hwnd: HWND, surface_index: usize, object_id:
 
 /// Theme object whose hover reveals the Antigravity Claude/GPT pool.
 pub(super) const ANTIGRAVITY_HOVER_OBJECT: &str = "antigravity-provider";
+pub(super) const CLAUDE_HOVER_OBJECT: &str = "claude-provider";
 pub(super) const CODEX_HOVER_OBJECT: &str = "codex-provider";
+
+fn claude_hover_at(hwnd: HWND, lparam: LPARAM) -> bool {
+    let state = lock_state();
+    let Some(state) = state.as_ref() else {
+        return false;
+    };
+    if surface_index_for_window(state, hwnd) != Some(0) {
+        return false;
+    }
+    let Some(rect) = state.claude_tile_rect else {
+        return false;
+    };
+    let Some(theme) = state.active_theme.as_ref() else {
+        return false;
+    };
+    let scale = theme_surface_scale(theme, 0).max(0.01);
+    let (x, y) = mouse_client_point(lparam);
+    let lx = x / scale;
+    let ly = y / scale;
+    lx >= rect.0 && lx < rect.0 + rect.2 && ly >= rect.1 && ly < rect.1 + rect.3
+}
 
 fn codex_hover_at(hwnd: HWND, lparam: LPARAM) -> bool {
     let state = lock_state();
@@ -219,8 +241,6 @@ fn codex_hover_at(hwnd: HWND, lparam: LPARAM) -> bool {
     let ly = y / scale;
     lx >= rect.0 && lx < rect.0 + rect.2 && ly >= rect.1 && ly < rect.1 + rect.3
 }
-
-
 
 fn antigravity_hover_at(hwnd: HWND, lparam: LPARAM) -> bool {
     let state = lock_state();
@@ -248,8 +268,10 @@ pub(super) fn update_mouse_hover(hwnd: HWND, lparam: LPARAM) {
         TrackMouseEvent(tracking)
     });
     set_antigravity_hover(hwnd, antigravity_hover_at(hwnd, lparam));
+    super::set_claude_hover(hwnd, claude_hover_at(hwnd, lparam));
     super::set_codex_hover(hwnd, codex_hover_at(hwnd, lparam));
     super::tick_antigravity_crossfade(hwnd, true);
+    super::tick_claude_crossfade(hwnd, true);
     super::tick_codex_crossfade(hwnd, true);
     for _ in 0..4 {
         let target = mouse_target_at(hwnd, lparam);
@@ -314,6 +336,7 @@ fn track_mouse_hover_with(
 pub(super) fn clear_mouse_hover(hwnd: HWND) {
     widget_tooltip::hide_for(hwnd);
     set_antigravity_hover(hwnd, false);
+    super::set_claude_hover(hwnd, false);
     super::set_codex_hover(hwnd, false);
     let previous = {
         let mut state = lock_state();

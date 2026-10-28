@@ -66,6 +66,8 @@ pub enum ContextMenuAction {
     },
     ToggleAntigravityGemini,
     ToggleAntigravityExternal,
+    ToggleClaudeMain,
+    ToggleClaudeX,
     ToggleCodexMain,
     ToggleCodexX,
     ToggleStartup,
@@ -313,6 +315,8 @@ pub fn rendered_label(
         "Refresh" => language.text("Refresh"),
         "Exit" => language.text("Exit"),
         "Claude Code" => language.text("Claude Code"),
+        "Claude Code (Main)" => language.text("Claude Code (Main)"),
+        "Claude Code X" => language.text("Claude Code X"),
         "Codex" => language.text("Codex"),
         "Codex (Main)" => language.text("Codex (Main)"),
         "Codex X" => language.text("Codex X"),
@@ -379,22 +383,17 @@ pub fn classic_context_menu() -> ContextMenuDocument {
         "Providers",
         vec![
             ContextMenuItem::action(
-                "provider-claude",
-                "Claude Code",
-                Action::ToggleProvider {
-                    provider: Provider::Claude,
-                },
+                "provider-claude-main",
+                "Claude Code (Main)",
+                Action::ToggleClaudeMain,
             ),
+            ContextMenuItem::action("provider-claude-x", "Claude Code X", Action::ToggleClaudeX),
             ContextMenuItem::action(
                 "provider-codex-main",
                 "Codex (Main)",
                 Action::ToggleCodexMain,
             ),
-            ContextMenuItem::action(
-                "provider-codex-x",
-                "Codex X",
-                Action::ToggleCodexX,
-            ),
+            ContextMenuItem::action("provider-codex-x", "Codex X", Action::ToggleCodexX),
             ContextMenuItem::action(
                 "provider-antigravity-gemini",
                 "Antigravity (Gemini)",
