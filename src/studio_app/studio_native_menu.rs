@@ -573,6 +573,28 @@ pub(super) fn context_menu_preview_action_checked(
             settings.poll_interval_ms == seconds.saturating_mul(1_000)
         }
         ContextMenuAction::ToggleProvider { provider } => settings.provider_enabled(*provider),
+        ContextMenuAction::ToggleClaudeMain => {
+            settings.provider_enabled(crate::providers::ProviderId::Claude)
+                && settings
+                    .accounts
+                    .claude
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "default")
+                    .map(|p| p.enabled)
+                    .unwrap_or(true)
+        }
+        ContextMenuAction::ToggleClaudeX => {
+            settings.provider_enabled(crate::providers::ProviderId::Claude)
+                && settings
+                    .accounts
+                    .claude
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "claude_x")
+                    .map(|p| p.enabled)
+                    .unwrap_or(false)
+        }
         ContextMenuAction::ToggleCodexMain => {
             settings.provider_enabled(crate::providers::ProviderId::Codex)
                 && settings

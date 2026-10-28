@@ -1355,6 +1355,10 @@ pub struct ThemeRuntime {
     pub antigravity_gemini_enabled: bool,
     pub antigravity_external_enabled: bool,
     pub crossfade_opacity: f64,
+    pub claude_crossfade_opacity: f64,
+    pub claude_hovered: bool,
+    pub claude_main_enabled: bool,
+    pub claude_x_enabled: bool,
     pub codex_crossfade_opacity: f64,
     pub codex_hovered: bool,
     pub codex_main_enabled: bool,
@@ -1378,6 +1382,10 @@ impl Default for ThemeRuntime {
             antigravity_gemini_enabled: true,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            claude_crossfade_opacity: 0.0,
+            claude_hovered: false,
+            claude_main_enabled: true,
+            claude_x_enabled: false,
             codex_crossfade_opacity: 0.0,
             codex_hovered: false,
             codex_main_enabled: true,
@@ -1418,6 +1426,10 @@ impl ThemeRuntime {
             antigravity_gemini_enabled: agy,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            claude_crossfade_opacity: 0.0,
+            claude_hovered: false,
+            claude_main_enabled: true,
+            claude_x_enabled: false,
             codex_crossfade_opacity: 0.0,
             codex_hovered: false,
             codex_main_enabled: true,
@@ -1425,6 +1437,20 @@ impl ThemeRuntime {
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
+    }
+
+    pub fn with_claude_state(
+        mut self,
+        hovered: bool,
+        main_enabled: bool,
+        x_enabled: bool,
+        crossfade_opacity: f64,
+    ) -> Self {
+        self.claude_hovered = hovered;
+        self.claude_main_enabled = main_enabled;
+        self.claude_x_enabled = x_enabled;
+        self.claude_crossfade_opacity = crossfade_opacity;
+        self
     }
 
     pub fn with_codex_state(
@@ -1618,6 +1644,8 @@ impl DataContext {
         context.insert("antigravity.dual_mode", agy_dual_mode as u8 as f64);
         let crossfade = runtime.crossfade_opacity.clamp(0.0, 1.0);
         context.insert("antigravity.crossfade_opacity", crossfade);
+        context.insert("antigravity.normal.opacity", crossfade);
+        context.insert("antigravity.hover.opacity", 1.0 - crossfade);
         let gemini_opacity = if crossfade > 0.5 {
             (crossfade - 0.5) * 2.0
         } else {
@@ -1640,12 +1668,29 @@ impl DataContext {
         };
         context.insert("antigravity.gemini.opacity", gemini_opacity);
         context.insert("antigravity.external.opacity", external_opacity);
+        context.insert("claude.hovered", runtime.claude_hovered as u8 as f64);
+        let claude_crossfade = runtime.claude_crossfade_opacity.clamp(0.0, 1.0);
+        context.insert("claude.crossfade_opacity", claude_crossfade);
+        context.insert("claude.normal.opacity", 1.0 - claude_crossfade);
+        context.insert("claude.hover.opacity", claude_crossfade);
+        context.insert(
+            "claude.main.enabled",
+            runtime.claude_main_enabled as u8 as f64,
+        );
+        context.insert("claude.x.enabled", runtime.claude_x_enabled as u8 as f64);
+        context.insert(
+            "claude.dual_mode",
+            (runtime.claude_main_enabled && runtime.claude_x_enabled) as u8 as f64,
+        );
         context.insert("codex.hovered", runtime.codex_hovered as u8 as f64);
         let codex_crossfade = runtime.codex_crossfade_opacity.clamp(0.0, 1.0);
         context.insert("codex.crossfade_opacity", codex_crossfade);
         context.insert("codex.normal.opacity", 1.0 - codex_crossfade);
         context.insert("codex.hover.opacity", codex_crossfade);
-        context.insert("codex.main.enabled", runtime.codex_main_enabled as u8 as f64);
+        context.insert(
+            "codex.main.enabled",
+            runtime.codex_main_enabled as u8 as f64,
+        );
         context.insert("codex.x.enabled", runtime.codex_x_enabled as u8 as f64);
         context.insert(
             "codex.dual_mode",
@@ -1671,13 +1716,57 @@ impl DataContext {
                     runtime.countdown,
                 );
             }
-            if !data.accounts.iter().any(|a| a.provider == ProviderId::Codex && a.profile.id == "default") {
-                let codex_usage = data.get(ProviderId::Codex);
-                context.insert_provider("accounts.codex.default", codex_usage, true, runtime.countdown);
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Claude && a.profile.id == "default")
+            {
+                let claude_usage = data.get(ProviderId::Claude);
+                context.insert_provider(
+                    "accounts.claude.default",
+                    claude_usage,
+                    false,
+                    runtime.countdown,
+                );
             }
-            if !data.accounts.iter().any(|a| a.provider == ProviderId::Codex && a.profile.id == "codex_x") {
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Claude && a.profile.id == "claude_x")
+            {
+                let claude_usage = data.get(ProviderId::Claude);
+                context.insert_provider(
+                    "accounts.claude.claude_x",
+                    claude_usage,
+                    false,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Codex && a.profile.id == "default")
+            {
                 let codex_usage = data.get(ProviderId::Codex);
-                context.insert_provider("accounts.codex.codex_x", codex_usage, true, runtime.countdown);
+                context.insert_provider(
+                    "accounts.codex.default",
+                    codex_usage,
+                    true,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Codex && a.profile.id == "codex_x")
+            {
+                let codex_usage = data.get(ProviderId::Codex);
+                context.insert_provider(
+                    "accounts.codex.codex_x",
+                    codex_usage,
+                    true,
+                    runtime.countdown,
+                );
             }
             for descriptor in PROVIDER_DESCRIPTORS {
                 if let Some(account) = data
