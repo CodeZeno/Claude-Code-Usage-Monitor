@@ -34,6 +34,7 @@ impl StudioApp {
                 self.settings.antigravity_external_enabled(),
                 1.0,
             )
+            .with_opencode_long_window(self.settings.opencode_long_window)
     }
 
     pub(super) fn theme_runtime_for_surface(&self, surface_index: usize) -> ThemeRuntime {

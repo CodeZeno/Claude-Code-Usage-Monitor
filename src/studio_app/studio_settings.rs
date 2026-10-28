@@ -97,6 +97,42 @@ impl StudioApp {
                             );
                         });
                     }
+                    if descriptor.id == ProviderId::OpenCode
+                        && self.settings.provider_enabled(descriptor.id)
+                    {
+                        let long_window_key =
+                            |window: app_settings::OpenCodeLongWindow| match window {
+                                app_settings::OpenCodeLongWindow::Weekly => "Weekly",
+                                app_settings::OpenCodeLongWindow::Monthly => "Monthly",
+                            };
+                        ui.horizontal(|ui| {
+                            ui.label(language.text("Long period"));
+                            let selected =
+                                language.text(long_window_key(self.settings.opencode_long_window));
+                            let mut picked = false;
+                            Dropdown::from_id_salt("opencode_long_window")
+                                .width(150.0)
+                                .selected_text(selected)
+                                .show_ui(ui, |ui| {
+                                    for window in [
+                                        app_settings::OpenCodeLongWindow::Weekly,
+                                        app_settings::OpenCodeLongWindow::Monthly,
+                                    ] {
+                                        picked |= dropdown_selectable_value(
+                                            ui,
+                                            &mut self.settings.opencode_long_window,
+                                            window,
+                                            language.text(long_window_key(window)),
+                                        )
+                                        .changed();
+                                    }
+                                });
+                            if picked {
+                                changed = true;
+                                self.request_refresh();
+                            }
+                        });
+                    }
                 }
             });
             section(ui, language.text("Display"), |ui| {

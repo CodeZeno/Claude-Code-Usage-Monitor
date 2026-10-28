@@ -46,6 +46,7 @@ pub(super) fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> A
         window_state_timer_active: false,
         custom_theme_enabled: true,
         usage_countdown: false,
+        opencode_long_window: app_settings::OpenCodeLongWindow::Monthly,
         active_theme_path: None,
         active_theme: Some(theme),
         theme_clock_interval: None,

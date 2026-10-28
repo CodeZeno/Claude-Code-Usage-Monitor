@@ -124,6 +124,10 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         // auto-selected `weekly` slot (which prefers the more constrained
         // of the two windows, as before).
         monthly: usage.monthly.as_ref().map(section_from_window),
+        // The raw 7-day window, always set when available, independent of the
+        // auto-selection. Themes read this when opencode_long_window is Weekly
+        // or Both.
+        weekly_7d: usage.weekly.as_ref().map(section_from_window),
         credits: None,
         stale: false,
         ..Default::default()
