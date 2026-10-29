@@ -3905,6 +3905,11 @@ fn antigravity_normal_and_hover_opacity_context_variables() {
     assert_eq!(ctx.get("antigravity.normal.opacity"), Some(0.0));
     let hover_opacity = ctx.get("antigravity.hover.opacity").expect("hover opacity");
     assert!((hover_opacity - 0.6).abs() < 1e-6);
+    assert_eq!(ctx.get("antigravity.gemini.opacity"), Some(0.0));
+    let external_opacity = ctx
+        .get("antigravity.external.opacity")
+        .expect("external opacity");
+    assert!((external_opacity - 0.6).abs() < 1e-6);
 }
 
 #[test]

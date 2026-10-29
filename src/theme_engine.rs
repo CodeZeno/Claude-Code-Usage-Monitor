@@ -1662,35 +1662,20 @@ impl DataContext {
             asymmetric_crossfade_opacities(1.0 - crossfade);
         context.insert("antigravity.normal.opacity", agy_normal_opacity);
         context.insert("antigravity.hover.opacity", agy_hover_opacity);
-        let gemini_opacity = if crossfade > 0.5 {
-            (crossfade - 0.5) * 2.0
-        } else {
-            0.0
-        };
-        let external_opacity = if crossfade < 0.5 {
-            (0.5 - crossfade) * 2.0
-        } else {
-            0.0
-        };
         // crossfade 1.0 shows the primary pool: Gemini in dual mode, otherwise
         // the single enabled pool; hover fades toward the other one.
         let (gemini_opacity, external_opacity) = match (
             runtime.antigravity_gemini_enabled,
             runtime.antigravity_external_enabled,
         ) {
-            (false, true) => (external_opacity, gemini_opacity),
+            (false, true) => (agy_hover_opacity, agy_normal_opacity),
             (false, false) => (0.0, 0.0),
-            _ => (gemini_opacity, external_opacity),
+            _ => (agy_normal_opacity, agy_hover_opacity),
         };
         context.insert("antigravity.gemini.opacity", gemini_opacity);
         context.insert("antigravity.external.opacity", external_opacity);
         context.insert("claude.hovered", runtime.claude_hovered as u8 as f64);
-        let claude_crossfade = runtime.claude_crossfade_opacity.clamp(0.0, 1.0);
-        context.insert("claude.crossfade_opacity", claude_crossfade);
-        let (claude_normal_opacity, claude_hover_opacity) =
-            asymmetric_crossfade_opacities(claude_crossfade);
-        context.insert("claude.normal.opacity", claude_normal_opacity);
-        context.insert("claude.hover.opacity", claude_hover_opacity);
+        context.insert_hover_crossfade("claude", runtime.claude_crossfade_opacity);
         context.insert(
             "claude.main.enabled",
             runtime.claude_main_enabled as u8 as f64,
@@ -1701,12 +1686,7 @@ impl DataContext {
             (runtime.claude_main_enabled && runtime.claude_x_enabled) as u8 as f64,
         );
         context.insert("codex.hovered", runtime.codex_hovered as u8 as f64);
-        let codex_crossfade = runtime.codex_crossfade_opacity.clamp(0.0, 1.0);
-        context.insert("codex.crossfade_opacity", codex_crossfade);
-        let (codex_normal_opacity, codex_hover_opacity) =
-            asymmetric_crossfade_opacities(codex_crossfade);
-        context.insert("codex.normal.opacity", codex_normal_opacity);
-        context.insert("codex.hover.opacity", codex_hover_opacity);
+        context.insert_hover_crossfade("codex", runtime.codex_crossfade_opacity);
         context.insert(
             "codex.main.enabled",
             runtime.codex_main_enabled as u8 as f64,
@@ -1849,6 +1829,15 @@ impl DataContext {
             context.insert_provider("active", None, false, runtime.countdown);
         }
         context
+    }
+
+    pub fn insert_hover_crossfade(&mut self, prefix: &str, progress_to_hover: f64) -> (f64, f64) {
+        let p = progress_to_hover.clamp(0.0, 1.0);
+        self.insert(&format!("{prefix}.crossfade_opacity"), p);
+        let (normal, hover) = asymmetric_crossfade_opacities(p);
+        self.insert(&format!("{prefix}.normal.opacity"), normal);
+        self.insert(&format!("{prefix}.hover.opacity"), hover);
+        (normal, hover)
     }
 
     fn insert_provider(

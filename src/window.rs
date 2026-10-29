@@ -162,6 +162,22 @@ struct AppState {
     suppress_next_left_up: bool,
 }
 
+impl AppState {
+    pub(super) fn is_any_crossfade_animating(&self) -> bool {
+        self.crossfade_animation.is_some()
+            || self.claude_crossfade_animation.is_some()
+            || self.codex_crossfade_animation.is_some()
+    }
+
+    pub(super) fn stop_crossfade_timer_if_idle(&self, hwnd: HWND) {
+        if !self.is_any_crossfade_animating() {
+            unsafe {
+                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PendingMouseClick {
     surface_index: usize,
@@ -3517,6 +3533,48 @@ impl CrossfadeAnimation {
             (opacity, true)
         }
     }
+
+    pub(super) fn tick_slot(
+        slot: &mut Option<Self>,
+        opacity_slot: &mut f64,
+        throttle: bool,
+    ) -> (bool, bool) {
+        let Some(mut anim) = *slot else {
+            return (false, false);
+        };
+        let now = std::time::Instant::now();
+        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
+        {
+            return (false, true);
+        }
+        let (opacity, more) = anim.current_opacity();
+        *opacity_slot = opacity;
+        anim.last_rendered = now;
+        if more {
+            *slot = Some(anim);
+        } else {
+            *opacity_slot = anim.target_opacity;
+            *slot = None;
+        }
+        (true, more)
+    }
+}
+
+pub(super) fn stop_crossfade_timer_if_idle(hwnd: HWND) {
+    if let Some(state) = lock_state().as_ref() {
+        state.stop_crossfade_timer_if_idle(hwnd);
+    }
+}
+
+pub(super) fn ensure_crossfade_timer(hwnd: HWND) {
+    unsafe {
+        let _ = set_controller_timer(
+            Some(hwnd),
+            TIMER_CROSSFADE_SCHEDULE,
+            ANTIGRAVITY_CROSSFADE_TICK_MS,
+            None,
+        );
+    }
 }
 
 pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
@@ -3525,39 +3583,14 @@ pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let Some(mut anim) = state.crossfade_animation else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
-        {
-            return;
-        }
-        let (opacity, more) = anim.current_opacity();
-        state.crossfade_opacity = opacity;
-        anim.last_rendered = now;
-        if more {
-            state.crossfade_animation = Some(anim);
-        } else {
-            state.crossfade_opacity = anim.target_opacity;
-            state.crossfade_animation = None;
-        }
-        (true, more)
+        CrossfadeAnimation::tick_slot(
+            &mut state.crossfade_animation,
+            &mut state.crossfade_opacity,
+            throttle,
+        )
     };
     if !still_animating {
-        let any_animating = {
-            let state = lock_state();
-            state.as_ref().is_some_and(|s| {
-                s.crossfade_animation.is_some()
-                    || s.codex_crossfade_animation.is_some()
-                    || s.claude_crossfade_animation.is_some()
-            })
-        };
-        if !any_animating {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
-        }
+        stop_crossfade_timer_if_idle(hwnd);
     }
     if should_render {
         render_layered();
@@ -3570,39 +3603,14 @@ pub(super) fn tick_claude_crossfade(hwnd: HWND, throttle: bool) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let Some(mut anim) = state.claude_crossfade_animation else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
-        {
-            return;
-        }
-        let (opacity, more) = anim.current_opacity();
-        state.claude_crossfade_opacity = opacity;
-        anim.last_rendered = now;
-        if more {
-            state.claude_crossfade_animation = Some(anim);
-        } else {
-            state.claude_crossfade_opacity = anim.target_opacity;
-            state.claude_crossfade_animation = None;
-        }
-        (true, more)
+        CrossfadeAnimation::tick_slot(
+            &mut state.claude_crossfade_animation,
+            &mut state.claude_crossfade_opacity,
+            throttle,
+        )
     };
     if !still_animating {
-        let any_animating = {
-            let state = lock_state();
-            state.as_ref().is_some_and(|s| {
-                s.crossfade_animation.is_some()
-                    || s.codex_crossfade_animation.is_some()
-                    || s.claude_crossfade_animation.is_some()
-            })
-        };
-        if !any_animating {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
-        }
+        stop_crossfade_timer_if_idle(hwnd);
     }
     if should_render {
         render_layered();
@@ -3648,14 +3656,7 @@ pub(super) fn set_claude_hover(hwnd: HWND, hovered: bool) {
         }
     }
     if should_animate {
-        unsafe {
-            let _ = set_controller_timer(
-                Some(hwnd),
-                TIMER_CROSSFADE_SCHEDULE,
-                ANTIGRAVITY_CROSSFADE_TICK_MS,
-                None,
-            );
-        }
+        ensure_crossfade_timer(hwnd);
         render_layered();
     }
 }
@@ -3666,39 +3667,14 @@ pub(super) fn tick_codex_crossfade(hwnd: HWND, throttle: bool) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let Some(mut anim) = state.codex_crossfade_animation else {
-            return;
-        };
-        let now = std::time::Instant::now();
-        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
-        {
-            return;
-        }
-        let (opacity, more) = anim.current_opacity();
-        state.codex_crossfade_opacity = opacity;
-        anim.last_rendered = now;
-        if more {
-            state.codex_crossfade_animation = Some(anim);
-        } else {
-            state.codex_crossfade_opacity = anim.target_opacity;
-            state.codex_crossfade_animation = None;
-        }
-        (true, more)
+        CrossfadeAnimation::tick_slot(
+            &mut state.codex_crossfade_animation,
+            &mut state.codex_crossfade_opacity,
+            throttle,
+        )
     };
     if !still_animating {
-        let any_animating = {
-            let state = lock_state();
-            state.as_ref().is_some_and(|s| {
-                s.crossfade_animation.is_some()
-                    || s.codex_crossfade_animation.is_some()
-                    || s.claude_crossfade_animation.is_some()
-            })
-        };
-        if !any_animating {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
-        }
+        stop_crossfade_timer_if_idle(hwnd);
     }
     if should_render {
         render_layered();
@@ -3745,14 +3721,7 @@ pub(super) fn set_codex_hover(hwnd: HWND, hovered: bool) {
         }
     }
     if should_animate {
-        unsafe {
-            let _ = set_controller_timer(
-                Some(hwnd),
-                TIMER_CROSSFADE_SCHEDULE,
-                ANTIGRAVITY_CROSSFADE_TICK_MS,
-                None,
-            );
-        }
+        ensure_crossfade_timer(hwnd);
         render_layered();
     }
 }
@@ -3782,14 +3751,7 @@ pub(super) fn set_antigravity_hover(hwnd: HWND, hovered: bool) {
         }
     }
     if should_animate {
-        unsafe {
-            let _ = set_controller_timer(
-                Some(hwnd),
-                TIMER_CROSSFADE_SCHEDULE,
-                ANTIGRAVITY_CROSSFADE_TICK_MS,
-                None,
-            );
-        }
+        ensure_crossfade_timer(hwnd);
         render_layered();
     }
 }
@@ -3838,14 +3800,7 @@ fn reload_external_settings(hwnd: HWND) {
             state.claude_crossfade_opacity = 0.0;
             state.claude_crossfade_animation = None;
         }
-        let any_animating = state.crossfade_animation.is_some()
-            || state.codex_crossfade_animation.is_some()
-            || state.claude_crossfade_animation.is_some();
-        if !any_animating {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
-        }
+        state.stop_crossfade_timer_if_idle(hwnd);
         state.antigravity_tile_rect = None;
         state.claude_tile_rect = None;
         state.codex_tile_rect = None;
