@@ -725,17 +725,17 @@
           }
         },
         {
-          "id": "opencode-weekly-value-dark",
-          "name": "opencode-weekly-value-dark",
+          "id": "opencode-long-7d-value-dark",
+          "name": "opencode-long-7d-value-dark",
           "parent": "opencode-provider",
-          "render": "system.dark",
+          "render": "(opencode.long_window == \"weekly\") * (system.dark)",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
           "height": "14",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_badge}",
+            "template": "7d {opencode.weekly_7d.display:usage_badge}",
             "font_family": "Segoe UI",
             "font_size": "min(10, (canvas.width - 4) / 5.5)",
             "weight": "medium",
@@ -748,17 +748,17 @@
           }
         },
         {
-          "id": "opencode-weekly-value-light",
-          "name": "opencode-weekly-value-light",
+          "id": "opencode-long-7d-value-light",
+          "name": "opencode-long-7d-value-light",
           "parent": "opencode-provider",
-          "render": "1 - system.dark",
+          "render": "(opencode.long_window == \"weekly\") * (1 - system.dark)",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
           "height": "14",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_badge}",
+            "template": "7d {opencode.weekly_7d.display:usage_badge}",
             "font_family": "Segoe UI",
             "font_size": "min(10, (canvas.width - 4) / 5.5)",
             "weight": "medium",
@@ -771,17 +771,85 @@
           }
         },
         {
-          "id": "opencode-weekly-bar",
-          "name": "opencode weekly usage",
+          "id": "opencode-long-7d-bar",
+          "name": "opencode 7d usage",
           "parent": "opencode-provider",
-          "render": "opencode.weekly.available",
+          "render": "(opencode.long_window == \"weekly\") * opencode.weekly_7d.available",
           "x": "4",
           "y": "55",
           "width": "max(1, canvas.width - 8)",
           "height": "3",
           "content": {
             "type": "progress",
-            "value": "opencode.weekly.display",
+            "value": "opencode.weekly_7d.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F59E0B"
+            },
+            "track": {
+              "color": "#80808040"
+            },
+            "corner_radius": "1"
+          }
+        },
+        {
+          "id": "opencode-long-30d-value-dark",
+          "name": "opencode-long-30d-value-dark",
+          "parent": "opencode-provider",
+          "render": "(opencode.long_window == \"monthly\") * (system.dark)",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "30d {opencode.monthly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#F5F5F5"
+            }
+          }
+        },
+        {
+          "id": "opencode-long-30d-value-light",
+          "name": "opencode-long-30d-value-light",
+          "parent": "opencode-provider",
+          "render": "(opencode.long_window == \"monthly\") * (1 - system.dark)",
+          "x": "2",
+          "y": "40",
+          "width": "max(1, canvas.width - 4)",
+          "height": "14",
+          "content": {
+            "type": "text",
+            "template": "30d {opencode.monthly.display:usage_badge}",
+            "font_family": "Segoe UI",
+            "font_size": "min(10, (canvas.width - 4) / 5.5)",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "center",
+            "color": {
+              "color": "#202020"
+            }
+          }
+        },
+        {
+          "id": "opencode-long-30d-bar",
+          "name": "opencode 30d usage",
+          "parent": "opencode-provider",
+          "render": "(opencode.long_window == \"monthly\") * opencode.monthly.available",
+          "x": "4",
+          "y": "55",
+          "width": "max(1, canvas.width - 8)",
+          "height": "3",
+          "content": {
+            "type": "progress",
+            "value": "opencode.monthly.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#F59E0B"

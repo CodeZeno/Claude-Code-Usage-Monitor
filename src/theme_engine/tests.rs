@@ -1013,10 +1013,11 @@ fn starter_theme_round_trips_and_validates() {
     // five providers over two windows in two modes, plus Grok and Copilot,
     // which fill only the long-window row, plus a credit overlay on that row
     // for the three providers that report credits, plus the two eight-segment
-    // Fable layers.
+    // Fable layers, plus the four OpenCode configurable
+    // long-window rows (7d dark/light + 30d dark/light).
     assert_eq!(
         segments,
-        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2]].concat()
+        [vec![10; 32], vec![8; 2]].concat()
     );
     assert!(theme.surfaces[0]
         .children
@@ -1222,6 +1223,75 @@ fn opencode_monthly_window_is_available_to_templates_when_present() {
         evaluate("claude.monthly.percentage", &context).unwrap(),
         0.0
     );
+}
+
+#[test]
+fn opencode_weekly_7d_binding_and_long_window_string_reflect_settings() {
+    use crate::app_settings::OpenCodeLongWindow;
+
+    let section = crate::models::UsageSection {
+        available: true,
+        percentage: 55.0,
+        resets_at: None,
+    };
+    let usage = crate::models::AppUsageData::from_iter([(
+        ProviderId::OpenCode,
+        crate::models::UsageData {
+            weekly_7d: Some(section.clone()),
+            ..Default::default()
+        },
+    )]);
+
+    // weekly_7d binding is populated from the field.
+    let context = DataContext::from_usage(Some(&usage), &Canvas::default());
+    assert_eq!(
+        evaluate("opencode.weekly_7d.percentage", &context).unwrap(),
+        55.0
+    );
+    assert_eq!(
+        evaluate("opencode.weekly_7d.remaining", &context).unwrap(),
+        45.0
+    );
+    assert_eq!(
+        evaluate("opencode.weekly_7d.available", &context).unwrap(),
+        1.0
+    );
+    assert_eq!(
+        format_template("{opencode.weekly_7d.label}", &context),
+        "7d"
+    );
+
+    // Absent weekly_7d produces available=0.
+    let empty_usage = crate::models::AppUsageData::from_iter([(
+        ProviderId::OpenCode,
+        crate::models::UsageData::default(),
+    )]);
+    let empty_ctx = DataContext::from_usage(Some(&empty_usage), &Canvas::default());
+    assert_eq!(
+        evaluate("opencode.weekly_7d.available", &empty_ctx).unwrap(),
+        0.0
+    );
+
+    // opencode.long_window reflects the runtime setting.
+    let runtime_for = |window: OpenCodeLongWindow| {
+        ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::OpenCode]))
+            .with_opencode_long_window(window)
+    };
+    for (window, expected_str) in [
+        (OpenCodeLongWindow::Weekly, "weekly"),
+        (OpenCodeLongWindow::Monthly, "monthly"),
+    ] {
+        let ctx = DataContext::from_usage_with_runtime(
+            Some(&usage),
+            &Canvas::default(),
+            runtime_for(window),
+        );
+        assert_eq!(
+            ctx.get_string("opencode.long_window").unwrap(),
+            expected_str,
+            "long_window binding for {window:?}"
+        );
+    }
 }
 
 #[test]
@@ -2302,6 +2372,8 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
             UsageData {
                 session: section.clone(),
                 weekly: section.clone(),
+                monthly: Some(section.clone()),
+                weekly_7d: Some(section.clone()),
                 limits: (provider == ProviderId::Claude)
                     .then(|| UsageLimit {
                         key: "weekly_scoped_fable".into(),

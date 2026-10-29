@@ -85,6 +85,11 @@ pub struct UsageData {
     /// Kept separate from `weekly` so themes can choose how to display it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub monthly: Option<UsageSection>,
+    /// The raw 7-day window for OpenCode, always set when available, independent
+    /// of the `weekly` auto-selection. Themes read this when
+    /// `opencode_long_window` is `Weekly` or `Both`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weekly_7d: Option<UsageSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits: Option<CreditsSection>,
     /// Additional API quotas, exposed only through opt-in theme bindings.
@@ -127,6 +132,7 @@ impl UsageData {
         [&self.session, &self.weekly]
             .into_iter()
             .chain(self.monthly.iter())
+            .chain(self.weekly_7d.iter())
             .chain(self.limits.iter().map(|limit| &limit.usage))
             .chain(external_sections)
     }
@@ -629,6 +635,38 @@ mod tests {
         // `antigravity` means the external pool; Gemini figures must never fill it.
         assert!(json.get("antigravity").is_none());
         assert!(json.get("antigravity_external").is_none());
+    }
+
+    #[test]
+    fn weekly_7d_field_round_trips_and_stays_absent_when_not_set() {
+        // Present: serialises and deserialises correctly.
+        let section = UsageSection {
+            available: true,
+            percentage: 37.5,
+            resets_at: None,
+        };
+        let data = UsageData {
+            weekly_7d: Some(section.clone()),
+            ..Default::default()
+        };
+        let json = serde_json::to_value(&data).unwrap();
+        assert_eq!(json["weekly_7d"]["percentage"], 37.5);
+        let decoded: UsageData = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.weekly_7d.as_ref().unwrap().percentage, 37.5);
+
+        // Absent: skipped from serialisation (no phantom key).
+        let empty = UsageData::default();
+        let json = serde_json::to_value(&empty).unwrap();
+        assert!(
+            json.get("weekly_7d").is_none(),
+            "weekly_7d must be omitted when None"
+        );
+        let decoded: UsageData = serde_json::from_value(json).unwrap();
+        assert!(decoded.weekly_7d.is_none());
+
+        // sections() iterator includes weekly_7d when present.
+        let sections: Vec<_> = data.sections().collect();
+        assert!(sections.iter().any(|s| s.percentage == 37.5));
     }
 
     #[test]
