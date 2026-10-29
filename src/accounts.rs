@@ -89,6 +89,14 @@ impl Default for ProviderAccounts {
 }
 
 impl ProviderAccounts {
+    pub fn is_profile_enabled(&self, id: &str, default_if_missing: bool) -> bool {
+        self.profiles
+            .iter()
+            .find(|profile| profile.id == id)
+            .map(|profile| profile.enabled)
+            .unwrap_or(default_if_missing)
+    }
+
     pub fn selected(&self) -> Option<&AccountProfile> {
         self.profiles
             .iter()
