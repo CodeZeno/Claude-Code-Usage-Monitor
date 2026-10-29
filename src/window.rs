@@ -3476,9 +3476,9 @@ fn check_language_change() {
     }
 }
 
-const ANTIGRAVITY_CROSSFADE_DURATION_MS: u64 = 300;
-const CODEX_CROSSFADE_DURATION_MS: u64 = 300;
-const CLAUDE_CROSSFADE_DURATION_MS: u64 = 300;
+const ANTIGRAVITY_CROSSFADE_DURATION_MS: u64 = 200;
+const CODEX_CROSSFADE_DURATION_MS: u64 = 200;
+const CLAUDE_CROSSFADE_DURATION_MS: u64 = 200;
 const ANTIGRAVITY_CROSSFADE_TICK_MS: u32 = 16;
 
 #[derive(Clone, Copy, Debug)]
@@ -3705,7 +3705,7 @@ pub(super) fn tick_codex_crossfade(hwnd: HWND, throttle: bool) {
     }
 }
 
-/// Updates the hover state when the cursor enters or leaves the Codex tile with a 300ms crossfade animation.
+/// Updates the hover state when the cursor enters or leaves the Codex tile with a 200ms crossfade animation.
 pub(super) fn set_codex_hover(hwnd: HWND, hovered: bool) {
     let mut should_animate = false;
     {

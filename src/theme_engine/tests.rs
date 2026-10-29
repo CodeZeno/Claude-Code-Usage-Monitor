@@ -3891,8 +3891,9 @@ fn claude_dual_mode_and_crossfade_context_variables() {
     assert_eq!(ctx.get("claude.x.enabled"), Some(1.0));
     assert_eq!(ctx.get("claude.dual_mode"), Some(1.0));
     assert_eq!(ctx.get("claude.crossfade_opacity"), Some(0.75));
-    assert_eq!(ctx.get("claude.normal.opacity"), Some(0.25));
-    assert_eq!(ctx.get("claude.hover.opacity"), Some(0.75));
+    assert_eq!(ctx.get("claude.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("claude.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 2.0 / 3.0).abs() < 1e-6);
 }
 
 #[test]
@@ -3901,8 +3902,9 @@ fn antigravity_normal_and_hover_opacity_context_variables() {
     let canvas = Canvas::default();
     let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
     assert_eq!(ctx.get("antigravity.crossfade_opacity"), Some(0.3));
-    assert_eq!(ctx.get("antigravity.normal.opacity"), Some(0.3));
-    assert_eq!(ctx.get("antigravity.hover.opacity"), Some(0.7));
+    assert_eq!(ctx.get("antigravity.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("antigravity.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 0.6).abs() < 1e-6);
 }
 
 #[test]
@@ -3915,6 +3917,57 @@ fn codex_dual_mode_and_crossfade_context_variables() {
     assert_eq!(ctx.get("codex.x.enabled"), Some(1.0));
     assert_eq!(ctx.get("codex.dual_mode"), Some(1.0));
     assert_eq!(ctx.get("codex.crossfade_opacity"), Some(0.75));
-    assert_eq!(ctx.get("codex.normal.opacity"), Some(0.25));
-    assert_eq!(ctx.get("codex.hover.opacity"), Some(0.75));
+    assert_eq!(ctx.get("codex.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("codex.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 2.0 / 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn test_asymmetric_crossfade_opacities_boundaries_and_minimal_overlap() {
+    use crate::theme_engine::asymmetric_crossfade_opacities;
+
+    // Normal steady state
+    let (normal, hover) = asymmetric_crossfade_opacities(0.0);
+    assert_eq!(normal, 1.0);
+    assert_eq!(hover, 0.0);
+
+    // Halfway through normal fade out (0.175)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.175);
+    assert!((normal - 0.5).abs() < 1e-6);
+    assert_eq!(hover, 0.0);
+
+    // Lead-in threshold for hover (0.25)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.25);
+    assert!((normal - (1.0 - 0.25 / 0.35)).abs() < 1e-6);
+    assert_eq!(hover, 0.0);
+
+    // Handover midpoint (0.30)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.30);
+    assert!((normal - (1.0 - 0.30 / 0.35)).abs() < 1e-6);
+    assert!((hover - (0.05 / 0.75)).abs() < 1e-6);
+
+    // Normal completely faded (0.35)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.35);
+    assert_eq!(normal, 0.0);
+    assert!((hover - (0.10 / 0.75)).abs() < 1e-6);
+
+    // Hover steady state
+    let (normal, hover) = asymmetric_crossfade_opacities(1.0);
+    assert_eq!(normal, 0.0);
+    assert_eq!(hover, 1.0);
+
+    // Defensive clamping
+    assert_eq!(asymmetric_crossfade_opacities(-0.5), (1.0, 0.0));
+    assert_eq!(asymmetric_crossfade_opacities(1.5), (0.0, 1.0));
+
+    // Overlap verification: at no point during transition do both layers have high visibility (no double-exposure)
+    for step in 0..=100 {
+        let p = step as f64 / 100.0;
+        let (n, h) = asymmetric_crossfade_opacities(p);
+        let min_overlap = n.min(h);
+        assert!(
+            min_overlap < 0.15,
+            "Excessive overlap at p = {p}: normal = {n}, hover = {h}, min = {min_overlap}"
+        );
+    }
 }

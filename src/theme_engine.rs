@@ -1542,6 +1542,32 @@ fn expected_used(resets_at: std::time::SystemTime, length: std::time::Duration) 
         .then(|| (1.0 - left.min(length).as_secs_f64() / length.as_secs_f64()) * 100.0)
 }
 
+/// Computes asymmetric crossfade opacities `(normal_opacity, hover_opacity)`
+/// for hover transitions.
+///
+/// Progress `p` runs from 0.0 (unhovered/normal state) to 1.0 (hovered state).
+/// - The outgoing normal state fades out rapidly between 0.0 and 0.35:
+///   `normal_opacity = (1.0 - p / 0.35).clamp(0.0, 1.0)`.
+/// - The incoming hover state fades in with a slight lead starting at 0.25:
+///   `hover_opacity = ((p - 0.25) / 0.75).clamp(0.0, 1.0)`.
+///
+/// This eliminates double-exposure ghosting / overlapping images while avoiding
+/// a jarring empty dip in brightness.
+pub fn asymmetric_crossfade_opacities(progress_to_hover: f64) -> (f64, f64) {
+    let p = progress_to_hover.clamp(0.0, 1.0);
+    let normal_opacity = if p < 0.35 {
+        (1.0 - p / 0.35).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let hover_opacity = if p > 0.25 {
+        ((p - 0.25) / 0.75).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (normal_opacity, hover_opacity)
+}
+
 impl DataContext {
     pub fn from_usage(data: Option<&AppUsageData>, canvas: &Canvas) -> Self {
         Self::from_usage_with_runtime(data, canvas, ThemeRuntime::default())
@@ -1632,8 +1658,10 @@ impl DataContext {
         context.insert("antigravity.dual_mode", agy_dual_mode as u8 as f64);
         let crossfade = runtime.crossfade_opacity.clamp(0.0, 1.0);
         context.insert("antigravity.crossfade_opacity", crossfade);
-        context.insert("antigravity.normal.opacity", crossfade);
-        context.insert("antigravity.hover.opacity", 1.0 - crossfade);
+        let (agy_normal_opacity, agy_hover_opacity) =
+            asymmetric_crossfade_opacities(1.0 - crossfade);
+        context.insert("antigravity.normal.opacity", agy_normal_opacity);
+        context.insert("antigravity.hover.opacity", agy_hover_opacity);
         let gemini_opacity = if crossfade > 0.5 {
             (crossfade - 0.5) * 2.0
         } else {
@@ -1659,8 +1687,10 @@ impl DataContext {
         context.insert("claude.hovered", runtime.claude_hovered as u8 as f64);
         let claude_crossfade = runtime.claude_crossfade_opacity.clamp(0.0, 1.0);
         context.insert("claude.crossfade_opacity", claude_crossfade);
-        context.insert("claude.normal.opacity", 1.0 - claude_crossfade);
-        context.insert("claude.hover.opacity", claude_crossfade);
+        let (claude_normal_opacity, claude_hover_opacity) =
+            asymmetric_crossfade_opacities(claude_crossfade);
+        context.insert("claude.normal.opacity", claude_normal_opacity);
+        context.insert("claude.hover.opacity", claude_hover_opacity);
         context.insert(
             "claude.main.enabled",
             runtime.claude_main_enabled as u8 as f64,
@@ -1673,8 +1703,10 @@ impl DataContext {
         context.insert("codex.hovered", runtime.codex_hovered as u8 as f64);
         let codex_crossfade = runtime.codex_crossfade_opacity.clamp(0.0, 1.0);
         context.insert("codex.crossfade_opacity", codex_crossfade);
-        context.insert("codex.normal.opacity", 1.0 - codex_crossfade);
-        context.insert("codex.hover.opacity", codex_crossfade);
+        let (codex_normal_opacity, codex_hover_opacity) =
+            asymmetric_crossfade_opacities(codex_crossfade);
+        context.insert("codex.normal.opacity", codex_normal_opacity);
+        context.insert("codex.hover.opacity", codex_hover_opacity);
         context.insert(
             "codex.main.enabled",
             runtime.codex_main_enabled as u8 as f64,
