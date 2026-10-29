@@ -176,6 +176,36 @@ impl AppState {
             }
         }
     }
+
+    pub(super) fn is_account_profile_enabled(
+        &self,
+        provider: ProviderId,
+        id: &str,
+        default_if_missing: bool,
+    ) -> bool {
+        self.providers.contains(provider)
+            && match provider {
+                ProviderId::Claude => self
+                    .accounts
+                    .claude
+                    .is_profile_enabled(id, default_if_missing),
+                ProviderId::Codex => self
+                    .accounts
+                    .codex
+                    .is_profile_enabled(id, default_if_missing),
+                _ => false,
+            }
+    }
+
+    pub(super) fn is_dual_mode_active(&self, provider: ProviderId) -> bool {
+        let (main_id, x_id) = match provider {
+            ProviderId::Claude => ("default", "claude_x"),
+            ProviderId::Codex => ("default", "codex_x"),
+            _ => return false,
+        };
+        self.is_account_profile_enabled(provider, main_id, true)
+            && self.is_account_profile_enabled(provider, x_id, false)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -836,46 +866,14 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         )
         .with_claude_state(
             state.claude_hovered,
-            state.providers.contains(ProviderId::Claude)
-                && state
-                    .accounts
-                    .claude
-                    .profiles
-                    .iter()
-                    .find(|p| p.id == "default")
-                    .map(|p| p.enabled)
-                    .unwrap_or(true),
-            state.providers.contains(ProviderId::Claude)
-                && state
-                    .accounts
-                    .claude
-                    .profiles
-                    .iter()
-                    .find(|p| p.id == "claude_x")
-                    .map(|p| p.enabled)
-                    .unwrap_or(false),
+            state.is_account_profile_enabled(ProviderId::Claude, "default", true),
+            state.is_account_profile_enabled(ProviderId::Claude, "claude_x", false),
             state.claude_crossfade_opacity,
         )
         .with_codex_state(
             state.codex_hovered,
-            state.providers.contains(ProviderId::Codex)
-                && state
-                    .accounts
-                    .codex
-                    .profiles
-                    .iter()
-                    .find(|p| p.id == "default")
-                    .map(|p| p.enabled)
-                    .unwrap_or(true),
-            state.providers.contains(ProviderId::Codex)
-                && state
-                    .accounts
-                    .codex
-                    .profiles
-                    .iter()
-                    .find(|p| p.id == "codex_x")
-                    .map(|p| p.enabled)
-                    .unwrap_or(false),
+            state.is_account_profile_enabled(ProviderId::Codex, "default", true),
+            state.is_account_profile_enabled(ProviderId::Codex, "codex_x", false),
             state.codex_crossfade_opacity,
         )
 }
@@ -2829,52 +2827,34 @@ fn render_layered() {
         let surface = &theme.surfaces[surface_index];
         let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
         if surface_index == 0 {
-            let needs_rect = lock_state()
-                .as_ref()
-                .map(|s| s.antigravity_tile_rect.is_none())
-                .unwrap_or(false);
-            if needs_rect {
-                let tile_rect = theme_engine::object_bounds(
-                    &theme,
-                    0,
-                    usage_data.as_ref(),
-                    surface_runtime,
-                    mouse::ANTIGRAVITY_HOVER_OBJECT,
-                );
-                if let Some(state) = lock_state().as_mut() {
-                    state.antigravity_tile_rect = tile_rect;
+            let mut state = lock_state();
+            if let Some(state) = state.as_mut() {
+                if state.antigravity_tile_rect.is_none() {
+                    state.antigravity_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::ANTIGRAVITY_HOVER_OBJECT,
+                    );
                 }
-            }
-            let needs_claude_rect = lock_state()
-                .as_ref()
-                .map(|s| s.claude_tile_rect.is_none())
-                .unwrap_or(false);
-            if needs_claude_rect {
-                let tile_rect = theme_engine::object_bounds(
-                    &theme,
-                    0,
-                    usage_data.as_ref(),
-                    surface_runtime,
-                    mouse::CLAUDE_HOVER_OBJECT,
-                );
-                if let Some(state) = lock_state().as_mut() {
-                    state.claude_tile_rect = tile_rect;
+                if state.claude_tile_rect.is_none() {
+                    state.claude_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::CLAUDE_HOVER_OBJECT,
+                    );
                 }
-            }
-            let needs_codex_rect = lock_state()
-                .as_ref()
-                .map(|s| s.codex_tile_rect.is_none())
-                .unwrap_or(false);
-            if needs_codex_rect {
-                let tile_rect = theme_engine::object_bounds(
-                    &theme,
-                    0,
-                    usage_data.as_ref(),
-                    surface_runtime,
-                    mouse::CODEX_HOVER_OBJECT,
-                );
-                if let Some(state) = lock_state().as_mut() {
-                    state.codex_tile_rect = tile_rect;
+                if state.codex_tile_rect.is_none() {
+                    state.codex_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::CODEX_HOVER_OBJECT,
+                    );
                 }
             }
         }
@@ -3624,27 +3604,9 @@ pub(super) fn set_claude_hover(hwnd: HWND, hovered: bool) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let dual_claude = state.providers.contains(ProviderId::Claude)
-            && state
-                .accounts
-                .claude
-                .profiles
-                .iter()
-                .find(|p| p.id == "default")
-                .map(|p| p.enabled)
-                .unwrap_or(true)
-            && state
-                .accounts
-                .claude
-                .profiles
-                .iter()
-                .find(|p| p.id == "claude_x")
-                .map(|p| p.enabled)
-                .unwrap_or(false);
-
         if state.claude_hovered != hovered {
             state.claude_hovered = hovered;
-            if dual_claude {
+            if state.is_dual_mode_active(ProviderId::Claude) {
                 let target = if hovered { 1.0 } else { 0.0 };
                 state.claude_crossfade_animation = Some(CrossfadeAnimation::new(
                     state.claude_crossfade_opacity,
@@ -3689,27 +3651,9 @@ pub(super) fn set_codex_hover(hwnd: HWND, hovered: bool) {
         let Some(state) = state.as_mut() else {
             return;
         };
-        let dual_codex = state.providers.contains(ProviderId::Codex)
-            && state
-                .accounts
-                .codex
-                .profiles
-                .iter()
-                .find(|p| p.id == "default")
-                .map(|p| p.enabled)
-                .unwrap_or(true)
-            && state
-                .accounts
-                .codex
-                .profiles
-                .iter()
-                .find(|p| p.id == "codex_x")
-                .map(|p| p.enabled)
-                .unwrap_or(false);
-
         if state.codex_hovered != hovered {
             state.codex_hovered = hovered;
-            if dual_codex {
+            if state.is_dual_mode_active(ProviderId::Codex) {
                 let target = if hovered { 1.0 } else { 0.0 };
                 state.codex_crossfade_animation = Some(CrossfadeAnimation::new(
                     state.codex_crossfade_opacity,
