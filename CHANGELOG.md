@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.22.8] - 2026-10-30
+
+### Fixed
+
+- Handle widget activation, cursor, wheel, application-command, and context-menu messages without forwarding them synchronously to Explorer, preventing taskbar hangs during mouse interaction. Apply the handling to primary, mirror, and desktop surfaces while retaining mouse actions. ([#199](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/199))
+- Own widget tooltips through the monitor's controller instead of the taskbar-hosted surface, keeping their native owner chain inside the monitor. Cover primary and mirror message handling with an isolated native-parent regression test.
+
 ## [2.22.7] - 2026-10-26
 
 ### Fixed
@@ -1564,3 +1571,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.4...v2.22.5
 [2.22.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.5...v2.22.6
 [2.22.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.6...v2.22.7
+[2.22.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.7...v2.22.8

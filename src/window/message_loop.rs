@@ -1107,7 +1107,12 @@ mod tests {
         ) -> LRESULT {
             if matches!(
                 msg,
-                WM_MOUSEACTIVATE | WM_SETCURSOR | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_APPCOMMAND
+                WM_MOUSEACTIVATE
+                    | WM_SETCURSOR
+                    | WM_MOUSEWHEEL
+                    | WM_MOUSEHWHEEL
+                    | WM_APPCOMMAND
+                    | WM_CONTEXTMENU
             ) {
                 FORWARDED.fetch_add(1, Ordering::SeqCst);
             }
@@ -1158,17 +1163,20 @@ mod tests {
             DefWindowProcW(child, WM_MOUSEACTIVATE, WPARAM(parent.0 as usize), press);
             assert_eq!(FORWARDED.swap(0, Ordering::SeqCst), 1);
 
-            assert_eq!(
-                wnd_proc(child, WM_MOUSEACTIVATE, WPARAM(parent.0 as usize), press).0,
-                MA_NOACTIVATE as isize
-            );
             let hover = LPARAM(((WM_MOUSEMOVE as isize) << 16) | HTCLIENT as isize);
-            assert_eq!(
-                wnd_proc(child, WM_SETCURSOR, WPARAM(child.0 as usize), hover).0,
-                1
-            );
-            for msg in [WM_MOUSEWHEEL, WM_MOUSEHWHEEL, WM_APPCOMMAND] {
-                assert_eq!(wnd_proc(child, msg, WPARAM(0), LPARAM(0)).0, 0);
+            let procedures: [WNDPROC; 2] = [Some(wnd_proc), Some(mirror_wnd_proc)];
+            for procedure in procedures.into_iter().flatten() {
+                assert_eq!(
+                    procedure(child, WM_MOUSEACTIVATE, WPARAM(parent.0 as usize), press).0,
+                    MA_NOACTIVATE as isize
+                );
+                assert_eq!(
+                    procedure(child, WM_SETCURSOR, WPARAM(child.0 as usize), hover).0,
+                    1
+                );
+                for msg in [WM_MOUSEWHEEL, WM_MOUSEHWHEEL, WM_APPCOMMAND, WM_CONTEXTMENU] {
+                    assert_eq!(procedure(child, msg, WPARAM(0), LPARAM(0)).0, 0);
+                }
             }
             let forwarded = FORWARDED.load(Ordering::SeqCst);
             let _ = DestroyWindow(child);
