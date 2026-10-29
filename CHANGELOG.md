@@ -4,6 +4,29 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.22.7] - 2026-10-26
+
+### Fixed
+
+- Fall back to a fresh Claude desktop token when the default CLI token is expired and cannot be refreshed. Apply the same recovery to automatic polling and named default profiles while keeping custom paths, environment-selected directories, desktop sources, and WSL accounts pinned. ([#194](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/194))
+- Skip expired desktop installations when searching for a fresh fallback token. Add regression coverage for refresh precedence, missing or expired tokens, multiple desktop installations, and account isolation.
+
+## [2.22.6] - 2026-10-26
+
+### Changed
+
+- Update the locked `lucide-icons` dependency from 1.56.0 to 1.60.0 for dashboard icons and the generated icon font subset. ([#188](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/188))
+
+## [2.22.5] - 2026-10-26
+
+### Changed
+
+- Update the egui/eframe family and bundled font source to 0.37.0. ([#187](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/187))
+
+### Fixed
+
+- Refresh the vendored window integration and align the DirectX renderer with egui 0.37 so the software dashboard fallback uses compatible types. Adapt the update button and submenu state to the new egui APIs. Reapply text-only native clipboard support, including disabling the new image paste path, without enabling image clipboard codecs.
+
 ## [2.22.4] - 2026-10-25
 
 ### Fixed
@@ -1538,3 +1561,6 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.1...v2.22.2
 [2.22.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.2...v2.22.3
 [2.22.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.3...v2.22.4
+[2.22.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.4...v2.22.5
+[2.22.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.5...v2.22.6
+[2.22.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.6...v2.22.7
