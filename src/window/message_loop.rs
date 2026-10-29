@@ -122,8 +122,10 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     lifecycle::reconcile_surfaces();
                 }
                 TIMER_CROSSFADE_SCHEDULE => {
-                    arm_crossfade_schedule(hwnd);
-                    render_layered();
+                    tick_antigravity_crossfade(hwnd, false);
+                    tick_claude_crossfade(hwnd, false);
+                    tick_codex_crossfade(hwnd, false);
+                    super::stop_crossfade_timer_if_idle(hwnd);
                 }
                 _ => {}
             }
@@ -135,6 +137,11 @@ pub(super) unsafe extern "system" fn wnd_proc(
             LRESULT(0)
         }
         WM_APP_USAGE_UPDATED => {
+            if let Some(state) = lock_state().as_mut() {
+                state.antigravity_tile_rect = None;
+                state.claude_tile_rect = None;
+                state.codex_tile_rect = None;
+            }
             check_theme_change();
             check_language_change();
             render_layered();
@@ -773,6 +780,17 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 IDM_LOCK_TASKBAR => {
                     toggle_taskbar_lock(hwnd);
                 }
+                IDM_SHOW_PACE => {
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            s.show_pace = !s.show_pace;
+                        }
+                    }
+                    save_state_settings();
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                }
                 IDM_FREQ_1MIN | IDM_FREQ_5MIN | IDM_FREQ_15MIN | IDM_FREQ_1HOUR => {
                     let new_interval = match id {
                         IDM_FREQ_1MIN => POLL_1_MIN,
@@ -793,7 +811,6 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 }
                 IDM_PROVIDER_ANTIGRAVITY_GEMINI | IDM_PROVIDER_ANTIGRAVITY_EXTERNAL => {
                     let mut should_reposition = false;
-                    let mut dual_mode = false;
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
@@ -829,23 +846,225 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.providers.set(ProviderId::Antigravity, true);
                                     should_reposition = true;
                                 }
-                                dual_mode = s.show_antigravity_gemini
-                                    && s.show_antigravity_external
+                                let any_pool = (s.show_antigravity_gemini
+                                    || s.show_antigravity_external)
                                     && s.providers.contains(ProviderId::Antigravity);
-                                if !dual_mode {
-                                    unsafe {
-                                        let _ = kill_controller_timer(
-                                            Some(hwnd),
-                                            TIMER_CROSSFADE_SCHEDULE,
-                                        );
-                                    }
+                                s.antigravity_tile_rect = None;
+                                s.claude_tile_rect = None;
+                                s.codex_tile_rect = None;
+                                if !any_pool {
+                                    s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
+                                    s.crossfade_animation = None;
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                 }
                             }
                         }
                     }
-                    if dual_mode {
-                        arm_crossfade_schedule(hwnd);
+                    save_state_settings();
+                    if should_reposition {
+                        position_at_taskbar();
+                    }
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                    request_poll(hwnd);
+                }
+                IDM_PROVIDER_CLAUDE_MAIN | IDM_PROVIDER_CLAUDE_X => {
+                    let mut should_reposition = false;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let is_main = id == IDM_PROVIDER_CLAUDE_MAIN;
+                            let target_id = if is_main { "default" } else { "claude_x" };
+                            if is_main
+                                && !s.accounts.claude.profiles.iter().any(|p| p.id == "default")
+                            {
+                                s.accounts
+                                    .claude
+                                    .profiles
+                                    .push(crate::accounts::AccountProfile {
+                                        id: "default".into(),
+                                        name: "Default".into(),
+                                        config_dir: String::new(),
+                                        credentials_path: String::new(),
+                                        enabled: true,
+                                    });
+                                s.accounts.claude.used_ids.insert("default".into());
+                            } else if !is_main
+                                && !s
+                                    .accounts
+                                    .claude
+                                    .profiles
+                                    .iter()
+                                    .any(|p| p.id == "claude_x")
+                            {
+                                s.accounts
+                                    .claude
+                                    .profiles
+                                    .push(crate::accounts::AccountProfile {
+                                        id: "claude_x".into(),
+                                        name: "Claude Code X".into(),
+                                        config_dir: "~/.claude_x".into(),
+                                        credentials_path: String::new(),
+                                        enabled: false,
+                                    });
+                                s.accounts.claude.used_ids.insert("claude_x".into());
+                            }
+                            let mut main_enabled = s.providers.contains(ProviderId::Claude)
+                                && s.accounts
+                                    .claude
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "default")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(true);
+                            let mut x_enabled = s.providers.contains(ProviderId::Claude)
+                                && s.accounts
+                                    .claude
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "claude_x")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(false);
+                            let current = if is_main { main_enabled } else { x_enabled };
+                            let other = if is_main { x_enabled } else { main_enabled };
+                            let target = !current;
+                            if !target
+                                && !other
+                                && s.providers.len() <= 1
+                                && s.providers.contains(ProviderId::Claude)
+                            {
+                                // Keep at least one provider active
+                            } else {
+                                if let Some(p) = s
+                                    .accounts
+                                    .claude
+                                    .profiles
+                                    .iter_mut()
+                                    .find(|p| p.id == target_id)
+                                {
+                                    p.enabled = target;
+                                }
+                                if is_main {
+                                    main_enabled = target;
+                                } else {
+                                    x_enabled = target;
+                                }
+                                let any_claude = main_enabled || x_enabled;
+                                if !any_claude {
+                                    s.providers.set(ProviderId::Claude, false);
+                                    s.claude_hovered = false;
+                                    s.claude_crossfade_opacity = 0.0;
+                                    s.claude_crossfade_animation = None;
+                                    s.stop_crossfade_timer_if_idle(hwnd);
+                                    should_reposition = true;
+                                } else if !s.providers.contains(ProviderId::Claude) {
+                                    s.providers.set(ProviderId::Claude, true);
+                                    should_reposition = true;
+                                }
+                                s.claude_tile_rect = None;
+                            }
+                        }
+                    }
+                    save_state_settings();
+                    if should_reposition {
+                        position_at_taskbar();
+                    }
+                    render_layered();
+                    sync_tray_icon(hwnd);
+                    request_poll(hwnd);
+                }
+                IDM_PROVIDER_CODEX_MAIN | IDM_PROVIDER_CODEX_X => {
+                    let mut should_reposition = false;
+                    {
+                        let mut state = lock_state();
+                        if let Some(s) = state.as_mut() {
+                            let is_main = id == IDM_PROVIDER_CODEX_MAIN;
+                            let target_id = if is_main { "default" } else { "codex_x" };
+                            if is_main
+                                && !s.accounts.codex.profiles.iter().any(|p| p.id == "default")
+                            {
+                                s.accounts
+                                    .codex
+                                    .profiles
+                                    .push(crate::accounts::AccountProfile {
+                                        id: "default".into(),
+                                        name: "Default".into(),
+                                        config_dir: String::new(),
+                                        credentials_path: String::new(),
+                                        enabled: true,
+                                    });
+                                s.accounts.codex.used_ids.insert("default".into());
+                            } else if !is_main
+                                && !s.accounts.codex.profiles.iter().any(|p| p.id == "codex_x")
+                            {
+                                s.accounts
+                                    .codex
+                                    .profiles
+                                    .push(crate::accounts::AccountProfile {
+                                        id: "codex_x".into(),
+                                        name: "Codex X".into(),
+                                        config_dir: "~/.codex_x".into(),
+                                        credentials_path: String::new(),
+                                        enabled: false,
+                                    });
+                                s.accounts.codex.used_ids.insert("codex_x".into());
+                            }
+                            let mut main_enabled = s.providers.contains(ProviderId::Codex)
+                                && s.accounts
+                                    .codex
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "default")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(true);
+                            let mut x_enabled = s.providers.contains(ProviderId::Codex)
+                                && s.accounts
+                                    .codex
+                                    .profiles
+                                    .iter()
+                                    .find(|p| p.id == "codex_x")
+                                    .map(|p| p.enabled)
+                                    .unwrap_or(false);
+                            let current = if is_main { main_enabled } else { x_enabled };
+                            let other = if is_main { x_enabled } else { main_enabled };
+                            let target = !current;
+                            if !target
+                                && !other
+                                && s.providers.len() <= 1
+                                && s.providers.contains(ProviderId::Codex)
+                            {
+                                // Keep at least one provider active
+                            } else {
+                                if let Some(p) = s
+                                    .accounts
+                                    .codex
+                                    .profiles
+                                    .iter_mut()
+                                    .find(|p| p.id == target_id)
+                                {
+                                    p.enabled = target;
+                                }
+                                if is_main {
+                                    main_enabled = target;
+                                } else {
+                                    x_enabled = target;
+                                }
+                                let any_codex = main_enabled || x_enabled;
+                                if !any_codex {
+                                    s.providers.set(ProviderId::Codex, false);
+                                    s.codex_hovered = false;
+                                    s.codex_crossfade_opacity = 0.0;
+                                    s.codex_crossfade_animation = None;
+                                    s.stop_crossfade_timer_if_idle(hwnd);
+                                    should_reposition = true;
+                                } else if !s.providers.contains(ProviderId::Codex) {
+                                    s.providers.set(ProviderId::Codex, true);
+                                    should_reposition = true;
+                                }
+                                s.codex_tile_rect = None;
+                            }
+                        }
                     }
                     save_state_settings();
                     if should_reposition {
@@ -856,30 +1075,41 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     request_poll(hwnd);
                 }
                 id if ProviderId::from_native_menu_command_id(id).is_some() => {
-                    let mut dual_mode = false;
                     {
                         let mut state = lock_state();
                         if let Some(s) = state.as_mut() {
                             let provider = ProviderId::from_native_menu_command_id(id)
                                 .expect("provider menu command was matched above");
                             let changed = s.providers.toggle(provider);
+                            // Tile widths depend on the provider count.
+                            s.antigravity_tile_rect = None;
+                            s.claude_tile_rect = None;
+                            s.codex_tile_rect = None;
+                            if !s.providers.contains(ProviderId::Claude) {
+                                s.claude_hovered = false;
+                                s.claude_crossfade_opacity = 0.0;
+                                s.claude_crossfade_animation = None;
+                                s.stop_crossfade_timer_if_idle(hwnd);
+                            }
+                            if !s.providers.contains(ProviderId::Codex) {
+                                s.codex_hovered = false;
+                                s.codex_crossfade_opacity = 0.0;
+                                s.codex_crossfade_animation = None;
+                                s.stop_crossfade_timer_if_idle(hwnd);
+                            }
                             if provider == ProviderId::Antigravity && changed {
                                 let enabled = s.providers.contains(ProviderId::Antigravity);
                                 s.show_antigravity_gemini = enabled;
                                 s.show_antigravity_external = enabled;
                                 if !enabled {
-                                    let _ =
-                                        kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+                                    s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
+                                    s.crossfade_animation = None;
+                                    s.antigravity_tile_rect = None;
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                 }
                             }
-                            dual_mode = s.show_antigravity_gemini
-                                && s.show_antigravity_external
-                                && s.providers.contains(ProviderId::Antigravity);
                         }
-                    }
-                    if dual_mode {
-                        arm_crossfade_schedule(hwnd);
                     }
                     save_state_settings();
                     position_at_taskbar();

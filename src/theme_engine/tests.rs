@@ -3449,10 +3449,58 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(find_render("antigravity-session-gemini-solo-dark"));
         assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
         assert!(find_render("antigravity-session-gemini-value-dark"));
         assert!(!find_render("antigravity-session-external-value-dark"));
+    }
+
+    // 1b. Solo Gemini while hovered: the hidden external pool fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(true, false, 0.0);
+        let mut context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        context.insert("system.dark", 1.0);
+        let find_render = |id: &str| {
+            theme.surfaces[0]
+                .children
+                .iter()
+                .find(|o| o.id == id)
+                .map(|o| evaluate(&o.render.0, &context).unwrap() != 0.0)
+                .unwrap_or(false)
+        };
+        assert!(!find_render("antigravity-session-gemini-solo-dark"));
+        assert!(find_render("antigravity-session-external-solo-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
+        assert!(find_render("antigravity-session-external-value-dark"));
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            1.0
+        );
+    }
+
+    // 1c. Solo External while hovered: Gemini fades in
+    {
+        let runtime =
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
+                .with_antigravity_pools(false, true, 0.0);
+        let context =
+            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime);
+        assert_eq!(
+            evaluate("antigravity.gemini.opacity", &context).unwrap(),
+            1.0
+        );
+        assert_eq!(
+            evaluate("antigravity.external.opacity", &context).unwrap(),
+            0.0
+        );
     }
 
     // 2. Solo External
@@ -3484,15 +3532,17 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(!find_render("antigravity-session-gemini-solo-dark"));
         assert!(find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
+        assert!(!find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-normal"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
         assert!(!find_render("antigravity-session-gemini-value-dark"));
         assert!(find_render("antigravity-session-external-value-dark"));
     }
 
-    // 3. Dual Mode Crossfade
+    // 3. Dual Mode Crossfade (Variant A)
     {
-        // At opacity 1.0 (Gemini holding)
+        // At opacity 1.0 (Normal: Gemini 6px, External 3px, Gemini text)
         let runtime =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 1.0);
@@ -3512,30 +3562,20 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
 
         assert!(!find_render("antigravity-session-gemini-solo-dark"));
         assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(find_render("antigravity-session-gemini-dual-dark"));
-        assert!(find_render("antigravity-session-external-dual-dark"));
-        assert!(find_render("antigravity-session-gemini-value-dark"));
-        assert!(!find_render("antigravity-session-external-value-dark"));
+        assert!(find_render("antigravity-gemini-5h-dark-normal"));
+        assert!(find_render("antigravity-gemini-weekly-dark-normal"));
+        assert!(find_render("antigravity-external-5h-dark-normal"));
+        assert!(find_render("antigravity-external-weekly-dark-normal"));
+        assert!(!find_render("antigravity-gemini-5h-dark-hover"));
+        assert!(!find_render("antigravity-gemini-weekly-dark-hover"));
+        assert!(!find_render("antigravity-external-5h-dark-hover"));
+        assert!(!find_render("antigravity-external-weekly-dark-hover"));
+        assert!(find_render("antigravity-gemini-text-dark-normal"));
+        assert!(!find_render("antigravity-gemini-text-dark-hover"));
+        assert!(find_render("antigravity-external-text-dark-normal"));
+        assert!(!find_render("antigravity-external-text-dark-hover"));
 
-        // At opacity 0.5 (Mid-transition)
-        let runtime_mid =
-            ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
-                .with_antigravity_pools(true, true, 0.5);
-        let mut context_mid =
-            DataContext::from_usage_with_runtime(Some(&usage), &Canvas::default(), runtime_mid);
-        context_mid.insert("system.dark", 1.0);
-        let find_render_mid = |id: &str| {
-            theme.surfaces[0]
-                .children
-                .iter()
-                .find(|o| o.id == id)
-                .map(|o| evaluate(&o.render.0, &context_mid).unwrap() != 0.0)
-                .unwrap_or(false)
-        };
-        assert!(find_render_mid("antigravity-session-gemini-value-dark"));
-        assert!(find_render_mid("antigravity-session-external-value-dark"));
-
-        // At opacity 0.0 (External holding)
+        // At opacity 0.0 (Hover: Gemini 3px, External 6px, External text)
         let runtime_ext =
             ThemeRuntime::from_providers(ProviderSet::from_enabled([ProviderId::Antigravity]))
                 .with_antigravity_pools(true, true, 0.0);
@@ -3550,8 +3590,18 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_ext).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(!find_render_ext("antigravity-session-gemini-value-dark"));
-        assert!(find_render_ext("antigravity-session-external-value-dark"));
+        assert!(!find_render_ext("antigravity-gemini-5h-dark-normal"));
+        assert!(!find_render_ext("antigravity-gemini-weekly-dark-normal"));
+        assert!(!find_render_ext("antigravity-external-5h-dark-normal"));
+        assert!(!find_render_ext("antigravity-external-weekly-dark-normal"));
+        assert!(find_render_ext("antigravity-gemini-5h-dark-hover"));
+        assert!(find_render_ext("antigravity-gemini-weekly-dark-hover"));
+        assert!(find_render_ext("antigravity-external-5h-dark-hover"));
+        assert!(find_render_ext("antigravity-external-weekly-dark-hover"));
+        assert!(!find_render_ext("antigravity-gemini-text-dark-normal"));
+        assert!(find_render_ext("antigravity-gemini-text-dark-hover"));
+        assert!(!find_render_ext("antigravity-external-text-dark-normal"));
+        assert!(find_render_ext("antigravity-external-text-dark-hover"));
     }
 }
 
@@ -3580,4 +3630,349 @@ fn missing_antigravity_external_pool_draws_an_empty_gauge() {
     assert_eq!(value("antigravity.gemini.session.display"), 75.0);
     assert_eq!(value("antigravity.gemini.weekly.display"), 0.0);
     assert_eq!(value("antigravity.external.session.display"), 0.0);
+}
+
+#[test]
+fn pace_expected_used_rejects_resets_outside_the_window() {
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for length in [FIVE_HOURS, WEEK] {
+        let half = expected_used(now + length / 2, length).unwrap();
+        assert!((half - 50.0).abs() < 0.1, "{half}");
+        assert_eq!(expected_used(SystemTime::UNIX_EPOCH, length), None);
+        // A reset reported slightly past the window start still ticks at 0.
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(30), length),
+            Some(0.0)
+        );
+        assert_eq!(
+            expected_used(now + length + Duration::from_secs(300), length),
+            None
+        );
+    }
+    assert_eq!(expected_used(now + FIVE_HOURS, Duration::ZERO), None);
+}
+
+#[test]
+fn pace_bindings_follow_elapsed_time_and_countdown_for_each_pool() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    let section = |length: Duration, elapsed_quarters: u32| UsageSection {
+        available: true,
+        percentage: 90.0,
+        resets_at: Some(now + length * (4 - elapsed_quarters) / 4),
+    };
+    for elapsed_quarters in [1, 2] {
+        let provider_usage = UsageData {
+            session: section(FIVE_HOURS, elapsed_quarters),
+            weekly: section(WEEK, elapsed_quarters),
+            external_pool: Some(Box::new(UsageData {
+                session: section(FIVE_HOURS, 4 - elapsed_quarters),
+                weekly: section(WEEK, 4 - elapsed_quarters),
+                ..Default::default()
+            })),
+            ..Default::default()
+        };
+        let usage = AppUsageData::from_iter(
+            [
+                ProviderId::Claude,
+                ProviderId::Codex,
+                ProviderId::Antigravity,
+            ]
+            .into_iter()
+            .map(|provider| (provider, provider_usage.clone())),
+        );
+        for countdown in [false, true] {
+            let context = DataContext::from_usage_with_runtime(
+                Some(&usage),
+                &Canvas::default(),
+                ThemeRuntime::default().with_countdown(countdown),
+            );
+            for name in [
+                "claude",
+                "codex",
+                "antigravity.gemini",
+                "antigravity.external",
+            ] {
+                let expected = if name == "antigravity.external" {
+                    (4 - elapsed_quarters) as f64 * 25.0
+                } else {
+                    elapsed_quarters as f64 * 25.0
+                };
+                for window in ["session", "five_hour", "weekly"] {
+                    let base = format!("{name}.{window}");
+                    assert_eq!(
+                        context.get(&format!("{base}.expected_available")),
+                        Some(1.0)
+                    );
+                    let used = context.get(&format!("{base}.expected")).unwrap();
+                    let display = context.get(&format!("{base}.expected_display")).unwrap();
+                    assert!((used - expected).abs() < 0.1, "{base}: {used}");
+                    assert!(
+                        (display
+                            - if countdown {
+                                100.0 - expected
+                            } else {
+                                expected
+                            })
+                        .abs()
+                            < 0.1,
+                        "{base}: {display}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn pace_bindings_hide_missing_windows_and_reset_times() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let now = SystemTime::now();
+    for countdown in [false, true] {
+        for (available, resets_at) in [
+            (true, None),
+            (false, Some(now + Duration::from_secs(60))),
+            (true, Some(SystemTime::UNIX_EPOCH)),
+            (true, Some(now + WEEK + Duration::from_secs(300))),
+        ] {
+            let section = UsageSection {
+                available,
+                percentage: 25.0,
+                resets_at,
+            };
+            let usage = UsageData {
+                session: section.clone(),
+                weekly: section,
+                ..Default::default()
+            };
+            let mut context = DataContext::default();
+            for data in [None, Some(&usage)] {
+                context.insert_provider("claude", data, false, countdown);
+                for window in ["session", "five_hour", "weekly"] {
+                    assert_eq!(
+                        context.get(&format!("claude.{window}.expected_available")),
+                        Some(0.0)
+                    );
+                    assert_eq!(context.get(&format!("claude.{window}.expected")), Some(0.0));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn show_pace_binding_follows_the_setting() {
+    let defaults = crate::app_settings::SettingsFile::default();
+    assert!(defaults.show_pace);
+    let context = DataContext::from_usage(None, &Canvas::default());
+    assert_eq!(context.get("display.show_pace"), Some(1.0));
+    for show_pace in [false, true] {
+        let mut settings = crate::app_settings::SettingsFile::default();
+        settings.show_pace = show_pace;
+        let runtime = ThemeRuntime::from_providers(settings.enabled_providers())
+            .with_show_pace(settings.show_pace);
+        let context = DataContext::from_usage_with_runtime(None, &Canvas::default(), runtime);
+        assert_eq!(
+            context.get("display.show_pace"),
+            Some(show_pace as u8 as f64)
+        );
+    }
+}
+
+#[test]
+fn compact_pace_ticks_validate_and_stay_inside_their_gauges() {
+    let theme: ThemeDocument =
+        serde_json::from_str(include_str!("../themes/compact-fluent-quad.json")).unwrap();
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    let children = &theme.surfaces[0].children;
+    for window in ["session", "weekly"] {
+        assert!(children
+            .iter()
+            .any(|object| object.id == format!("claude-{window}-segments-dark-pace")));
+    }
+    let ticks = children
+        .iter()
+        .enumerate()
+        .filter(|(_, object)| object.id.ends_with("-pace"))
+        .collect::<Vec<_>>();
+    assert_eq!(ticks.len(), 64);
+    for (index, tick) in ticks {
+        let gauge = &children[index - 1];
+        assert_eq!(tick.id, format!("{}-pace", gauge.id));
+        assert!(matches!(&gauge.content, SceneContent::Progress { .. }));
+        assert!(matches!(&tick.content, SceneContent::None));
+        assert_eq!(tick.parent, gauge.parent);
+        assert_eq!(tick.render.0, gauge.render.0);
+        let stripped = tick.visibility.0.strip_prefix("(100) * ").unwrap();
+        let stripped = stripped
+            .strip_suffix(" * antigravity.gemini.opacity")
+            .or_else(|| stripped.strip_suffix(" * antigravity.external.opacity"))
+            .or_else(|| stripped.strip_suffix(" * antigravity.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * antigravity.hover.opacity"))
+            .or_else(|| stripped.strip_suffix(" * claude.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * claude.hover.opacity"))
+            .or_else(|| stripped.strip_suffix(" * codex.normal.opacity"))
+            .or_else(|| stripped.strip_suffix(" * codex.hover.opacity"))
+            .unwrap_or(stripped);
+        let binding = stripped
+            .strip_suffix(".expected_available * display.show_pace")
+            .unwrap();
+        let LayerBackground::Colour { colour } = &tick.background else {
+            panic!("{} must have a colour background", tick.id);
+        };
+        assert!(parse_color(&colour.color).is_some());
+        let expected_colour = if tick.id.ends_with("-dark-pace") || tick.id.contains("-dark-") {
+            "#FFFFFFFF"
+        } else {
+            "#1A1A1AFF"
+        };
+        assert_eq!(colour.color, expected_colour);
+        let mut context = DataContext::from_usage(None, &Canvas::default());
+        context.insert("antigravity.gemini.opacity", 1.0);
+        context.insert("antigravity.external.opacity", 1.0);
+        context.insert("antigravity.normal.opacity", 1.0);
+        context.insert("antigravity.hover.opacity", 1.0);
+        context.insert("claude.normal.opacity", 1.0);
+        context.insert("claude.hover.opacity", 1.0);
+        context.insert("codex.normal.opacity", 1.0);
+        context.insert("codex.hover.opacity", 1.0);
+        for count in 1..=ProviderId::ALL.len() {
+            context.insert("providers.count", count as f64);
+            let start = evaluate(&gauge.x.0, &context).unwrap();
+            let end = start + evaluate(&gauge.width.0, &context).unwrap();
+            assert_eq!(evaluate(&tick.width.0, &context).unwrap(), 1.0);
+            assert_eq!(
+                evaluate(&tick.y.0, &context).unwrap(),
+                evaluate(&gauge.y.0, &context).unwrap() - 1.0
+            );
+            assert_eq!(
+                evaluate(&tick.height.0, &context).unwrap(),
+                evaluate(&gauge.height.0, &context).unwrap() + 2.0
+            );
+            assert_eq!(evaluate(&colour.opacity.0, &context).unwrap(), 0.9);
+            for available in [0.0, 1.0] {
+                context.insert(&format!("{binding}.expected_available"), available);
+                for show_pace in [0.0, 1.0] {
+                    context.insert("display.show_pace", show_pace);
+                    assert_eq!(
+                        evaluate(&tick.visibility.0, &context).unwrap(),
+                        available * show_pace * 100.0
+                    );
+                }
+            }
+            for expected in [-10.0, 0.0, 0.1, 25.0, 50.0, 99.9, 100.0, 110.0] {
+                context.insert(&format!("{binding}.expected_display"), expected);
+                let x = evaluate(&tick.x.0, &context).unwrap();
+                assert!(x >= start && x + 1.0 <= end, "{}: {x}", tick.id);
+                assert_eq!(x.fract(), 0.0);
+                if expected <= 0.0 {
+                    assert_eq!(x, start);
+                } else if expected >= 100.0 {
+                    assert_eq!(x + 1.0, end);
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn claude_dual_mode_and_crossfade_context_variables() {
+    let runtime = ThemeRuntime::default().with_claude_state(true, true, true, 0.75);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("claude.hovered"), Some(1.0));
+    assert_eq!(ctx.get("claude.main.enabled"), Some(1.0));
+    assert_eq!(ctx.get("claude.x.enabled"), Some(1.0));
+    assert_eq!(ctx.get("claude.dual_mode"), Some(1.0));
+    assert_eq!(ctx.get("claude.crossfade_opacity"), Some(0.75));
+    assert_eq!(ctx.get("claude.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("claude.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 2.0 / 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn antigravity_normal_and_hover_opacity_context_variables() {
+    let runtime = ThemeRuntime::default().with_antigravity_pools(true, true, 0.3);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("antigravity.crossfade_opacity"), Some(0.3));
+    assert_eq!(ctx.get("antigravity.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("antigravity.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 0.6).abs() < 1e-6);
+    assert_eq!(ctx.get("antigravity.gemini.opacity"), Some(0.0));
+    let external_opacity = ctx
+        .get("antigravity.external.opacity")
+        .expect("external opacity");
+    assert!((external_opacity - 0.6).abs() < 1e-6);
+}
+
+#[test]
+fn codex_dual_mode_and_crossfade_context_variables() {
+    let runtime = ThemeRuntime::default().with_codex_state(true, true, true, 0.75);
+    let canvas = Canvas::default();
+    let ctx = DataContext::from_usage_with_runtime(None, &canvas, runtime);
+    assert_eq!(ctx.get("codex.hovered"), Some(1.0));
+    assert_eq!(ctx.get("codex.main.enabled"), Some(1.0));
+    assert_eq!(ctx.get("codex.x.enabled"), Some(1.0));
+    assert_eq!(ctx.get("codex.dual_mode"), Some(1.0));
+    assert_eq!(ctx.get("codex.crossfade_opacity"), Some(0.75));
+    assert_eq!(ctx.get("codex.normal.opacity"), Some(0.0));
+    let hover_opacity = ctx.get("codex.hover.opacity").expect("hover opacity");
+    assert!((hover_opacity - 2.0 / 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn test_asymmetric_crossfade_opacities_boundaries_and_minimal_overlap() {
+    use crate::theme_engine::asymmetric_crossfade_opacities;
+
+    // Normal steady state
+    let (normal, hover) = asymmetric_crossfade_opacities(0.0);
+    assert_eq!(normal, 1.0);
+    assert_eq!(hover, 0.0);
+
+    // Halfway through normal fade out (0.175)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.175);
+    assert!((normal - 0.5).abs() < 1e-6);
+    assert_eq!(hover, 0.0);
+
+    // Lead-in threshold for hover (0.25)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.25);
+    assert!((normal - (1.0 - 0.25 / 0.35)).abs() < 1e-6);
+    assert_eq!(hover, 0.0);
+
+    // Handover midpoint (0.30)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.30);
+    assert!((normal - (1.0 - 0.30 / 0.35)).abs() < 1e-6);
+    assert!((hover - (0.05 / 0.75)).abs() < 1e-6);
+
+    // Normal completely faded (0.35)
+    let (normal, hover) = asymmetric_crossfade_opacities(0.35);
+    assert_eq!(normal, 0.0);
+    assert!((hover - (0.10 / 0.75)).abs() < 1e-6);
+
+    // Hover steady state
+    let (normal, hover) = asymmetric_crossfade_opacities(1.0);
+    assert_eq!(normal, 0.0);
+    assert_eq!(hover, 1.0);
+
+    // Defensive clamping
+    assert_eq!(asymmetric_crossfade_opacities(-0.5), (1.0, 0.0));
+    assert_eq!(asymmetric_crossfade_opacities(1.5), (0.0, 1.0));
+
+    // Overlap verification: at no point during transition do both layers have high visibility (no double-exposure)
+    for step in 0..=100 {
+        let p = step as f64 / 100.0;
+        let (n, h) = asymmetric_crossfade_opacities(p);
+        let min_overlap = n.min(h);
+        assert!(
+            min_overlap < 0.15,
+            "Excessive overlap at p = {p}: normal = {n}, hover = {h}, min = {min_overlap}"
+        );
+    }
 }

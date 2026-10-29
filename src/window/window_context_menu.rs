@@ -147,8 +147,53 @@ pub(super) fn context_menu_action_flags(
         ContextMenuAction::ToggleProvider { provider } => state.providers.contains(*provider),
         ContextMenuAction::ToggleAntigravityGemini => state.show_antigravity_gemini,
         ContextMenuAction::ToggleAntigravityExternal => state.show_antigravity_external,
+        ContextMenuAction::ToggleClaudeMain => {
+            state.providers.contains(ProviderId::Claude)
+                && state
+                    .accounts
+                    .claude
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "default")
+                    .map(|p| p.enabled)
+                    .unwrap_or(true)
+        }
+        ContextMenuAction::ToggleClaudeX => {
+            state.providers.contains(ProviderId::Claude)
+                && state
+                    .accounts
+                    .claude
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "claude_x")
+                    .map(|p| p.enabled)
+                    .unwrap_or(false)
+        }
+        ContextMenuAction::ToggleCodexMain => {
+            state.providers.contains(ProviderId::Codex)
+                && state
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "default")
+                    .map(|p| p.enabled)
+                    .unwrap_or(true)
+        }
+        ContextMenuAction::ToggleCodexX => {
+            state.providers.contains(ProviderId::Codex)
+                && state
+                    .accounts
+                    .codex
+                    .profiles
+                    .iter()
+                    .find(|p| p.id == "codex_x")
+                    .map(|p| p.enabled)
+                    .unwrap_or(false)
+        }
         ContextMenuAction::ToggleStartup => is_startup_enabled(),
         ContextMenuAction::ToggleTaskbarLock => state.lock_taskbar,
+        ContextMenuAction::ToggleShowPace => state.show_pace,
         ContextMenuAction::ToggleWidget => state
             .active_theme
             .as_ref()
@@ -271,8 +316,13 @@ pub(super) fn execute_context_menu_action(
         }
         ContextMenuAction::ToggleAntigravityGemini => Some(IDM_PROVIDER_ANTIGRAVITY_GEMINI),
         ContextMenuAction::ToggleAntigravityExternal => Some(IDM_PROVIDER_ANTIGRAVITY_EXTERNAL),
+        ContextMenuAction::ToggleClaudeMain => Some(IDM_PROVIDER_CLAUDE_MAIN),
+        ContextMenuAction::ToggleClaudeX => Some(IDM_PROVIDER_CLAUDE_X),
+        ContextMenuAction::ToggleCodexMain => Some(IDM_PROVIDER_CODEX_MAIN),
+        ContextMenuAction::ToggleCodexX => Some(IDM_PROVIDER_CODEX_X),
         ContextMenuAction::ToggleStartup => Some(IDM_START_WITH_WINDOWS),
         ContextMenuAction::ToggleTaskbarLock => Some(IDM_LOCK_TASKBAR),
+        ContextMenuAction::ToggleShowPace => Some(IDM_SHOW_PACE),
         ContextMenuAction::SetLanguage { language } => {
             if language.eq_ignore_ascii_case("system") {
                 Some(IDM_LANG_SYSTEM)

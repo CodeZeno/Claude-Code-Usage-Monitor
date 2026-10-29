@@ -236,6 +236,13 @@ const MENU_ACTIONS: &[ActionSpec] = &[
         "check_for_updates()",
         "check_for_updates",
     ),
+    (
+        "toggle_show_pace",
+        SETTINGS,
+        "Show pace",
+        "toggle_show_pace()",
+        "toggle_show_pace",
+    ),
     ("exit", APP, "Exit", "exit()", "exit"),
     (
         "set_update_frequency",
@@ -1370,6 +1377,7 @@ fn menu_action_details(
         "toggle_widget" => ContextMenuAction::ToggleWidget,
         "toggle_startup" => ContextMenuAction::ToggleStartup,
         "toggle_taskbar_lock" => ContextMenuAction::ToggleTaskbarLock,
+        "toggle_show_pace" => ContextMenuAction::ToggleShowPace,
         "check_for_updates" => ContextMenuAction::CheckForUpdates,
         "exit" => ContextMenuAction::Exit,
         "set_update_frequency" => {

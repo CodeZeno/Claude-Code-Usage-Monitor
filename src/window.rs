@@ -101,6 +101,17 @@ struct AppState {
     pub(super) show_antigravity_gemini: bool,
     pub(super) show_antigravity_external: bool,
     crossfade_opacity: f64,
+    antigravity_hovered: bool,
+    crossfade_animation: Option<CrossfadeAnimation>,
+    pub(super) antigravity_tile_rect: Option<(f64, f64, f64, f64)>,
+    pub(super) claude_hovered: bool,
+    pub(super) claude_crossfade_opacity: f64,
+    pub(super) claude_crossfade_animation: Option<CrossfadeAnimation>,
+    pub(super) claude_tile_rect: Option<(f64, f64, f64, f64)>,
+    pub(super) codex_hovered: bool,
+    pub(super) codex_crossfade_opacity: f64,
+    pub(super) codex_crossfade_animation: Option<CrossfadeAnimation>,
+    pub(super) codex_tile_rect: Option<(f64, f64, f64, f64)>,
     accounts: crate::accounts::AccountSettings,
 
     data: Option<AppUsageData>,
@@ -138,6 +149,7 @@ struct AppState {
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
+    show_pace: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -148,6 +160,52 @@ struct AppState {
     hovered_mouse_layer: Option<(usize, String)>,
     pending_mouse_click: Option<PendingMouseClick>,
     suppress_next_left_up: bool,
+}
+
+impl AppState {
+    pub(super) fn is_any_crossfade_animating(&self) -> bool {
+        self.crossfade_animation.is_some()
+            || self.claude_crossfade_animation.is_some()
+            || self.codex_crossfade_animation.is_some()
+    }
+
+    pub(super) fn stop_crossfade_timer_if_idle(&self, hwnd: HWND) {
+        if !self.is_any_crossfade_animating() {
+            unsafe {
+                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+            }
+        }
+    }
+
+    pub(super) fn is_account_profile_enabled(
+        &self,
+        provider: ProviderId,
+        id: &str,
+        default_if_missing: bool,
+    ) -> bool {
+        self.providers.contains(provider)
+            && match provider {
+                ProviderId::Claude => self
+                    .accounts
+                    .claude
+                    .is_profile_enabled(id, default_if_missing),
+                ProviderId::Codex => self
+                    .accounts
+                    .codex
+                    .is_profile_enabled(id, default_if_missing),
+                _ => false,
+            }
+    }
+
+    pub(super) fn is_dual_mode_active(&self, provider: ProviderId) -> bool {
+        let (main_id, x_id) = match provider {
+            ProviderId::Claude => ("default", "claude_x"),
+            ProviderId::Codex => ("default", "codex_x"),
+            _ => return false,
+        };
+        self.is_account_profile_enabled(provider, main_id, true)
+            && self.is_account_profile_enabled(provider, x_id, false)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -208,6 +266,7 @@ const IDM_FREQ_15MIN: u16 = 12;
 const IDM_FREQ_1HOUR: u16 = 13;
 const IDM_START_WITH_WINDOWS: u16 = 20;
 const IDM_LOCK_TASKBAR: u16 = 21;
+const IDM_SHOW_PACE: u16 = 22;
 const IDM_VERSION_ACTION: u16 = 31;
 const IDM_LANG_SYSTEM: u16 = 100;
 const IDM_LANG_FIRST: u16 = 101;
@@ -215,6 +274,10 @@ const IDM_DASHBOARD: u16 = 71;
 // 62 stays the whole-provider Antigravity toggle used by saved custom menus.
 pub(super) const IDM_PROVIDER_ANTIGRAVITY_GEMINI: u16 = 68;
 pub(super) const IDM_PROVIDER_ANTIGRAVITY_EXTERNAL: u16 = 67;
+pub(super) const IDM_PROVIDER_CODEX_MAIN: u16 = 69;
+pub(super) const IDM_PROVIDER_CODEX_X: u16 = 70;
+pub(super) const IDM_PROVIDER_CLAUDE_MAIN: u16 = 72;
+pub(super) const IDM_PROVIDER_CLAUDE_X: u16 = 73;
 
 const WM_DPICHANGED_MSG: u32 = 0x02E0;
 const WM_APP_UPDATE_CHECK_COMPLETE: u32 = WM_APP + 2;
@@ -793,12 +856,25 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_show_pace(state.show_pace)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
         .with_antigravity_pools(
             state.show_antigravity_gemini,
             state.show_antigravity_external,
             state.crossfade_opacity,
+        )
+        .with_claude_state(
+            state.claude_hovered,
+            state.is_account_profile_enabled(ProviderId::Claude, "default", true),
+            state.is_account_profile_enabled(ProviderId::Claude, "claude_x", false),
+            state.claude_crossfade_opacity,
+        )
+        .with_codex_state(
+            state.codex_hovered,
+            state.is_account_profile_enabled(ProviderId::Codex, "default", true),
+            state.is_account_profile_enabled(ProviderId::Codex, "codex_x", false),
+            state.codex_crossfade_opacity,
         )
 }
 
@@ -1030,6 +1106,7 @@ fn save_state_settings() {
         persisted.show_antigravity_gemini = Some(antigravity_on && s.show_antigravity_gemini);
         persisted.show_antigravity_external = Some(antigravity_on && s.show_antigravity_external);
         persisted.custom_theme_enabled = s.custom_theme_enabled;
+        persisted.show_pace = s.show_pace;
         persisted.active_theme_path = s
             .active_theme_path
             .as_ref()
@@ -1037,6 +1114,7 @@ fn save_state_settings() {
         persisted.placement_override = s.placement_override.clone();
         persisted.floating_card_opacity = s.floating_card_opacity;
         persisted.lock_taskbar = s.lock_taskbar;
+        persisted.accounts = s.accounts.clone();
         // The dashboard process owns its dimensions, so leave the freshly
         // loaded values unchanged when monitor actions persist settings.
         if let Err(error) = save_settings(&persisted) {
@@ -1917,6 +1995,9 @@ fn replace_active_theme(state: &mut AppState, loaded: ThemeDocument, path: Optio
         clear_auto_ejection(state);
     }
     state.active_theme = Some(loaded);
+    state.antigravity_tile_rect = None;
+    state.claude_tile_rect = None;
+    state.codex_tile_rect = None;
     if path.is_some() {
         state.active_theme_path = path;
     }
@@ -2574,6 +2655,17 @@ pub fn run() {
                 show_antigravity_gemini: settings.antigravity_gemini_enabled(),
                 show_antigravity_external: settings.antigravity_external_enabled(),
                 crossfade_opacity: 1.0,
+                antigravity_hovered: false,
+                crossfade_animation: None,
+                antigravity_tile_rect: None,
+                claude_hovered: false,
+                claude_crossfade_opacity: 0.0,
+                claude_crossfade_animation: None,
+                claude_tile_rect: None,
+                codex_hovered: false,
+                codex_crossfade_opacity: 0.0,
+                codex_crossfade_animation: None,
+                codex_tile_rect: None,
                 accounts: settings.accounts.clone(),
                 data: None,
                 poll_interval_ms: settings.poll_interval_ms,
@@ -2607,6 +2699,7 @@ pub fn run() {
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
+                show_pace: settings.show_pace,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -2642,17 +2735,6 @@ pub fn run() {
         // Initial render using the presenter selected by the surface nest.
         schedule_countdown_timer();
         schedule_clock_timer();
-        let startup_dual_mode = {
-            let state = lock_state();
-            state.as_ref().is_some_and(|s| {
-                s.show_antigravity_gemini
-                    && s.show_antigravity_external
-                    && s.providers.contains(ProviderId::Antigravity)
-            })
-        };
-        if startup_dual_mode {
-            arm_crossfade_schedule(hwnd);
-        }
         render_layered();
 
         if open_dashboard_on_start {
@@ -2744,6 +2826,38 @@ fn render_layered() {
         };
         let surface = &theme.surfaces[surface_index];
         let surface_runtime = theme_runtime_for_surface(&theme, surface_index, runtime);
+        if surface_index == 0 {
+            let mut state = lock_state();
+            if let Some(state) = state.as_mut() {
+                if state.antigravity_tile_rect.is_none() {
+                    state.antigravity_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::ANTIGRAVITY_HOVER_OBJECT,
+                    );
+                }
+                if state.claude_tile_rect.is_none() {
+                    state.claude_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::CLAUDE_HOVER_OBJECT,
+                    );
+                }
+                if state.codex_tile_rect.is_none() {
+                    state.codex_tile_rect = theme_engine::object_bounds(
+                        &theme,
+                        0,
+                        usage_data.as_ref(),
+                        surface_runtime,
+                        mouse::CODEX_HOVER_OBJECT,
+                    );
+                }
+            }
+        }
         let nest = surface
             .placement
             .nest
@@ -3358,43 +3472,231 @@ fn check_language_change() {
     }
 }
 
-/// All widget surfaces use the same wall-clock phase, including after a
-/// settings change or a delayed timer following sleep.
-fn antigravity_crossfade_frame(now_ms: u64) -> (f64, u32) {
-    let phase = now_ms % 20_000;
-    let smooth = |elapsed: u64| {
-        let t = elapsed as f64 / 2_000.0;
-        t * t * (3.0 - 2.0 * t)
-    };
-    match phase {
-        0..8_000 => (1.0, (8_000 - phase) as u32),
-        8_000..10_000 => (1.0 - smooth(phase - 8_000), 30),
-        10_000..18_000 => (0.0, (18_000 - phase) as u32),
-        _ => (smooth(phase - 18_000), 30),
+const ANTIGRAVITY_CROSSFADE_DURATION_MS: u64 = 200;
+const CODEX_CROSSFADE_DURATION_MS: u64 = 200;
+const CLAUDE_CROSSFADE_DURATION_MS: u64 = 200;
+const ANTIGRAVITY_CROSSFADE_TICK_MS: u32 = 16;
+
+#[derive(Clone, Copy, Debug)]
+pub(super) struct CrossfadeAnimation {
+    pub(super) start_opacity: f64,
+    pub(super) target_opacity: f64,
+    pub(super) start_time: std::time::Instant,
+    pub(super) duration: std::time::Duration,
+    pub(super) last_rendered: std::time::Instant,
+}
+
+impl CrossfadeAnimation {
+    pub(super) fn new(
+        start_opacity: f64,
+        target_opacity: f64,
+        duration: std::time::Duration,
+    ) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            start_opacity,
+            target_opacity,
+            start_time: now,
+            duration,
+            last_rendered: now,
+        }
+    }
+
+    pub(super) fn current_opacity(&self) -> (f64, bool) {
+        let elapsed = self.start_time.elapsed();
+        if elapsed >= self.duration || self.duration.is_zero() {
+            (self.target_opacity, false)
+        } else {
+            let progress = elapsed.as_secs_f64() / self.duration.as_secs_f64();
+            let opacity =
+                self.start_opacity + (self.target_opacity - self.start_opacity) * progress;
+            (opacity, true)
+        }
+    }
+
+    pub(super) fn tick_slot(
+        slot: &mut Option<Self>,
+        opacity_slot: &mut f64,
+        throttle: bool,
+    ) -> (bool, bool) {
+        let Some(mut anim) = *slot else {
+            return (false, false);
+        };
+        let now = std::time::Instant::now();
+        if throttle && now.duration_since(anim.last_rendered) < std::time::Duration::from_millis(15)
+        {
+            return (false, true);
+        }
+        let (opacity, more) = anim.current_opacity();
+        *opacity_slot = opacity;
+        anim.last_rendered = now;
+        if more {
+            *slot = Some(anim);
+        } else {
+            *opacity_slot = anim.target_opacity;
+            *slot = None;
+        }
+        (true, more)
     }
 }
 
-pub(super) fn arm_crossfade_schedule(hwnd: HWND) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis() as u64)
-        .unwrap_or(0);
-    let (opacity, delay_ms) = antigravity_crossfade_frame(now_ms);
-    let mut state = lock_state();
-    let dual_mode = state.as_ref().is_some_and(|state| {
-        state.show_antigravity_gemini
-            && state.show_antigravity_external
-            && state.providers.contains(ProviderId::Antigravity)
-    });
-    if let Some(state) = state.as_mut() {
-        state.crossfade_opacity = if dual_mode { opacity } else { 1.0 };
+pub(super) fn stop_crossfade_timer_if_idle(hwnd: HWND) {
+    if let Some(state) = lock_state().as_ref() {
+        state.stop_crossfade_timer_if_idle(hwnd);
     }
+}
+
+pub(super) fn ensure_crossfade_timer(hwnd: HWND) {
     unsafe {
-        if dual_mode {
-            let _ = set_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE, delay_ms, None);
-        } else {
-            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
+        let _ = set_controller_timer(
+            Some(hwnd),
+            TIMER_CROSSFADE_SCHEDULE,
+            ANTIGRAVITY_CROSSFADE_TICK_MS,
+            None,
+        );
+    }
+}
+
+pub(super) fn tick_antigravity_crossfade(hwnd: HWND, throttle: bool) {
+    let (should_render, still_animating) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        CrossfadeAnimation::tick_slot(
+            &mut state.crossfade_animation,
+            &mut state.crossfade_opacity,
+            throttle,
+        )
+    };
+    if !still_animating {
+        stop_crossfade_timer_if_idle(hwnd);
+    }
+    if should_render {
+        render_layered();
+    }
+}
+
+pub(super) fn tick_claude_crossfade(hwnd: HWND, throttle: bool) {
+    let (should_render, still_animating) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        CrossfadeAnimation::tick_slot(
+            &mut state.claude_crossfade_animation,
+            &mut state.claude_crossfade_opacity,
+            throttle,
+        )
+    };
+    if !still_animating {
+        stop_crossfade_timer_if_idle(hwnd);
+    }
+    if should_render {
+        render_layered();
+    }
+}
+
+pub(super) fn set_claude_hover(hwnd: HWND, hovered: bool) {
+    let mut should_animate = false;
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if state.claude_hovered != hovered {
+            state.claude_hovered = hovered;
+            if state.is_dual_mode_active(ProviderId::Claude) {
+                let target = if hovered { 1.0 } else { 0.0 };
+                state.claude_crossfade_animation = Some(CrossfadeAnimation::new(
+                    state.claude_crossfade_opacity,
+                    target,
+                    std::time::Duration::from_millis(CLAUDE_CROSSFADE_DURATION_MS),
+                ));
+                should_animate = true;
+            }
         }
+    }
+    if should_animate {
+        ensure_crossfade_timer(hwnd);
+        render_layered();
+    }
+}
+
+pub(super) fn tick_codex_crossfade(hwnd: HWND, throttle: bool) {
+    let (should_render, still_animating) = {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        CrossfadeAnimation::tick_slot(
+            &mut state.codex_crossfade_animation,
+            &mut state.codex_crossfade_opacity,
+            throttle,
+        )
+    };
+    if !still_animating {
+        stop_crossfade_timer_if_idle(hwnd);
+    }
+    if should_render {
+        render_layered();
+    }
+}
+
+/// Updates the hover state when the cursor enters or leaves the Codex tile with a 200ms crossfade animation.
+pub(super) fn set_codex_hover(hwnd: HWND, hovered: bool) {
+    let mut should_animate = false;
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        if state.codex_hovered != hovered {
+            state.codex_hovered = hovered;
+            if state.is_dual_mode_active(ProviderId::Codex) {
+                let target = if hovered { 1.0 } else { 0.0 };
+                state.codex_crossfade_animation = Some(CrossfadeAnimation::new(
+                    state.codex_crossfade_opacity,
+                    target,
+                    std::time::Duration::from_millis(CODEX_CROSSFADE_DURATION_MS),
+                ));
+                should_animate = true;
+            }
+        }
+    }
+    if should_animate {
+        ensure_crossfade_timer(hwnd);
+        render_layered();
+    }
+}
+
+pub(super) fn set_antigravity_hover(hwnd: HWND, hovered: bool) {
+    let mut should_animate = false;
+    {
+        let mut state = lock_state();
+        let Some(state) = state.as_mut() else {
+            return;
+        };
+        // Dual mode fades Gemini to Claude/GPT; a single pool fades to the
+        // hidden one.
+        let any_pool = (state.show_antigravity_gemini || state.show_antigravity_external)
+            && state.providers.contains(ProviderId::Antigravity);
+        if state.antigravity_hovered != hovered {
+            state.antigravity_hovered = hovered;
+            if any_pool {
+                let target = if hovered { 0.0 } else { 1.0 };
+                state.crossfade_animation = Some(CrossfadeAnimation::new(
+                    state.crossfade_opacity,
+                    target,
+                    std::time::Duration::from_millis(ANTIGRAVITY_CROSSFADE_DURATION_MS),
+                ));
+                should_animate = true;
+            }
+        }
+    }
+    if should_animate {
+        ensure_crossfade_timer(hwnd);
+        render_layered();
     }
 }
 
@@ -3404,8 +3706,6 @@ fn reload_external_settings(hwnd: HWND) {
     let theme_path = settings.active_theme_path.as_ref().map(PathBuf::from);
     let providers_changed;
     let lock_enabled;
-    let antigravity_changed;
-    let dual_mode;
     {
         let mut state = lock_state();
         let Some(state) = state.as_mut() else {
@@ -3415,8 +3715,6 @@ fn reload_external_settings(hwnd: HWND) {
             state.providers != settings.enabled_providers() || state.accounts != settings.accounts;
         let gemini_enabled = settings.antigravity_gemini_enabled();
         let external_enabled = settings.antigravity_external_enabled();
-        antigravity_changed = state.show_antigravity_gemini != gemini_enabled
-            || state.show_antigravity_external != external_enabled;
         state.show_antigravity_gemini = gemini_enabled;
         state.show_antigravity_external = external_enabled;
         state.accounts = settings.accounts.clone();
@@ -3426,15 +3724,30 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
-        dual_mode = state.show_antigravity_gemini
-            && state.show_antigravity_external
+        state.show_pace = settings.show_pace;
+        let any_pool = (state.show_antigravity_gemini || state.show_antigravity_external)
             && state.providers.contains(ProviderId::Antigravity);
-        if !dual_mode {
-            unsafe {
-                let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-            }
+        if !any_pool {
+            state.antigravity_hovered = false;
             state.crossfade_opacity = 1.0;
+            state.crossfade_animation = None;
         }
+        let codex_active = state.providers.contains(ProviderId::Codex);
+        if !codex_active {
+            state.codex_hovered = false;
+            state.codex_crossfade_opacity = 0.0;
+            state.codex_crossfade_animation = None;
+        }
+        let claude_active = state.providers.contains(ProviderId::Claude);
+        if !claude_active {
+            state.claude_hovered = false;
+            state.claude_crossfade_opacity = 0.0;
+            state.claude_crossfade_animation = None;
+        }
+        state.stop_crossfade_timer_if_idle(hwnd);
+        state.antigravity_tile_rect = None;
+        state.claude_tile_rect = None;
+        state.codex_tile_rect = None;
         update_configured_placement(
             state,
             settings.placement_override,
@@ -3445,9 +3758,6 @@ fn reload_external_settings(hwnd: HWND) {
         state.lock_taskbar = settings.lock_taskbar;
         lock_enabled = state.lock_taskbar;
         apply_language_to_state(state, language_override);
-    }
-    if dual_mode && (antigravity_changed || providers_changed) {
-        arm_crossfade_schedule(hwnd);
     }
     unsafe {
         set_controller_timer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);
@@ -4252,25 +4562,24 @@ mod credential_watch_worker_tests {
 
 #[cfg(test)]
 mod antigravity_crossfade_tests {
-    use super::antigravity_crossfade_frame;
+    use super::CrossfadeAnimation;
+    use std::time::Duration;
 
     #[test]
-    fn pool_crossfade_follows_the_same_phase_after_startup_sleep_and_rearming() {
-        for cycle in [0, 20_000, 180_000] {
-            for (phase, opacity, delay) in [
-                (0, 1.0, 8_000),
-                (7_000, 1.0, 1_000),
-                (8_000, 1.0, 30),
-                (9_000, 0.5, 30),
-                (10_000, 0.0, 8_000),
-                (17_000, 0.0, 1_000),
-                (18_000, 0.0, 30),
-                (19_000, 0.5, 30),
-            ] {
-                assert_eq!(antigravity_crossfade_frame(cycle + phase), (opacity, delay));
-            }
-        }
-        let before_wrap = antigravity_crossfade_frame(19_999).0;
-        assert!((1.0 - before_wrap).abs() < 0.000_001);
+    fn crossfade_animation_interpolates_and_completes() {
+        let anim = CrossfadeAnimation::new(1.0, 0.0, Duration::from_millis(0));
+        let (opacity, more) = anim.current_opacity();
+        assert_eq!(opacity, 0.0);
+        assert!(!more);
+
+        let anim = CrossfadeAnimation::new(0.0, 1.0, Duration::from_secs(10));
+        let (opacity, more) = anim.current_opacity();
+        assert!(opacity < 0.1);
+        assert!(more);
+
+        let anim_return = CrossfadeAnimation::new(0.0, 1.0, Duration::from_millis(0));
+        let (opacity, more) = anim_return.current_opacity();
+        assert_eq!(opacity, 1.0);
+        assert!(!more);
     }
 }

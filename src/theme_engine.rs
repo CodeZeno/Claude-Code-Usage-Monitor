@@ -1347,11 +1347,20 @@ pub struct ThemeRuntime {
     /// the `.display` values and summaries using them follow this; `.percentage`
     /// always means consumption so severity thresholds keep their meaning.
     pub countdown: bool,
+    pub show_pace: bool,
     pub surface_nest: SurfaceNest,
     pub floating_card_opacity: u8,
     pub antigravity_gemini_enabled: bool,
     pub antigravity_external_enabled: bool,
     pub crossfade_opacity: f64,
+    pub claude_crossfade_opacity: f64,
+    pub claude_hovered: bool,
+    pub claude_main_enabled: bool,
+    pub claude_x_enabled: bool,
+    pub codex_crossfade_opacity: f64,
+    pub codex_hovered: bool,
+    pub codex_main_enabled: bool,
+    pub codex_x_enabled: bool,
     host_width: u32,
     host_height: u32,
 }
@@ -1364,11 +1373,20 @@ impl Default for ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            show_pace: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: true,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            claude_crossfade_opacity: 0.0,
+            claude_hovered: false,
+            claude_main_enabled: true,
+            claude_x_enabled: false,
+            codex_crossfade_opacity: 0.0,
+            codex_hovered: false,
+            codex_main_enabled: true,
+            codex_x_enabled: false,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1398,14 +1416,51 @@ impl ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            show_pace: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: agy,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            claude_crossfade_opacity: 0.0,
+            claude_hovered: false,
+            claude_main_enabled: true,
+            claude_x_enabled: false,
+            codex_crossfade_opacity: 0.0,
+            codex_hovered: false,
+            codex_main_enabled: true,
+            codex_x_enabled: false,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
+    }
+
+    pub fn with_claude_state(
+        mut self,
+        hovered: bool,
+        main_enabled: bool,
+        x_enabled: bool,
+        crossfade_opacity: f64,
+    ) -> Self {
+        self.claude_hovered = hovered;
+        self.claude_main_enabled = main_enabled;
+        self.claude_x_enabled = x_enabled;
+        self.claude_crossfade_opacity = crossfade_opacity;
+        self
+    }
+
+    pub fn with_codex_state(
+        mut self,
+        hovered: bool,
+        main_enabled: bool,
+        x_enabled: bool,
+        crossfade_opacity: f64,
+    ) -> Self {
+        self.codex_hovered = hovered;
+        self.codex_main_enabled = main_enabled;
+        self.codex_x_enabled = x_enabled;
+        self.codex_crossfade_opacity = crossfade_opacity;
+        self
     }
 
     pub fn with_antigravity_pools(
@@ -1447,6 +1502,11 @@ impl ThemeRuntime {
         self
     }
 
+    pub fn with_show_pace(mut self, show_pace: bool) -> Self {
+        self.show_pace = show_pace;
+        self
+    }
+
     /// Supply the selected native host's 96-DPI logical dimensions. Theme
     /// expressions consume these as `host.width` and `host.height`.
     pub fn with_host_dimensions(mut self, width: u32, height: u32) -> Self {
@@ -1466,6 +1526,46 @@ impl ThemeRuntime {
     pub fn provider_enabled(self, provider: ProviderId) -> bool {
         self.providers.contains(provider)
     }
+}
+
+const FIVE_HOURS: std::time::Duration = std::time::Duration::from_secs(5 * 3600);
+const WEEK: std::time::Duration = std::time::Duration::from_secs(7 * 24 * 3600);
+
+/// Percent of a window of `length` that has passed by now, given when it
+/// resets; `None` when the reset is not within one window from now.
+fn expected_used(resets_at: std::time::SystemTime, length: std::time::Duration) -> Option<f64> {
+    let left = resets_at
+        .duration_since(std::time::SystemTime::now())
+        .ok()?;
+    // A minute of slack for poll latency right after a reset.
+    (!length.is_zero() && left <= length + std::time::Duration::from_secs(60))
+        .then(|| (1.0 - left.min(length).as_secs_f64() / length.as_secs_f64()) * 100.0)
+}
+
+/// Computes asymmetric crossfade opacities `(normal_opacity, hover_opacity)`
+/// for hover transitions.
+///
+/// Progress `p` runs from 0.0 (unhovered/normal state) to 1.0 (hovered state).
+/// - The outgoing normal state fades out rapidly between 0.0 and 0.35:
+///   `normal_opacity = (1.0 - p / 0.35).clamp(0.0, 1.0)`.
+/// - The incoming hover state fades in with a slight lead starting at 0.25:
+///   `hover_opacity = ((p - 0.25) / 0.75).clamp(0.0, 1.0)`.
+///
+/// This eliminates double-exposure ghosting / overlapping images while avoiding
+/// a jarring empty dip in brightness.
+pub fn asymmetric_crossfade_opacities(progress_to_hover: f64) -> (f64, f64) {
+    let p = progress_to_hover.clamp(0.0, 1.0);
+    let normal_opacity = if p < 0.35 {
+        (1.0 - p / 0.35).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let hover_opacity = if p > 0.25 {
+        ((p - 0.25) / 0.75).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    (normal_opacity, hover_opacity)
 }
 
 impl DataContext {
@@ -1544,6 +1644,7 @@ impl DataContext {
             );
         }
         context.insert("display.countdown", runtime.countdown as u8 as f64);
+        context.insert("display.show_pace", runtime.show_pace as u8 as f64);
         context.insert(
             "antigravity.gemini.enabled",
             runtime.antigravity_gemini_enabled as u8 as f64,
@@ -1555,9 +1656,45 @@ impl DataContext {
         let agy_dual_mode =
             runtime.antigravity_gemini_enabled && runtime.antigravity_external_enabled;
         context.insert("antigravity.dual_mode", agy_dual_mode as u8 as f64);
+        let crossfade = runtime.crossfade_opacity.clamp(0.0, 1.0);
+        context.insert("antigravity.crossfade_opacity", crossfade);
+        let (agy_normal_opacity, agy_hover_opacity) =
+            asymmetric_crossfade_opacities(1.0 - crossfade);
+        context.insert("antigravity.normal.opacity", agy_normal_opacity);
+        context.insert("antigravity.hover.opacity", agy_hover_opacity);
+        // crossfade 1.0 shows the primary pool: Gemini in dual mode, otherwise
+        // the single enabled pool; hover fades toward the other one.
+        let (gemini_opacity, external_opacity) = match (
+            runtime.antigravity_gemini_enabled,
+            runtime.antigravity_external_enabled,
+        ) {
+            (false, true) => (agy_hover_opacity, agy_normal_opacity),
+            (false, false) => (0.0, 0.0),
+            _ => (agy_normal_opacity, agy_hover_opacity),
+        };
+        context.insert("antigravity.gemini.opacity", gemini_opacity);
+        context.insert("antigravity.external.opacity", external_opacity);
+        context.insert("claude.hovered", runtime.claude_hovered as u8 as f64);
+        context.insert_hover_crossfade("claude", runtime.claude_crossfade_opacity);
         context.insert(
-            "antigravity.crossfade_opacity",
-            runtime.crossfade_opacity.clamp(0.0, 1.0),
+            "claude.main.enabled",
+            runtime.claude_main_enabled as u8 as f64,
+        );
+        context.insert("claude.x.enabled", runtime.claude_x_enabled as u8 as f64);
+        context.insert(
+            "claude.dual_mode",
+            (runtime.claude_main_enabled && runtime.claude_x_enabled) as u8 as f64,
+        );
+        context.insert("codex.hovered", runtime.codex_hovered as u8 as f64);
+        context.insert_hover_crossfade("codex", runtime.codex_crossfade_opacity);
+        context.insert(
+            "codex.main.enabled",
+            runtime.codex_main_enabled as u8 as f64,
+        );
+        context.insert("codex.x.enabled", runtime.codex_x_enabled as u8 as f64);
+        context.insert(
+            "codex.dual_mode",
+            (runtime.codex_main_enabled && runtime.codex_x_enabled) as u8 as f64,
         );
         if let Some(data) = data {
             for account in &data.accounts {
@@ -1576,6 +1713,58 @@ impl DataContext {
                     &key,
                     account.usage.as_ref(),
                     account.provider == ProviderId::Codex,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Claude && a.profile.id == "default")
+            {
+                let claude_usage = data.get(ProviderId::Claude);
+                context.insert_provider(
+                    "accounts.claude.default",
+                    claude_usage,
+                    false,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Claude && a.profile.id == "claude_x")
+            {
+                let claude_usage = data.get(ProviderId::Claude);
+                context.insert_provider(
+                    "accounts.claude.claude_x",
+                    claude_usage,
+                    false,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Codex && a.profile.id == "default")
+            {
+                let codex_usage = data.get(ProviderId::Codex);
+                context.insert_provider(
+                    "accounts.codex.default",
+                    codex_usage,
+                    true,
+                    runtime.countdown,
+                );
+            }
+            if !data
+                .accounts
+                .iter()
+                .any(|a| a.provider == ProviderId::Codex && a.profile.id == "codex_x")
+            {
+                let codex_usage = data.get(ProviderId::Codex);
+                context.insert_provider(
+                    "accounts.codex.codex_x",
+                    codex_usage,
+                    true,
                     runtime.countdown,
                 );
             }
@@ -1640,6 +1829,15 @@ impl DataContext {
             context.insert_provider("active", None, false, runtime.countdown);
         }
         context
+    }
+
+    pub fn insert_hover_crossfade(&mut self, prefix: &str, progress_to_hover: f64) -> (f64, f64) {
+        let p = progress_to_hover.clamp(0.0, 1.0);
+        self.insert(&format!("{prefix}.crossfade_opacity"), p);
+        let (normal, hover) = asymmetric_crossfade_opacities(p);
+        self.insert(&format!("{prefix}.normal.opacity"), normal);
+        self.insert(&format!("{prefix}.hover.opacity"), hover);
+        (normal, hover)
     }
 
     fn insert_provider(
@@ -1738,6 +1936,40 @@ impl DataContext {
             display(weekly)
         };
         self.insert(&format!("{name}.weekly.display"), shown_weekly);
+        // Pace: the share a window would have spent by now at an even rate.
+        // `expected_display` follows the countdown setting like `display`.
+        let five_hour_section = usage
+            .filter(|usage| usage.session.available)
+            .map(|usage| &usage.session);
+        let weekly_section = usage
+            .filter(|usage| usage.weekly.available)
+            .map(|usage| &usage.weekly);
+        let session_section = if use_codex_session_fallback {
+            weekly_section.map(|section| (section, WEEK))
+        } else {
+            five_hour_section.map(|section| (section, FIVE_HOURS))
+        };
+        for (window, section) in [
+            ("session", session_section),
+            (
+                "five_hour",
+                five_hour_section.map(|section| (section, FIVE_HOURS)),
+            ),
+            ("weekly", weekly_section.map(|section| (section, WEEK))),
+        ] {
+            let expected =
+                section.and_then(|(section, length)| expected_used(section.resets_at?, length));
+            self.insert(
+                &format!("{name}.{window}.expected_available"),
+                expected.is_some() as u8 as f64,
+            );
+            let expected = expected.unwrap_or(0.0);
+            self.insert(&format!("{name}.{window}.expected"), expected);
+            self.insert(
+                &format!("{name}.{window}.expected_display"),
+                display(expected),
+            );
+        }
         let monthly = usage.and_then(|usage| usage.monthly.as_ref());
         self.insert_string(&format!("{name}.monthly.label"), "30d");
         if let Some(monthly) = monthly {

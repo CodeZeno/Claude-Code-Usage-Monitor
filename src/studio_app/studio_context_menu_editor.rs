@@ -323,8 +323,13 @@ pub(super) fn context_menu_action_script(action: &ContextMenuAction) -> String {
         }
         ContextMenuAction::ToggleAntigravityGemini => "toggle_antigravity_gemini()".into(),
         ContextMenuAction::ToggleAntigravityExternal => "toggle_antigravity_external()".into(),
+        ContextMenuAction::ToggleClaudeMain => "toggle_claude_main()".into(),
+        ContextMenuAction::ToggleClaudeX => "toggle_claude_x()".into(),
+        ContextMenuAction::ToggleCodexMain => "toggle_codex_main()".into(),
+        ContextMenuAction::ToggleCodexX => "toggle_codex_x()".into(),
         ContextMenuAction::ToggleStartup => "toggle_startup()".into(),
         ContextMenuAction::ToggleTaskbarLock => "toggle_taskbar_lock()".into(),
+        ContextMenuAction::ToggleShowPace => "toggle_show_pace()".into(),
         ContextMenuAction::ToggleWidget => "toggle_widget()".into(),
         ContextMenuAction::LegacyResetPosition => String::new(),
         ContextMenuAction::SetLanguage { language } => {
@@ -352,6 +357,7 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
         ("refresh", ContextMenuAction::Refresh),
         ("toggle_startup", ContextMenuAction::ToggleStartup),
         ("toggle_taskbar_lock", ContextMenuAction::ToggleTaskbarLock),
+        ("toggle_show_pace", ContextMenuAction::ToggleShowPace),
         ("toggle_widget", ContextMenuAction::ToggleWidget),
         ("check_for_updates", ContextMenuAction::CheckForUpdates),
         (
@@ -362,6 +368,10 @@ pub(super) fn parse_context_menu_action_script(script: &str) -> Result<ContextMe
             "toggle_antigravity_external",
             ContextMenuAction::ToggleAntigravityExternal,
         ),
+        ("toggle_claude_main", ContextMenuAction::ToggleClaudeMain),
+        ("toggle_claude_x", ContextMenuAction::ToggleClaudeX),
+        ("toggle_codex_main", ContextMenuAction::ToggleCodexMain),
+        ("toggle_codex_x", ContextMenuAction::ToggleCodexX),
         ("exit", ContextMenuAction::Exit),
     ] {
         if script == format!("{name}()") {
