@@ -134,16 +134,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     tick_antigravity_crossfade(hwnd, false);
                     tick_claude_crossfade(hwnd, false);
                     tick_codex_crossfade(hwnd, false);
-                    let any_animating = lock_state().as_ref().is_some_and(|s| {
-                        s.crossfade_animation.is_some()
-                            || s.claude_crossfade_animation.is_some()
-                            || s.codex_crossfade_animation.is_some()
-                    });
-                    if !any_animating {
-                        unsafe {
-                            let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
-                        }
-                    }
+                    super::stop_crossfade_timer_if_idle(hwnd);
                 }
                 _ => {}
             }
@@ -876,16 +867,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.antigravity_hovered = false;
                                     s.crossfade_opacity = 1.0;
                                     s.crossfade_animation = None;
-                                    if s.claude_crossfade_animation.is_none()
-                                        && s.codex_crossfade_animation.is_none()
-                                    {
-                                        unsafe {
-                                            let _ = kill_controller_timer(
-                                                Some(hwnd),
-                                                TIMER_CROSSFADE_SCHEDULE,
-                                            );
-                                        }
-                                    }
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                 }
                             }
                         }
@@ -985,16 +967,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.claude_hovered = false;
                                     s.claude_crossfade_opacity = 0.0;
                                     s.claude_crossfade_animation = None;
-                                    if s.crossfade_animation.is_none()
-                                        && s.codex_crossfade_animation.is_none()
-                                    {
-                                        unsafe {
-                                            let _ = kill_controller_timer(
-                                                Some(hwnd),
-                                                TIMER_CROSSFADE_SCHEDULE,
-                                            );
-                                        }
-                                    }
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                     should_reposition = true;
                                 } else if !s.providers.contains(ProviderId::Claude) {
                                     s.providers.set(ProviderId::Claude, true);
@@ -1094,16 +1067,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.codex_hovered = false;
                                     s.codex_crossfade_opacity = 0.0;
                                     s.codex_crossfade_animation = None;
-                                    if s.crossfade_animation.is_none()
-                                        && s.claude_crossfade_animation.is_none()
-                                    {
-                                        unsafe {
-                                            let _ = kill_controller_timer(
-                                                Some(hwnd),
-                                                TIMER_CROSSFADE_SCHEDULE,
-                                            );
-                                        }
-                                    }
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                     should_reposition = true;
                                 } else if !s.providers.contains(ProviderId::Codex) {
                                     s.providers.set(ProviderId::Codex, true);
@@ -1136,31 +1100,13 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                 s.claude_hovered = false;
                                 s.claude_crossfade_opacity = 0.0;
                                 s.claude_crossfade_animation = None;
-                                if s.crossfade_animation.is_none()
-                                    && s.codex_crossfade_animation.is_none()
-                                {
-                                    unsafe {
-                                        let _ = kill_controller_timer(
-                                            Some(hwnd),
-                                            TIMER_CROSSFADE_SCHEDULE,
-                                        );
-                                    }
-                                }
+                                s.stop_crossfade_timer_if_idle(hwnd);
                             }
                             if !s.providers.contains(ProviderId::Codex) {
                                 s.codex_hovered = false;
                                 s.codex_crossfade_opacity = 0.0;
                                 s.codex_crossfade_animation = None;
-                                if s.crossfade_animation.is_none()
-                                    && s.claude_crossfade_animation.is_none()
-                                {
-                                    unsafe {
-                                        let _ = kill_controller_timer(
-                                            Some(hwnd),
-                                            TIMER_CROSSFADE_SCHEDULE,
-                                        );
-                                    }
-                                }
+                                s.stop_crossfade_timer_if_idle(hwnd);
                             }
                             if provider == ProviderId::Antigravity && changed {
                                 let enabled = s.providers.contains(ProviderId::Antigravity);
@@ -1171,14 +1117,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     s.crossfade_opacity = 1.0;
                                     s.crossfade_animation = None;
                                     s.antigravity_tile_rect = None;
-                                    if s.claude_crossfade_animation.is_none()
-                                        && s.codex_crossfade_animation.is_none()
-                                    {
-                                        let _ = kill_controller_timer(
-                                            Some(hwnd),
-                                            TIMER_CROSSFADE_SCHEDULE,
-                                        );
-                                    }
+                                    s.stop_crossfade_timer_if_idle(hwnd);
                                 }
                             }
                         }
