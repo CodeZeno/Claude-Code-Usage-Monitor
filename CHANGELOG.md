@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.22.10] - 2026-11-02
+
+### Changed
+
+- Update the locked `lucide-icons` dependency from 1.60.0 to 1.61.0 for dashboard icons and the generated icon font subset. ([#203](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/203))
+
 ## [2.22.9] - 2026-11-02
 
 ### Changed
@@ -1579,3 +1585,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.6...v2.22.7
 [2.22.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.7...v2.22.8
 [2.22.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.8...v2.22.9
+[2.22.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.9...v2.22.10
