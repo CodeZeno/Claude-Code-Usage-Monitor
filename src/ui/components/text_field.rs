@@ -38,7 +38,7 @@ impl<'a> SinglelineField<'a> {
     }
 
     pub(crate) fn horizontal_align(mut self, align: egui::Align) -> Self {
-        self.widget = self.widget.horizontal_align(align);
+        self.widget = self.widget.align(egui::Align2([align, egui::Align::Min]));
         self
     }
 

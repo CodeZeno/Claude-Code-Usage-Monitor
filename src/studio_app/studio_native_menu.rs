@@ -371,7 +371,7 @@ pub(super) fn preview_context_menu_submenu<R>(
     let widget_id = ui.next_auto_id();
     let submenu_id = SubMenu::id_from_widget_id(widget_id);
     let preview_state_id = find_menu_root(ui)
-        .id
+        .scope_id
         .with("context-menu-preview-open-submenu");
     if !open_submenu_state_ids.borrow().contains(&preview_state_id) {
         open_submenu_state_ids.borrow_mut().push(preview_state_id);
