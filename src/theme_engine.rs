@@ -1352,6 +1352,7 @@ pub struct ThemeRuntime {
     pub antigravity_gemini_enabled: bool,
     pub antigravity_external_enabled: bool,
     pub crossfade_opacity: f64,
+    pub opencode_long_window: crate::app_settings::OpenCodeLongWindow,
     host_width: u32,
     host_height: u32,
 }
@@ -1369,6 +1370,7 @@ impl Default for ThemeRuntime {
             antigravity_gemini_enabled: true,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            opencode_long_window: crate::app_settings::OpenCodeLongWindow::Monthly,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1403,6 +1405,7 @@ impl ThemeRuntime {
             antigravity_gemini_enabled: agy,
             antigravity_external_enabled: false,
             crossfade_opacity: 1.0,
+            opencode_long_window: crate::app_settings::OpenCodeLongWindow::Monthly,
             host_width: default_canvas_width(),
             host_height: default_canvas_height(),
         }
@@ -1444,6 +1447,15 @@ impl ThemeRuntime {
     /// Count each allowance down towards its limit instead of up from zero.
     pub fn with_countdown(mut self, countdown: bool) -> Self {
         self.countdown = countdown;
+        self
+    }
+
+    /// Select which long window the OpenCode row shows.
+    pub fn with_opencode_long_window(
+        mut self,
+        window: crate::app_settings::OpenCodeLongWindow,
+    ) -> Self {
+        self.opencode_long_window = window;
         self
     }
 
@@ -1639,6 +1651,11 @@ impl DataContext {
             context.insert_provider("antigravity.external", None, false, runtime.countdown);
             context.insert_provider("active", None, false, runtime.countdown);
         }
+        let long_window_str = match runtime.opencode_long_window {
+            crate::app_settings::OpenCodeLongWindow::Weekly => "weekly",
+            crate::app_settings::OpenCodeLongWindow::Monthly => "monthly",
+        };
+        context.insert_string("opencode.long_window", long_window_str);
         context
     }
 
@@ -1759,6 +1776,30 @@ impl DataContext {
             &format!("{name}.monthly.available"),
             monthly.is_some() as u8 as f64,
         );
+        let weekly_7d = usage.and_then(|usage| usage.weekly_7d.as_ref());
+        self.insert_string(&format!("{name}.weekly_7d.label"), "7d");
+        if let Some(weekly_7d) = weekly_7d {
+            self.insert(
+                &format!("{name}.weekly_7d.percentage"),
+                weekly_7d.percentage,
+            );
+            self.insert(
+                &format!("{name}.weekly_7d.remaining"),
+                100.0 - weekly_7d.percentage,
+            );
+            self.insert(
+                &format!("{name}.weekly_7d.display"),
+                display(weekly_7d.percentage),
+            );
+        } else {
+            self.insert(&format!("{name}.weekly_7d.percentage"), 0.0);
+            self.insert(&format!("{name}.weekly_7d.remaining"), 100.0);
+            self.insert(&format!("{name}.weekly_7d.display"), display(0.0));
+        }
+        self.insert(
+            &format!("{name}.weekly_7d.available"),
+            weekly_7d.map_or(false, |s| s.available) as u8 as f64,
+        );
         self.insert(&format!("{name}.available"), usage.is_some() as u8 as f64);
         // Carried over from an earlier poll: real figures, not current ones.
         self.insert(
@@ -1843,11 +1884,14 @@ impl DataContext {
         }
         let (monthly_unix, monthly_seconds) =
             reset_value(monthly.and_then(|value| value.resets_at));
+        let (weekly_7d_unix, weekly_7d_seconds) =
+            reset_value(weekly_7d.and_then(|value| value.resets_at));
         for (window, unix, seconds) in [
             ("session", session_unix, session_seconds),
             ("five_hour", five_hour_unix, five_hour_seconds),
             ("weekly", weekly_unix, weekly_seconds),
             ("monthly", monthly_unix, monthly_seconds),
+            ("weekly_7d", weekly_7d_unix, weekly_7d_seconds),
         ] {
             self.insert(&format!("{name}.{window}.reset.unix"), unix);
             self.insert(&format!("{name}.{window}.reset.seconds"), seconds);

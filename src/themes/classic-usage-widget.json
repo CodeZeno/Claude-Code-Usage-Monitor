@@ -1112,16 +1112,16 @@
           }
         },
         {
-          "id": "opencode-weekly-segments-dark",
-          "name": "dark OpenCode long-window segments",
-          "render": "system.dark",
+          "id": "opencode-long-7d-segments-dark",
+          "name": "dark OpenCode 7d segments",
+          "render": "(opencode.long_window == \"weekly\") * (system.dark)",
           "parent": "opencode-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
             "type": "progress",
-            "value": "opencode.weekly.display",
+            "value": "opencode.weekly_7d.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#4CAF50FF"
@@ -1136,9 +1136,9 @@
           }
         },
         {
-          "id": "opencode-weekly-value-dark",
-          "name": "dark OpenCode long-window value",
-          "render": "system.dark",
+          "id": "opencode-long-7d-value-dark",
+          "name": "dark OpenCode 7d value",
+          "render": "(opencode.long_window == \"weekly\") * (system.dark)",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1146,7 +1146,7 @@
           "height": "13",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_line}",
+            "template": "7d {opencode.weekly_7d.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",
@@ -1159,16 +1159,16 @@
           }
         },
         {
-          "id": "opencode-weekly-segments-light",
-          "name": "light OpenCode long-window segments",
-          "render": "1 - system.dark",
+          "id": "opencode-long-7d-segments-light",
+          "name": "light OpenCode 7d segments",
+          "render": "(opencode.long_window == \"weekly\") * (1 - system.dark)",
           "parent": "opencode-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
             "type": "progress",
-            "value": "opencode.weekly.display",
+            "value": "opencode.weekly_7d.display",
             "direction": "left_to_right",
             "fill": {
               "color": "#2E7D32FF"
@@ -1183,9 +1183,9 @@
           }
         },
         {
-          "id": "opencode-weekly-value-light",
-          "name": "light OpenCode long-window value",
-          "render": "1 - system.dark",
+          "id": "opencode-long-7d-value-light",
+          "name": "light OpenCode 7d value",
+          "render": "(opencode.long_window == \"weekly\") * (1 - system.dark)",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1193,7 +1193,101 @@
           "height": "13",
           "content": {
             "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_line}",
+            "template": "7d {opencode.weekly_7d.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#1B5E20FF"
+            }
+          }
+        },
+        {
+          "id": "opencode-long-30d-segments-dark",
+          "name": "dark OpenCode 30d segments",
+          "render": "(opencode.long_window == \"monthly\") * (system.dark)",
+          "parent": "opencode-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "opencode.monthly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4CAF50FF"
+            },
+            "track": {
+              "color": "#444444FF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "opencode-long-30d-value-dark",
+          "name": "dark OpenCode 30d value",
+          "render": "(opencode.long_window == \"monthly\") * (system.dark)",
+          "parent": "opencode-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "30d {opencode.monthly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#81C784FF"
+            }
+          }
+        },
+        {
+          "id": "opencode-long-30d-segments-light",
+          "name": "light OpenCode 30d segments",
+          "render": "(opencode.long_window == \"monthly\") * (1 - system.dark)",
+          "parent": "opencode-provider",
+          "y": "28",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "13",
+          "content": {
+            "type": "progress",
+            "value": "opencode.monthly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2E7D32FF"
+            },
+            "track": {
+              "color": "#AAAAAAFF"
+            },
+            "corner_radius": "2",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "opencode-long-30d-value-light",
+          "name": "light OpenCode 30d value",
+          "render": "(opencode.long_window == \"monthly\") * (1 - system.dark)",
+          "parent": "opencode-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "28",
+          "width": "90",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "30d {opencode.monthly.display:usage_line}",
             "font_family": "Segoe UI",
             "font_size": "12",
             "weight": "medium",

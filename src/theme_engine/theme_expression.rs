@@ -527,7 +527,7 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
         || (dynamic.is_none()
             && !matches!(
                 window,
-                "session" | "five_hour" | "weekly" | "monthly" | "credits"
+                "session" | "five_hour" | "weekly" | "weekly_7d" | "monthly" | "credits"
             ))
     {
         return None;

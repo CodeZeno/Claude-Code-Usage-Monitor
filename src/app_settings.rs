@@ -23,6 +23,17 @@ pub const POLL_1_HOUR: u32 = POLL_1_HOUR_SECONDS * 1_000;
 // SetTimer clamps longer intervals to USER_TIMER_MAXIMUM (i32::MAX ms).
 pub const MAX_POLL_MINUTES: u32 = i32::MAX as u32 / POLL_1_MIN;
 
+/// Which long window the OpenCode widget row shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenCodeLongWindow {
+    /// Always show the 7-day window.
+    Weekly,
+    /// Always show the 30-day window.
+    #[default]
+    Monthly,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SettingsFile {
     #[serde(default)]
@@ -66,6 +77,9 @@ pub struct SettingsFile {
     show_grok: bool,
     #[serde(default)]
     show_copilot: bool,
+    /// Which long window the OpenCode widget row shows.
+    #[serde(default)]
+    pub opencode_long_window: OpenCodeLongWindow,
     #[serde(default = "default_true")]
     pub custom_theme_enabled: bool,
     /// Show what is left of each allowance instead of what has been spent, so
@@ -137,6 +151,7 @@ impl Default for SettingsFile {
             show_cursor: false,
             show_grok: false,
             show_copilot: false,
+            opencode_long_window: OpenCodeLongWindow::Monthly,
             custom_theme_enabled: true,
             usage_countdown: false,
             active_theme_path: None,
@@ -503,6 +518,23 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opencode_long_window_defaults_to_monthly_and_round_trips() {
+        // A fresh settings file (missing the key) deserialises to Monthly.
+        let settings = decode_settings("{}").unwrap();
+        assert_eq!(settings.opencode_long_window, OpenCodeLongWindow::Monthly);
+
+        // All variants survive a round-trip.
+        for variant in [OpenCodeLongWindow::Weekly, OpenCodeLongWindow::Monthly] {
+            let settings = SettingsFile {
+                opencode_long_window: variant,
+                ..Default::default()
+            };
+            let decoded = decode_settings(&settings_json(&settings).to_string()).unwrap();
+            assert_eq!(decoded.opencode_long_window, variant);
+        }
+    }
 
     #[test]
     fn taskbar_lock_is_opt_in_and_survives_settings_round_trip() {
