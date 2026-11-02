@@ -2265,7 +2265,13 @@ unsafe extern "system" fn mirror_wnd_proc(
 ) -> LRESULT {
     match msg {
         WM_NCHITTEST => LRESULT(HTCLIENT as isize),
-        WM_SETCURSOR if set_surface_cursor(hwnd) => LRESULT(1),
+        // See the primary surface: DefWindowProc forwards both to the parent.
+        WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+        WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_APPCOMMAND | WM_CONTEXTMENU => LRESULT(0),
+        WM_SETCURSOR => {
+            set_surface_cursor(hwnd);
+            LRESULT(1)
+        }
         WM_MOUSEMOVE => {
             update_mouse_hover(hwnd, lparam);
             LRESULT(0)

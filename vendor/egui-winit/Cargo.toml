@@ -13,7 +13,7 @@
 edition = "2024"
 rust-version = "1.95"
 name = "egui-winit"
-version = "0.36.2"
+version = "0.37.0"
 authors = ["Emil Ernerfeldt <emil.ernerfeldt@gmail.com>"]
 build = false
 include = [
@@ -78,9 +78,11 @@ serde = [
 wayland = [
     "winit/wayland",
     "bytemuck",
+    "arboard?/wayland-data-control",
 ]
 x11 = [
     "winit/x11",
+    "winit/rwh_06",
     "bytemuck",
 ]
 
@@ -89,7 +91,7 @@ name = "egui_winit"
 path = "src/lib.rs"
 
 [dependencies.accesskit_winit]
-version = "0.32.0"
+version = "0.34.0"
 optional = true
 
 [dependencies.bytemuck]
@@ -101,11 +103,11 @@ version = "0.2.12"
 optional = true
 
 [dependencies.egui]
-version = "0.36.2"
+version = "0.37.0"
 default-features = false
 
 [dependencies.log]
-version = "0.4.33"
+version = "0.4.34"
 features = ["std"]
 
 [dependencies.profiling]
@@ -124,7 +126,7 @@ optional = true
 version = "1.1"
 
 [dependencies.webbrowser]
-version = "1.2"
+version = "1.2.4"
 optional = true
 
 [dependencies.winit]
@@ -172,189 +174,148 @@ features = [
 ]
 default-features = false
 
+[target.'cfg(target_os = "macos")'.dependencies.block2]
+version = "0.6.2"
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2]
+version = "0.6.4"
+
+[target.'cfg(target_os = "macos")'.dependencies.objc2-app-kit]
+version = "0.3.2"
+features = [
+    "std",
+    "block2",
+    "NSEvent",
+    "NSResponder",
+]
+default-features = false
+
+[target.'cfg(target_os = "windows")'.dependencies.windows-sys]
+version = "0.61.2"
+features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_UI_WindowsAndMessaging",
+]
+
 [lints.clippy]
 allow_attributes = "warn"
 as_ptr_cast_mut = "warn"
 assigning_clones = "allow"
-bool_to_int_with_if = "warn"
 branches_sharing_code = "warn"
+cast_lossless = "allow"
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
-checked_conversions = "warn"
+cast_precision_loss = "allow"
+cast_sign_loss = "allow"
 clear_with_drain = "warn"
 clone_on_ref_ptr = "warn"
-cloned_instead_of_copied = "warn"
 coerce_container_to_any = "warn"
 comparison_chain = "allow"
 dbg_macro = "warn"
 debug_assert_with_mut_call = "warn"
-decimal_bitwise_operands = "warn"
+default_trait_access = "allow"
 default_union_representation = "warn"
 derive_partial_eq_without_eq = "warn"
 disallowed_script_idents = "warn"
-doc_broken_link = "warn"
-doc_comment_double_space_linebreaks = "warn"
 doc_include_without_cfg = "warn"
-doc_link_with_quotes = "warn"
-doc_markdown = "warn"
-duration_suboptimal_units = "warn"
-elidable_lifetime_names = "warn"
 empty_enum_variants_with_brackets = "warn"
-empty_enums = "warn"
-enum_glob_use = "warn"
 equatable_if_let = "warn"
 exit = "warn"
-expl_impl_clone_on_copy = "warn"
-explicit_deref_methods = "warn"
-explicit_into_iter_loop = "warn"
-explicit_iter_loop = "warn"
 fallible_impl_from = "warn"
-filter_map_next = "warn"
-flat_map_option = "warn"
+float_cmp = "allow"
 float_cmp_const = "warn"
-fn_params_excessive_bools = "warn"
 fn_to_numeric_cast_any = "warn"
-format_push_string = "warn"
-from_iter_instead_of_collect = "warn"
 get_unwrap = "warn"
-ignore_without_reason = "warn"
-ignored_unit_patterns = "warn"
-implicit_clone = "warn"
 imprecise_flops = "warn"
-inconsistent_struct_constructor = "warn"
-index_refutable_slice = "warn"
-inefficient_to_string = "warn"
 infinite_loop = "warn"
-into_iter_without_iter = "warn"
-invalid_upcast_comparisons = "warn"
-ip_constant = "warn"
-iter_filter_is_ok = "warn"
-iter_filter_is_some = "warn"
-iter_not_returning_iterator = "warn"
+inline_always = "allow"
+items_after_statements = "allow"
 iter_on_empty_collections = "warn"
 iter_on_single_items = "warn"
 iter_over_hash_type = "warn"
-iter_without_into_iter = "warn"
-large_digit_groups = "warn"
-large_futures = "warn"
 large_include_file = "warn"
-large_stack_arrays = "warn"
 large_stack_frames = "warn"
-large_types_passed_by_value = "warn"
 let_underscore_must_use = "allow"
 let_underscore_untyped = "allow"
-linkedlist = "warn"
 literal_string_with_formatting_args = "warn"
 lossy_float_literal = "warn"
-macro_use_imports = "warn"
-manual_assert = "warn"
-manual_ilog2 = "warn"
-manual_instant_elapsed = "warn"
-manual_is_power_of_two = "warn"
-manual_is_variant_and = "warn"
-manual_let_else = "warn"
-manual_midpoint = "warn"
 manual_range_contains = "allow"
-manual_string_new = "warn"
+many_single_char_names = "allow"
 map_err_ignore = "warn"
 map_unwrap_or = "allow"
-match_bool = "warn"
-match_same_arms = "warn"
-match_wild_err_arm = "warn"
-match_wildcard_for_single_variants = "warn"
 mem_forget = "warn"
-mismatching_type_param_order = "warn"
 missing_assert_message = "warn"
-missing_errors_doc = "warn"
-missing_fields_in_debug = "warn"
-mut_mut = "warn"
+missing_panics_doc = "allow"
+multiple_crate_versions = "allow"
+must_use_candidate = "allow"
 mutex_integer = "warn"
-needless_continue = "warn"
-needless_for_each = "warn"
 needless_pass_by_ref_mut = "warn"
-needless_pass_by_value = "warn"
-needless_raw_string_hashes = "warn"
 needless_type_cast = "warn"
-negative_feature_names = "warn"
-non_std_lazy_statics = "warn"
 non_zero_suggestions = "warn"
 nonstandard_macro_braces = "warn"
-option_as_ref_cloned = "warn"
-option_option = "warn"
 or_fun_call = "warn"
 path_buf_push_overwrite = "warn"
 pathbuf_init_then_push = "warn"
 precedence_bits = "warn"
 print_stderr = "warn"
 print_stdout = "warn"
-ptr_as_ptr = "warn"
-ptr_cast_constness = "warn"
-pub_underscore_fields = "warn"
 pub_without_shorthand = "warn"
 rc_mutex = "warn"
+redundant_closure_for_method_calls = "allow"
 redundant_type_annotations = "warn"
-ref_as_ptr = "warn"
-ref_option = "warn"
-ref_option_ref = "warn"
 ref_patterns = "warn"
 rest_pat_in_fully_bound_structs = "warn"
 return_and_then = "warn"
-same_functions_in_if_condition = "warn"
-same_length_and_capacity = "warn"
+return_self_not_must_use = "allow"
 self_named_module_files = "allow"
-self_only_used_in_recursion = "warn"
-semicolon_if_nothing_returned = "warn"
 set_contains_or_insert = "warn"
 should_panic_without_expect = "allow"
 significant_drop_tightening = "allow"
-single_char_pattern = "warn"
-single_match_else = "warn"
+similar_names = "allow"
 single_option_map = "warn"
 std_instead_of_core = "warn"
-str_split_at_newline = "warn"
 str_to_string = "warn"
 string_add = "warn"
-string_add_assign = "warn"
 string_lit_as_bytes = "warn"
 string_lit_chars_any = "warn"
+struct_excessive_bools = "allow"
+struct_field_names = "allow"
 suspicious_xor_used_as_pow = "warn"
 todo = "warn"
 too_long_first_doc_paragraph = "warn"
 too_many_lines = "allow"
 trailing_empty_array = "warn"
 trait_duplication_in_bounds = "warn"
-transmute_ptr_to_ptr = "warn"
+trivially_copy_pass_by_ref = "allow"
 tuple_array_conversions = "warn"
-unchecked_time_subtraction = "warn"
 undocumented_unsafe_blocks = "warn"
 unimplemented = "warn"
 uninhabited_references = "warn"
-uninlined_format_args = "warn"
-unnecessary_box_returns = "warn"
-unnecessary_debug_formatting = "warn"
-unnecessary_literal_bound = "warn"
 unnecessary_safety_comment = "warn"
 unnecessary_safety_doc = "warn"
 unnecessary_self_imports = "warn"
-unnecessary_semicolon = "warn"
 unnecessary_struct_initialization = "warn"
-unnecessary_trailing_comma = "warn"
-unnecessary_wraps = "warn"
-unnested_or_patterns = "warn"
-unused_async = "warn"
+unreadable_literal = "allow"
 unused_peekable = "warn"
 unused_rounding = "warn"
-unused_self = "warn"
 unused_trait_names = "warn"
 unwrap_used = "warn"
 use_self = "warn"
+used_underscore_binding = "allow"
 useless_let_if_seq = "warn"
 verbose_file_reads = "warn"
-wildcard_dependencies = "warn"
 wildcard_imports = "allow"
-zero_sized_map_values = "warn"
 
 [lints.clippy.all]
+level = "warn"
+priority = -1
+
+[lints.clippy.cargo]
+level = "warn"
+priority = -1
+
+[lints.clippy.pedantic]
 level = "warn"
 priority = -1
 
@@ -377,6 +338,11 @@ priority = -1
 [lints.rust.rust_2018_idioms]
 level = "warn"
 priority = -1
+
+[lints.rust.unexpected_cfgs]
+level = "warn"
+priority = 0
+check-cfg = ["cfg(web_sys_unstable_apis)"]
 
 [lints.rustdoc]
 all = "warn"

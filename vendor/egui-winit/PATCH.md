@@ -1,8 +1,8 @@
 # Text-only clipboard patch
 
-Based on crates.io `egui-winit` 0.36.2, upstream commit
-`49682f8baa058bf49e011035cfbd6e825f88a5ef` from
-<https://github.com/emilk/egui/tree/49682f8baa058bf49e011035cfbd6e825f88a5ef/crates/egui-winit>.
+Based on crates.io `egui-winit` 0.37.0, upstream commit
+`7c0b40402271e8d40cda69f87cf3c2617c2e4382` from
+<https://github.com/emilk/egui/tree/7c0b40402271e8d40cda69f87cf3c2617c2e4382/crates/egui-winit>.
 The upstream MIT and Apache-2.0 licenses are included.
 
 This application keeps native text copy/cut/paste but disables image clipboard
@@ -12,8 +12,10 @@ Changes from the published crate:
 
 - Remove `arboard`'s `image-data` feature (its default features remain disabled).
 - Remove `bytemuck` from the clipboard feature; other features can still enable it.
-- Remove `Clipboard::set_image` and reject `OutputCommand::CopyImage` with a log
-  message. The existing paste path reads text only.
+- Remove `Clipboard::set_image` and image conversion helpers, make
+  `Clipboard::get_image` return `None`, and reject `OutputCommand::CopyImage`
+  with a log message. Native copy/cut/paste reads and writes text only.
+- Remove upstream image conversion tests; retain the text clipboard error test.
 - Point the manifest's license include paths to the bundled license files.
 
 The root `[patch.crates-io]` entry selects this copy. When upgrading egui/eframe,
