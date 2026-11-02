@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.22.11] - 2026-11-03
+
+### Fixed
+
+- Hide Claude's five-hour meter and tooltip entry when the usage API reports no session quota, including Ultra accounts, while preserving weekly and Fable meters. Keep reset-time fallback probes from restoring an absent quota. ([#204](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/204))
+
 ## [2.22.10] - 2026-11-02
 
 ### Changed
@@ -1586,3 +1592,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.7...v2.22.8
 [2.22.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.8...v2.22.9
 [2.22.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.9...v2.22.10
+[2.22.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.10...v2.22.11

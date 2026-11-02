@@ -1204,12 +1204,20 @@ fn usage_summary_lines(
                 .session_label
                 .as_deref()
                 .unwrap_or(strings.session_window);
+            let label = match data.selected_account_name(provider) {
+                Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
+                None => language.text(descriptor.display_name).to_string(),
+            };
+            if provider == ProviderId::Claude && !usage.session.available {
+                lines.push(format!(
+                    "{label} {weekly_label}: {}",
+                    window_text(&usage.weekly)
+                ));
+                continue;
+            }
             lines.push(format!(
                 "{} {}: {} | {}: {}",
-                match data.selected_account_name(provider) {
-                    Some(name) => format!("{} ({name})", language.text(descriptor.display_name)),
-                    None => language.text(descriptor.display_name).to_string(),
-                },
+                label,
                 session_label,
                 if detailed_at.is_some() {
                     window_text(&usage.session)
@@ -4006,6 +4014,32 @@ mod tray_usage_summary_tests {
             .provider_auth_error(ProviderId::Claude)
             .1;
         assert!(instruction.contains("desktop app") && instruction.contains("/login"));
+    }
+
+    #[test]
+    fn claude_summaries_omit_an_absent_five_hour_window() {
+        let mut reading = usage(0.0, 26.0, None);
+        reading.session = UsageSection::default();
+        let data = [(ProviderId::Claude, reading)].into_iter().collect();
+        let providers = ProviderSet::from_enabled([ProviderId::Claude]);
+        for (countdown, expected) in [(false, "26"), (true, "74")] {
+            assert_eq!(
+                tray_usage_summary_lines(&data, providers, LanguageId::English, countdown),
+                [format!("Claude Code 7d: {expected}%")]
+            );
+            assert_eq!(
+                usage_summary_lines(
+                    &data,
+                    providers,
+                    LanguageId::English,
+                    countdown,
+                    true,
+                    true,
+                    Some(UNIX_EPOCH),
+                ),
+                [format!("Claude Code 7d: {expected}.0%")]
+            );
+        }
     }
 
     #[test]

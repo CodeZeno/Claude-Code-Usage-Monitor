@@ -432,7 +432,7 @@
         {
           "id": "claude-session-segments-dark",
           "name": "dark Claude Code 5-hour segments",
-          "render": "system.dark",
+          "render": "(system.dark) && claude.session.available",
           "parent": "claude-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -456,7 +456,7 @@
         {
           "id": "claude-session-value-dark",
           "name": "dark Claude Code 5-hour value",
-          "render": "system.dark",
+          "render": "(system.dark) && claude.session.available",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -479,7 +479,7 @@
         {
           "id": "claude-session-segments-light",
           "name": "light Claude Code 5-hour segments",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && claude.session.available",
           "parent": "claude-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -503,7 +503,7 @@
         {
           "id": "claude-session-value-light",
           "name": "light Claude Code 5-hour value",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && claude.session.available",
           "parent": "claude-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",

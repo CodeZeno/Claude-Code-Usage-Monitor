@@ -197,14 +197,7 @@ pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollEr
         {
             if let Ok(fallback) = fetch_usage_via_messages(token) {
                 let mut merged = data;
-                merged.session.available |= fallback.session.available;
-                merged.weekly.available |= fallback.weekly.available;
-                if merged.session.resets_at.is_none() {
-                    merged.session.resets_at = fallback.session.resets_at;
-                }
-                if merged.weekly.resets_at.is_none() {
-                    merged.weekly.resets_at = fallback.weekly.resets_at;
-                }
+                fill_missing_reset_times(&mut merged, &fallback);
                 return Ok(merged);
             }
         }
@@ -217,6 +210,19 @@ pub(super) fn fetch_usage_with_fallback(token: &str) -> Result<UsageData, PollEr
         diagnose::log("usage endpoint and Messages API fallback both failed");
     }
     result
+}
+
+fn fill_missing_reset_times(data: &mut UsageData, fallback: &UsageData) {
+    // The usage endpoint is authoritative about which quotas exist. Header
+    // probes only supply timers for windows it actually reported.
+    for (section, fallback) in [
+        (&mut data.session, &fallback.session),
+        (&mut data.weekly, &fallback.weekly),
+    ] {
+        if section.available && section.resets_at.is_none() {
+            section.resets_at = fallback.resets_at;
+        }
+    }
 }
 
 pub(super) fn try_usage_endpoint(token: &str) -> Result<Option<UsageData>, PollError> {
@@ -1405,6 +1411,57 @@ mod tests {
             assert_eq!(data.session.percentage, percentage);
             assert!(data.session.resets_at.is_none());
             assert!(!data.weekly.available);
+        }
+    }
+
+    #[test]
+    fn weekly_and_fable_only_usage_preserves_the_absent_session() {
+        for session in ["", "\"five_hour\":null,"] {
+            let json = format!(
+                r#"{{{session}"seven_day":{{"utilization":26}},"limits":[{{"kind":"weekly_scoped","percent":43,"scope":{{"model":{{"display_name":"Fable"}}}}}}]}}"#
+            );
+            let mut body = ureq::Body::builder().data(json.into_bytes());
+            let data = parse_usage_body(&mut body).unwrap();
+            let cached: UsageData =
+                serde_json::from_str(&serde_json::to_string(&data).unwrap()).unwrap();
+            assert_eq!(cached, data);
+            assert!(!data.session.available);
+            assert!(data.session.resets_at.is_none());
+            assert!(data.weekly.available);
+            assert_eq!(data.weekly.percentage, 26.0);
+            assert_eq!(data.limits[0].model.as_deref(), Some("Fable"));
+            assert_eq!(data.limits[0].usage.percentage, 43.0);
+        }
+    }
+
+    #[test]
+    fn reset_fallback_does_not_restore_absent_windows_or_replace_usage() {
+        let fallback = usage_from_json(
+            r#"{"five_hour":{"utilization":90,"resets_at":"2030-01-01T00:00:00Z"},"seven_day":{"utilization":95,"resets_at":"2030-01-02T00:00:00Z"}}"#,
+        );
+        for json in [
+            r#"{"seven_day":{"utilization":26}}"#,
+            r#"{"five_hour":{"utilization":0}}"#,
+            r#"{"five_hour":{"utilization":29,"resets_at":"2030-01-03T00:00:00Z"},"seven_day":{"utilization":26}}"#,
+        ] {
+            let mut data = usage_from_json(json);
+            let original = data.clone();
+            fill_missing_reset_times(&mut data, &fallback);
+            for (section, original, fallback) in [
+                (&data.session, &original.session, &fallback.session),
+                (&data.weekly, &original.weekly, &fallback.weekly),
+            ] {
+                assert_eq!(section.available, original.available);
+                assert_eq!(section.percentage, original.percentage);
+                assert_eq!(
+                    section.resets_at,
+                    if original.available {
+                        original.resets_at.or(fallback.resets_at)
+                    } else {
+                        None
+                    }
+                );
+            }
         }
     }
 
