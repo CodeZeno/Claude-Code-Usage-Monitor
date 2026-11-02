@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.22.9] - 2026-11-02
+
+### Changed
+
+- Update the locked `zip` dependency from 9.0.5 to 9.1.2 and its `typed-path` dependency to 0.13.0 for Theme Studio package import and export, retaining the existing Deflate feature configuration. ([#202](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/202))
+
 ## [2.22.8] - 2026-10-30
 
 ### Fixed
@@ -1572,3 +1578,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.5...v2.22.6
 [2.22.7]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.6...v2.22.7
 [2.22.8]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.7...v2.22.8
+[2.22.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.8...v2.22.9
