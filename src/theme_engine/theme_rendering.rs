@@ -1052,6 +1052,11 @@ pub(super) fn render_object_content(
             color,
         } => {
             let text = format_template(template, context);
+            let font_family = if context.force_segoe_ui {
+                crate::widget_font::segoe_ui_family(weight.gdi_weight())
+            } else {
+                font_family
+            };
             let size = (evaluate(&font_size.0, context).unwrap_or(13.0) * scale).max(1.0);
             let contrast = evaluate(&contrast.0, context)
                 .unwrap_or(1.4)

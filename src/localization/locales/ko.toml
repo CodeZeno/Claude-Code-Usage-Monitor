@@ -69,6 +69,8 @@ grok_window_title = "Grok 사용량 모니터"
 copilot_window_title = "Copilot 사용량 모니터"
 
 [translations]
+"Use Windows default font" = "Windows 기본 글꼴 사용"
+"Turn off to use Segoe UI for widget text" = "끄면 위젯 텍스트에 Segoe UI를 사용합니다"
 "Absolute value" = "절댓값"
 "Action" = "Action"
 "Actions run from top to bottom in one update." = "작업은 한 번의 업데이트에서 위에서 아래로 실행됩니다."

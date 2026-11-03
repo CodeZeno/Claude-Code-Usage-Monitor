@@ -22,6 +22,7 @@ mod theme_package;
 mod tray_icon;
 mod ui;
 mod updater;
+mod widget_font;
 mod window;
 mod winsqlite;
 

@@ -67,6 +67,8 @@ grok_window_title = "Monitor zużycia Grok"
 copilot_window_title = "Monitor zużycia Copilot"
 
 [translations]
+"Use Windows default font" = "Używaj domyślnej czcionki systemu Windows"
+"Turn off to use Segoe UI for widget text" = "Wyłącz, aby używać Segoe UI w tekście widżetu"
 "Absolute value" = "Wartość bezwzględna"
 "Action" = "Akcja"
 "Actions run from top to bottom in one update." = "Akcje wykonują się od góry do dołu w ramach jednej aktualizacji."

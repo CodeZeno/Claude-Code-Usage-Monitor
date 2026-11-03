@@ -46,6 +46,7 @@ pub(super) fn state_for(theme: ThemeDocument, placement: PlacementOverride) -> A
         window_state_timer_active: false,
         custom_theme_enabled: true,
         usage_countdown: false,
+        use_windows_default_font: true,
         active_theme_path: None,
         active_theme: Some(theme),
         theme_clock_interval: None,
@@ -69,6 +70,14 @@ fn placement(nest: &str) -> PlacementOverride {
         tray_offset: 0,
         floating_host: None,
     }
+}
+
+#[test]
+fn font_setting_reaches_widget_runtime() {
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    assert!(theme_runtime_from_state(&state).use_windows_default_font);
+    state.use_windows_default_font = false;
+    assert!(!theme_runtime_from_state(&state).use_windows_default_font);
 }
 
 #[test]

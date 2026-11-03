@@ -67,6 +67,8 @@ grok_window_title = "Grok Kullanım İzleyicisi"
 copilot_window_title = "Copilot Kullanım İzleyicisi"
 
 [translations]
+"Use Windows default font" = "Windows varsayılan yazı tipini kullan"
+"Turn off to use Segoe UI for widget text" = "Widget metninde Segoe UI kullanmak için kapatın"
 "Absolute value" = "Mutlak değer"
 "Action" = "Action"
 "Actions run from top to bottom in one update." = "Eylemler tek bir güncellemede yukarıdan aşağıya çalışır."

@@ -29,6 +29,7 @@ impl StudioApp {
             .with_poll_state(self.usage_poll_ok, self.usage_has_error)
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
+            .with_windows_default_font(self.settings.use_windows_default_font)
             .with_antigravity_pools(
                 self.settings.antigravity_gemini_enabled(),
                 self.settings.antigravity_external_enabled(),

@@ -1332,6 +1332,7 @@ pub struct RenderedTheme {
 pub struct DataContext {
     values: HashMap<String, f64>,
     strings: HashMap<String, String>,
+    force_segoe_ui: bool,
 }
 
 /// Runtime environment used by theme expressions and layout. Provider state is
@@ -1347,6 +1348,7 @@ pub struct ThemeRuntime {
     /// the `.display` values and summaries using them follow this; `.percentage`
     /// always means consumption so severity thresholds keep their meaning.
     pub countdown: bool,
+    pub use_windows_default_font: bool,
     pub surface_nest: SurfaceNest,
     pub floating_card_opacity: u8,
     pub antigravity_gemini_enabled: bool,
@@ -1364,6 +1366,7 @@ impl Default for ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            use_windows_default_font: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: true,
@@ -1398,6 +1401,7 @@ impl ThemeRuntime {
             has_error: false,
             language: LanguageId::English,
             countdown: false,
+            use_windows_default_font: true,
             surface_nest: SurfaceNest::Taskbar,
             floating_card_opacity: 85,
             antigravity_gemini_enabled: agy,
@@ -1447,6 +1451,11 @@ impl ThemeRuntime {
         self
     }
 
+    pub fn with_windows_default_font(mut self, enabled: bool) -> Self {
+        self.use_windows_default_font = enabled;
+        self
+    }
+
     /// Supply the selected native host's 96-DPI logical dimensions. Theme
     /// expressions consume these as `host.width` and `host.height`.
     pub fn with_host_dimensions(mut self, width: u32, height: u32) -> Self {
@@ -1478,7 +1487,10 @@ impl DataContext {
         canvas: &Canvas,
         runtime: ThemeRuntime,
     ) -> Self {
-        let mut context = Self::default();
+        let mut context = Self {
+            force_segoe_ui: !runtime.use_windows_default_font,
+            ..Self::default()
+        };
         context.insert("canvas.width", canvas.width as f64);
         context.insert("canvas.height", canvas.height as f64);
         context.insert("parent.width", canvas.width as f64);

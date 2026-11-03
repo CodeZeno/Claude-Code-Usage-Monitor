@@ -1354,6 +1354,75 @@ fn empty_text_output_is_a_safe_noop() {
 }
 
 #[test]
+fn font_override_bypasses_wider_theme_fonts_without_changing_default_rendering() {
+    for scale in [1.0_f64, 1.25, 1.5, 1.75, 2.0] {
+        let render = |family: &str, windows_default: bool, width: f64| {
+            let mut theme = ThemeDocument::starter();
+            let mut root = SceneObject::object("font-check", "Font check");
+            root.width = width.into();
+            root.height = 13.0.into();
+            root.content = SceneContent::Text {
+                template: "13% · 4.5h".into(),
+                font_family: family.into(),
+                font_size: 12.0.into(),
+                weight: FontWeight::Medium,
+                rendering: FontRendering::ClearType,
+                contrast: 1.0.into(),
+                align: TextAlign::Left,
+                color: Paint::new("#FFFFFFFF"),
+            };
+            theme.surfaces = vec![root];
+            let rendered = render_theme_surface_with_runtime_at_scale(
+                &theme,
+                0,
+                None,
+                ThemeRuntime::default().with_windows_default_font(windows_default),
+                scale,
+            );
+            assert!(rendered.warnings.is_empty());
+            rendered
+        };
+        let default = render("Verdana", true, 62.0);
+        // The enabled/default path still uses the font stored in the theme.
+        let mut expected = vec![0; default.pixels.len()];
+        render_text_mask(
+            &mut expected,
+            default.width,
+            default.height,
+            "13% · 4.5h",
+            "Verdana",
+            12.0 * scale,
+            500,
+            FontRendering::ClearType,
+            1.0,
+            TextAlign::Left,
+            Rgba {
+                r: 255,
+                g: 255,
+                b: 255,
+                a: 255,
+            },
+        );
+        assert_eq!(default.pixels, expected);
+        let forced = render("Verdana", false, 62.0);
+        assert_eq!(forced.pixels, render("Tahoma", false, 62.0).pixels);
+        assert!(forced.pixels.iter().any(|p| *p != 0));
+        let full = render("Verdana", false, 200.0);
+        for y in 0..forced.height as usize {
+            assert_eq!(
+                forced.pixels[y * forced.width as usize..(y + 1) * forced.width as usize],
+                full.pixels
+                    [y * full.width as usize..y * full.width as usize + forced.width as usize],
+                "forced Segoe UI must fit the existing box at scale {scale}",
+            );
+        }
+        if scale == 1.5 {
+            assert_ne!(default.pixels, forced.pixels);
+        }
+    }
+}
+
+#[test]
 fn theme_surfaces_rasterize_at_requested_dpi_scales() {
     let theme = ThemeDocument::starter();
     let runtime = ThemeRuntime::new(true, false, false);

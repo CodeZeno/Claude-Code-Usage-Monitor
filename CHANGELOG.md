@@ -4,6 +4,16 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.0] - 2026-11-03
+
+### Added
+
+- Add an enabled-by-default "Use Windows default font" toggle under Settings → Appearance. Turn it off to use the installed Segoe UI font for widget text and Theme Studio previews, bypassing Windows font substitutions that can cause clipping. Existing font rendering is preserved while enabled.
+
+### Fixed
+
+- Recognize the current widget surface window class in the Windows VM test harness, allowing visibility checks to detect the widget instead of only its hidden controller window.
+
 ## [2.22.11] - 2026-11-03
 
 ### Fixed
@@ -1593,3 +1603,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.9]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.8...v2.22.9
 [2.22.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.9...v2.22.10
 [2.22.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.10...v2.22.11
+[2.23.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.11...v2.23.0

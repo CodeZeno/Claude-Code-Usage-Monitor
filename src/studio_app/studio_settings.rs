@@ -153,6 +153,18 @@ impl StudioApp {
             section(ui, language.text("Appearance"), |ui| {
                 setting_row(
                     ui,
+                    language.text("Use Windows default font"),
+                    language.text("Turn off to use Segoe UI for widget text"),
+                    |ui| {
+                        changed |= Toggle::new(&mut self.settings.use_windows_default_font)
+                            .labels(language.text("Enabled"), language.text("Disabled"))
+                            .show(ui)
+                            .changed();
+                    },
+                );
+                setting_separator(ui);
+                setting_row(
+                    ui,
                     language.text("Active theme"),
                     language.text("The widget is managed in Theme Studio"),
                     |ui| {

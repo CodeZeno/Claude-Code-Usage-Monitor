@@ -138,6 +138,7 @@ struct AppState {
 
     custom_theme_enabled: bool,
     usage_countdown: bool,
+    use_windows_default_font: bool,
     active_theme_path: Option<PathBuf>,
     active_theme: Option<ThemeDocument>,
     theme_clock_interval: Option<Duration>,
@@ -793,6 +794,7 @@ fn theme_runtime_from_state(state: &AppState) -> ThemeRuntime {
         .with_poll_state(poll_ok, has_error)
         .with_language(state.language)
         .with_countdown(state.usage_countdown)
+        .with_windows_default_font(state.use_windows_default_font)
         .with_nest(nest)
         .with_floating_card_opacity(opacity)
         .with_antigravity_pools(
@@ -2621,6 +2623,7 @@ pub fn run() {
                 window_state_timer_active: false,
                 custom_theme_enabled,
                 usage_countdown: settings.usage_countdown,
+                use_windows_default_font: settings.use_windows_default_font,
                 active_theme_path,
                 active_theme,
                 theme_clock_interval,
@@ -3440,6 +3443,7 @@ fn reload_external_settings(hwnd: HWND) {
         state.poll_interval_ms = settings.poll_interval_ms;
         state.providers = settings.enabled_providers();
         state.usage_countdown = settings.usage_countdown;
+        state.use_windows_default_font = settings.use_windows_default_font;
         dual_mode = state.show_antigravity_gemini
             && state.show_antigravity_external
             && state.providers.contains(ProviderId::Antigravity);

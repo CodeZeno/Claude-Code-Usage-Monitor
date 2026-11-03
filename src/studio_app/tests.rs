@@ -1,4 +1,12 @@
 use super::*;
+
+#[test]
+fn font_setting_reaches_preview_runtime() {
+    let mut app = app_with_surfaces(vec![root("main")]);
+    assert!(app.theme_runtime().use_windows_default_font);
+    app.settings.use_windows_default_font = false;
+    assert!(!app.theme_runtime().use_windows_default_font);
+}
 use crate::ui::components::helper::{
     show_helper, Caret, HelperInsertion, HelperState, HelperStatus, HelperView, InsertMode,
 };

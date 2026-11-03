@@ -72,6 +72,9 @@ pub struct SettingsFile {
     /// the widget counts down towards a limit rather than up from zero.
     #[serde(default)]
     pub usage_countdown: bool,
+    /// Preserve theme fonts and Windows substitution unless explicitly disabled.
+    #[serde(default = "default_true")]
+    pub use_windows_default_font: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_theme_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -139,6 +142,7 @@ impl Default for SettingsFile {
             show_copilot: false,
             custom_theme_enabled: true,
             usage_countdown: false,
+            use_windows_default_font: true,
             active_theme_path: None,
             dashboard_width: None,
             dashboard_height: None,
@@ -503,6 +507,23 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_default_font_is_on_for_existing_settings_and_persists_when_disabled() {
+        assert!(SettingsFile::default().use_windows_default_font);
+        assert!(decode_settings("{}").unwrap().use_windows_default_font);
+        for enabled in [false, true] {
+            let settings = SettingsFile {
+                use_windows_default_font: enabled,
+                ..Default::default()
+            };
+            let saved = settings_json(&settings).to_string();
+            assert_eq!(
+                decode_settings(&saved).unwrap().use_windows_default_font,
+                enabled
+            );
+        }
+    }
 
     #[test]
     fn taskbar_lock_is_opt_in_and_survives_settings_round_trip() {

@@ -69,6 +69,8 @@ grok_window_title = "Grok 使用量監控"
 copilot_window_title = "Copilot 使用量監控"
 
 [translations]
+"Use Windows default font" = "使用 Windows 預設字型"
+"Turn off to use Segoe UI for widget text" = "關閉後，小工具文字將使用 Segoe UI"
 "Absolute value" = "絕對值"
 "Action" = "Action"
 "Actions run from top to bottom in one update." = "動作會在一次更新中由上而下執行。"

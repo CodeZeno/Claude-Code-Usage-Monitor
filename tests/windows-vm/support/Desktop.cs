@@ -73,7 +73,7 @@ public static class CCUMLabDesktop {
             uint owner; GetWindowThreadProcessId(h, out owner);
             var name = new StringBuilder(256); GetClassName(h, name, name.Capacity);
             RECT r;
-            if (owner == pid && name.ToString() == "ClaudeCodeUsageMonitor" && seen.Add(h) && GetWindowRect(h, out r))
+            if (owner == pid && (name.ToString() == "ClaudeCodeUsageMonitor" || name.ToString() == "ClaudeCodeUsageSurface") && seen.Add(h) && GetWindowRect(h, out r))
                 list.Add(new WindowInfo { Handle=h.ToInt64(), Parent=GetParent(h).ToInt64(), Left=r.Left, Top=r.Top, Right=r.Right, Bottom=r.Bottom, Visible=IsWindowVisible(h) });
             return true;
         };
