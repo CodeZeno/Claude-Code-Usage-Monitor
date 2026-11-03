@@ -102,7 +102,10 @@ fn api_key_candidates() -> Vec<ApiKeyCandidate> {
             key: secret.trim().to_string(),
         });
     }
-    candidates.into_iter().filter(|candidate| is_header_safe_key(&candidate.key)).collect()
+    candidates
+        .into_iter()
+        .filter(|candidate| is_header_safe_key(&candidate.key))
+        .collect()
 }
 
 fn fetch_mistral_usage(api_key: &str) -> Result<UsageData, PollError> {
@@ -145,22 +148,20 @@ fn fetch_mistral_usage(api_key: &str) -> Result<UsageData, PollError> {
     };
 
     let monthly = spend.map(|spend| monthly_section(spend, budget, SystemTime::now()));
-    match (session.is_some(), monthly.is_some()) {
-        (false, None) => {
-            diagnose::log("Mistral response carried neither rate-limit headers nor spend data");
-            Err(PollError::UnexpectedResponse)
-        }
-        _ => Ok(UsageData {
-            limits: Vec::new(),
-            session: session.unwrap_or_default(),
-            weekly: monthly.clone().unwrap_or_default(),
-            weekly_label: monthly.as_ref().map(|_| "30d".into()),
-            monthly,
-            credits: None,
-            stale: false,
-            ..Default::default()
-        }),
+    if session.is_none() && monthly.is_none() {
+        diagnose::log("Mistral response carried neither rate-limit headers nor spend data");
+        return Err(PollError::UnexpectedResponse);
     }
+    Ok(UsageData {
+        limits: Vec::new(),
+        session: session.unwrap_or_default(),
+        weekly: monthly.clone().unwrap_or_default(),
+        weekly_label: monthly.as_ref().map(|_| "30d".into()),
+        monthly,
+        credits: None,
+        stale: false,
+        ..Default::default()
+    })
 }
 
 /// Monthly spend and budget are optional; a 403 on billing routes simply means
@@ -213,7 +214,10 @@ fn fetch_billing(
         .body_mut()
         .read_json()
         .map_err(|error| {
-            diagnose::log_error("unable to parse Mistral billing subscription response", error);
+            diagnose::log_error(
+                "unable to parse Mistral billing subscription response",
+                error,
+            );
             PollError::UnexpectedResponse
         })?;
     let budget = subscription
@@ -253,7 +257,7 @@ fn window_from_headers(
 ) -> Option<UsageSection> {
     let limit = limit?;
     let remaining = remaining?;
-    if limit <= 0 || remaining < 0 {
+    if limit <= 0 {
         return None;
     }
     let percentage = ((limit - remaining) as f64 / limit as f64 * 100.0).clamp(0.0, 100.0);
@@ -340,7 +344,10 @@ fn monthly_section(spend: f64, budget: Option<f64>, now: SystemTime) -> UsageSec
 }
 
 fn current_month_bounds(now: SystemTime) -> (u64, u64) {
-    let now_secs = now.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let now_secs = now
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let (year, month, _) = civil_from_days(now_secs / 86_400);
     let start = days_from_civil(year, month, 1) * 86_400;
     let (next_year, next_month) = if month == 12 {
@@ -374,7 +381,7 @@ fn days_from_civil(year: u64, month: u64, day: u64) -> u64 {
     let y = if month <= 2 { year - 1 } else { year } as i64;
     let era = if y >= 0 { y } else { y - 399 } / 400;
     let yoe = (y - era * 400) as u64;
-    let mp = if month > 2 { month - 3 } else { month + 9 } as u64;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
     let doy = (153 * mp + 2) / 5 + day - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
     (era * 146_097 + doe as i64 - 719_468) as u64
@@ -416,9 +423,21 @@ mod tests {
         // 2026-11-03T00:00:00Z is inside November 2026.
         let now = UNIX_EPOCH + Duration::from_secs(1_793_664_000);
         let entries = vec![
-            entry(Some(10.5), Some("2026-11-01T00:00:00Z"), Some("2026-11-03T00:00:00Z")),
-            entry(Some(2.0), Some("2026-10-31T00:00:00Z"), Some("2026-11-01T00:00:00Z")),
-            entry(Some(99.0), Some("2026-10-01T00:00:00Z"), Some("2026-10-31T00:00:00Z")),
+            entry(
+                Some(10.5),
+                Some("2026-11-01T00:00:00Z"),
+                Some("2026-11-03T00:00:00Z"),
+            ),
+            entry(
+                Some(2.0),
+                Some("2026-10-31T00:00:00Z"),
+                Some("2026-11-01T00:00:00Z"),
+            ),
+            entry(
+                Some(99.0),
+                Some("2026-10-01T00:00:00Z"),
+                Some("2026-10-31T00:00:00Z"),
+            ),
             entry(Some(1.25), None, None),
             entry(Some(-5.0), None, None),
             entry(None, None, None),
@@ -450,10 +469,16 @@ mod tests {
     fn month_bounds_wrap_the_year() {
         // 2026-11-30T00:00:00Z: November runs 2026-11-01 .. 2026-12-01.
         let november = UNIX_EPOCH + Duration::from_secs(1_796_083_200 - 86_400);
-        assert_eq!(current_month_bounds(november), (1_793_491_200, 1_796_083_200));
+        assert_eq!(
+            current_month_bounds(november),
+            (1_793_491_200, 1_796_083_200)
+        );
         // 2026-12-31T00:00:00Z: December wraps into January 2027.
         let december = UNIX_EPOCH + Duration::from_secs(1_798_761_600 - 86_400);
-        assert_eq!(current_month_bounds(december), (1_796_083_200, 1_798_761_600));
+        assert_eq!(
+            current_month_bounds(december),
+            (1_796_083_200, 1_798_761_600)
+        );
     }
 
     #[test]
