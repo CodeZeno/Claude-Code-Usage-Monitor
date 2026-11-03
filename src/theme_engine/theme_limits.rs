@@ -74,6 +74,15 @@ impl DataContext {
                 .map(serde_json::Value::to_string)
                 .unwrap_or_default(),
         );
+        // Dollar amounts and display flags carried in the scope become direct
+        // bindings so themes can print them (e.g. `openrouter.limits.long.usage_usd`).
+        if let Some(scope) = limit.scope.as_ref().and_then(|value| value.as_object()) {
+            for (field, value) in scope {
+                if let Some(value) = value.as_f64() {
+                    self.insert(&format!("{base}.{field}"), value);
+                }
+            }
+        }
         let unix = limit
             .usage
             .resets_at
@@ -118,6 +127,7 @@ impl DataContext {
                     | "cursor"
                     | "grok"
                     | "copilot"
+                    | "openrouter"
                     | "active"
             ) {
                 return None;

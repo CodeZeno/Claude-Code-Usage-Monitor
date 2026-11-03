@@ -100,6 +100,10 @@ impl LanguageId {
                 strings.copilot_token_expired_title,
                 strings.copilot_token_expired_body,
             ),
+            ProviderId::OpenRouter => (
+                strings.token_expired_title,
+                self.text("Add a Management API key in Settings → Providers → OpenRouter → Connection, then refresh this monitor."),
+            ),
         }
     }
 

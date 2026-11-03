@@ -523,6 +523,7 @@ pub(super) fn format_usage_line(base: &str, context: &DataContext) -> Option<Str
                 | "cursor"
                 | "grok"
                 | "copilot"
+                | "openrouter"
         ))
         || (dynamic.is_none()
             && !matches!(
@@ -654,6 +655,13 @@ pub(super) fn format_duration_short(seconds: u64, context: &DataContext) -> Stri
 pub(super) fn format_value(value: f64, format: &str, context: &DataContext) -> String {
     if let Some(value) = format_timestamp(value, format, context) {
         return value;
+    }
+    if format.eq_ignore_ascii_case("amount") {
+        return if value.fract().abs() < 1e-9 {
+            format!("{value:.0}")
+        } else {
+            format!("{value:.2}")
+        };
     }
     if format.eq_ignore_ascii_case("duration_short") {
         let seconds = value.max(0.0).round() as u64;
