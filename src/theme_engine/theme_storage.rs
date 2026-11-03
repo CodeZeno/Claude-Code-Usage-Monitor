@@ -327,26 +327,22 @@ pub(super) fn ensure_bundled_editable_themes(
     directory: &Path,
     asset_directory: &Path,
 ) -> Result<(), String> {
-    let install_marker = directory.join(BUNDLED_EDITABLE_INSTALL_MARKER);
-    if install_marker.exists() {
-        return Ok(());
-    }
-    std::fs::create_dir_all(asset_directory).map_err(|error| error.to_string())?;
-    for (file_name, source) in BUNDLED_THEME_ASSETS {
-        let path = asset_directory.join(file_name);
-        if !path.exists() {
-            std::fs::write(path, source).map_err(|error| error.to_string())?;
+    for bundle in BUNDLED_EDITABLE_THEMES {
+        let install_marker = directory.join(bundle.install_marker);
+        if install_marker.exists() {
+            continue;
         }
-    }
 
-    for (expected_id, source) in BUNDLED_EDITABLE_THEME_SOURCES {
-        let mut bundled: ThemeDocument = serde_json::from_str(source).map_err(|error| {
-            format!("Bundled editable theme '{expected_id}' is invalid JSON: {error}")
+        let mut bundled: ThemeDocument = serde_json::from_str(bundle.source).map_err(|error| {
+            format!(
+                "Bundled editable theme '{}' is invalid JSON: {error}",
+                bundle.id
+            )
         })?;
-        if bundled.id != *expected_id {
+        if bundled.id != bundle.id {
             return Err(format!(
-                "Bundled editable theme id '{}' does not match '{expected_id}'",
-                bundled.id
+                "Bundled editable theme id '{}' does not match '{}'",
+                bundled.id, bundle.id
             ));
         }
         bundled.prepare_runtime();
@@ -359,23 +355,26 @@ pub(super) fn ensure_bundled_editable_themes(
             ));
         }
 
-        let path = directory.join(format!("{expected_id}.json"));
-        if !path.exists() {
-            crate::app_settings::write_json_atomic(&path, &bundled)?;
-            continue;
+        std::fs::create_dir_all(asset_directory).map_err(|error| error.to_string())?;
+        for (file_name, source) in bundle.assets {
+            let path = asset_directory.join(file_name);
+            if !path.exists() {
+                std::fs::write(path, source).map_err(|error| error.to_string())?;
+            }
         }
 
-        // Upgrade the original locally-created Minecraft theme without
-        // replacing any other user edits. Once changed, later menu choices are
-        // preserved because only the old prototype reference is recognized.
-        let Ok(mut installed) = load_theme(&path) else {
-            continue;
-        };
-        if migrate_minecraft_context_menu(&mut installed) {
-            crate::app_settings::write_json_atomic(&path, &installed)?;
+        let path = directory.join(format!("{}.json", bundle.id));
+        if !path.exists() {
+            crate::app_settings::write_json_atomic(&path, &bundled)?;
+        } else if let Ok(mut installed) = load_theme(&path) {
+            // Upgrade the original locally-created Minecraft menu reference
+            // without replacing other user edits or later menu choices.
+            if migrate_minecraft_context_menu(&mut installed) {
+                crate::app_settings::write_json_atomic(&path, &installed)?;
+            }
         }
+        std::fs::write(install_marker, b"1").map_err(|error| error.to_string())?;
     }
-    std::fs::write(install_marker, b"1").map_err(|error| error.to_string())?;
     Ok(())
 }
 
