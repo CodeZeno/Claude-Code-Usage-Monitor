@@ -2785,6 +2785,14 @@
           "height": "46"
         },
         {
+          "id": "mistral-provider",
+          "name": "Mistral provider",
+          "render": "providers.mistral.enabled",
+          "parent": "provider-row",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62",
+          "height": "46"
+        },
+        {
           "id": "copilot-pool-segments-dark",
           "name": "dark Copilot pool segments",
           "render": "system.dark",
@@ -2807,6 +2815,41 @@
             "direction": "left_to_right",
             "fill": {
               "color": "#EC4899FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "mistral-pool-segments-dark",
+          "name": "dark Mistral pool segments",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "mistral-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "mistral.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#FF8A00FF",
               "opacity": "1"
             },
             "track": {
@@ -2853,6 +2896,39 @@
           }
         },
         {
+          "id": "mistral-pool-value-dark",
+          "name": "dark Mistral pool value",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "mistral-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFC49AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
           "id": "copilot-pool-segments-light",
           "name": "light Copilot pool segments",
           "render": "1 - system.dark",
@@ -2875,6 +2951,41 @@
             "direction": "left_to_right",
             "fill": {
               "color": "#DB2777FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "mistral-pool-segments-light",
+          "name": "light Mistral pool segments",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "mistral-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "mistral.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#E05E00FF",
               "opacity": "1"
             },
             "track": {
@@ -2916,6 +3027,39 @@
             "align": "left",
             "color": {
               "color": "#BE185DFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "mistral-pool-value-light",
+          "name": "light Mistral pool value",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "mistral-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "62",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.weekly.display:usage_line}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C24E00FF",
               "opacity": "1"
             }
           }
@@ -4815,6 +4959,336 @@
           "content": {
             "type": "text",
             "template": "{copilot.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "mistral-tray-icon",
+      "name": "Mistral usage",
+      "render": "0",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "tray_icon",
+        "horizontal": "right",
+        "vertical": "bottom",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": 0,
+        "offset_y": 0
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF",
+          "opacity": "1"
+        }
+      },
+      "border": null,
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "corner_radius": "3",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "mistral-tray-high-outline",
+          "name": "Mistral high-usage black outline",
+          "render": "mistral.headline.percentage >= 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#9D174DFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "3",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mistral-tray-low-fill",
+          "name": "Mistral normal black fill",
+          "render": "mistral.headline.percentage < 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#E05E00FF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "1",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mistral-tray-high-fill",
+          "name": "Mistral high-usage white fill",
+          "render": "mistral.headline.percentage >= 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "1",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mistral-tray-placeholder",
+          "name": "Mistral loading placeholder",
+          "render": "data.poll_ok == 0 || mistral.available == 0",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Mi",
+            "font_family": "Arial Bold",
+            "font_size": "34",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-low-one-digit",
+          "name": "Mistral normal one-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display < 9.5 && mistral.headline.percentage < 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-low-two-digits",
+          "name": "Mistral normal two-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display >= 9.5 && mistral.headline.display < 99.5 && mistral.headline.percentage < 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-low-three-digits",
+          "name": "Mistral normal three-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display >= 99.5 && mistral.headline.percentage < 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-high-one-digit",
+          "name": "Mistral high-usage one-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display < 9.5 && mistral.headline.percentage >= 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-high-two-digits",
+          "name": "Mistral high-usage two-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display >= 9.5 && mistral.headline.display < 99.5 && mistral.headline.percentage >= 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "rendering": "antialiased",
+            "contrast": "1.4",
+            "align": "center",
+            "color": {
+              "color": "#9D174DFF"
+            }
+          }
+        },
+        {
+          "id": "mistral-tray-high-three-digits",
+          "name": "Mistral high-usage three-digit percentage",
+          "render": "data.poll_ok && mistral.available && mistral.headline.display >= 99.5 && mistral.headline.percentage >= 90",
+          "visibility": "100",
+          "parent": "mistral-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{mistral.headline.display:0}",
             "font_family": "Arial Bold",
             "font_size": "30",
             "weight": "bold",

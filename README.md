@@ -72,6 +72,7 @@ In the default theme, left-click a provider tray icon to show or hide the widget
 | Cursor | Sign in to Cursor, then enable it in **Providers**. The local session is detected automatically. |
 | Grok Build | Run `grok login` in the Grok Build CLI, then enable Grok in **Providers**. The signed-in session is detected automatically. |
 | GitHub Copilot | Sign in with the Copilot CLI (`copilot`, then `/login`) or the GitHub CLI (`gh auth login`), then enable Copilot in **Providers**. The stored login is detected automatically. |
+| Mistral (Vibe + Studio) | Set `MISTRAL_API_KEY` or store a Mistral API key in Windows Credential Manager, then enable Mistral in **Providers**. Create the key in Studio under **API keys** at console.mistral.ai. |
 
 For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
 
@@ -89,6 +90,8 @@ For Cursor, `CURSOR_SESSION_TOKEN` can override the automatically detected local
 Grok Build usage comes from the session the CLI stores in `%USERPROFILE%\.grok\auth.json`, read through the same billing endpoint as the CLI's own `/usage` panel. Set `GROK_HOME` if the CLI keeps its home directory elsewhere. Only xAI sign-in entries are used; corporate identity-provider tokens and stored API keys are excluded. A bare `XAI_API_KEY` is not enough: the shared weekly allowance is only readable with a signed-in session. Grok reports one pool per billing period rather than a five-hour window, so the monitor shows it on the long-window row alongside the other providers, leaving the short-window row empty. On-demand spending replaces the pool on that row once any is used, as it already does for Claude Code and Codex.
 
 GitHub Copilot usage comes from `api.github.com/copilot_internal/user`, the endpoint Copilot's own editors and CLI read. The monitor uses the first GitHub login that endpoint accepts, in this order: the `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` environment variable, the Copilot CLI login, then the GitHub CLI login, both read from Windows Credential Manager. Copilot spends one premium-request pool per calendar month, so the monitor shows it on the long-window row and leaves the short-window row empty. Metered chat and completion allowances, as on Copilot Free, are available to themes through `copilot.limits.chat` and `copilot.limits.completions`.
+
+Mistral usage (Vibe CLI and Studio/La Plateforme) comes from `api.mistral.ai` with a Bearer API key, read from `MISTRAL_API_KEY` or from the `mistral:vibe-api-key` entry in Windows Credential Manager — the same key the Vibe CLI uses. The short-window row reads the `x-ratelimit-*` headers returned by `GET /v1/models`; the long-window row shows the calendar-month spend from `GET /v1/billing/usage` (in EUR) against the `monthly_budget` from `GET /v1/billing/subscription`, resetting at midnight UTC on the 1st, and is labelled `30d`. Billing routes that the key cannot read (403/404) are skipped without failing the poll.
 
 ## Data and privacy
 

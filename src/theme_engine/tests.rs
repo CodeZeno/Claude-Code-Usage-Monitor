@@ -2327,7 +2327,7 @@ fn classic_vertical_stacks_enabled_providers_and_preserves_tray_roots() {
                 ThemeRuntime::from_providers(providers).with_host_dimensions(host_width, 1440);
             let width = (host_width - 2).min(62);
             let provider_height = |provider| match provider {
-                ProviderId::Grok | ProviderId::Copilot => 42,
+                ProviderId::Grok | ProviderId::Copilot | ProviderId::Mistral => 42,
                 _ => 64,
             };
             let height = providers.iter().map(provider_height).sum();

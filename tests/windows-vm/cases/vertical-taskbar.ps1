@@ -93,7 +93,7 @@ function Select-VerticalTheme([string]$Path, [switch]$AllProviders, [switch]$Loc
         language='en'; poll_interval_ms=900000; custom_theme_enabled=$true; active_theme_path=$Path
         lock_taskbar=[bool]$LockTaskbar
         show_claude_code=$true; show_codex=[bool]$AllProviders; show_antigravity=[bool]$AllProviders
-        show_opencode=[bool]$AllProviders; show_cursor=[bool]$AllProviders; show_grok=[bool]$AllProviders; show_copilot=[bool]$AllProviders
+        show_opencode=[bool]$AllProviders; show_cursor=[bool]$AllProviders; show_grok=[bool]$AllProviders; show_copilot=[bool]$AllProviders; show_mistral=[bool]$AllProviders
         last_update_check_unix=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     }
 }
@@ -229,7 +229,7 @@ try {
     $fixture.id = 'classic-vertical-sample'
     $fixture.name = 'Classic Vertical sample usage fixture'
     foreach ($object in $fixture.surfaces[0].children) {
-        if ($object.id -match '^(claude|codex|antigravity|opencode|cursor|grok|copilot)-(session|weekly)-') {
+        if ($object.id -match '^(claude|codex|antigravity|opencode|cursor|grok|copilot|mistral)-(session|weekly)-') {
             $provider = $Matches[1]; $window = $Matches[2]
             if ($object.content.type -eq 'progress') {
                 $object.render = '1'
@@ -237,7 +237,7 @@ try {
             } elseif ($object.content.type -eq 'text') {
                 $badge = '{' + $provider + '.' + $window + '.display:usage_badge}'
                 $object.content.template = $object.content.template.Replace($badge, $(if ($window -eq 'session') { '42%' } else { '69%' }))
-                $object.content.template = $object.content.template.Replace(('{' + $provider + '.weekly.label}'), $(if ($provider -in @('grok','copilot')) { '30d' } else { '7d' }))
+                $object.content.template = $object.content.template.Replace(('{' + $provider + '.weekly.label}'), $(if ($provider -in @('grok','copilot','mistral')) { '30d' } else { '7d' }))
             }
         }
     }

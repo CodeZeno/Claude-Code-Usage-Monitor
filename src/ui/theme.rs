@@ -39,6 +39,7 @@ const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/
 /// | U+F005    | Cursor      | Lobe Icons (MIT)                       |
 /// | U+F006    | Grok        | Lobe Icons (MIT)                       |
 /// | U+F007    | Copilot     | Lobe Icons (MIT)                       |
+/// | U+F008    | Mistral     | Simple Icons (CC0-1.0)                 |
 ///
 /// Those licences cover the path data. The logos remain the trademarks of their
 /// owners and identify the provider a setting belongs to.
@@ -62,6 +63,7 @@ pub(crate) fn provider_mark_glyph(provider: ProviderId) -> char {
         ProviderId::Cursor => '\u{f005}',
         ProviderId::Grok => '\u{f006}',
         ProviderId::Copilot => '\u{f007}',
+        ProviderId::Mistral => '\u{f008}',
     }
 }
 

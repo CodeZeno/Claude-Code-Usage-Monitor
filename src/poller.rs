@@ -286,6 +286,7 @@ mod codex;
 mod copilot;
 mod cursor;
 mod grok;
+mod mistral;
 mod opencode;
 mod retry_after;
 mod windows_credentials;
@@ -298,7 +299,7 @@ struct ProviderPoller {
     credential_watch: fn(bool) -> CredentialWatchSnapshot,
 }
 
-const PROVIDER_POLLERS: [ProviderPoller; 7] = [
+const PROVIDER_POLLERS: [ProviderPoller; 8] = [
     ProviderPoller {
         id: ProviderId::Claude,
         poll: claude::poll_claude_code,
@@ -333,6 +334,11 @@ const PROVIDER_POLLERS: [ProviderPoller; 7] = [
         id: ProviderId::Copilot,
         poll: copilot::poll_copilot,
         credential_watch: copilot::credential_watch_snapshot,
+    },
+    ProviderPoller {
+        id: ProviderId::Mistral,
+        poll: mistral::poll_mistral,
+        credential_watch: mistral::credential_watch_snapshot,
     },
 ];
 
