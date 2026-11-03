@@ -920,6 +920,9 @@ fn built_in_themes_hide_absent_claude_sessions_and_keep_weekly_and_fable_limits(
                     let mut weekly_layers = 0;
                     let mut fable_layers = 0;
                     for object in &theme.surfaces[0].children {
+                        if object.id.ends_with("-pace") {
+                            continue;
+                        }
                         let visible = evaluate(&object.render.0, &context).unwrap() != 0.0;
                         if object.id.starts_with("claude-session-") {
                             if !session_available {

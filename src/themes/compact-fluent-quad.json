@@ -408,7 +408,7 @@
         {
           "id": "claude-session-segments-dark-pace",
           "name": "dark Claude Code 5-hour segments pace tick",
-          "render": "system.dark",
+          "render": "(system.dark) && claude.session.available",
           "visibility": "(100) * claude.session.expected_available * display.show_pace",
           "parent": "claude-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
@@ -502,7 +502,7 @@
         {
           "id": "claude-session-segments-light-pace",
           "name": "light Claude Code 5-hour segments pace tick",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && claude.session.available",
           "visibility": "(100) * claude.session.expected_available * display.show_pace",
           "parent": "claude-provider",
           "x": "round((ceil(10 / max(1, providers.count)) * 11 - 2) * clamp(claude.session.expected_display, 0, 100) / 100)",
