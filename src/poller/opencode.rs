@@ -202,11 +202,28 @@ fn fetch_go_status(
         format!("auth={}", credentials.auth_cookie)
     };
 
+    // Extract the bare token for the Bearer header.  If the cookie string
+    // already carries an `auth=` prefix (full cookie header), strip it so
+    // the Bearer value is just the opaque token; otherwise the raw value is
+    // already the token.
+    let bearer_token = credentials
+        .auth_cookie
+        .split(';')
+        .find_map(|part| {
+            let part = part.trim_start();
+            part.strip_prefix("auth=")
+        })
+        .unwrap_or(&credentials.auth_cookie);
+
     let mut response = match build_agent()?
         .get(url)
         .header("Accept", "application/json")
         .header("x-org-id", &credentials.workspace_id)
+        // Send both the legacy Cookie header and the modern Bearer token.
+        // The OpenCode Console API currently requires Authorization: Bearer
+        // and returns HTTP 401 when only the Cookie header is present.
         .header("Cookie", &cookie)
+        .header("Authorization", &format!("Bearer {bearer_token}"))
         .header("User-Agent", DASHBOARD_USER_AGENT)
         .call()
         .and_then(super::check_http_status)
