@@ -568,6 +568,29 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(sent_cookie, expected);
+            // Verify that Authorization: Bearer carries the correct bare token.
+            // The bearer value is the auth= segment stripped of its prefix, or the
+            // full cookie string when no auth= segment is present (bare / session tokens).
+            let sent_bearer = request
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("authorization")
+                        .then_some(value.trim_start())
+                })
+                .unwrap_or("");
+            let expected_bearer = cookie
+                .split(';')
+                .find_map(|part| {
+                    let part = part.trim_start();
+                    part.strip_prefix("auth=")
+                })
+                .unwrap_or(cookie);
+            assert_eq!(
+                sent_bearer,
+                format!("Bearer {expected_bearer}"),
+                "Authorization header mismatch for cookie={cookie:?}"
+            );
             let request = request.to_ascii_lowercase();
             assert!(request.starts_with("get /console/api/go/status http/1.1\r\n"));
             assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
