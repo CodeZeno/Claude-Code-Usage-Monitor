@@ -187,6 +187,32 @@ fn fetch_dashboard_usage(credentials: &DashboardCredentials) -> Result<Dashboard
     fetch_go_status(credentials, GO_STATUS_URL)
 }
 
+fn extract_bearer_token(auth_cookie: &str) -> Option<&str> {
+    // Look for a non-empty `auth=<token>` segment in a cookie string.
+    if let Some(token) = auth_cookie.split(';').find_map(|part| {
+        let part = part.trim();
+        let value = part.strip_prefix("auth=")?.trim();
+        (!value.is_empty()).then_some(value)
+    }) {
+        return Some(token);
+    }
+
+    // If there is no `auth=` segment, check if this is a single bare token
+    // (e.g. legacy opaque tokens or OAuth access tokens stored without a cookie name prefix).
+    // It must not contain semicolons, must not start with known cookie assignment prefixes
+    // like "__Host-console_session=" or "auth=", and must not be empty.
+    let trimmed = auth_cookie.trim();
+    if !trimmed.is_empty()
+        && !trimmed.contains(';')
+        && !trimmed.starts_with("__Host-console_session=")
+        && !trimmed.starts_with("auth=")
+    {
+        Some(trimmed)
+    } else {
+        None
+    }
+}
+
 fn fetch_go_status(
     credentials: &DashboardCredentials,
     url: &str,
@@ -202,27 +228,8 @@ fn fetch_go_status(
         format!("auth={}", credentials.auth_cookie)
     };
 
-    // Extract a clean Bearer token from the credential.  The token must be a
-    // single RFC 6750-compatible value (no ';' separators).
-    //
-    // - If auth_cookie contains an `auth=<value>` segment, strip the prefix and
-    //   use the value (empty values are skipped — they are RFC-invalid as Bearer).
-    // - Otherwise, if auth_cookie is a bare token with no ';' separator, use it
-    //   directly (covers legacy opaque tokens stored without a name= prefix).
-    // - Multi-segment cookie strings without a valid auth= segment are not usable
-    //   as Bearer tokens; in that case no Authorization header is sent.
-    let bearer_token: Option<&str> = credentials
-        .auth_cookie
-        .split(';')
-        .find_map(|part| {
-            let part = part.trim_start();
-            part.strip_prefix("auth=").filter(|s| !s.is_empty())
-        })
-        .or_else(|| {
-            // Single-segment raw value: treat as a bare token.  Multi-segment
-            // strings (containing ';') cannot be a valid RFC 6750 Bearer token.
-            (!credentials.auth_cookie.contains(';')).then_some(credentials.auth_cookie.as_str())
-        });
+
+    let bearer_token = extract_bearer_token(&credentials.auth_cookie);
 
     let request = build_agent()?
         .get(url)
@@ -556,25 +563,41 @@ mod tests {
 
     #[test]
     fn console_request_sends_workspace_context_and_normalizes_auth_cookie() {
-        for (cookie, expected) in [
-            ("test-token", "auth=test-token"),
-            ("test-token==", "auth=test-token=="),
-            ("auth=test-token; theme=dark", "auth=test-token; theme=dark"),
+        for (cookie, expected_cookie, expected_authorization) in [
+            (
+                "test-token",
+                "auth=test-token",
+                Some("Bearer test-token"),
+            ),
+            (
+                "test-token==",
+                "auth=test-token==",
+                Some("Bearer test-token=="),
+            ),
+            (
+                "auth=test-token; theme=dark",
+                "auth=test-token; theme=dark",
+                Some("Bearer test-token"),
+            ),
             (
                 "__Host-console_session=SessionToken==",
                 "__Host-console_session=SessionToken==",
+                None,
             ),
             (
                 "__Host-console_session=SessionToken; __stripe_mid=StripeValue",
                 "__Host-console_session=SessionToken; __stripe_mid=StripeValue",
+                None,
             ),
             (
                 "theme=dark; __Host-console_session=SessionToken",
                 "theme=dark; __Host-console_session=SessionToken",
+                None,
             ),
             (
                 "auth=; __Host-console_session=SessionToken",
                 "auth=; __Host-console_session=SessionToken",
+                None,
             ),
         ] {
             let (result, request) = mock_status_request(200, GO_STATUS_JSON, cookie);
@@ -587,11 +610,9 @@ mod tests {
                         .then_some(value.trim_start())
                 })
                 .unwrap();
-            assert_eq!(sent_cookie, expected);
-            // Verify that Authorization: Bearer carries the correct bare token.
-            // The header is present only when a clean RFC 6750-compatible token is
-            // available: either an extracted auth= value or a single-segment bare string.
-            // Multi-segment cookie strings without auth= must NOT send a Bearer header.
+            assert_eq!(sent_cookie, expected_cookie);
+            // Verify that Authorization: Bearer carries the correct bare token
+            // and is strictly omitted when credentials provide only session cookies.
             let sent_authorization = request
                 .lines()
                 .find_map(|line| {
@@ -599,30 +620,51 @@ mod tests {
                     name.eq_ignore_ascii_case("authorization")
                         .then_some(value.trim_start())
                 });
-            // Mirror the production extraction logic to derive the expected value.
-            let expected_bearer: Option<&str> = cookie
-                .split(';')
-                .find_map(|part| {
-                    let part = part.trim_start();
-                    part.strip_prefix("auth=").filter(|s| !s.is_empty())
-                })
-                .or_else(|| (!cookie.contains(';')).then_some(cookie));
-            match expected_bearer {
-                Some(token) => assert_eq!(
-                    sent_authorization,
-                    Some(format!("Bearer {token}").as_str()),
-                    "Authorization header mismatch for cookie={cookie:?}"
-                ),
-                None => assert_eq!(
-                    sent_authorization, None,
-                    "Authorization header must be absent for multi-segment cookie without auth= (cookie={cookie:?})"
-                ),
-            }
+            assert_eq!(
+                sent_authorization, expected_authorization,
+                "Authorization header mismatch for cookie={cookie:?}"
+            );
             let request = request.to_ascii_lowercase();
             assert!(request.starts_with("get /console/api/go/status http/1.1\r\n"));
             assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
             assert!(request.contains("\r\naccept: application/json\r\n"));
         }
+    }
+
+    #[test]
+    fn bearer_token_extraction_distinguishes_tokens_from_session_cookies() {
+        assert_eq!(extract_bearer_token("test-token"), Some("test-token"));
+        assert_eq!(extract_bearer_token("test-token=="), Some("test-token=="));
+        assert_eq!(
+            extract_bearer_token("auth=test-token; theme=dark"),
+            Some("test-token")
+        );
+        assert_eq!(
+            extract_bearer_token("  auth=token ; other=val"),
+            Some("token")
+        );
+        assert_eq!(
+            extract_bearer_token("st_61dd5f7c-097c-41be-9e06-ba1356bb203f"),
+            Some("st_61dd5f7c-097c-41be-9e06-ba1356bb203f")
+        );
+        assert_eq!(
+            extract_bearer_token("__Host-console_session=SessionToken=="),
+            None
+        );
+        assert_eq!(
+            extract_bearer_token("__Host-console_session=SessionToken; __stripe_mid=Val"),
+            None
+        );
+        assert_eq!(
+            extract_bearer_token("theme=dark; __Host-console_session=SessionToken"),
+            None
+        );
+        assert_eq!(
+            extract_bearer_token("auth=; __Host-console_session=SessionToken"),
+            None
+        );
+        assert_eq!(extract_bearer_token("auth="), None);
+        assert_eq!(extract_bearer_token(""), None);
     }
 
     #[test]
