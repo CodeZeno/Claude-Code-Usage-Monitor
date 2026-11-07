@@ -202,31 +202,49 @@ fn fetch_go_status(
         format!("auth={}", credentials.auth_cookie)
     };
 
-    // Extract the bare token for the Bearer header.  If the cookie string
-    // already carries an `auth=` prefix (full cookie header), strip it so
-    // the Bearer value is just the opaque token; otherwise the raw value is
-    // already the token.
-    let bearer_token = credentials
+    // Extract a clean Bearer token from the credential.  The token must be a
+    // single RFC 6750-compatible value (no ';' separators).
+    //
+    // - If auth_cookie contains an `auth=<value>` segment, strip the prefix and
+    //   use the value (empty values are skipped — they are RFC-invalid as Bearer).
+    // - Otherwise, if auth_cookie is a bare token with no ';' separator, use it
+    //   directly (covers legacy opaque tokens stored without a name= prefix).
+    // - Multi-segment cookie strings without a valid auth= segment are not usable
+    //   as Bearer tokens; in that case no Authorization header is sent.
+    let bearer_token: Option<&str> = credentials
         .auth_cookie
         .split(';')
         .find_map(|part| {
             let part = part.trim_start();
-            // Skip segments where auth= is present but empty; a blank Bearer
-            // token is RFC 6750-invalid and would be rejected by the API.
             part.strip_prefix("auth=").filter(|s| !s.is_empty())
         })
-        .unwrap_or(&credentials.auth_cookie);
+        .or_else(|| {
+            // Single-segment raw value: treat as a bare token.  Multi-segment
+            // strings (containing ';') cannot be a valid RFC 6750 Bearer token.
+            (!credentials.auth_cookie.contains(';')).then_some(credentials.auth_cookie.as_str())
+        });
 
-    let mut response = match build_agent()?
+    let request = build_agent()?
         .get(url)
         .header("Accept", "application/json")
         .header("x-org-id", &credentials.workspace_id)
-        // Send both the legacy Cookie header and the modern Bearer token.
+        // Send the legacy Cookie header on every request.
         // The OpenCode Console API currently requires Authorization: Bearer
         // and returns HTTP 401 when only the Cookie header is present.
         .header("Cookie", &cookie)
-        .header("Authorization", &format!("Bearer {bearer_token}"))
-        .header("User-Agent", DASHBOARD_USER_AGENT)
+        .header("User-Agent", DASHBOARD_USER_AGENT);
+    // Add Authorization: Bearer only when a clean, RFC 6750-compatible token
+    // is available.  Omitting it for unrecognised credential shapes avoids
+    // sending a malformed header that could cause non-401 API errors.
+    let bearer_header;
+    let request = if let Some(token) = bearer_token {
+        bearer_header = format!("Bearer {token}");
+        request.header("Authorization", &bearer_header)
+    } else {
+        request
+    };
+
+    let mut response = match request
         .call()
         .and_then(super::check_http_status)
     {
@@ -571,28 +589,35 @@ mod tests {
                 .unwrap();
             assert_eq!(sent_cookie, expected);
             // Verify that Authorization: Bearer carries the correct bare token.
-            // The bearer value is the auth= segment stripped of its prefix, or the
-            // full cookie string when no auth= segment is present (bare / session tokens).
-            let sent_bearer = request
+            // The header is present only when a clean RFC 6750-compatible token is
+            // available: either an extracted auth= value or a single-segment bare string.
+            // Multi-segment cookie strings without auth= must NOT send a Bearer header.
+            let sent_authorization = request
                 .lines()
                 .find_map(|line| {
                     let (name, value) = line.split_once(':')?;
                     name.eq_ignore_ascii_case("authorization")
                         .then_some(value.trim_start())
-                })
-                .unwrap_or("");
-            let expected_bearer = cookie
+                });
+            // Mirror the production extraction logic to derive the expected value.
+            let expected_bearer: Option<&str> = cookie
                 .split(';')
                 .find_map(|part| {
                     let part = part.trim_start();
                     part.strip_prefix("auth=").filter(|s| !s.is_empty())
                 })
-                .unwrap_or(cookie);
-            assert_eq!(
-                sent_bearer,
-                format!("Bearer {expected_bearer}"),
-                "Authorization header mismatch for cookie={cookie:?}"
-            );
+                .or_else(|| (!cookie.contains(';')).then_some(cookie));
+            match expected_bearer {
+                Some(token) => assert_eq!(
+                    sent_authorization,
+                    Some(format!("Bearer {token}").as_str()),
+                    "Authorization header mismatch for cookie={cookie:?}"
+                ),
+                None => assert_eq!(
+                    sent_authorization, None,
+                    "Authorization header must be absent for multi-segment cookie without auth= (cookie={cookie:?})"
+                ),
+            }
             let request = request.to_ascii_lowercase();
             assert!(request.starts_with("get /console/api/go/status http/1.1\r\n"));
             assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
