@@ -211,7 +211,9 @@ fn fetch_go_status(
         .split(';')
         .find_map(|part| {
             let part = part.trim_start();
-            part.strip_prefix("auth=")
+            // Skip segments where auth= is present but empty; a blank Bearer
+            // token is RFC 6750-invalid and would be rejected by the API.
+            part.strip_prefix("auth=").filter(|s| !s.is_empty())
         })
         .unwrap_or(&credentials.auth_cookie);
 
@@ -583,7 +585,7 @@ mod tests {
                 .split(';')
                 .find_map(|part| {
                     let part = part.trim_start();
-                    part.strip_prefix("auth=")
+                    part.strip_prefix("auth=").filter(|s| !s.is_empty())
                 })
                 .unwrap_or(cookie);
             assert_eq!(
