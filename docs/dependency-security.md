@@ -35,7 +35,7 @@ it does not parse user-provided fonts at runtime through this dependency.
 
 `deny.toml` temporarily excepts only this advisory. `cargo audit` still displays
 its warning, and future vulnerability advisories remain blocking. The repository
-maintainers own reviewing this exception by **2026-10-23**, or sooner when
+maintainers own reviewing this exception by **2026-12-08**, or sooner when
 oxifont updates. Update or replace the subsetter to remove `ttf-parser`, then
 remove the exception; cargo-deny rejects unused advisory exceptions. The review
 date is a maintenance reminder, not an automatically enforced expiration.
