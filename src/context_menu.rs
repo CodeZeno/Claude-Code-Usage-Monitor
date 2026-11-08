@@ -66,8 +66,13 @@ pub enum ContextMenuAction {
     },
     ToggleAntigravityGemini,
     ToggleAntigravityExternal,
+    ToggleClaudeMain,
+    ToggleClaudeX,
+    ToggleCodexMain,
+    ToggleCodexX,
     ToggleStartup,
     ToggleTaskbarLock,
+    ToggleShowPace,
     ToggleWidget,
     /// Accepted only so menus saved by older versions can be loaded and
     /// cleaned up. New menus cannot create or execute this legacy action.
@@ -310,7 +315,11 @@ pub fn rendered_label(
         "Refresh" => language.text("Refresh"),
         "Exit" => language.text("Exit"),
         "Claude Code" => language.text("Claude Code"),
+        "Claude Code (Main)" => language.text("Claude Code (Main)"),
+        "Claude Code X" => language.text("Claude Code X"),
         "Codex" => language.text("Codex"),
+        "Codex (Main)" => language.text("Codex (Main)"),
+        "Codex X" => language.text("Codex X"),
         "Antigravity" => language.text("Antigravity"),
         "OpenCode" => language.text("OpenCode"),
         "Cursor" => language.text("Cursor"),
@@ -325,6 +334,7 @@ pub fn rendered_label(
         "Check for updates" => language.text("Check for updates"),
         "Lock in taskbar" => language.text("Lock in taskbar"),
         "Show widget" => language.text("Show widget"),
+        "Show pace" => language.text("Show pace"),
         _ => label,
     };
     crate::theme_engine::format_template(translated, context)
@@ -373,19 +383,17 @@ pub fn classic_context_menu() -> ContextMenuDocument {
         "Providers",
         vec![
             ContextMenuItem::action(
-                "provider-claude",
-                "Claude Code",
-                Action::ToggleProvider {
-                    provider: Provider::Claude,
-                },
+                "provider-claude-main",
+                "Claude Code (Main)",
+                Action::ToggleClaudeMain,
             ),
+            ContextMenuItem::action("provider-claude-x", "Claude Code X", Action::ToggleClaudeX),
             ContextMenuItem::action(
-                "provider-codex",
-                "Codex",
-                Action::ToggleProvider {
-                    provider: Provider::Codex,
-                },
+                "provider-codex-main",
+                "Codex (Main)",
+                Action::ToggleCodexMain,
             ),
+            ContextMenuItem::action("provider-codex-x", "Codex X", Action::ToggleCodexX),
             ContextMenuItem::action(
                 "provider-antigravity-gemini",
                 "Antigravity (Gemini)",
@@ -457,6 +465,7 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                 Action::ToggleStartup,
             ),
             ContextMenuItem::action("lock-taskbar", "Lock in taskbar", Action::ToggleTaskbarLock),
+            ContextMenuItem::action("show-pace", "Show pace", Action::ToggleShowPace),
             ContextMenuItem::submenu("language", "Language", languages),
             ContextMenuItem::separator("settings-separator"),
             ContextMenuItem::action(
@@ -718,6 +727,23 @@ mod tests {
         assert!(menu.validate().is_empty());
         assert!(menu.items.iter().any(|item| item.id == "refresh"));
         assert!(menu.items.iter().any(|item| item.id == "update-frequency"));
+        let settings = menu
+            .items
+            .iter()
+            .find(|item| item.id == "settings")
+            .unwrap();
+        let ContextMenuItemKind::Submenu { items } = &settings.kind else {
+            panic!("Settings must be a submenu");
+        };
+        assert!(items.iter().any(|item| {
+            item.label == "Show pace"
+                && matches!(
+                    &item.kind,
+                    ContextMenuItemKind::Action {
+                        action: ContextMenuAction::ToggleShowPace
+                    }
+                )
+        }));
         assert!(serde_json::to_string(&menu)
             .unwrap()
             .contains("provider-opencode"));

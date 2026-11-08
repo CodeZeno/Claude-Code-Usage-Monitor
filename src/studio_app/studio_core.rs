@@ -30,6 +30,7 @@ impl StudioApp {
             .with_language(language)
             .with_countdown(self.settings.usage_countdown)
             .with_windows_default_font(self.settings.use_windows_default_font)
+            .with_show_pace(self.settings.show_pace)
             .with_antigravity_pools(
                 self.settings.antigravity_gemini_enabled(),
                 self.settings.antigravity_external_enabled(),

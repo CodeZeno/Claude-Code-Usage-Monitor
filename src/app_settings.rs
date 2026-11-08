@@ -75,6 +75,8 @@ pub struct SettingsFile {
     /// Preserve theme fonts and Windows substitution unless explicitly disabled.
     #[serde(default = "default_true")]
     pub use_windows_default_font: bool,
+    #[serde(default = "default_true")]
+    pub show_pace: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_theme_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -143,6 +145,7 @@ impl Default for SettingsFile {
             custom_theme_enabled: true,
             usage_countdown: false,
             use_windows_default_font: true,
+            show_pace: true,
             active_theme_path: None,
             dashboard_width: None,
             dashboard_height: None,
@@ -688,6 +691,27 @@ mod tests {
         let counting_down = decode_settings(r#"{"usage_countdown":true}"#).unwrap();
         assert!(counting_down.usage_countdown);
         assert_eq!(settings_json(&counting_down)["usage_countdown"], true);
+    }
+
+    #[test]
+    fn show_pace_defaults_to_on_and_round_trips() {
+        let settings = SettingsFile::default();
+        assert!(settings.show_pace);
+        assert_eq!(settings_json(&settings)["show_pace"], true);
+
+        let legacy = decode_settings(r#"{"poll_interval_ms":900000}"#).unwrap();
+        assert!(legacy.show_pace);
+
+        for show_pace in [false, true] {
+            let settings = SettingsFile {
+                show_pace,
+                ..Default::default()
+            };
+            let json = settings_json(&settings);
+            assert_eq!(json["show_pace"], show_pace);
+            let loaded = decode_settings(&json.to_string()).unwrap();
+            assert_eq!(loaded.show_pace, show_pace);
+        }
     }
 
     #[test]

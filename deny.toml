@@ -8,12 +8,12 @@ yanked = "deny"
 unmaintained = "all"
 unsound = "all"
 unused-ignored-advisory = "deny"
-# Owner: repository maintainers. Review by 2026-10-23, or on an oxifont update.
+# Owner: repository maintainers. Review by 2026-12-08, or on an oxifont update.
 # Build-time only: oxifont processes font bytes bundled by locked dependencies.
 # No patched release exists; migrate/update the subsetter to remove this crate.
 # Keep cargo-audit's warning visible. This does not ignore future vulnerabilities.
 ignore = [
-    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is unmaintained; required by oxifont-subset/oxifont-parser 0.2.2 for build-time bundled font subsetting. Owner: repository maintainers; review by 2026-10-23. See docs/dependency-security.md." },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser 0.25.1 is unmaintained; required by oxifont-subset/oxifont-parser 0.2.2 for build-time bundled font subsetting. Owner: repository maintainers; review by 2026-12-08. See docs/dependency-security.md." },
 ]
 
 [licenses]
