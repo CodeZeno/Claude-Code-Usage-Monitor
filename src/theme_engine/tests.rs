@@ -978,8 +978,14 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
         let mut claude = usage.get(ProviderId::Claude).unwrap().clone();
         claude.session.available = session_available;
         usage.insert(ProviderId::Claude, claude);
-        for codex_enabled in [false, true] {
-            let runtime = ThemeRuntime::new(true, codex_enabled, false);
+        for (runtime, provider_count) in [
+            (ThemeRuntime::new(true, false, false), 1),
+            (ThemeRuntime::new(true, true, false), 2),
+            (
+                ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
+                ProviderId::ALL.len(),
+            ),
+        ] {
             let (width, height) = resolve_surface_size(&theme, 0, Some(&usage), runtime);
             let canvas = Canvas {
                 width,
@@ -989,41 +995,57 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
             let (objects, warnings) =
                 resolve_objects_for(surface, &canvas, &surface.children, Some(&usage), runtime);
             assert!(warnings.is_empty(), "{warnings:?}");
-            let object = |prefix: &str| {
-                objects
-                    .iter()
-                    .find(|o| o.source.id.starts_with(prefix))
-                    .unwrap()
-            };
-            let session_label_visible = objects
-                .iter()
-                .any(|o| o.source.id.starts_with("session-label-"));
-            let stacked = !session_available && !codex_enabled;
+            let find = |prefix: &str| objects.iter().find(|o| o.source.id.starts_with(prefix));
+            let stacked = !session_available;
             let weekly_y = if stacked { 5.0 } else { 28.0 };
-            assert_eq!(session_label_visible, !stacked);
-            let weekly_label = object("weekly-label-");
-            assert_eq!(weekly_label.y, weekly_y);
-            let fable_label = objects
-                .iter()
-                .find(|o| o.source.id.starts_with("fable-window-label-"));
-            assert_eq!(fable_label.is_some(), stacked);
 
-            let weekly_bar = object("claude-weekly-segments-");
-            let weekly_value = object("claude-weekly-value-");
-            let fable_bar = object("fable-weekly-segments-");
-            let fable_value = object("fable-weekly-value-");
+            assert_eq!(
+                find("session-label-").is_some(),
+                session_available || provider_count > 1
+            );
+            assert_eq!(
+                find("claude-session-segments-").is_some(),
+                session_available
+            );
+            assert_eq!(find("claude-window-label-").is_some(), stacked);
+            assert_eq!(find("fable-window-label-").is_some(), stacked);
+
+            let weekly_bar = find("claude-weekly-segments-").unwrap();
+            let weekly_value = find("claude-weekly-value-").unwrap();
+            let fable_bar = find("fable-weekly-segments-").unwrap();
+            let fable_value = find("fable-weekly-value-").unwrap();
             assert_eq!(weekly_bar.y, weekly_y);
             assert_eq!(weekly_value.y, weekly_y);
             assert_eq!(fable_bar.y, if stacked { 28.0 } else { 5.0 });
             assert_eq!(fable_value.y, 28.0);
-            if let Some(fable_label) = fable_label {
-                assert_eq!(fable_label.x, weekly_label.x);
+            if stacked {
+                let claude_label = find("claude-window-label-").unwrap();
+                let fable_label = find("fable-window-label-").unwrap();
+                assert_eq!(claude_label.x, fable_label.x);
+                assert_eq!(claude_label.y, weekly_bar.y);
                 assert_eq!(fable_label.y, fable_bar.y);
                 assert_eq!(weekly_bar.x, fable_bar.x);
                 assert_eq!(weekly_bar.width, fable_bar.width);
                 assert_eq!(weekly_value.x, fable_value.x);
                 assert!(fable_value.x + fable_value.width <= f64::from(width));
-                assert_eq!(width, 245);
+
+                for provider in objects
+                    .iter()
+                    .filter(|object| object.source.parent.as_deref() == Some("provider-row"))
+                {
+                    assert!(provider.x + provider.width <= claude_label.x);
+                }
+                if provider_count == 1 {
+                    assert_eq!(width, 245);
+                    assert!(find("weekly-label-").is_none());
+                } else if provider_count == 2 {
+                    let codex_session = find("codex-session-segments-").unwrap();
+                    let codex_weekly = find("codex-weekly-segments-").unwrap();
+                    assert_eq!(codex_session.x, 41.0);
+                    assert_eq!(codex_session.x, codex_weekly.x);
+                    assert_eq!(find("session-label-").unwrap().y, codex_session.y);
+                    assert_eq!(find("weekly-label-").unwrap().y, codex_weekly.y);
+                }
             } else {
                 assert!(fable_bar.x >= weekly_value.x + weekly_value.width);
             }
