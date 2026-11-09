@@ -944,12 +944,16 @@ fn built_in_themes_hide_absent_claude_sessions_and_keep_weekly_and_fable_limits(
 }
 
 #[test]
-fn built_in_classic_adds_a_fable_column_when_the_limit_is_available() {
+fn classic_stacks_weekly_and_fable_without_a_claude_session() {
     use crate::models::{UsageData, UsageLimit, UsageSection};
 
-    let usage = AppUsageData::from_iter([(
+    let mut usage = AppUsageData::from_iter([(
         ProviderId::Claude,
         UsageData {
+            weekly: UsageSection {
+                available: true,
+                ..Default::default()
+            },
             limits: vec![UsageLimit {
                 key: "weekly_scoped_fable".into(),
                 kind: "weekly_scoped".into(),
@@ -968,20 +972,63 @@ fn built_in_classic_adds_a_fable_column_when_the_limit_is_available() {
         },
     )]);
     let theme = ThemeDocument::starter();
+    let surface = &theme.surfaces[0];
 
-    assert_eq!(
-        resolve_surface_size(
-            &theme,
-            0,
-            Some(&usage),
-            ThemeRuntime::new(true, false, false)
-        ),
-        (310, 46)
-    );
-    assert!(theme.surfaces[0]
-        .children
-        .iter()
-        .any(|object| object.id == "fable-provider"));
+    for session_available in [false, true] {
+        let mut claude = usage.get(ProviderId::Claude).unwrap().clone();
+        claude.session.available = session_available;
+        usage.insert(ProviderId::Claude, claude);
+        for codex_enabled in [false, true] {
+            let runtime = ThemeRuntime::new(true, codex_enabled, false);
+            let (width, height) = resolve_surface_size(&theme, 0, Some(&usage), runtime);
+            let canvas = Canvas {
+                width,
+                height,
+                ..Default::default()
+            };
+            let (objects, warnings) =
+                resolve_objects_for(surface, &canvas, &surface.children, Some(&usage), runtime);
+            assert!(warnings.is_empty(), "{warnings:?}");
+            let object = |prefix: &str| {
+                objects
+                    .iter()
+                    .find(|o| o.source.id.starts_with(prefix))
+                    .unwrap()
+            };
+            let session_label_visible = objects
+                .iter()
+                .any(|o| o.source.id.starts_with("session-label-"));
+            let stacked = !session_available && !codex_enabled;
+            let weekly_y = if stacked { 5.0 } else { 28.0 };
+            assert_eq!(session_label_visible, !stacked);
+            let weekly_label = object("weekly-label-");
+            assert_eq!(weekly_label.y, weekly_y);
+            let fable_label = objects
+                .iter()
+                .find(|o| o.source.id.starts_with("fable-window-label-"));
+            assert_eq!(fable_label.is_some(), stacked);
+
+            let weekly_bar = object("claude-weekly-segments-");
+            let weekly_value = object("claude-weekly-value-");
+            let fable_bar = object("fable-weekly-segments-");
+            let fable_value = object("fable-weekly-value-");
+            assert_eq!(weekly_bar.y, weekly_y);
+            assert_eq!(weekly_value.y, weekly_y);
+            assert_eq!(fable_bar.y, if stacked { 28.0 } else { 5.0 });
+            assert_eq!(fable_value.y, 28.0);
+            if let Some(fable_label) = fable_label {
+                assert_eq!(fable_label.x, weekly_label.x);
+                assert_eq!(fable_label.y, fable_bar.y);
+                assert_eq!(weekly_bar.x, fable_bar.x);
+                assert_eq!(weekly_bar.width, fable_bar.width);
+                assert_eq!(weekly_value.x, fable_value.x);
+                assert!(fable_value.x + fable_value.width <= f64::from(width));
+                assert_eq!(width, 245);
+            } else {
+                assert!(fable_bar.x >= weekly_value.x + weekly_value.width);
+            }
+        }
+    }
 }
 
 #[test]
