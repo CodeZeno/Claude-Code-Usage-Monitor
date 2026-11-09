@@ -45,6 +45,7 @@ fn build_themes() {
         "compact-fluent-quad.json",
         "classic-vertical.json",
         "minecraft-codex.json",
+        "minecraft-claude.json",
     ] {
         let path = Path::new("src/themes").join(name);
         println!("cargo:rerun-if-changed={}", path.display());

@@ -327,8 +327,11 @@ pub(super) fn ensure_bundled_editable_themes(
     directory: &Path,
     asset_directory: &Path,
 ) -> Result<(), String> {
-    let install_marker = directory.join(BUNDLED_EDITABLE_INSTALL_MARKER);
-    if install_marker.exists() {
+    let pending: Vec<_> = BUNDLED_EDITABLE_THEME_SOURCES
+        .iter()
+        .filter(|(_, _, marker)| !directory.join(marker).exists())
+        .collect();
+    if pending.is_empty() {
         return Ok(());
     }
     std::fs::create_dir_all(asset_directory).map_err(|error| error.to_string())?;
@@ -339,43 +342,51 @@ pub(super) fn ensure_bundled_editable_themes(
         }
     }
 
-    for (expected_id, source) in BUNDLED_EDITABLE_THEME_SOURCES {
-        let mut bundled: ThemeDocument = serde_json::from_str(source).map_err(|error| {
-            format!("Bundled editable theme '{expected_id}' is invalid JSON: {error}")
-        })?;
-        if bundled.id != *expected_id {
-            return Err(format!(
-                "Bundled editable theme id '{}' does not match '{expected_id}'",
-                bundled.id
-            ));
-        }
-        bundled.prepare_runtime();
-        let errors = bundled.validate();
-        if !errors.is_empty() {
-            return Err(format!(
-                "Bundled editable theme '{}' is invalid:\n{}",
-                bundled.name,
-                errors.join("\n")
-            ));
-        }
-
-        let path = directory.join(format!("{expected_id}.json"));
-        if !path.exists() {
-            crate::app_settings::write_json_atomic(&path, &bundled)?;
-            continue;
-        }
-
-        // Upgrade the original locally-created Minecraft theme without
-        // replacing any other user edits. Once changed, later menu choices are
-        // preserved because only the old prototype reference is recognized.
-        let Ok(mut installed) = load_theme(&path) else {
-            continue;
-        };
-        if migrate_minecraft_context_menu(&mut installed) {
-            crate::app_settings::write_json_atomic(&path, &installed)?;
-        }
+    for (expected_id, source, marker) in pending {
+        install_bundled_editable_theme(directory, expected_id, source)?;
+        std::fs::write(directory.join(marker), b"1").map_err(|error| error.to_string())?;
     }
-    std::fs::write(install_marker, b"1").map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn install_bundled_editable_theme(
+    directory: &Path,
+    expected_id: &str,
+    source: &str,
+) -> Result<(), String> {
+    let mut bundled: ThemeDocument = serde_json::from_str(source).map_err(|error| {
+        format!("Bundled editable theme '{expected_id}' is invalid JSON: {error}")
+    })?;
+    if bundled.id != expected_id {
+        return Err(format!(
+            "Bundled editable theme id '{}' does not match '{expected_id}'",
+            bundled.id
+        ));
+    }
+    bundled.prepare_runtime();
+    let errors = bundled.validate();
+    if !errors.is_empty() {
+        return Err(format!(
+            "Bundled editable theme '{}' is invalid:\n{}",
+            bundled.name,
+            errors.join("\n")
+        ));
+    }
+
+    let path = directory.join(format!("{expected_id}.json"));
+    if !path.exists() {
+        return crate::app_settings::write_json_atomic(&path, &bundled);
+    }
+
+    // Upgrade the original locally-created Minecraft theme without
+    // replacing any other user edits. Once changed, later menu choices are
+    // preserved because only the old prototype reference is recognized.
+    let Ok(mut installed) = load_theme(&path) else {
+        return Ok(());
+    };
+    if migrate_minecraft_context_menu(&mut installed) {
+        crate::app_settings::write_json_atomic(&path, &installed)?;
+    }
     Ok(())
 }
 
