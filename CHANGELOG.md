@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.4] - 2026-11-10
+
+### Changed
+
+- Update the locked `ureq` dependency from 3.5.0 to 3.5.1 and `ureq-proto` from 0.6.5 to 0.7.1 for provider polling and update checks, retaining native TLS and Windows certificate-store verification. ([#210](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/210))
+
 ## [2.23.3] - 2026-11-10
 
 ### Changed
@@ -1626,3 +1632,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.0...v2.23.1
 [2.23.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.1...v2.23.2
 [2.23.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.2...v2.23.3
+[2.23.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.3...v2.23.4
