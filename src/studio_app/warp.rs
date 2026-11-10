@@ -189,7 +189,7 @@ impl Host {
         let window = event_loop
             .create_window(
                 Window::default_attributes()
-                    .with_title("Usage Monitor")
+                    .with_title(crate::dashboard::DASHBOARD_TITLE)
                     .with_visible(false)
                     .with_theme(Some(winit::window::Theme::Dark))
                     .with_inner_size(winit::dpi::LogicalSize::new(self.width, self.height))

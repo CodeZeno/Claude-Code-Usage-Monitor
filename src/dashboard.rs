@@ -15,7 +15,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetForegroundWindow, ShowWindowAsync, MB_ICONERROR, MB_OK, SW_RESTORE, WM_CLOSE,
 };
 
-const DASHBOARD_TITLE: &str = "Usage Monitor";
+pub(crate) const DASHBOARD_TITLE: &str = "Claude Code Usage Monitor";
 const DASHBOARD_MUTEX: &str = "Local\\ClaudeCodeUsageMonitorDashboard";
 const DASHBOARD_REQUEST_EVENT: &str = "Local\\ClaudeCodeUsageMonitorOpenDashboard";
 

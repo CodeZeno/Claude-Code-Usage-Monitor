@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.5] - 2026-11-11
+
+### Fixed
+
+- Show the full project name, "Claude Code Usage Monitor", in the dashboard window title for both OpenGL and WARP renderers, keeping window lookup consistent. ([#201](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/201))
+
 ## [2.23.4] - 2026-11-10
 
 ### Changed
@@ -1633,3 +1639,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.1...v2.23.2
 [2.23.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.2...v2.23.3
 [2.23.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.3...v2.23.4
+[2.23.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.4...v2.23.5
