@@ -189,7 +189,9 @@ pub(super) fn context_menu_action_flags(
                     theme,
                     &state.mouse_action_overrides,
                 );
-                let (origin_surface, _) = context_menu_action_origin(origin.cloned())?;
+                // STATE is already locked here. Match the action's first-surface
+                // fallback without calling the helper that locks STATE again.
+                let origin_surface = origin.map_or(0, |(surface_index, _)| *surface_index);
                 toggle_layer_render_state(
                     &effective,
                     origin_surface,
@@ -472,6 +474,44 @@ mod tests {
         assert_eq!(
             toggle_layer_render_state(&theme, 0, "no-such-object", None, runtime),
             None
+        );
+    }
+
+    #[test]
+    fn layer_toggle_state_uses_origin_surface_and_live_overrides() {
+        let mut theme = ThemeDocument::starter();
+        let runtime = ThemeRuntime::new(true, true, true);
+        let layer_id = theme.surfaces[0].children[0].id.clone();
+        theme.surfaces[0].children[0].render = 1.0.into();
+        let mut second = theme.surfaces[0].clone();
+        second.id = "second".into();
+        second.children[0].render = 0.0.into();
+        theme.surfaces.push(second);
+        let second_index = theme.surfaces.len() - 1;
+        theme.prepare_runtime();
+        assert_eq!(
+            toggle_layer_render_state(&theme, second_index, &layer_id, None, runtime),
+            Some(false)
+        );
+        let mut overrides = HashMap::new();
+        theme_engine::execute_mouse_actions(
+            &theme,
+            0,
+            &layer_id,
+            "toggle(self, render)",
+            None,
+            runtime,
+            &mut overrides,
+        )
+        .unwrap();
+        let effective = theme_engine::apply_mouse_action_overrides(&theme, &overrides);
+        assert_eq!(
+            toggle_layer_render_state(&effective, 0, &layer_id.to_uppercase(), None, runtime),
+            Some(false)
+        );
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, &layer_id, None, runtime),
+            Some(true)
         );
     }
 }

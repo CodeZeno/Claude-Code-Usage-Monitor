@@ -4,6 +4,13 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.1] - 2026-11-10
+
+### Fixed
+
+- Show context-menu check marks for `toggle_layer_render` actions targeting layers in the originating surface, including runtime visibility overrides. Preserve check marks for surface targets. ([#214](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/214))
+- Avoid locking application state twice when evaluating a layer toggle in a menu opened without an explicit origin, preventing a menu hang.
+
 ## [2.23.0] - 2026-11-03
 
 ### Added
@@ -1604,3 +1611,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.22.10]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.9...v2.22.10
 [2.22.11]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.10...v2.22.11
 [2.23.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.22.11...v2.23.0
+[2.23.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.0...v2.23.1
