@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.23.6] - 2026-11-11
+
+### Fixed
+
+- Match the dashboard's native window class as well as its title when opening, focusing, or toggling it, preventing the renamed dashboard from being confused with the hidden monitor controller. Add regression coverage for windows sharing the same title and update the Windows VM harness to recognize the full dashboard name.
+
 ## [2.23.5] - 2026-11-11
 
 ### Fixed
@@ -1640,3 +1646,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.2...v2.23.3
 [2.23.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.3...v2.23.4
 [2.23.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.4...v2.23.5
+[2.23.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.5...v2.23.6

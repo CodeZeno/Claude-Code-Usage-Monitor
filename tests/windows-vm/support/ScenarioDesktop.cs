@@ -137,7 +137,7 @@ public static class CCUMScenarioDesktop {
             // Never synchronously query captions on unrelated/hidden UIA windows.
             if(!candidates.Contains(owner) || !IsWindowVisible(h)) return true;
             var s=new StringBuilder(512); GetWindowText(h,s,s.Capacity);
-            if (s.ToString()=="Usage Monitor") found=h.ToInt64();
+            if (s.ToString()=="Claude Code Usage Monitor") found=h.ToInt64();
             return true;
         },IntPtr.Zero);
         return found;

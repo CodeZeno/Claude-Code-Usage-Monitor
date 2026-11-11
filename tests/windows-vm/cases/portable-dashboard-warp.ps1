@@ -66,7 +66,7 @@ public static class CCUMWarpDesktop {
     public static IntPtr Find() {
         IntPtr found=IntPtr.Zero;
         EnumWindows((h,p) => { var s=new StringBuilder(256); GetWindowText(h,s,256);
-            if (IsWindowVisible(h) && s.ToString()=="Usage Monitor") { found=h; return false; } return true; },IntPtr.Zero);
+            if (IsWindowVisible(h) && s.ToString()=="Claude Code Usage Monitor") { found=h; return false; } return true; },IntPtr.Zero);
         return found;
     }
 }
