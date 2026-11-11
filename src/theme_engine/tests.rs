@@ -2527,27 +2527,79 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
 }
 
 #[test]
-fn bundled_minecraft_theme_is_valid_editable_and_uses_dashboard_v2() {
-    assert_eq!(BUNDLED_EDITABLE_THEME_SOURCES.len(), 1);
-    let (expected_id, source) = BUNDLED_EDITABLE_THEME_SOURCES[0];
-    let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
-    assert_eq!(expected_id, MINECRAFT_THEME_ID);
-    assert_eq!(theme.id, MINECRAFT_THEME_ID);
-    assert!(!theme.is_builtin());
-    theme.prepare_runtime();
-    assert!(theme.validate().is_empty());
-    assert_eq!(
-        theme.surfaces[0]
-            .mouse_events
-            .as_ref()
-            .map(|events| events.right_click.as_str()),
-        Some("show_context_menu(\"dashboard-v2\")")
-    );
+fn bundled_minecraft_themes_are_valid_editable_and_use_dashboard_v2() {
+    let ids: Vec<_> = BUNDLED_EDITABLE_THEME_SOURCES
+        .iter()
+        .map(|(id, _, _)| *id)
+        .collect();
+    assert_eq!(ids, [MINECRAFT_THEME_ID, MINECRAFT_CLAUDE_THEME_ID]);
+
+    let mut markers: Vec<_> = BUNDLED_EDITABLE_THEME_SOURCES
+        .iter()
+        .map(|(_, _, marker)| *marker)
+        .collect();
+    markers.sort_unstable();
+    markers.dedup();
+    assert_eq!(markers.len(), BUNDLED_EDITABLE_THEME_SOURCES.len());
+
+    let mut themes = Vec::new();
+    for (expected_id, source, _) in BUNDLED_EDITABLE_THEME_SOURCES {
+        let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
+        assert_eq!(theme.id, *expected_id);
+        assert!(!theme.is_builtin());
+        theme.prepare_runtime();
+        assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+        assert_eq!(
+            theme.surfaces[0]
+                .mouse_events
+                .as_ref()
+                .map(|events| events.right_click.as_str()),
+            Some("show_context_menu(\"dashboard-v2\")")
+        );
+        themes.push(theme);
+    }
 
     for (file_name, bytes) in BUNDLED_THEME_ASSETS {
         assert!(file_name.starts_with("minecraft-"));
         assert!(image::load_from_memory(bytes).is_ok());
-        assert_eq!(theme_asset_usage(&theme, &format!("assets/{file_name}")), 1);
+        let usage: usize = themes
+            .iter()
+            .map(|theme| theme_asset_usage(theme, &format!("assets/{file_name}")))
+            .sum();
+        assert_eq!(usage, 1, "{file_name}");
+    }
+}
+
+#[test]
+fn bundled_minecraft_claude_bars_snap_to_half_icons() {
+    let mut theme: ThemeDocument =
+        serde_json::from_str(BUNDLED_EDITABLE_THEME_SOURCES[1].1).unwrap();
+    theme.prepare_runtime();
+    let layer = |id: &str| {
+        theme.surfaces[0]
+            .children
+            .iter()
+            .find(|child| child.id == id)
+            .unwrap_or_else(|| panic!("missing layer {id}"))
+            .clone()
+    };
+    let hearts_width = layer("mcc-hearts-full-clip").width;
+    let hunger_width = layer("mcc-hunger-full-clip").width;
+
+    // (weekly % used, session % used, hearts clip, hunger clip). Strips are
+    // 142px wide; each half icon is 7px plus the 2px leading outline column.
+    for (weekly, session, hearts, hunger) in [
+        (0.0, 0.0, 142.0, 142.0),
+        (1.0, 1.0, 142.0, 142.0),
+        (62.0, 37.0, 58.0, 93.0),
+        (99.0, 100.0, 9.0, 2.0),
+        (100.0, 99.0, 2.0, 9.0),
+    ] {
+        let mut context = DataContext::default();
+        context.insert("claude.weekly.percentage", weekly);
+        context.insert("claude.session.percentage", session);
+        assert_eq!(evaluate(&hearts_width.0, &context).unwrap(), hearts, "{weekly}%");
+        assert_eq!(evaluate(&hunger_width.0, &context).unwrap(), hunger, "{session}%");
     }
 }
 
@@ -2609,6 +2661,38 @@ fn bundled_minecraft_install_preserves_user_edits() {
     std::fs::remove_file(&theme_path).unwrap();
     ensure_bundled_editable_themes(&themes, &assets).unwrap();
     assert!(!theme_path.exists());
+
+    std::fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bundled_minecraft_claude_theme_reaches_existing_installs() {
+    let root = std::env::temp_dir().join(format!(
+        "claude-code-usage-monitor-minecraft-claude-test-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let themes = root.join("themes");
+    let assets = themes.join("assets");
+    // An install from before this theme existed: only the original marker.
+    std::fs::create_dir_all(&themes).unwrap();
+    std::fs::write(themes.join(".minecraft-theme-installed"), b"1").unwrap();
+
+    ensure_bundled_editable_themes(&themes, &assets).unwrap();
+    let claude_path = themes.join(format!("{MINECRAFT_CLAUDE_THEME_ID}.json"));
+    assert!(load_theme(&claude_path).is_ok());
+    // The original theme's deletion is still respected.
+    assert!(!themes.join(format!("{MINECRAFT_THEME_ID}.json")).exists());
+    for (file_name, _) in BUNDLED_THEME_ASSETS {
+        assert!(assets.join(file_name).is_file());
+    }
+
+    std::fs::remove_file(&claude_path).unwrap();
+    ensure_bundled_editable_themes(&themes, &assets).unwrap();
+    assert!(!claude_path.exists());
 
     std::fs::remove_dir_all(&root).unwrap();
 }
