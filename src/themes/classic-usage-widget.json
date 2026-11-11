@@ -20,7 +20,7 @@
         "offset_x": 0,
         "offset_y": 0
       },
-      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + providers.claude.enabled * claude.model.fable.available * 93",
+      "width": "42 + providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 3 + (providers.opencode.enabled + providers.cursor.enabled) * 28 + providers.claude.enabled * claude.model.fable.available * if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 28 + 28 * (providers.count > 1), 93)",
       "height": "46",
       "mouse_events": {
         "right_click": "show_context_menu(\"classic-v1\")"
@@ -87,7 +87,7 @@
         {
           "id": "session-label-dark",
           "name": "dark 5-hour label",
-          "render": "system.dark",
+          "render": "system.dark && !(providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "x": "13",
           "y": "5",
           "width": "18",
@@ -109,9 +109,9 @@
         {
           "id": "weekly-label-dark",
           "name": "dark 7-day label",
-          "render": "system.dark * (1 - providers.opencode.enabled)",
+          "render": "system.dark && !providers.opencode.enabled && !((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available) && providers.count == 1)",
           "x": "13",
-          "y": "28",
+          "y": "28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "width": "18",
           "height": "13",
           "content": {
@@ -129,9 +129,55 @@
           }
         },
         {
+          "id": "claude-window-label-dark",
+          "name": "dark Claude 7-day label",
+          "render": "system.dark && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "x": "0",
+          "y": "5",
+          "width": "18",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.weekly_window}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#888888FF"
+            }
+          },
+          "parent": "claude-usage"
+        },
+        {
+          "id": "fable-window-label-dark",
+          "name": "dark Fable 7-day label",
+          "render": "system.dark && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "x": "0",
+          "y": "28",
+          "width": "18",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.weekly_window}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#888888FF"
+            }
+          },
+          "parent": "claude-usage"
+        },
+        {
           "id": "session-label-light",
           "name": "light 5-hour label",
-          "render": "1 - system.dark",
+          "render": "(1 - system.dark) && !(providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "x": "13",
           "y": "5",
           "width": "18",
@@ -153,9 +199,9 @@
         {
           "id": "weekly-label-light",
           "name": "light 7-day label",
-          "render": "(1 - system.dark) * (1 - providers.opencode.enabled)",
+          "render": "(1 - system.dark) && !providers.opencode.enabled && !((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available) && providers.count == 1)",
           "x": "13",
-          "y": "28",
+          "y": "28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "width": "18",
           "height": "13",
           "content": {
@@ -171,6 +217,52 @@
               "color": "#404040FF"
             }
           }
+        },
+        {
+          "id": "claude-window-label-light",
+          "name": "light Claude 7-day label",
+          "render": "(1 - system.dark) && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "x": "0",
+          "y": "5",
+          "width": "18",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.weekly_window}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#404040FF"
+            }
+          },
+          "parent": "claude-usage"
+        },
+        {
+          "id": "fable-window-label-light",
+          "name": "light Fable 7-day label",
+          "render": "(1 - system.dark) && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "x": "0",
+          "y": "28",
+          "width": "18",
+          "height": "13",
+          "content": {
+            "type": "text",
+            "template": "{i18n.weekly_window}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#404040FF"
+            }
+          },
+          "parent": "claude-usage"
         },
         {
           "id": "cursor-provider",
@@ -423,17 +515,25 @@
         },
         {
           "id": "claude-provider",
-          "name": "Claude Code provider",
-          "render": "providers.claude.enabled",
+          "name": "Claude Code slot",
+          "render": "providers.claude.enabled && !(providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "parent": "provider-row",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62",
+          "height": "46"
+        },
+        {
+          "id": "claude-usage",
+          "name": "Claude Code usage",
+          "render": "providers.claude.enabled",
+          "x": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), canvas.width - 1 - ((ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 90 + 28), 41 + providers.cursor.enabled * ((ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 90 + 3))",
+          "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 90 + 28, (ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 62)",
           "height": "46"
         },
         {
           "id": "claude-session-segments-dark",
           "name": "dark Claude Code 5-hour segments",
           "render": "(system.dark) && claude.session.available",
-          "parent": "claude-provider",
+          "parent": "claude-usage",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
@@ -457,7 +557,7 @@
           "id": "claude-session-value-dark",
           "name": "dark Claude Code 5-hour value",
           "render": "(system.dark) && claude.session.available",
-          "parent": "claude-provider",
+          "parent": "claude-usage",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
           "width": "62",
@@ -480,7 +580,7 @@
           "id": "claude-session-segments-light",
           "name": "light Claude Code 5-hour segments",
           "render": "(1 - system.dark) && claude.session.available",
-          "parent": "claude-provider",
+          "parent": "claude-usage",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
@@ -504,7 +604,7 @@
           "id": "claude-session-value-light",
           "name": "light Claude Code 5-hour value",
           "render": "(1 - system.dark) && claude.session.available",
-          "parent": "claude-provider",
+          "parent": "claude-usage",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
           "width": "62",
@@ -527,8 +627,8 @@
           "id": "claude-weekly-segments-dark",
           "name": "dark Claude Code 7-day segments",
           "render": "system.dark",
-          "parent": "claude-provider",
-          "y": "28",
+          "parent": "claude-usage",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
@@ -545,15 +645,16 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
-          }
+          },
+          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
           "id": "claude-weekly-value-dark",
           "name": "dark Claude Code 7-day value",
           "render": "(system.dark) && !claude.credits.available",
-          "parent": "claude-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
+          "parent": "claude-usage",
+          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "62",
           "height": "13",
           "content": {
@@ -574,8 +675,8 @@
           "id": "claude-weekly-segments-light",
           "name": "light Claude Code 7-day segments",
           "render": "1 - system.dark",
-          "parent": "claude-provider",
-          "y": "28",
+          "parent": "claude-usage",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
@@ -592,15 +693,16 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
-          }
+          },
+          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
           "id": "claude-weekly-value-light",
           "name": "light Claude Code 7-day value",
           "render": "(1 - system.dark) && !claude.credits.available",
-          "parent": "claude-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
+          "parent": "claude-usage",
+          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "62",
           "height": "13",
           "content": {
@@ -1209,8 +1311,8 @@
           "id": "claude-credits-segments-dark",
           "name": "dark claude credit overlay",
           "render": "(system.dark) && claude.credits.available",
-          "parent": "claude-provider",
-          "y": "28",
+          "parent": "claude-usage",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
@@ -1229,15 +1331,16 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
-          }
+          },
+          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
           "id": "claude-credits-value-dark",
           "name": "dark claude credit balance",
           "render": "(system.dark) && claude.credits.available",
-          "parent": "claude-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
+          "parent": "claude-usage",
+          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "62",
           "height": "13",
           "content": {
@@ -1259,8 +1362,8 @@
           "id": "claude-credits-segments-light",
           "name": "light claude credit overlay",
           "render": "(1 - system.dark) && claude.credits.available",
-          "parent": "claude-provider",
-          "y": "28",
+          "parent": "claude-usage",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
           "height": "13",
           "content": {
@@ -1279,15 +1382,16 @@
             "segments": 10,
             "segments_expression": "ceil(10 / max(1, providers.count))",
             "segment_gap": "1"
-          }
+          },
+          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
           "id": "claude-credits-value-light",
           "name": "light claude credit balance",
           "render": "(1 - system.dark) && claude.credits.available",
-          "parent": "claude-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
+          "parent": "claude-usage",
+          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "62",
           "height": "13",
           "content": {
@@ -1713,8 +1817,8 @@
           "id": "fable-provider",
           "name": "Fable weekly meter",
           "render": "providers.claude.enabled && claude.model.fable.available",
-          "parent": "provider-row",
-          "width": "90",
+          "x": "canvas.width - 1 - if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 90, 90)",
+          "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 90, 90)",
           "height": "46"
         },
         {
@@ -1722,8 +1826,8 @@
           "name": "dark Fable weekly segments",
           "render": "system.dark",
           "parent": "fable-provider",
-          "y": "5",
-          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 28, 5)",
+          "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1), 87)",
           "height": "13",
           "content": {
             "type": "progress",
@@ -1737,7 +1841,7 @@
             },
             "corner_radius": "2",
             "segments": 8,
-            "segments_expression": "floor((90 + 1) / 11)",
+            "segments_expression": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), ceil(10 / max(1, providers.count)), 8)",
             "segment_gap": "1"
           }
         },
@@ -1746,6 +1850,7 @@
           "name": "dark Fable weekly value",
           "render": "system.dark",
           "parent": "fable-provider",
+          "x": "((ceil(10 / max(1, providers.count)) * 11 - 1) + 4) * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "y": "28",
           "width": "90",
           "height": "13",
@@ -1768,8 +1873,8 @@
           "name": "light Fable weekly segments",
           "render": "1 - system.dark",
           "parent": "fable-provider",
-          "y": "5",
-          "width": "floor((90 + 1) / 11) * 11 - 1",
+          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 28, 5)",
+          "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1), 87)",
           "height": "13",
           "content": {
             "type": "progress",
@@ -1783,7 +1888,7 @@
             },
             "corner_radius": "2",
             "segments": 8,
-            "segments_expression": "floor((90 + 1) / 11)",
+            "segments_expression": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), ceil(10 / max(1, providers.count)), 8)",
             "segment_gap": "1"
           }
         },
@@ -1792,6 +1897,7 @@
           "name": "light Fable weekly value",
           "render": "1 - system.dark",
           "parent": "fable-provider",
+          "x": "((ceil(10 / max(1, providers.count)) * 11 - 1) + 4) * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "y": "28",
           "width": "90",
           "height": "13",
