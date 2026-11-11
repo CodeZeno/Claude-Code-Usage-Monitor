@@ -424,6 +424,13 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                     provider: Provider::Copilot,
                 },
             ),
+            ContextMenuItem::action(
+                "provider-openrouter",
+                "OpenRouter",
+                Action::ToggleProvider {
+                    provider: Provider::OpenRouter,
+                },
+            ),
         ],
     );
     let languages = std::iter::once(ContextMenuItem::action(

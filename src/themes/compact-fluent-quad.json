@@ -21,7 +21,7 @@
         "offset_x": 6,
         "offset_y": 0
       },
-      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18 + providers.claude.enabled * claude.model.fable.available * 96",
+      "width": "providers.count * (ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + 62) + max(0, providers.count - 1) * 6 + providers.opencode.enabled * 28 + providers.cursor.enabled * 18 + providers.claude.enabled * claude.model.fable.available * 96 + providers.openrouter.enabled * (48 - (1 - openrouter.long.show_cap) * 36)",
       "height": "46",
       "background": {
         "type": "none"
@@ -2916,6 +2916,430 @@
             "align": "left",
             "color": {
               "color": "#BE185DFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-provider",
+          "name": "OpenRouter provider",
+          "render": "providers.openrouter.enabled",
+          "visibility": "100",
+          "parent": "provider-row",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4 + (110 - (1 - openrouter.long.show_cap) * 36)",
+          "height": "46",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "openrouter-account-segments-dark",
+          "name": "dark OpenRouter balance segments",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "y": "11",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "openrouter.account.remaining_pct",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "openrouter-account-dep-dark",
+          "name": "dark OpenRouter balance with deposit",
+          "render": "(system.dark) && openrouter.account.show_deposit",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${openrouter.account.balance_usd:amount} · ${openrouter.account.total_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-account-nodep-dark",
+          "name": "dark OpenRouter balance only",
+          "render": "(system.dark) && !openrouter.account.show_deposit",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${openrouter.account.balance_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-account-segments-light",
+          "name": "light OpenRouter balance segments",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "y": "11",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "openrouter.account.remaining_pct",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A5512FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "openrouter-account-dep-light",
+          "name": "light OpenRouter balance with deposit",
+          "render": "(1 - system.dark) && openrouter.account.show_deposit",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${openrouter.account.balance_usd:amount} · ${openrouter.account.total_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#4A5512FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-account-nodep-light",
+          "name": "light OpenRouter balance only",
+          "render": "(1 - system.dark) && !openrouter.account.show_deposit",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "9",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${openrouter.account.balance_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#4A5512FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-long-segments-dark",
+          "name": "dark OpenRouter window segments",
+          "render": "system.dark",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "openrouter.long.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#444444FF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "openrouter-long-cap-dark",
+          "name": "dark OpenRouter window value with cap",
+          "render": "(system.dark) && openrouter.long.show_cap",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{openrouter.long.label} ${openrouter.long.spent_usd:amount} · ${openrouter.long.cap_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-long-nocap-dark",
+          "name": "dark OpenRouter window value",
+          "render": "(system.dark) && !openrouter.long.show_cap",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{openrouter.long.label} ${openrouter.long.spent_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#A8B84AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-long-segments-light",
+          "name": "light OpenRouter window segments",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "y": "27",
+          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
+          "height": "9",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "openrouter.long.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4A5512FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#AAAAAAFF",
+              "opacity": "1"
+            },
+            "corner_radius": "1.5",
+            "segments": 10,
+            "segments_expression": "ceil(10 / max(1, providers.count))",
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "openrouter-long-cap-light",
+          "name": "light OpenRouter window value with cap",
+          "render": "(1 - system.dark) && openrouter.long.show_cap",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{openrouter.long.label} ${openrouter.long.spent_usd:amount} · ${openrouter.long.cap_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#4A5512FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "openrouter-long-nocap-light",
+          "name": "light OpenRouter window value",
+          "render": "(1 - system.dark) && !openrouter.long.show_cap",
+          "visibility": "100",
+          "parent": "openrouter-provider",
+          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
+          "y": "25",
+          "width": "110 - (1 - openrouter.long.show_cap) * 36",
+          "height": "13",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{openrouter.long.label} ${openrouter.long.spent_usd:amount}",
+            "font_family": "Segoe UI",
+            "font_size": "12",
+            "weight": "medium",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#4A5512FF",
               "opacity": "1"
             }
           }
