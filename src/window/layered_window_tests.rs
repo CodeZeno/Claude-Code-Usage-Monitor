@@ -209,3 +209,86 @@ fn re_embedding_a_hosted_surface_does_not_change_its_frame() {
     assert!(take_frame_changes() > 0);
     assert_eq!(unsafe { GetParent(window.0) }.unwrap(), parent.0);
 }
+
+#[test]
+fn hosted_placement_detects_real_moves_resizes_and_z_order_changes() {
+    let parent = TestWindow::new(WINDOW_EX_STYLE::default());
+    let window = TestWindow::new(WS_EX_LAYERED);
+    let sibling = TestWindow::new(WS_EX_LAYERED);
+    let origin = POINT { x: 23, y: 17 };
+    unsafe {
+        // A displaced host verifies conversion from screen to client coordinates.
+        SetWindowPos(
+            parent.0,
+            None,
+            -200,
+            100,
+            200,
+            100,
+            SWP_NOZORDER | SWP_NOACTIVATE,
+        )
+        .unwrap();
+        native_interop::embed_as_child(window.0, parent.0);
+        SetWindowPos(
+            window.0,
+            Some(HWND_TOP),
+            origin.x,
+            origin.y,
+            30,
+            20,
+            SWP_NOACTIVATE,
+        )
+        .unwrap();
+        assert!(positioning::hosted_child_is_placed(
+            window.0, parent.0, origin, 30, 20
+        ));
+        assert!(!positioning::hosted_child_is_placed(
+            window.0,
+            parent.0,
+            POINT { x: 24, y: 17 },
+            30,
+            20
+        ));
+        assert!(!positioning::hosted_child_is_placed(
+            window.0, parent.0, origin, 31, 20
+        ));
+        assert!(!positioning::hosted_child_is_placed(
+            window.0, parent.0, origin, 30, 21
+        ));
+        native_interop::embed_as_child(sibling.0, parent.0);
+        assert!(!positioning::hosted_child_is_placed(
+            window.0, parent.0, origin, 30, 20
+        ));
+        SetWindowPos(
+            window.0,
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+        .unwrap();
+        assert!(positioning::hosted_child_is_placed(
+            window.0, parent.0, origin, 30, 20
+        ));
+    }
+}
+
+#[test]
+fn re_embedding_repairs_styles_even_when_the_parent_matches() {
+    let parent = TestWindow::new(WINDOW_EX_STYLE::default());
+    let window = TestWindow::new(WS_EX_LAYERED);
+    native_interop::embed_as_child(window.0, parent.0);
+    unsafe {
+        let style = GetWindowLongW(window.0, GWL_STYLE);
+        SetWindowLongW(window.0, GWL_STYLE, style & !(WS_CLIPSIBLINGS.0 as i32));
+    }
+    take_frame_changes();
+    native_interop::embed_as_child(window.0, parent.0);
+    assert!(take_frame_changes() > 0);
+    assert_ne!(
+        unsafe { GetWindowLongW(window.0, GWL_STYLE) } as u32 & WS_CLIPSIBLINGS.0,
+        0
+    );
+}

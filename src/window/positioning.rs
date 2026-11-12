@@ -247,7 +247,7 @@ pub(super) fn render_custom_window(
 
 /// True when a hosted child is already the top sibling at exactly this
 /// rectangle (origin in `parent` client coordinates).
-unsafe fn hosted_child_is_placed(
+pub(super) unsafe fn hosted_child_is_placed(
     hwnd: HWND,
     parent: HWND,
     origin: POINT,

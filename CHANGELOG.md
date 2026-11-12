@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.24.1] - 2026-11-12
+
+### Fixed
+
+- Leave already hosted taskbar widgets in place during routine renders, preventing redundant frame changes from making hidden mouse pointers reappear while typing in other applications. Preserve reparenting, style repairs, and changes to position, size, or sibling order. ([#219](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/219))
+
 ## [2.24.0] - 2026-11-12
 
 ### Added
@@ -1664,3 +1670,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.4...v2.23.5
 [2.23.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.5...v2.23.6
 [2.24.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.6...v2.24.0
+[2.24.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.0...v2.24.1
