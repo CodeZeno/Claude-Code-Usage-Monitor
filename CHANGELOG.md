@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.24.2] - 2026-11-12
+
+### Fixed
+
+- Stack Claude's weekly and Fable meters in the Classic widget when no session quota is available, keeping both meters together beside other providers. Center the weekly meter when Claude is the only provider and no Fable limit is available. Cover all Claude-enabled provider combinations in layout regression tests. ([#212](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/212))
+
 ## [2.24.1] - 2026-11-12
 
 ### Fixed
@@ -1671,3 +1677,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.5...v2.23.6
 [2.24.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.6...v2.24.0
 [2.24.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.0...v2.24.1
+[2.24.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.1...v2.24.2

@@ -978,14 +978,18 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
         let mut claude = usage.get(ProviderId::Claude).unwrap().clone();
         claude.session.available = session_available;
         usage.insert(ProviderId::Claude, claude);
-        for (runtime, provider_count) in [
-            (ThemeRuntime::new(true, false, false), 1),
-            (ThemeRuntime::new(true, true, false), 2),
-            (
-                ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
-                ProviderId::ALL.len(),
-            ),
-        ] {
+        // Include Cursor and OpenCode separately: they have wider slots and
+        // OpenCode intentionally replaces the shared weekly label.
+        for mask in (1usize..1 << ProviderId::ALL.len()).filter(|mask| mask & 1 != 0) {
+            let providers = ProviderSet::from_enabled(
+                ProviderId::ALL
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(index, _)| mask & (1 << index) != 0)
+                    .map(|(_, provider)| provider),
+            );
+            let provider_count = mask.count_ones() as usize;
+            let runtime = ThemeRuntime::from_providers(providers);
             let (width, height) = resolve_surface_size(&theme, 0, Some(&usage), runtime);
             let canvas = Canvas {
                 width,
@@ -1038,7 +1042,7 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
                 if provider_count == 1 {
                     assert_eq!(width, 245);
                     assert!(find("weekly-label-").is_none());
-                } else if provider_count == 2 {
+                } else if mask == 3 {
                     let codex_session = find("codex-session-segments-").unwrap();
                     let codex_weekly = find("codex-weekly-segments-").unwrap();
                     assert_eq!(codex_session.x, 41.0);
