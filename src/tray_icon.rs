@@ -1,12 +1,13 @@
 use std::sync::Mutex;
 
-use windows::core::PCWSTR;
+use windows::core::{GUID, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::UI::Shell::{
-    ExtractIconExW, Shell_NotifyIconGetRect, Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE,
-    NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
+    ExtractIconExW, Shell_NotifyIconGetRect, Shell_NotifyIconW, NIF_GUID, NIF_ICON, NIF_INFO,
+    NIF_MESSAGE, NIF_TIP, NIIF_WARNING, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    NOTIFYICONIDENTIFIER,
 };
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -15,11 +16,99 @@ use crate::native_interop::WM_APP_TRAY;
 const APP_TRAY_ICON_ID: u32 = 1;
 const THEME_TRAY_ICON_ID_BASE: u32 = 1_000;
 
-static REGISTERED_THEME_ICON_IDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+mod settings;
+pub(crate) use settings::cleanup_legacy_entries;
+mod provider_artwork;
+
+const APP_NAME: &str = "Claude Code Usage Monitor";
+
+pub fn surface_provider(surface_id: &str) -> Option<crate::providers::ProviderId> {
+    let key = surface_id.strip_suffix("-tray-icon")?;
+    crate::providers::PROVIDER_DESCRIPTORS
+        .iter()
+        .find(|provider| provider.key == key)
+        .map(|provider| provider.id)
+}
+
+pub fn surface_label(surface_id: &str, surface_name: &str) -> String {
+    let name = surface_provider(surface_id)
+        .map(|provider| {
+            if provider == crate::providers::ProviderId::Claude {
+                "Claude"
+            } else {
+                provider.descriptor().display_name
+            }
+        })
+        .unwrap_or(surface_name);
+    format!("{APP_NAME}: {name}")
+}
+
+unsafe fn update_icon(nid: &NOTIFYICONDATAW) -> bool {
+    Shell_NotifyIconW(NIM_MODIFY, nid).as_bool() || Shell_NotifyIconW(NIM_ADD, nid).as_bool()
+}
+
+fn labelled_tooltip(label: &str, usage: &str) -> String {
+    if usage.trim().is_empty() || usage == label {
+        label.to_owned()
+    } else {
+        format!("{label}\n{usage}")
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TrayIdentity {
+    callback_id: u32,
+    guid: GUID,
+}
+
+static REGISTERED_THEME_ICONS: Mutex<Vec<TrayIdentity>> = Mutex::new(Vec::new());
+
+// These namespace seeds and the encoding are a persisted shell identity contract.
+// Never use DefaultHasher, array positions, display names, tooltips or versions.
+fn icon_guid(kind: &str, key: &str) -> GUID {
+    let mut high = 0x936e_7a42_1cd5_48bfu64;
+    let mut low = 0xa4d3_509b_82f6_017eu64;
+    for byte in kind.bytes().chain([0]).chain(key.bytes()) {
+        high = (high ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+        low = (low ^ u64::from(byte))
+            .wrapping_mul(0x100000001b3)
+            .rotate_left(7);
+    }
+    GUID::from_u128((u128::from(high) << 64) | u128::from(low))
+}
+
+fn app_identity() -> TrayIdentity {
+    TrayIdentity {
+        callback_id: APP_TRAY_ICON_ID,
+        guid: icon_guid("application", "main"),
+    }
+}
+
+fn theme_identity(surface_index: usize, surface_id: &str) -> TrayIdentity {
+    TrayIdentity {
+        callback_id: themed_icon_id(surface_index),
+        // Root IDs already identify provider icons across bundled themes, and
+        // distinguish custom roots (including separately bound account icons).
+        guid: icon_guid("surface", &surface_id.to_ascii_lowercase()),
+    }
+}
+
+fn icon_data(hwnd: HWND, identity: TrayIdentity) -> NOTIFYICONDATAW {
+    NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: identity.callback_id,
+        uFlags: NIF_GUID,
+        guidItem: identity.guid,
+        ..Default::default()
+    }
+}
 
 /// Rasterized Theme Studio root to expose as a genuine notification-area icon.
 pub struct ThemedTrayIcon {
     pub surface_index: usize,
+    pub surface_id: String,
+    pub label: String,
     pub tooltip: String,
     pub width: u32,
     pub height: u32,
@@ -85,12 +174,21 @@ pub fn themed_surface_index(id: u32) -> Option<usize> {
 }
 
 pub fn cursor_over_themed_icon(hwnd: HWND, surface_index: usize) -> bool {
+    let identity = REGISTERED_THEME_ICONS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .iter()
+        .find(|icon| icon.callback_id == themed_icon_id(surface_index))
+        .copied();
+    let Some(identity) = identity else {
+        return false;
+    };
     unsafe {
         let identifier = NOTIFYICONIDENTIFIER {
             cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
             hWnd: hwnd,
-            uID: themed_icon_id(surface_index),
-            ..Default::default()
+            uID: identity.callback_id,
+            guidItem: identity.guid,
         };
         let Ok(rect) = Shell_NotifyIconGetRect(&identifier) else {
             return false;
@@ -170,18 +268,15 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
     }
 }
 
-fn remove_id(hwnd: HWND, id: u32) {
+fn remove_id(hwnd: HWND, identity: TrayIdentity) {
     unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = id;
+        let nid = icon_data(hwnd, identity);
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
     }
 }
 
 fn remove_registered_theme_icons(hwnd: HWND) {
-    let mut registered = REGISTERED_THEME_ICON_IDS
+    let mut registered = REGISTERED_THEME_ICONS
         .lock()
         .unwrap_or_else(|error| error.into_inner());
     for id in registered.drain(..) {
@@ -198,20 +293,15 @@ pub fn sync(hwnd: HWND, tooltip: &str) {
     }
 
     unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = APP_TRAY_ICON_ID;
-        nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+        let mut nid = icon_data(hwnd, app_identity());
+        nid.uFlags |= NIF_ICON | NIF_MESSAGE | NIF_TIP;
         nid.uCallbackMessage = WM_APP_TRAY;
         nid.hIcon = hicon;
-        copy_to_tip(tooltip, &mut nid.szTip);
+        copy_to_tip(&labelled_tooltip(APP_NAME, tooltip), &mut nid.szTip);
 
-        // NIM_ADD succeeds on first registration. If the icon is already
-        // present, NIM_MODIFY refreshes its image, callback and tooltip.
-        if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
-            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
-        }
+        // Ordinary refreshes modify the existing icon; add it on startup or
+        // after Explorer has restarted and lost the live registration.
+        update_icon(&nid);
         let _ = DestroyIcon(hicon);
     }
 }
@@ -219,58 +309,75 @@ pub fn sync(hwnd: HWND, tooltip: &str) {
 /// Register Theme Studio roots as independent notification-area icons. The
 /// shell owns their order and overflow placement just like every other app icon.
 pub fn sync_themed(hwnd: HWND, icons: &[ThemedTrayIcon]) {
-    remove_id(hwnd, APP_TRAY_ICON_ID);
-    let mut refreshed_ids = Vec::with_capacity(icons.len());
+    remove_id(hwnd, app_identity());
+    let desired: Vec<_> = icons
+        .iter()
+        .map(|icon| theme_identity(icon.surface_index, &icon.surface_id))
+        .collect();
+    let mut registered = REGISTERED_THEME_ICONS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    // Withdraw changed callback mappings before adding anything: an old root
+    // must not delete a new icon that has taken its former array position.
+    // Re-add moved roots with the same GUID so Explorer retains preferences.
+    registered.retain(|identity| {
+        if desired.contains(identity) {
+            true
+        } else {
+            remove_id(hwnd, *identity);
+            false
+        }
+    });
     for icon in icons {
         let hicon = create_themed_icon(icon);
         if hicon.is_invalid() {
             continue;
         }
-        let id = themed_icon_id(icon.surface_index);
+        let identity = theme_identity(icon.surface_index, &icon.surface_id);
         unsafe {
-            let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-            nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-            nid.hWnd = hwnd;
-            nid.uID = id;
-            nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            let mut nid = icon_data(hwnd, identity);
+            nid.uFlags |= NIF_ICON | NIF_MESSAGE | NIF_TIP;
             nid.uCallbackMessage = WM_APP_TRAY;
             nid.hIcon = hicon;
-            copy_to_tip(&icon.tooltip, &mut nid.szTip);
-            if !Shell_NotifyIconW(NIM_ADD, &nid).as_bool() {
-                let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+            copy_to_tip(
+                &labelled_tooltip(&icon.label, &icon.tooltip),
+                &mut nid.szTip,
+            );
+            let success = update_icon(&nid);
+            if success && !registered.contains(&identity) {
+                registered.push(identity);
             }
             let _ = DestroyIcon(hicon);
         }
-        refreshed_ids.push(id);
     }
-
-    let mut registered = REGISTERED_THEME_ICON_IDS
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    for id in registered
+    drop(registered);
+    // Windows Settings keeps its own PNG snapshot. Keep it independent from
+    // the live, usage-dependent HICON sent to Explorer above.
+    let snapshots: Vec<_> = icons
         .iter()
-        .copied()
-        .filter(|id| !refreshed_ids.contains(id))
-    {
-        remove_id(hwnd, id);
-    }
-    *registered = refreshed_ids;
+        .filter_map(|icon| {
+            let provider = surface_provider(&icon.surface_id)?;
+            let png = provider_artwork::provider_snapshot(provider)?;
+            Some((
+                theme_identity(icon.surface_index, &icon.surface_id).guid,
+                png,
+            ))
+        })
+        .collect();
+    settings::sync_provider_snapshots(&snapshots);
 }
 
 /// Show a Windows balloon notification from the application tray icon.
 pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
-    let icon_id = REGISTERED_THEME_ICON_IDS
+    let identity = REGISTERED_THEME_ICONS
         .lock()
         .unwrap_or_else(|error| error.into_inner())
         .first()
         .copied()
-        .unwrap_or(APP_TRAY_ICON_ID);
+        .unwrap_or_else(app_identity);
     unsafe {
-        let mut nid: NOTIFYICONDATAW = std::mem::zeroed();
-        nid.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-        nid.hWnd = hwnd;
-        nid.uID = icon_id;
-        nid.uFlags = NIF_INFO;
+        let mut nid = icon_data(hwnd, identity);
+        nid.uFlags |= NIF_INFO;
         nid.dwInfoFlags = NIIF_WARNING;
         copy_wide(title, &mut nid.szInfoTitle);
         copy_wide(message, &mut nid.szInfo);
@@ -280,7 +387,7 @@ pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
 
 /// Remove the application tray icon from the shell.
 pub fn remove_all(hwnd: HWND) {
-    remove_id(hwnd, APP_TRAY_ICON_ID);
+    remove_id(hwnd, app_identity());
     remove_registered_theme_icons(hwnd);
 }
 
@@ -311,6 +418,68 @@ fn copy_to_tip(value: &str, tooltip: &mut [u16; 128]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_labels_identify_each_icon_and_custom_roots_keep_their_name() {
+        assert_eq!(
+            surface_label("claude-tray-icon", "Ignored"),
+            "Claude Code Usage Monitor: Claude"
+        );
+        assert_eq!(
+            surface_label("codex-tray-icon", "Ignored"),
+            "Claude Code Usage Monitor: Codex"
+        );
+        assert_eq!(
+            surface_label("codex-work", "Codex (Work)"),
+            "Claude Code Usage Monitor: Codex (Work)"
+        );
+    }
+
+    #[test]
+    fn shell_identity_survives_surface_reordering_and_theme_switches() {
+        let mut theme = crate::theme_engine::ThemeDocument::starter();
+        let index = theme
+            .surfaces
+            .iter()
+            .position(|s| s.id == "codex-tray-icon")
+            .unwrap();
+        let original = theme_identity(index, &theme.surfaces[index].id);
+        theme.surfaces.swap(0, index);
+        theme.surfaces[0].name = "Renamed Codex account icon".into();
+        theme.id = "custom-copy".into();
+        let moved = theme_identity(0, &theme.surfaces[0].id);
+        assert_eq!(original.guid, moved.guid);
+        assert_ne!(original.callback_id, moved.callback_id);
+        assert_ne!(
+            original, moved,
+            "moving a root must replace its callback mapping"
+        );
+        assert_ne!(
+            original.guid,
+            theme_identity(index, "claude-tray-icon").guid
+        );
+        assert_ne!(
+            original.guid,
+            theme_identity(index, "codex-work-tray-icon").guid
+        );
+        assert_ne!(original.guid, app_identity().guid);
+    }
+
+    #[test]
+    fn all_shell_operations_use_the_persistent_guid() {
+        let identity = theme_identity(8, "codex-tray-icon");
+        // Pin the persisted value so refactors and upgrades cannot silently
+        // create another Settings entry for an existing root.
+        assert_eq!(
+            identity.guid,
+            GUID::from_u128(0x2ad06097_b0fe_0e3a_8790_c274861a5ced)
+        );
+        let data = icon_data(HWND::default(), identity);
+        assert_eq!(data.guidItem, identity.guid);
+        assert_eq!(data.uID, identity.callback_id);
+        assert_eq!(data.uFlags, NIF_GUID);
+        assert_eq!(identity.guid, theme_identity(6, "CODEX-TRAY-ICON").guid);
+    }
 
     #[test]
     fn tray_buttons_have_distinct_actions() {

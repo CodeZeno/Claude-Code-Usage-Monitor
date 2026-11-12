@@ -1239,12 +1239,19 @@ fn usage_summary_lines(
 }
 
 fn tray_usage_summary_from_state() -> Option<String> {
+    tray_usage_summary_for_provider_from_state(None)
+}
+
+fn tray_usage_summary_for_provider_from_state(provider: Option<ProviderId>) -> Option<String> {
     let state = lock_state();
     let state = state.as_ref()?;
+    let providers = provider
+        .map(|provider| ProviderSet::from_enabled([provider]))
+        .unwrap_or(state.providers);
     let errors = tray_error_lines(
         state.data.as_ref(),
         state.last_poll_failure,
-        state.providers,
+        providers,
         state.language,
     );
     if !errors.is_empty() {
@@ -1255,7 +1262,7 @@ fn tray_usage_summary_from_state() -> Option<String> {
     }
     let lines = tray_usage_summary_lines_with_pools(
         state.data.as_ref()?,
-        state.providers,
+        providers,
         state.language,
         state.usage_countdown,
         state.show_antigravity_gemini,
@@ -1387,9 +1394,17 @@ fn sync_tray_icon(hwnd: HWND) {
                     );
                     Some(tray_icon::ThemedTrayIcon {
                         surface_index,
-                        tooltip: usage_tooltip
-                            .clone()
-                            .unwrap_or_else(|| surface.name.clone()),
+                        surface_id: surface.id.clone(),
+                        label: tray_icon::surface_label(&surface.id, &surface.name),
+                        tooltip: match tray_icon::surface_provider(&surface.id) {
+                            Some(provider) => {
+                                tray_usage_summary_for_provider_from_state(Some(provider))
+                                    .unwrap_or_default()
+                            }
+                            None => usage_tooltip
+                                .clone()
+                                .unwrap_or_else(|| surface.name.clone()),
+                        },
                         width: rendered.width,
                         height: rendered.height,
                         pixels: rendered.pixels,
@@ -2417,6 +2432,7 @@ pub fn run() {
         }
     };
 
+    tray_icon::cleanup_legacy_entries();
     let class_name = native_interop::wide_str("ClaudeCodeUsageMonitor");
 
     unsafe {

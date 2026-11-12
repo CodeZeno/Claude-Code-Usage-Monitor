@@ -4,6 +4,22 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.24.0] - 2026-11-12
+
+### Added
+
+- Show provider logos beside the app's entries in Windows Settings' "Other system tray icons" list. Keep the shared "Claude Code Usage Monitor" name and the theme's live system-tray usage badges.
+- Automatically remove obsolete tray registrations from missing or verified inactive installations, without backups. Preserve active copies' preferences and remove only the deleted entries' saved ordering references.
+
+### Changed
+
+- Identify provider tray icons in hover tooltips with labels such as "Claude Code Usage Monitor: Claude" and "Claude Code Usage Monitor: Codex", followed by that provider's own usage or error.
+
+### Fixed
+
+- Give notification-area icons persistent identities based on their saved root IDs, retaining their Windows visibility preferences when theme surfaces are reordered, renamed, temporarily disabled, or reused across themes and upgrades. Keep callback routing, hover queries, and balloon notifications associated with the correct icon. ([#216](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/216))
+- Remove legacy position-based tray registrations for this executable while retaining current persistent registrations and their visibility preferences.
+
 ## [2.23.6] - 2026-11-11
 
 ### Fixed
@@ -1647,3 +1663,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.23.4]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.3...v2.23.4
 [2.23.5]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.4...v2.23.5
 [2.23.6]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.5...v2.23.6
+[2.24.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.6...v2.24.0
