@@ -3,6 +3,7 @@ use std::cell::RefCell;
 
 thread_local! {
     static LAYERED_TRANSITIONS: RefCell<Vec<bool>> = const { RefCell::new(Vec::new()) };
+    static FRAME_CHANGES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 unsafe extern "system" fn observe_layered_style(
@@ -19,6 +20,12 @@ unsafe extern "system" fn observe_layered_style(
                     .borrow_mut()
                     .push(styles.styleNew & WS_EX_LAYERED.0 != 0);
             });
+        }
+    }
+    if message == WM_WINDOWPOSCHANGING {
+        let position = &*(lparam.0 as *const WINDOWPOS);
+        if position.flags.contains(SWP_FRAMECHANGED) {
+            FRAME_CHANGES.with(|changes| changes.set(changes.get() + 1));
         }
     }
     DefWindowProcW(hwnd, message, wparam, lparam)
@@ -87,6 +94,10 @@ impl Drop for TestWindow {
 
 fn take_transitions() -> Vec<bool> {
     LAYERED_TRANSITIONS.with(|transitions| std::mem::take(&mut *transitions.borrow_mut()))
+}
+
+fn take_frame_changes() -> usize {
+    FRAME_CHANGES.with(|changes| changes.replace(0))
 }
 
 #[test]
@@ -174,4 +185,27 @@ fn reparenting_desktop_composition_windows_does_not_enable_layering() {
     let ex_style = unsafe { GetWindowLongW(window.0, GWL_EXSTYLE) } as u32;
     assert_eq!(ex_style & WS_EX_LAYERED.0, 0);
     assert_ne!(ex_style & WS_EX_NOREDIRECTIONBITMAP.0, 0);
+}
+
+#[test]
+fn re_embedding_a_hosted_surface_does_not_change_its_frame() {
+    let parent = TestWindow::new(WINDOW_EX_STYLE::default());
+    let window = TestWindow::new(WS_EX_LAYERED);
+    native_interop::embed_as_child(window.0, parent.0);
+    assert!(take_frame_changes() > 0);
+
+    // Routine renders re-embed into the same host. A frame change there is a
+    // window placement change, which makes Windows post an unmoved
+    // WM_MOUSEMOVE to whichever window is under the pointer.
+    for _ in 0..3 {
+        native_interop::embed_as_child(window.0, parent.0);
+    }
+    assert_eq!(take_frame_changes(), 0);
+
+    // A surface that left the hosted form is still converted back.
+    native_interop::make_popup(window.0, true);
+    take_frame_changes();
+    native_interop::embed_as_child(window.0, parent.0);
+    assert!(take_frame_changes() > 0);
+    assert_eq!(unsafe { GetParent(window.0) }.unwrap(), parent.0);
 }
