@@ -1,6 +1,6 @@
 [package]
 name = "claude-code-usage-monitor"
-version = "2.23.6"
+version = "2.24.0"
 edition = "2021"
 rust-version = "1.95"
 license = "MIT"
@@ -43,6 +43,7 @@ features = [
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
     "Win32_System_Diagnostics_Debug",
+    "Win32_System_Diagnostics_ToolHelp",
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Accessibility",

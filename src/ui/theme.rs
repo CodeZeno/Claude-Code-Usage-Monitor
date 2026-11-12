@@ -42,7 +42,7 @@ const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/
 ///
 /// Those licences cover the path data. The logos remain the trademarks of their
 /// owners and identify the provider a setting belongs to.
-const BRAND_MARK_FONT_BYTES: &[u8] = include_bytes!("../icons/brand-marks.ttf");
+pub(crate) const BRAND_MARK_FONT_BYTES: &[u8] = include_bytes!("../icons/brand-marks.ttf");
 
 /// Private-use codepoint of the GitHub mark. Lucide's own glyphs sit below
 /// U+E800, so this cannot collide with the generated subset.
