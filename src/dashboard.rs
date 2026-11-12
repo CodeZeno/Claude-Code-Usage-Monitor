@@ -15,7 +15,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SetForegroundWindow, ShowWindowAsync, MB_ICONERROR, MB_OK, SW_RESTORE, WM_CLOSE,
 };
 
-const DASHBOARD_TITLE: &str = "Usage Monitor";
+pub(crate) const DASHBOARD_TITLE: &str = "Claude Code Usage Monitor";
+// Both eframe/OpenGL and our WARP host use winit's default native class.
+// The hidden monitor controller has the same title but a different class.
+const DASHBOARD_WINDOW_CLASS: &str = "Window Class";
 const DASHBOARD_MUTEX: &str = "Local\\ClaudeCodeUsageMonitorDashboard";
 const DASHBOARD_REQUEST_EVENT: &str = "Local\\ClaudeCodeUsageMonitorOpenDashboard";
 
@@ -246,12 +249,23 @@ pub fn report_launch_failure(owner: HWND, detail: &str) {
     }
 }
 
-pub fn focus_existing() -> bool {
-    let title = crate::native_interop::wide_str(DASHBOARD_TITLE);
+fn find_dashboard_window(title: &str) -> Option<HWND> {
+    let title = crate::native_interop::wide_str(title);
+    let class = crate::native_interop::wide_str(DASHBOARD_WINDOW_CLASS);
     unsafe {
-        let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title.as_ptr())) else {
-            return false;
-        };
+        FindWindowW(
+            PCWSTR::from_raw(class.as_ptr()),
+            PCWSTR::from_raw(title.as_ptr()),
+        )
+        .ok()
+    }
+}
+
+pub fn focus_existing() -> bool {
+    let Some(hwnd) = find_dashboard_window(DASHBOARD_TITLE) else {
+        return false;
+    };
+    unsafe {
         // The dashboard runs on another UI thread/process. Do not block the
         // monitor (and its taskbar host) if that thread is busy or unresponsive.
         let _ = ShowWindowAsync(hwnd, SW_RESTORE);
@@ -261,17 +275,85 @@ pub fn focus_existing() -> bool {
 }
 
 pub fn close_existing() -> bool {
-    let title = crate::native_interop::wide_str(DASHBOARD_TITLE);
-    unsafe {
-        let Ok(hwnd) = FindWindowW(PCWSTR::null(), PCWSTR::from_raw(title.as_ptr())) else {
-            return false;
-        };
-        PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok()
-    }
+    let Some(hwnd) = find_dashboard_window(DASHBOARD_TITLE) else {
+        return false;
+    };
+    unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() }
 }
 
 pub fn toggle(owner: HWND) {
     if !close_existing() {
         show(owner);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::Win32::Foundation::ERROR_CLASS_ALREADY_EXISTS;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+
+    struct TestWindow(HWND);
+
+    impl TestWindow {
+        fn new(class: &str, title: &str) -> Self {
+            unsafe extern "system" fn procedure(
+                hwnd: HWND,
+                message: u32,
+                wparam: WPARAM,
+                lparam: LPARAM,
+            ) -> windows::Win32::Foundation::LRESULT {
+                unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+            }
+            let class = crate::native_interop::wide_str(class);
+            let title = crate::native_interop::wide_str(title);
+            unsafe {
+                let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
+                let registered = RegisterClassW(&WNDCLASSW {
+                    lpfnWndProc: Some(procedure),
+                    hInstance: instance.into(),
+                    lpszClassName: PCWSTR::from_raw(class.as_ptr()),
+                    ..Default::default()
+                });
+                assert!(registered != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS);
+                Self(
+                    CreateWindowExW(
+                        WINDOW_EX_STYLE::default(),
+                        PCWSTR::from_raw(class.as_ptr()),
+                        PCWSTR::from_raw(title.as_ptr()),
+                        WINDOW_STYLE::default(),
+                        0,
+                        0,
+                        0,
+                        0,
+                        None,
+                        None,
+                        Some(instance.into()),
+                        None,
+                    )
+                    .unwrap(),
+                )
+            }
+        }
+    }
+
+    impl Drop for TestWindow {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = DestroyWindow(self.0);
+            }
+        }
+    }
+
+    #[test]
+    fn dashboard_lookup_excludes_the_controller_with_the_same_title() {
+        let title = format!("CCUM dashboard lookup regression {}", std::process::id());
+        let _controller = TestWindow::new("CCUMDashboardLookupControllerTest", &title);
+        assert!(find_dashboard_window(&title).is_none());
+        let dashboard = TestWindow::new(DASHBOARD_WINDOW_CLASS, &title);
+        assert_eq!(find_dashboard_window(&title), Some(dashboard.0));
+        drop(dashboard);
+        assert!(find_dashboard_window(&title).is_none());
     }
 }

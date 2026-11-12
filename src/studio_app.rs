@@ -242,7 +242,7 @@ fn run_dashboard(
 ) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("Usage Monitor")
+            .with_title(crate::dashboard::DASHBOARD_TITLE)
             .with_inner_size([width, height])
             .with_icon(icon),
         renderer: eframe::Renderer::Glow,

@@ -189,23 +189,16 @@ pub(super) fn context_menu_action_flags(
                     theme,
                     &state.mouse_action_overrides,
                 );
-                effective
-                    .surfaces
-                    .iter()
-                    .position(|surface| surface.id.eq_ignore_ascii_case(target))
-                    .map(|surface_index| {
-                        let runtime = theme_runtime_for_surface(
-                            &effective,
-                            surface_index,
-                            theme_runtime_from_state(state),
-                        );
-                        theme_engine::surface_should_render(
-                            &effective,
-                            surface_index,
-                            state.data.as_ref(),
-                            runtime,
-                        )
-                    })
+                // STATE is already locked here. Match the action's first-surface
+                // fallback without calling the helper that locks STATE again.
+                let origin_surface = origin.map_or(0, |(surface_index, _)| *surface_index);
+                toggle_layer_render_state(
+                    &effective,
+                    origin_surface,
+                    target,
+                    state.data.as_ref(),
+                    theme_runtime_from_state(state),
+                )
             })
             .unwrap_or(false),
         _ => false,
@@ -225,6 +218,49 @@ pub(super) fn context_menu_action_flags(
         (false, true) => MF_GRAYED,
         (false, false) => MENU_ITEM_FLAGS(0),
     }
+}
+
+/// Whether a `toggle_layer_render` target currently draws, so its menu row can
+/// carry a check mark. The target is a surface id, or a layer inside the
+/// surface the menu was opened from, which is what the action itself toggles.
+/// An unknown id has no state to report.
+pub(super) fn toggle_layer_render_state(
+    theme: &ThemeDocument,
+    origin_surface: usize,
+    target: &str,
+    data: Option<&AppUsageData>,
+    base_runtime: ThemeRuntime,
+) -> Option<bool> {
+    if let Some(surface_index) = theme
+        .surfaces
+        .iter()
+        .position(|surface| surface.id.eq_ignore_ascii_case(target))
+    {
+        let runtime = theme_runtime_for_surface(theme, surface_index, base_runtime);
+        return Some(theme_engine::surface_should_render(
+            theme,
+            surface_index,
+            data,
+            runtime,
+        ));
+    }
+    let object_index = theme
+        .surfaces
+        .get(origin_surface)?
+        .children
+        .iter()
+        .position(|object| object.id.eq_ignore_ascii_case(target))?;
+    let runtime = theme_runtime_for_surface(theme, origin_surface, base_runtime);
+    Some(
+        theme_engine::resolve_object_bounds_with_runtime(
+            theme,
+            origin_surface,
+            object_index,
+            data,
+            runtime,
+        )
+        .is_some(),
+    )
 }
 
 pub(super) fn context_menu_action_origin(
@@ -406,5 +442,76 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_layer_toggle_row_reports_the_layer_state_a_surface_row_already_reported() {
+        let mut theme = ThemeDocument::starter();
+        let runtime = ThemeRuntime::new(true, true, true);
+        let surface_id = theme.surfaces[0].id.clone();
+        let layer_id = theme.surfaces[0].children[0].id.clone();
+        theme.surfaces[0].children[0].render = 1.0.into();
+        theme.prepare_runtime();
+
+        // A surface id keeps reporting the surface, as it always did.
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, &surface_id, None, runtime),
+            Some(true)
+        );
+        // A layer id used to report nothing, leaving the row unchecked even
+        // while the layer was drawing.
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, &layer_id, None, runtime),
+            Some(true)
+        );
+        theme.surfaces[0].children[0].render = 0.0.into();
+        theme.prepare_runtime();
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, &layer_id, None, runtime),
+            Some(false)
+        );
+        // An id that matches nothing has no state to report.
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, "no-such-object", None, runtime),
+            None
+        );
+    }
+
+    #[test]
+    fn layer_toggle_state_uses_origin_surface_and_live_overrides() {
+        let mut theme = ThemeDocument::starter();
+        let runtime = ThemeRuntime::new(true, true, true);
+        let layer_id = theme.surfaces[0].children[0].id.clone();
+        theme.surfaces[0].children[0].render = 1.0.into();
+        let mut second = theme.surfaces[0].clone();
+        second.id = "second".into();
+        second.children[0].render = 0.0.into();
+        theme.surfaces.push(second);
+        let second_index = theme.surfaces.len() - 1;
+        theme.prepare_runtime();
+        assert_eq!(
+            toggle_layer_render_state(&theme, second_index, &layer_id, None, runtime),
+            Some(false)
+        );
+        let mut overrides = HashMap::new();
+        theme_engine::execute_mouse_actions(
+            &theme,
+            0,
+            &layer_id,
+            "toggle(self, render)",
+            None,
+            runtime,
+            &mut overrides,
+        )
+        .unwrap();
+        let effective = theme_engine::apply_mouse_action_overrides(&theme, &overrides);
+        assert_eq!(
+            toggle_layer_render_state(&effective, 0, &layer_id.to_uppercase(), None, runtime),
+            Some(false)
+        );
+        assert_eq!(
+            toggle_layer_render_state(&theme, 0, &layer_id, None, runtime),
+            Some(true)
+        );
     }
 }
