@@ -91,6 +91,35 @@ fn verified_source_can_replace_the_installed_binary() {
 }
 
 #[test]
+fn failed_replacement_never_deletes_the_only_copy_in_the_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("missing-download.exe");
+    let target = dir.path().join("app.exe");
+    let backup = backup_path_for(&target);
+    // A previous restore failed: the installed exe survives only as the backup.
+    std::fs::write(&backup, b"original").unwrap();
+
+    let error =
+        replace_target_binary_with_retries(&target, &source, 3, Duration::ZERO).unwrap_err();
+
+    assert!(error.contains(&backup.display().to_string()), "{error}");
+    assert_eq!(std::fs::read(&backup).unwrap(), b"original");
+}
+
+#[test]
+fn failed_copy_restores_the_installed_binary() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("missing-download.exe");
+    let target = dir.path().join("app.exe");
+    std::fs::write(&target, b"original").unwrap();
+
+    replace_target_binary_with_retries(&target, &source, 2, Duration::ZERO).unwrap_err();
+
+    assert_eq!(std::fs::read(&target).unwrap(), b"original");
+    assert!(!backup_path_for(&target).exists());
+}
+
+#[test]
 fn updater_agent_rejects_plain_http() {
     let error = build_agent()
         .unwrap()
