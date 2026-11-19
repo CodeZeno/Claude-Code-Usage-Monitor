@@ -67,6 +67,10 @@ opencode_window_title = "ตัวติดตามการใช้งาน 
 cursor_window_title = "ตัวติดตามการใช้งาน Cursor"
 grok_window_title = "ตัวติดตามการใช้งาน Grok"
 copilot_window_title = "ตัวติดตามการใช้งาน Copilot"
+mistral_model = "Mistral"
+mistral_token_expired_title = "Mistral ยืนยันตัวตนไม่สำเร็จ"
+mistral_token_expired_body = "ตั้งค่า MISTRAL_API_KEY ในตัวแปรสภาพแวดล้อม หรือลงชื่อเข้าใช้ด้วย Vibe CLI อย่างเป็นทางการเพื่อให้ ~/.vibe/.env มี MISTRAL_API_KEY จากนั้นให้รีเฟรชหรือเปิดแอปนี้ใหม่"
+mistral_window_title = "ตัวติดตามการใช้งาน Mistral"
 
 [translations]
 "Use Windows default font" = "ใช้แบบอักษรเริ่มต้นของ Windows"

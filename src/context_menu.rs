@@ -424,6 +424,13 @@ pub fn classic_context_menu() -> ContextMenuDocument {
                     provider: Provider::Copilot,
                 },
             ),
+            ContextMenuItem::action(
+                "provider-mistral",
+                "Mistral",
+                Action::ToggleProvider {
+                    provider: Provider::Mistral,
+                },
+            ),
         ],
     );
     let languages = std::iter::once(ContextMenuItem::action(
@@ -730,6 +737,9 @@ mod tests {
         assert!(serde_json::to_string(&menu)
             .unwrap()
             .contains("provider-copilot"));
+        assert!(serde_json::to_string(&menu)
+            .unwrap()
+            .contains("provider-mistral"));
         assert!(menu.items.iter().any(|item| {
             item.id == "toggle-widget"
                 && matches!(

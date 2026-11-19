@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [Unreleased]
+
+### Added
+
+- Add Mistral as a provider: shows Vibe Code credits and La Plateforme API credits (both monthly budgets) in the widget. Reads `MISTRAL_API_KEY` or the Vibe CLI's `~/.vibe/.env`.
+
 ## [2.23.6] - 2026-11-11
 
 ### Fixed

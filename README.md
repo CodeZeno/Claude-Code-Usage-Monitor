@@ -3,7 +3,7 @@
 ![Windows](https://img.shields.io/badge/platform-Windows-blue)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A lightweight, open-source Windows taskbar widget for monitoring Claude Code usage limits and reset times. It can also display usage for Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, and GitHub Copilot.
+A lightweight, open-source Windows taskbar widget for monitoring Claude Code usage limits and reset times. It can also display usage for Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, GitHub Copilot, and Mistral.
 
 See the [user guide](USER_GUIDE.md) for theme customisation and everyday settings,
 or the [changelog](CHANGELOG.md) for version history and notable changes.
@@ -14,7 +14,7 @@ or the [changelog](CHANGELOG.md) for version history and notable changes.
 
 - Displays current usage and time remaining until each limit resets
 - Counts usage up from zero or down from the full allowance, whichever you prefer
-- Supports Claude Code, Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, and GitHub Copilot
+- Supports Claude Code, Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, GitHub Copilot, and Mistral
 - Supports multiple accounts for Claude Code and Codex
 - Lives in the Windows taskbar with quick controls in the system tray
 - Supports multiple monitors and Windows startup
@@ -72,6 +72,7 @@ In the default theme, left-click a provider tray icon to show or hide the widget
 | Cursor | Sign in to Cursor, then enable it in **Providers**. The local session is detected automatically. |
 | Grok Build | Run `grok login` in the Grok Build CLI, then enable Grok in **Providers**. The signed-in session is detected automatically. |
 | GitHub Copilot | Sign in with the Copilot CLI (`copilot`, then `/login`) or the GitHub CLI (`gh auth login`), then enable Copilot in **Providers**. The stored login is detected automatically. |
+| Mistral | Set `MISTRAL_API_KEY`, or sign in with the official Vibe CLI (the monitor reads `%USERPROFILE%\.vibe\.env`; set `VIBE_HOME` if the CLI uses another home), or the Windows Credential Manager entry `ai.mistral.vibe` written by `vibe --setup` (sign-in with the Vibe CLI). Enable Mistral in **Providers**. |
 
 For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
 
@@ -83,6 +84,8 @@ For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, o
 ```
 
 The workspace ID is part of the OpenCode Go console URL: `https://opencode.ai/console/<workspaceId>/go`. Copy the `__Host-console_session` cookie from an authenticated `opencode.ai` browser session, including its name as shown above. A full Cookie header containing `__Host-console_session` or the legacy `auth` cookie is also accepted unchanged; no empty `auth=;` prefix is needed. Bare legacy `auth` cookie values remain supported. These formats work for both `authCookie` and `OPENCODE_GO_AUTH_COOKIE`. Set `OPENCODE_GO_CONFIG_FILE` to use a different config path. The monitor reads usage from the console JSON API using this workspace ID and cookie.
+
+For Mistral, the monitor reads `MISTRAL_API_KEY` from the environment first; if it is unset, it falls back to the official Vibe CLI's `.env` file, at `%VIBE_HOME%\.env` when `VIBE_HOME` is set and `%USERPROFILE%\.vibe\.env` otherwise. The monitor reads the account's two monthly budgets, Vibe Code credits and API credits, from `https://api.mistral.ai/v1/billing/budget`. Both reset at the end of the calendar month, so the widget shows them as two lines sharing the same month-end reset.
 
 For Cursor, `CURSOR_SESSION_TOKEN` can override the automatically detected local session.
 

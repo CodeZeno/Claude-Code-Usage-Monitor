@@ -92,6 +92,13 @@ Custom theme files are stored in:
 These settings save automatically. The default theme adapts to enabled providers;
 a custom theme must include layers for the providers you want to display.
 
+Most providers only need their own sign-in. Mistral also needs an API key: the
+monitor reads `MISTRAL_API_KEY`, or the Vibe CLI's `.env` file at
+`%USERPROFILE%\.vibe\.env`, or `%VIBE_HOME%\.env` when `VIBE_HOME` is set, or the
+Windows Credential Manager entry `ai.mistral.vibe` written by `vibe --setup`
+(sign-in with the Vibe CLI). Its Vibe Code credits and API credits are the
+account's two monthly budgets, both resetting at the end of the month.
+
 ## Show used or remaining allowance
 
 1. Open **Settings > Display**.
