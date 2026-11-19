@@ -65,6 +65,10 @@ opencode_window_title = "Monitor zużycia OpenCode"
 cursor_window_title = "Monitor zużycia Cursor"
 grok_window_title = "Monitor zużycia Grok"
 copilot_window_title = "Monitor zużycia Copilot"
+mistral_model = "Mistral"
+mistral_token_expired_title = "Błąd uwierzytelniania Mistral"
+mistral_token_expired_body = "Ustaw zmienną środowiskową MISTRAL_API_KEY lub zaloguj się przez oficjalną aplikację Vibe CLI, aby plik ~/.vibe/.env zawierał MISTRAL_API_KEY. Następnie odśwież lub uruchom aplikację ponownie."
+mistral_window_title = "Monitor zużycia Mistral"
 
 [translations]
 "Use Windows default font" = "Używaj domyślnej czcionki systemu Windows"

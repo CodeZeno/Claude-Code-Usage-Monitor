@@ -67,6 +67,10 @@ opencode_window_title = "OpenCode 使用量監控"
 cursor_window_title = "Cursor 使用量監控"
 grok_window_title = "Grok 使用量監控"
 copilot_window_title = "Copilot 使用量監控"
+mistral_model = "Mistral"
+mistral_token_expired_title = "Mistral 驗證錯誤"
+mistral_token_expired_body = "設定 MISTRAL_API_KEY 環境變數，或使用官方 Vibe CLI 登入，以便 ~/.vibe/.env 包含 MISTRAL_API_KEY。完成後，請重新整理或重新啟動此應用程式。"
+mistral_window_title = "Mistral 使用量監控"
 
 [translations]
 "Use Windows default font" = "使用 Windows 預設字型"

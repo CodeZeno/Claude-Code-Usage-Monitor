@@ -65,6 +65,10 @@ opencode_window_title = "OpenCode-gebruiksmonitor"
 cursor_window_title = "Cursor-gebruiksmonitor"
 grok_window_title = "Grok-gebruiksmonitor"
 copilot_window_title = "Copilot-gebruiksmonitor"
+mistral_model = "Mistral"
+mistral_token_expired_title = "Mistral-authenticatiefout"
+mistral_token_expired_body = "Stel de MISTRAL_API_KEY-omgevingsvariabele in, of meld je aan met de officiële Vibe CLI zodat ~/.vibe/.env MISTRAL_API_KEY bevat. Ververs of herstart de app daarna."
+mistral_window_title = "Mistral-gebruiksmonitor"
 
 [translations]
 "Use Windows default font" = "Standaardlettertype van Windows gebruiken"

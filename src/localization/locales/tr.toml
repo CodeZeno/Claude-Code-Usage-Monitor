@@ -65,6 +65,10 @@ opencode_window_title = "OpenCode Kullanım İzleyicisi"
 cursor_window_title = "Cursor Kullanım İzleyicisi"
 grok_window_title = "Grok Kullanım İzleyicisi"
 copilot_window_title = "Copilot Kullanım İzleyicisi"
+mistral_model = "Mistral"
+mistral_token_expired_title = "Mistral Kimlik Doğrulama Hatası"
+mistral_token_expired_body = "MISTRAL_API_KEY ortam değişkenini ayarlayın veya resmi Vibe CLI ile oturum açın, böylece ~/.vibe/.env MISTRAL_API_KEY içersin. Ardından uygulamayı yenileyin veya yeniden başlatın."
+mistral_window_title = "Mistral Kullanım İzleyicisi"
 
 [translations]
 "Use Windows default font" = "Windows varsayılan yazı tipini kullan"

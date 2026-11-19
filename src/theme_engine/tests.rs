@@ -1085,14 +1085,16 @@ fn starter_theme_round_trips_and_validates() {
         })
         .collect::<Vec<_>>();
     // Classic contains separate light and dark progress layers so the
-    // 1.4.9 palette follows the taskbar mode without runtime recolouring:
-    // five providers over two windows in two modes, plus Grok and Copilot,
-    // which fill only the long-window row, plus a credit overlay on that row
-    // for the three providers that report credits, plus the two eight-segment
-    // Fable layers.
+    // 1.4.9 palette follows the taskbar mode without runtime recolouring.
+    // In document order: five providers over two windows in two modes
+    // (20), Grok and Copilot long-window rows (2×2), credit overlays on
+    // that row for the three providers that report credits (3×2), the
+    // two eight-segment Fable layers (2), then Mistral's API monthly
+    // bar and Vibe long-window pool in dark and light (2×2) — Mistral's
+    // segments come last in document order, after the Fable layers.
     assert_eq!(
         segments,
-        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2]].concat()
+        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2], vec![10; 2 * 2]].concat()
     );
     assert!(theme.surfaces[0]
         .children
@@ -2131,7 +2133,10 @@ fn starter_adapts_width_segments_and_collapsed_provider_rows() {
         ),
         (
             ThemeRuntime::from_providers(ProviderSet::from_enabled(ProviderId::ALL)),
-            725,
+            // 8 providers: 42 + 8 * (2*11 - 1 + 4 + 62) + 7 * 3 + (1 + 1) * 28
+            // (Mistral joins the row after Copilot; the Fable column is empty
+            // without usage data, so its 93-point term is zero).
+            815,
             2,
         ),
     ] {
@@ -2207,7 +2212,7 @@ fn starter_has_a_taskbar_widget_and_provider_tray_icons() {
         theme.surfaces[0].placement.reference.region,
         ReferenceRegion::SystemTray
     );
-    assert_eq!(theme.surfaces.len(), 8);
+    assert_eq!(theme.surfaces.len(), 9);
     assert!(theme.surfaces[1..]
         .iter()
         .all(|surface| surface.placement.nest == SurfaceNest::TrayIcon));
@@ -2328,6 +2333,10 @@ fn classic_vertical_stacks_enabled_providers_and_preserves_tray_roots() {
             let width = (host_width - 2).min(62);
             let provider_height = |provider| match provider {
                 ProviderId::Grok | ProviderId::Copilot => 42,
+                // Mistral reports Vibe + API windows, so it keeps the full row,
+                // matching classic-vertical.json, whose height expression
+                // discounts only grok/copilot by 22 points.
+                ProviderId::Mistral => 64,
                 _ => 64,
             };
             let height = providers.iter().map(provider_height).sum();
@@ -2459,6 +2468,7 @@ fn compact_fluent_quad_widget_respects_usage_direction() {
             UsageData {
                 session: section.clone(),
                 weekly: section.clone(),
+                monthly: Some(section.clone()),
                 limits: (provider == ProviderId::Claude)
                     .then(|| UsageLimit {
                         key: "weekly_scoped_fable".into(),

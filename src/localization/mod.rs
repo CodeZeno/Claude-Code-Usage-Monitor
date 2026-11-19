@@ -100,6 +100,10 @@ impl LanguageId {
                 strings.copilot_token_expired_title,
                 strings.copilot_token_expired_body,
             ),
+            ProviderId::Mistral => (
+                strings.mistral_token_expired_title,
+                strings.mistral_token_expired_body,
+            ),
         }
     }
 
@@ -149,6 +153,10 @@ pub struct Strings {
     pub cursor_model: &'static str,
     pub grok_model: &'static str,
     pub copilot_model: &'static str,
+    pub mistral_model: &'static str,
+    pub mistral_token_expired_title: &'static str,
+    pub mistral_token_expired_body: &'static str,
+    pub mistral_window_title: &'static str,
     pub settings: &'static str,
     pub start_with_windows: &'static str,
     pub language: &'static str,
