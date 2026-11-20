@@ -235,6 +235,12 @@ try {
         $expectedSize = if ([IntPtr]::Size -eq 8) { 40 } else { 28 }
         Require ([Runtime.InteropServices.Marshal]::SizeOf([Activator]::CreateInstance($inputType)) -eq $expectedSize)
     }
+    Check 'tray lookups use the app persistent NIF_GUID identity' {
+        # Pinned in tray_icon::tests::all_shell_operations_use_the_persistent_guid.
+        Require ([CCUMScenarioDesktop]::TrayIconGuid(1008, 'CODEX-TRAY-ICON') -eq [guid]'2ad06097-b0fe-0e3a-8790-c274861a5ced')
+        Require ([CCUMScenarioDesktop]::TrayIconGuid(1, 'ignored') -eq [CCUMScenarioDesktop]::TrayGuid('application', 'main'))
+        Require ([CCUMScenarioDesktop]::TrayIconGuid(1, '') -ne [CCUMScenarioDesktop]::TrayIconGuid(1000, 'main'))
+    }
     Check 'blank dashboard content cannot pass using its decorated frame' {
         $bitmap = [Drawing.Bitmap]::new(320,240)
         $graphics = [Drawing.Graphics]::FromImage($bitmap)
@@ -310,6 +316,19 @@ try {
         Expect-Throw { Assert-HostRequest $request $scenario $runId } 'not permitted'
         $request.action = 'reboot'; $request.id = '..\escape'
         Expect-Throw { Assert-HostRequest $request $scenario $runId } 'identity mismatch'
+    }
+    Check 'chocolatey host action accepts only fixed operations and versions' {
+        . "$PSScriptRoot\Host.Actions.ps1"
+        $chocolatey = @(Get-LabPlan $config -Tests chocolatey-package)[0]
+        Require ((@($chocolatey.test.hostActions) -join ',') -ceq 'chocolatey')
+        $parsed = Get-ChocolateyHostOperation ([pscustomobject]@{operation='upgrade'; version='2.25.0'})
+        Require ($parsed.Operation -eq 'upgrade' -and $parsed.Version -eq '2.25.0')
+        Require ($null -eq (Get-ChocolateyHostOperation ([pscustomobject]@{operation='uninstall'; version='..\x'})).Version)
+        Expect-Throw { Get-ChocolateyHostOperation ([pscustomobject]@{operation='exec'}) } 'Unknown Chocolatey operation'
+        Expect-Throw { Get-ChocolateyHostOperation ([pscustomobject]@{operation='Install'; version='1.0.0'}) } 'Unknown Chocolatey operation'
+        foreach ($version in @($null, '', '1.0', '1.0.0-beta', '1.0.0 --source x', '..\..\1.0.0', "1.0.0`n")) {
+            Expect-Throw { Get-ChocolateyHostOperation ([pscustomobject]@{operation='install'; version=$version}) } 'MAJOR.MINOR.PATCH'
+        }
     }
     Check 'pause hook resumes the same VM even when the wait fails' {
         & {

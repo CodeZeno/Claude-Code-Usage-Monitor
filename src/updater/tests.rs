@@ -244,6 +244,7 @@ fn v(version: &str) -> Version {
 fn winget_result(current: &str, listed: &[&str]) -> String {
     let listed = listed.iter().map(|version| v(version)).collect::<Vec<_>>();
     match winget_update_result(&v(current), &listed) {
+        UpdateCheckResult::ManagedExternally => panic!("WinGet must check its source"),
         UpdateCheckResult::UpToDate => "up to date".into(),
         UpdateCheckResult::Available(AvailableUpdate::Winget { version }) => {
             format!("winget {version}")
@@ -350,6 +351,45 @@ fn source_errors_never_fall_back_to_the_other_channel() {
         || Err("WinGet unavailable".into()),
     );
     assert_eq!(winget.unwrap_err(), "WinGet unavailable");
+}
+
+#[test]
+fn chocolatey_leaves_updates_to_the_package_manager_without_network_checks() {
+    assert!(matches!(
+        check_channel_updates(
+            InstallChannel::Chocolatey,
+            || panic!("Chocolatey must not contact GitHub"),
+            || panic!("Chocolatey must not invoke WinGet"),
+        )
+        .unwrap(),
+        UpdateCheckResult::ManagedExternally
+    ));
+}
+
+#[test]
+fn only_portable_installations_replace_their_own_executable() {
+    assert!(ensure_self_update_channel(InstallChannel::Portable).is_ok());
+    for channel in [InstallChannel::Winget, InstallChannel::Chocolatey] {
+        assert_eq!(
+            ensure_self_update_channel(channel).unwrap_err(),
+            "This installation must be updated through its package manager."
+        );
+    }
+}
+
+#[test]
+fn chocolatey_marker_identifies_custom_install_directories() {
+    let root = tempfile::tempdir().unwrap();
+    let executable = root.path().join("claude-code-usage-monitor.exe");
+    let marker = root.path().join("chocolatey-package");
+    assert!(!is_chocolatey_install_path(&executable));
+    std::fs::write(&marker, "another-package").unwrap();
+    assert!(!is_chocolatey_install_path(&executable));
+    std::fs::write(&marker, "claude-code-usage-monitor\r\n").unwrap();
+    assert!(is_chocolatey_install_path(&executable));
+    let sibling = root.path().join("portable");
+    std::fs::create_dir(&sibling).unwrap();
+    assert!(!is_chocolatey_install_path(&sibling.join("app.exe")));
 }
 
 #[test]

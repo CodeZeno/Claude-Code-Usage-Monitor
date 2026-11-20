@@ -58,6 +58,24 @@ function Assert-Docked([string]$Label) {
 function Assert-Tray([string]$Label) {
     Assert-Check "$Label tray registered" (Wait-Condition { (Get-RegisteredTrayIcon) -ge 0 } 20) 'Shell_NotifyIconGetRect for active theme roots'
 }
+function Get-TrayOwner {
+    # The hidden controller window owns tray icons and receives their callbacks;
+    # the visible widget is only a surface and never registers an icon itself.
+    $owners = @(Get-AppProcesses | ForEach-Object { [CCUMScenarioDesktop]::HostWindows($_.Id) } | Where-Object Class -EQ 'ClaudeCodeUsageMonitor')
+    if ($owners.Count -ne 1) { throw "Expected one tray owner window, found $($owners.Count)." }
+    return $owners[0]
+}
+function Get-TrayIconGuid([uint32]$IconId) {
+    # The shell identifies NIF_GUID icons only by GUID; derive it from the active
+    # theme root exactly as the app does.
+    if ($IconId -eq 1) { return [CCUMScenarioDesktop]::TrayIconGuid($IconId, '') }
+    $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+    $theme = Get-Content $settings.active_theme_path -Raw | ConvertFrom-Json
+    return [CCUMScenarioDesktop]::TrayIconGuid($IconId, [string]$theme.surfaces[$IconId - 1000].id)
+}
+function Get-TrayIconStatus([long]$Owner, [uint32]$IconId) {
+    return [CCUMScenarioDesktop]::TrayStatus($Owner, $IconId, (Get-TrayIconGuid $IconId))
+}
 function Get-RegisteredTrayIcon {
     $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
     $ids = @(1)
@@ -68,8 +86,8 @@ function Get-RegisteredTrayIcon {
         })
         if (-not $ids.Count) { $ids = @(1) }
     }
-    $w = Get-Widget
-    foreach ($id in $ids) { if ([CCUMScenarioDesktop]::TrayStatus($w.Handle, $id) -ge 0) { return $id } }
+    $owner = Get-TrayOwner
+    foreach ($id in $ids) { if ((Get-TrayIconStatus $owner.Handle $id) -ge 0) { return $id } }
     return -1
 }
 function Show-TestTrayIcon([uint32]$IconId) {
@@ -102,12 +120,12 @@ function Get-TrayTooltip([string]$ExpectedPattern = '.') {
 }
 function Read-TrayTooltipOnce {
     # Read the live shell tooltip, not a persisted NotifyIconSettings registry entry.
-    $w = Get-Widget
+    $owner = Get-TrayOwner
     $iconId = Get-RegisteredTrayIcon
     if ($iconId -lt 0) { throw 'No active theme tray icon is registered.' }
     try {
         Show-TestTrayIcon $iconId
-        $bounds = [CCUMScenarioDesktop]::TrayBounds($w.Handle, $iconId)
+        $bounds = [CCUMScenarioDesktop]::TrayBounds($owner.Handle, $iconId, (Get-TrayIconGuid $iconId))
         # A hidden icon's Shell_NotifyIconGetRect can identify the chevron,
         # even after the flyout opens. Resolve the live icon in that flyout.
         $shellPid = [Windows.Automation.AutomationElement]::FromHandle([CCUMScenarioDesktop]::TaskbarHandle()).Current.ProcessId
@@ -222,7 +240,7 @@ function Invoke-Subcase([string]$Name, [scriptblock]$Body) {
 function Complete-Subcases {
     if (@($Context.Checks | Where-Object passed -EQ $false).Count) { throw 'One or more subcases failed; see checks and per-case evidence.' }
 }
-function Invoke-HostAction([string]$Action, $Arguments = @{}) {
+function Invoke-HostAction([string]$Action, $Arguments = @{}, [int]$TimeoutSeconds = 180) {
     $id = [guid]::NewGuid().ToString('N')
     @{id=$id; runId=$request.runId; scenarioId=$request.id; action=$Action; arguments=$Arguments} |
         ConvertTo-Json -Depth 8 | Set-Content "$Root\host-request.tmp" -Encoding UTF8
@@ -232,7 +250,7 @@ function Invoke-HostAction([string]$Action, $Arguments = @{}) {
         while ($true) { Start-Sleep -Seconds 1 }
     }
     $responsePath = "$Root\host-response-$id.json"
-    if (-not (Wait-Condition { Test-Path $responsePath } 180)) { throw "Host action timed out: $Action" }
+    if (-not (Wait-Condition { Test-Path $responsePath } $TimeoutSeconds)) { throw "Host action timed out: $Action" }
     $response = Get-Content $responsePath -Raw | ConvertFrom-Json
     if ($response.id -ne $id -or -not $response.ok) { throw "Host action $Action failed: $($response.error)" }
     return $response.data
@@ -243,10 +261,10 @@ function Save-Continuation([string]$Phase) {
 }
 function Toggle-Startup {
     # Invoke the app's real native menu. Never write the Run key on its behalf.
-    $w = Get-Widget
+    $owner = Get-TrayOwner
     $iconId = Get-RegisteredTrayIcon
     Assert-Check 'startup menu uses a registered tray icon' ($iconId -ge 0) $iconId
-    [CCUMScenarioDesktop]::Post($w.Handle, 0x8003, $iconId, 0x205)
+    [CCUMScenarioDesktop]::Post($owner.Handle, 0x8003, $iconId, 0x205)
     Assert-Check 'startup menu opened' (Wait-Condition { [CCUMScenarioDesktop]::MenuVisible() } 10) 'native popup'
     $language = (Get-Content $settingsPath -Raw | ConvertFrom-Json).language
     $label = if ($language -eq 'de') { 'Mit Windows starten' } else { 'Start with Windows' }

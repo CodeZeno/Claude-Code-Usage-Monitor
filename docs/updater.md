@@ -8,6 +8,15 @@ version, even when GitHub has a later release. An equal or older source version
 means the installation is up to date. Source failures remain errors and never
 trigger a fallback to the other channel. WinGet upgrades use that same source.
 
+Chocolatey packages include a `chocolatey-package` marker beside the executable.
+Those installations leave updates to Chocolatey: automatic checks do not contact
+GitHub or WinGet, and an interactive check explains how to save work, quit the
+app, and run `choco upgrade claude-code-usage-monitor` in an administrator
+terminal. This does not claim the installed version is current. The marker works
+with custom Chocolatey installation roots and without `ChocolateyInstall` in
+the app's environment. Keep it with the executable when using the package.
+The portable update entry point also rejects package-managed installations.
+
 The portable updater accepts only the exact `claude-code-usage-monitor.exe`
 asset from the configured repository's latest stable GitHub release. It rejects
 duplicate assets, unexpected download URLs, invalid semantic versions, drafts,

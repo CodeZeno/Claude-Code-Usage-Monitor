@@ -85,3 +85,57 @@ jobs:
             --urls $env:PACKAGE_URL `
             --version $env:PACKAGE_VERSION `
             $env:WINGET_PACKAGE_ID
+
+  chocolatey:
+    needs: build
+    if: github.repository == 'CodeZeno/Claude-Code-Usage-Monitor' && !contains(github.ref_name, '-') && !contains(github.ref_name, '+')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      CHOCOLATEY_API_KEY: ${{ secrets.CHOCOLATEY_API_KEY }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download published executable
+        shell: pwsh
+        run: |
+          gh release download $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --pattern $env:RELEASE_ASSET_NAME --dir target/chocolatey-download
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to download the published release.' }
+
+      # Chocolatey runs package scripts in Windows PowerShell, so test them there
+      # before rendering the package that will be packed and submitted.
+      - name: Test Chocolatey package safeguards and generation
+        shell: powershell
+        run: ./tests/Test-ChocolateyPackage.ps1 -BinaryPath "target/chocolatey-download/$env:RELEASE_ASSET_NAME"
+
+      - name: Prepare Chocolatey package
+        shell: pwsh
+        run: ./packaging/chocolatey/New-Package.ps1 -Version $env:GITHUB_REF_NAME.Substring(1) -BinaryPath "target/chocolatey-download/$env:RELEASE_ASSET_NAME" -OutputDirectory target/chocolatey-package
+
+      - name: Pack Chocolatey package
+        shell: pwsh
+        run: |
+          choco pack target/chocolatey-package/claude-code-usage-monitor.nuspec --output-directory target/chocolatey-output --limit-output
+          if ($LASTEXITCODE -ne 0) { throw 'Chocolatey packing failed.' }
+
+      - name: Save package for review and resubmission
+        uses: actions/upload-artifact@v7
+        with:
+          name: chocolatey-package
+          path: target/chocolatey-output/*.nupkg
+          if-no-files-found: error
+
+      - name: Skip when Chocolatey key is not configured
+        if: env.CHOCOLATEY_API_KEY == ''
+        shell: pwsh
+        run: Write-Warning 'Package prepared but not submitted because CHOCOLATEY_API_KEY is not configured.'
+
+      - name: Submit Chocolatey package
+        if: env.CHOCOLATEY_API_KEY != ''
+        shell: pwsh
+        run: |
+          $package = Get-Item target/chocolatey-output/*.nupkg
+          choco push $package.FullName --source https://push.chocolatey.org/ --api-key $env:CHOCOLATEY_API_KEY --limit-output
+          if ($LASTEXITCODE -ne 0) { throw 'Chocolatey submission failed. Check package ownership and moderation status.' }

@@ -27,7 +27,7 @@ unsupported combinations as `skipped`, with a reason.
 | --- | --- | --- |
 | `smoke` (default) | Portable launch/restart and clean first launch | Baseline |
 | `regression` | Desktop, settings, Explorer, display/theme, network, and locale coverage | Baseline, auto-hide, left, center |
-| `update` | Portable update success/failures and sign-in startup | Baseline |
+| `update` | Portable update success/failures, sign-in startup and the Chocolatey package lifecycle | Baseline |
 | `published-package` | WinGet install and upgrade | Baseline |
 | `nightly` | 30-minute soak, 50 dashboard lifetimes, pause/resume and clock jump | Baseline |
 
@@ -179,6 +179,7 @@ checks require no VM, administrator rights, network, or external test framework.
 | `network-and-auth-errors` | Invalid lab-only Claude/Codex tokens, distinct cached errors and shell messages, host disconnect/reconnect, 90-second offline CPU/retry measurement, 60-second outbound WFP connection audit with all provider flags disabled. |
 | `locale-and-theme-gallery` | All 14 languages crossed with the two horizontal built-in themes, widget and dashboard pixel checks and screenshots embedded in `summary.md`; malformed custom-theme fallback. |
 | `vertical-taskbar` | Windows 10 native taskbar controls select right, left and bottom edges; the default horizontal themes fall back beside a vertical bar, while Classic Vertical remains contained on vertical bars and falls back above a horizontal bar. Verify live edge/theme changes, saved theme retention, automatic redocking and restart. Capture widget, taskbar and desktop screenshots for the original loading state, single-provider sizing and a separate sample-usage theme copy. Sample percentages test presentation without credentials or service polling. |
+| `chocolatey-package` | Bootstraps Chocolatey into `C:\Choco Lab Root` through the elevated `chocolatey` host action, renders the working tree's package with `New-Package.ps1` pointing at the candidate, and packs it as `1.0.0` and the candidate version. Installs through a local source; checks the pinned hash, marker, and GUI shim launches of the widget and `--dashboard`; verifies the German Chocolatey update prompt and no prompt at startup. Requires upgrade and uninstall refusals without process termination while the dashboard or widget runs, then a successful upgrade preserving settings and the quoted startup entry, uninstall removing it, and uninstall leaving a running portable copy and its startup entry alone. Choco output is saved per step. Both packages reuse the candidate binary, so upgrades exercise package handling rather than a binary change. |
 | `soak-and-power` | 50 dashboard open/close cycles, handle/thread/private-memory plateau checks, VM pause/resume, two-hour guest clock jump, explicit countdown-fixture precondition, 30 minutes of monotonic idle sampling. |
 
 Example selections:
@@ -257,9 +258,12 @@ averages allow at most 4 MiB private-memory, five handles and one thread of grow
 
 `hostActions` is an optional catalogue array. Allowed values are `reboot`,
 `network-disconnect`, `network-connect`, `pause-resume`, `clock-forward`,
-`audit-start`, `audit-stop`, and `display-modes`. The host validates each request's run ID,
+`audit-start`, `audit-stop`, `display-modes`, and `chocolatey`. The host validates each request's run ID,
 scenario ID, request ID and per-case allowlist before doing anything. Requests
-cannot contain shell commands. PowerShell Direct remains available when the VM's
+cannot contain shell commands. `chocolatey` runs elevated in the guest and accepts
+only the fixed operations `bootstrap`, `pack`, `install`, `upgrade`, and
+`uninstall` with an exact `MAJOR.MINOR.PATCH` version. The package ID, root,
+source, and package paths are fixed by the host. PowerShell Direct remains available when the VM's
 virtual network adapters are disconnected.
 The pause hook closes its control connection before suspension and creates a new
 PowerShell Direct session after resuming the same VM; the interactive scenario

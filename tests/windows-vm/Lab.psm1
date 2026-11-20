@@ -49,7 +49,7 @@ function Read-LabCatalog {
         if ($test.PSObject.Properties['hostActions']) {
             Assert-CatalogList $test.hostActions 'Test hostActions' -AllowEmpty
             foreach ($action in $test.hostActions) {
-                if ($action -notin @('reboot', 'network-disconnect', 'network-connect', 'pause-resume', 'clock-forward', 'audit-start', 'audit-stop', 'display-modes')) { throw "Unknown host action: $action" }
+                if ($action -notin @('reboot', 'network-disconnect', 'network-connect', 'pause-resume', 'clock-forward', 'audit-start', 'audit-stop', 'display-modes', 'chocolatey')) { throw "Unknown host action: $action" }
             }
         }
         foreach ($field in @('suites', 'operatingSystems', 'taskbars')) {

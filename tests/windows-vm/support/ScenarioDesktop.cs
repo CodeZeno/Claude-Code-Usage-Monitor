@@ -59,13 +59,16 @@ public static class CCUMScenarioDesktop {
             return false;
         }, IntPtr.Zero);
     }
-    public static string ReadUpdateError(int processId) {
+    public static string ReadUpdateError(int processId) { return ReadDialog(processId, "Update failed"); }
+    public static bool DismissUpdateError(int processId) { return DismissDialog(processId, "Update failed"); }
+    // Text of visible top-level windows owned by the process with this exact title.
+    public static string ReadDialog(int processId, string expectedTitle) {
         var text=new StringBuilder();
         EnumWindows(delegate(IntPtr h,IntPtr p) {
             uint owner; GetWindowThreadProcessId(h,out owner);
             if(owner!=processId || !IsWindowVisible(h)) return true;
             var title=new StringBuilder(256); GetWindowText(h,title,256);
-            if(title.ToString()=="Update failed") {
+            if(title.ToString()==expectedTitle) {
                 EnumChildWindows(h,delegate(IntPtr child,IntPtr unused) {
                     var value=new StringBuilder(4096); GetWindowText(child,value,value.Capacity);
                     text.Append(value).Append(' '); return true;
@@ -75,15 +78,15 @@ public static class CCUMScenarioDesktop {
         },IntPtr.Zero);
         return text.ToString();
     }
-    public static bool DismissUpdateError(int processId) {
+    public static bool DismissDialog(int processId, string expectedTitle) {
         bool found=false;
         EnumWindows(delegate(IntPtr h,IntPtr p) {
             uint owner; GetWindowThreadProcessId(h,out owner);
             if(owner!=processId || !IsWindowVisible(h)) return true;
             var title=new StringBuilder(256); GetWindowText(h,title,256);
-            if(title.ToString()=="Update failed") {
+            if(title.ToString()==expectedTitle) {
                 IntPtr ok=GetDlgItem(h,1);
-                if(!PostMessage(ok!=IntPtr.Zero ? ok : h,ok!=IntPtr.Zero ? 0xf5U : 0x10U,IntPtr.Zero,IntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot dismiss helper dialog");
+                if(!PostMessage(ok!=IntPtr.Zero ? ok : h,ok!=IntPtr.Zero ? 0xf5U : 0x10U,IntPtr.Zero,IntPtr.Zero)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Cannot dismiss dialog");
                 found=true;
             }
             return true;
@@ -160,9 +163,29 @@ public static class CCUMScenarioDesktop {
     public static Rect Taskbar() { Rect r; if (!GetWindowRect(FindWindow("Shell_TrayWnd",null),out r)) throw new Exception("No taskbar"); return r; }
     public static IntPtr TaskbarHandle() { return FindWindow("Shell_TrayWnd",null); }
     public static bool IsTaskbarChild(long h) { return IsChild(FindWindow("Shell_TrayWnd",null),new IntPtr(h)); }
-    public static int TrayStatus(long h, uint iconId) { Rect r; var id=new IconId { Window=new IntPtr(h), Id=iconId }; id.Size=(uint)Marshal.SizeOf(id); return Shell_NotifyIconGetRect(ref id,out r); }
-    public static void HoverTray(long h, uint iconId) {
-        Rect r=TrayBounds(h,iconId);
+    // Mirrors tray_icon::icon_guid. Since v2.24.0 every icon is registered with
+    // NIF_GUID, and the shell resolves such icons by GUID rather than hWnd/uID.
+    public static Guid TrayGuid(string kind, string key) {
+        ulong high=0x936e7a421cd548bfUL, low=0xa4d3509b82f6017eUL;
+        var bytes=new List<byte>(Encoding.UTF8.GetBytes(kind)); bytes.Add(0); bytes.AddRange(Encoding.UTF8.GetBytes(key));
+        unchecked {
+            foreach (var b in bytes) {
+                high=(high^b)*0x100000001b3UL;
+                low=(low^b)*0x100000001b3UL; low=(low<<7)|(low>>57);
+            }
+        }
+        var tail=BitConverter.GetBytes(low); if (BitConverter.IsLittleEndian) Array.Reverse(tail);
+        return new Guid((int)(high>>32),(short)(high>>16),(short)high,tail);
+    }
+    public static Guid TrayIconGuid(uint iconId, string surfaceId) {
+        if (iconId==1) return TrayGuid("application","main");
+        var key=new StringBuilder(surfaceId);
+        for (int i=0;i<key.Length;i++) if (key[i]>='A' && key[i]<='Z') key[i]=(char)(key[i]+32);
+        return TrayGuid("surface",key.ToString());
+    }
+    public static int TrayStatus(long h, uint iconId, Guid guid) { Rect r; var id=new IconId { Window=new IntPtr(h), Id=iconId, Guid=guid }; id.Size=(uint)Marshal.SizeOf(id); return Shell_NotifyIconGetRect(ref id,out r); }
+    public static void HoverTray(long h, uint iconId, Guid guid) {
+        Rect r=TrayBounds(h,iconId,guid);
         HoverPoint((r.Left+r.Right)/2,(r.Top+r.Bottom)/2);
     }
     public static void HoverPoint(int x, int y) {
@@ -184,8 +207,8 @@ public static class CCUMScenarioDesktop {
         mouse_event(8,0,0,0,UIntPtr.Zero);
         mouse_event(16,0,0,0,UIntPtr.Zero);
     }
-    public static Rect TrayBounds(long h, uint iconId) {
-        Rect r; var id=new IconId { Window=new IntPtr(h), Id=iconId }; id.Size=(uint)Marshal.SizeOf(id);
+    public static Rect TrayBounds(long h, uint iconId, Guid guid) {
+        Rect r; var id=new IconId { Window=new IntPtr(h), Id=iconId, Guid=guid }; id.Size=(uint)Marshal.SizeOf(id);
         if (Shell_NotifyIconGetRect(ref id,out r)<0) throw new Exception("Tray icon unavailable");
         return r;
     }

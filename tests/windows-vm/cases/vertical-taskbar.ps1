@@ -158,7 +158,7 @@ function Test-LiveThemeSelection([string]$ClassicPath, [string]$VerticalPath) {
             $visible = @([CCUMScenarioDesktop]::HostWindows($originalPid) | Where-Object Visible)
             switch ($kind) {
                 'desktop' { $visible.Count -eq 1 -and $visible[0].Class -eq 'CCUMDesktopSurface' -and $visible[0].Parent -ne 0 }
-                'tray_icon' { $visible.Count -eq 0 -and [CCUMScenarioDesktop]::TrayStatus($owner.Handle, 1000) -eq 0 }
+                'tray_icon' { $visible.Count -eq 0 -and (Get-TrayIconStatus $owner.Handle 1000) -eq 0 }
                 'taskbar' { $visible.Count -eq 1 -and [CCUMScenarioDesktop]::IsTaskbarChild($visible[0].Handle) }
                 default {
                     $x = if ($kind -eq 'floating-override') { 500 } else { 400 }

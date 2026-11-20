@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>claude-code-usage-monitor</id>
+    <version>__VERSION__</version>
+    <title>Claude Code Usage Monitor</title>
+    <authors>Code Zeno Pty Ltd</authors>
+    <owners>CodeZeno</owners>
+    <projectUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor</projectUrl>
+    <projectSourceUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor</projectSourceUrl>
+    <docsUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor/blob/main/docs/chocolatey.md</docsUrl>
+    <iconUrl>https://cdn.jsdelivr.net/gh/CodeZeno/Claude-Code-Usage-Monitor@main/src/icons/256x256.png</iconUrl>
+    <packageSourceUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor/tree/main/packaging/chocolatey</packageSourceUrl>
+    <licenseUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor/blob/main/LICENSE</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <bugTrackerUrl>https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues</bugTrackerUrl>
+    <tags>claude code usage monitor taskbar widget windows portable</tags>
+    <summary>Windows taskbar widget for monitoring AI coding assistant usage.</summary>
+    <description>Claude Code Usage Monitor displays usage limits and reset times for Claude Code, Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, and GitHub Copilot.
+
+Requires Windows 10 or 11 x64, or Windows 11 on Arm (through x64 emulation), and an installed, signed-in supported provider. No provider software or credentials are included.
+
+Run claude-code-usage-monitor to start the widget, or claude-code-usage-monitor --dashboard for settings and Theme Studio. Save your work and quit both the monitor and dashboard before upgrading or uninstalling. Updates are managed by Chocolatey. Settings are preserved on uninstall.</description>
+    <releaseNotes>https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases/tag/v__VERSION__</releaseNotes>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

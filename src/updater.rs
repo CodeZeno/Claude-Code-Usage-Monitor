@@ -45,12 +45,15 @@ use semver::Version;
 pub enum InstallChannel {
     Portable,
     Winget,
+    Chocolatey,
 }
 
 #[derive(Debug)]
 pub enum UpdateCheckResult {
     UpToDate,
     Available(AvailableUpdate),
+    /// The package manager owns updates; no online check was performed.
+    ManagedExternally,
 }
 
 #[derive(Clone, Debug)]
@@ -117,6 +120,7 @@ fn parse_apply_update_args(
 
 pub fn current_install_channel() -> InstallChannel {
     match std::env::current_exe() {
+        Ok(path) if is_chocolatey_install_path(&path) => InstallChannel::Chocolatey,
         Ok(path) if is_winget_install_path(&path) => InstallChannel::Winget,
         _ => InstallChannel::Portable,
     }
@@ -134,6 +138,7 @@ fn check_channel_updates(
     // Query only the installation's source. WinGet publication can lag GitHub,
     // and neither source's availability should depend on the other one.
     match channel {
+        InstallChannel::Chocolatey => Ok(UpdateCheckResult::ManagedExternally),
         InstallChannel::Portable => Ok(match github()? {
             Some(release) => UpdateCheckResult::Available(AvailableUpdate::Release(release)),
             None => UpdateCheckResult::UpToDate,
@@ -183,7 +188,19 @@ pub fn begin_winget_update() -> Result<(), String> {
     Ok(())
 }
 
+fn ensure_self_update_channel(channel: InstallChannel) -> Result<(), String> {
+    // Replacing a package-managed executable would desynchronize the manager's
+    // recorded version and checksum, so only portable copies update themselves.
+    match channel {
+        InstallChannel::Portable => Ok(()),
+        InstallChannel::Winget | InstallChannel::Chocolatey => {
+            Err("This installation must be updated through its package manager.".into())
+        }
+    }
+}
+
 pub fn begin_self_update(release: &ReleaseDescriptor) -> Result<(), String> {
+    ensure_self_update_channel(current_install_channel())?;
     let current_exe =
         std::env::current_exe().map_err(|e| format!("Unable to locate current executable: {e}"))?;
     ensure_target_location_writable(&current_exe)?;
@@ -533,6 +550,15 @@ fn github_repo() -> Result<(&'static str, &'static str), String> {
 
 fn user_agent() -> &'static str {
     concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"))
+}
+
+fn is_chocolatey_install_path(path: &Path) -> bool {
+    // The package ships this marker next to the real executable. Unlike an
+    // environment-variable check, it also works with custom Chocolatey roots
+    // and when Explorer has not inherited ChocolateyInstall after installation.
+    path.parent()
+        .and_then(|parent| std::fs::read_to_string(parent.join("chocolatey-package")).ok())
+        .is_some_and(|marker| marker.trim() == "claude-code-usage-monitor")
 }
 
 fn is_winget_install_path(path: &Path) -> bool {

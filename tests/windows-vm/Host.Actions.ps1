@@ -7,6 +7,20 @@ function Assert-HostRequest($Request, $Scenario, [string]$RunId) {
     if ($Request.action -notin $allowed) { throw "Host action is not permitted for this case: $($Request.action)" }
 }
 
+function Get-ChocolateyHostOperation($Arguments) {
+    # Chocolatey needs an elevated token, which the desktop scenario task lacks.
+    # Accept only fixed package operations on lab-rendered packages; never paths,
+    # sources, package IDs, or command text from the guest.
+    $operation = [string]$Arguments.operation
+    if ($operation -cnotin @('bootstrap', 'pack', 'install', 'upgrade', 'uninstall')) { throw "Unknown Chocolatey operation: $operation" }
+    $version = $null
+    if ($operation -in @('pack', 'install', 'upgrade')) {
+        $version = [string]$Arguments.version
+        if ($version -cnotmatch '\A\d{1,5}\.\d{1,5}\.\d{1,5}\z') { throw 'Chocolatey lab version must be MAJOR.MINOR.PATCH.' }
+    }
+    return [pscustomobject]@{ Operation = $operation; Version = $version }
+}
+
 function Invoke-LabHostRequest($Request, $Scenario, $Target, [ref]$Session, $Credential, [string]$GuestRoot, [hashtable]$HostState) {
     Assert-HostRequest $Request $Scenario $runId
     $data = $null
@@ -155,6 +169,64 @@ function Invoke-LabHostRequest($Request, $Scenario, $Target, [ref]$Session, $Cre
                 if (-not @(Get-Process explorer -ErrorAction SilentlyContinue).Count) { throw 'Automatic guest sign-in did not complete.' }
             }
             return
+        }
+        'chocolatey' {
+            $choco = Get-ChocolateyHostOperation $Request.arguments
+            $data = Invoke-Command -Session $Session.Value -ScriptBlock {
+                param($root, $operation, $version)
+                $ErrorActionPreference = 'Stop'
+                # A custom root with a space covers marker-based channel detection
+                # and quoted startup paths. The disposable checkpoint is restored after.
+                $chocoRoot = 'C:\Choco Lab Root'
+                $env:ChocolateyInstall = $chocoRoot
+                $source = "$root\choco-source"
+                $null = New-Item -ItemType Directory -Path $source -Force
+                $chocoExe = Join-Path $chocoRoot 'choco.exe'
+                $arguments = switch ($operation) {
+                    'pack' { @('pack', "$root\choco-build\$version\claude-code-usage-monitor.nuspec", '--output-directory', $source, '--limit-output') }
+                    'install' { @('install', 'claude-code-usage-monitor', '--version', $version, '--source', $source, '--yes', '--no-progress') }
+                    'upgrade' { @('upgrade', 'claude-code-usage-monitor', '--version', $version, '--source', $source, '--yes', '--no-progress') }
+                    'uninstall' { @('uninstall', 'claude-code-usage-monitor', '--yes', '--no-progress') }
+                    default { $null }
+                }
+                if ($operation -eq 'bootstrap') {
+                    if (Test-Path -LiteralPath $chocoExe) { throw 'Chocolatey is already present in the lab root.' }
+                    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072
+                    $installer = "$root\choco-install.ps1"
+                    # A just-restored checkpoint may not have DNS yet, or may hold a
+                    # lease from an earlier Default Switch subnet and fall back to a
+                    # link-local address. Renew that lease, retry briefly, then keep
+                    # the guest's network state with the failure.
+                    for ($attempt = 1; ; $attempt++) {
+                        try { (New-Object Net.WebClient).DownloadFile('https://community.chocolatey.org/install.ps1', $installer); break }
+                        catch {
+                            if ($attempt -ge 10) {
+                                Get-NetIPConfiguration -ErrorAction SilentlyContinue | Out-String |
+                                    Set-Content -LiteralPath "$root\evidence\network.txt" -Encoding UTF8
+                                throw
+                            }
+                            if (-not @(Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object IPv4DefaultGateway).Count) {
+                                $null = & ipconfig.exe /renew 2>&1
+                            }
+                            Start-Sleep -Seconds 10
+                        }
+                    }
+                    $output = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                    if ($exitCode -eq 0 -and (Test-Path -LiteralPath $chocoExe)) {
+                        $output += (& $chocoExe --version 2>&1 | Out-String)
+                    }
+                } else {
+                    $output = & $chocoExe @arguments 2>&1 | Out-String
+                    $exitCode = $LASTEXITCODE
+                }
+                $log = Join-Path $chocoRoot 'logs\chocolatey.log'
+                if (Test-Path -LiteralPath $log) { Copy-Item -LiteralPath $log -Destination "$root\evidence\chocolatey.log" -Force }
+                $lib = Join-Path $chocoRoot 'lib\claude-code-usage-monitor\claude-code-usage-monitor.nuspec'
+                $installed = $null
+                if (Test-Path -LiteralPath $lib) { $installed = ([xml](Get-Content -LiteralPath $lib -Raw)).package.metadata.version }
+                @{ operation=$operation; exitCode=$exitCode; output=$output; root=$chocoRoot; installedVersion=$installed }
+            } -ArgumentList $GuestRoot, $choco.Operation, $choco.Version
         }
         default { throw "Unknown host action: $($Request.action)" }
     }

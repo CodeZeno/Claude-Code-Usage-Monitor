@@ -441,6 +441,17 @@
       "taskbars": ["baseline"],
       "requires": ["candidateExe"],
       "timeoutSeconds": 900
+    },
+    {
+      "id": "chocolatey-package",
+      "description": "Generate, install, upgrade and uninstall the Chocolatey package from a custom root, including running-instance refusals and the managed-update prompt",
+      "script": "cases/chocolatey-package.ps1",
+      "suites": ["update"],
+      "operatingSystems": ["windows10", "windows11"],
+      "taskbars": ["baseline"],
+      "requires": ["candidateExe"],
+      "timeoutSeconds": 1800,
+      "hostActions": ["chocolatey"]
     }
   ]
 }

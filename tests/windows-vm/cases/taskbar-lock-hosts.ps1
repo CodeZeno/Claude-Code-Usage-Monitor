@@ -20,7 +20,7 @@ function Owner-Window { @(Host-Windows | Where-Object Class -EQ 'ClaudeCodeUsage
 function Host-Ready([string]$Kind) {
     $visible = @(Host-Windows | Where-Object Visible)
     switch ($Kind) {
-        'tray_icon' { return $visible.Count -eq 0 -and [CCUMScenarioDesktop]::TrayStatus((Owner-Window).Handle, 1000) -eq 0 }
+        'tray_icon' { return $visible.Count -eq 0 -and (Get-TrayIconStatus (Owner-Window).Handle 1000) -eq 0 }
         'desktop' { return $visible.Count -eq 1 -and $visible[0].Class -eq 'CCUMDesktopSurface' -and $visible[0].Parent -ne 0 }
         'floating' { return $visible.Count -eq 1 -and $visible[0].Parent -eq 0 }
         'taskbar' { return $visible.Count -eq 1 -and [CCUMScenarioDesktop]::IsTaskbarChild($visible[0].Handle) }
@@ -34,7 +34,7 @@ function Assert-Host([string]$HostKind, [string]$Label) {
     switch ($HostKind) {
         'tray_icon' {
             Assert-Check "$Label no visible widget" ($visible.Count -eq 0) $windows
-            Assert-Check "$Label real tray registration" ([CCUMScenarioDesktop]::TrayStatus((Owner-Window).Handle, 1000) -eq 0) 'theme tray root'
+            Assert-Check "$Label real tray registration" ((Get-TrayIconStatus (Owner-Window).Handle 1000) -eq 0) 'theme tray root'
         }
         'desktop' {
             Assert-Check "$Label desktop presenter" ($visible.Count -eq 1 -and $visible[0].Class -eq 'CCUMDesktopSurface') $windows

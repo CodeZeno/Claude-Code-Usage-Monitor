@@ -98,6 +98,12 @@ try {
             Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\Invoke-GuestScenario.ps1" -Destination "$guestRoot\Invoke-GuestScenario.ps1"
             Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\support" -Destination "$guestRoot\support" -Recurse
             Copy-Item -ToSession $session -LiteralPath "$PSScriptRoot\$($scenario.test.script)" -Destination "$guestRoot\$($scenario.test.script)"
+            if ($scenario.test.PSObject.Properties['hostActions'] -and 'chocolatey' -in $scenario.test.hostActions) {
+                # Render lab packages from the working tree's package sources.
+                $packaging = Join-Path (Split-Path -Parent (Split-Path -Parent $PSScriptRoot)) 'packaging\chocolatey'
+                Invoke-Command -Session $session -ScriptBlock { param($root) $null = New-Item -ItemType Directory -Path "$root\packaging" -Force } -ArgumentList $guestRoot
+                Copy-Item -ToSession $session -LiteralPath $packaging -Destination "$guestRoot\packaging\chocolatey" -Recurse
+            }
             foreach ($name in @('candidateExe', 'previousExe')) {
                 if ($name -in $scenario.test.requires) {
                     $filename = if ($name -eq 'candidateExe') { 'candidate.exe' } else { 'previous.exe' }

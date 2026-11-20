@@ -4,6 +4,23 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [2.25.0] - 2026-11-21
+
+### Added
+
+- Add a Chocolatey portable package with a pinned release download and SHA-256 checksum, GUI command shim, running-instance safeguards enforced by the install and uninstall scripts, and uninstall cleanup for matching startup entries in loaded local, domain, and Microsoft Entra ID user profiles. Support Windows 10 and 11 x64 and Windows 11 on Arm through x64 emulation. Preserve application settings and other installations. ([#217](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/217))
+- Prepare and submit Chocolatey packages from stable tagged releases using the `CHOCOLATEY_API_KEY` repository secret, retaining the generated package as a workflow artifact for review and moderation resubmission. Test the package safeguards in Windows PowerShell before rendering the package, and include source, documentation, and icon metadata.
+- Add a `chocolatey-package` Hyper-V lab case covering install, upgrade, and uninstall from a custom Chocolatey root, refusals while the widget or dashboard runs, and the managed-update prompt.
+
+### Changed
+
+- Recognize Chocolatey installations by their package marker and direct users to upgrade through Chocolatey with translated instructions in every supported language. Do not perform portable self-updates or query GitHub or WinGet for these installations. The portable update entry point now refuses both Chocolatey and WinGet installations.
+
+### Fixed
+
+- Quote the executable path in the "Start with Windows" registry command so an installation path containing spaces, such as a custom Chocolatey root, cannot resolve to another program at sign-in. Upgrade an existing unquoted entry for the running executable at startup while continuing to recognize it, and leave other installations' entries untouched.
+- Locate tray icons by the persistent GUID the app has registered them with since 2.24.0 in the Windows VM harness, restoring tray registration, tooltip, and startup-menu checks that could no longer find the icon by window handle and ID.
+
 ## [2.24.2] - 2026-11-12
 
 ### Fixed
@@ -1678,3 +1695,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.24.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.23.6...v2.24.0
 [2.24.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.0...v2.24.1
 [2.24.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.1...v2.24.2
+[2.25.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.24.2...v2.25.0

@@ -39,6 +39,11 @@ winget install CodeZeno.ClaudeCodeUsageMonitor
 
 Alternatively, download `claude-code-usage-monitor.exe` from [GitHub Releases](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/releases).
 
+Chocolatey packaging is prepared for publication to the community repository;
+availability depends on its first submission being approved. See
+[Chocolatey installation and release notes](docs/chocolatey.md) for commands,
+upgrade behavior, and publication details.
+
 See [updater verification](docs/updater.md) for the portable updater's integrity checks and trust boundary.
 
 ## Usage
