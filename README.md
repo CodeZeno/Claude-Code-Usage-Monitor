@@ -73,7 +73,9 @@ In the default theme, left-click a provider tray icon to show or hide the widget
 | Grok Build | Run `grok login` in the Grok Build CLI, then enable Grok in **Providers**. The signed-in session is detected automatically. |
 | GitHub Copilot | Sign in with the Copilot CLI (`copilot`, then `/login`) or the GitHub CLI (`gh auth login`), then enable Copilot in **Providers**. The stored login is detected automatically. |
 
-For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, or create `%APPDATA%\opencode-go\config.json`:
+For OpenCode Go the monitor uses the credential it finds first, in this order: `OPENCODE_GO_WORKSPACE_ID` with `OPENCODE_GO_AUTH_COOKIE`, then `%APPDATA%\opencode-go\config.json`, then a signed-in OpenCode Console CLI.
+
+The environment or the configuration file take an explicit workspace ID and cookie:
 
 ```json
 {
@@ -82,7 +84,9 @@ For OpenCode Go, set `OPENCODE_GO_WORKSPACE_ID` and `OPENCODE_GO_AUTH_COOKIE`, o
 }
 ```
 
-The workspace ID is part of the OpenCode Go console URL: `https://opencode.ai/console/<workspaceId>/go`. Copy the `__Host-console_session` cookie from an authenticated `opencode.ai` browser session, including its name as shown above. A full Cookie header containing `__Host-console_session` or the legacy `auth` cookie is also accepted unchanged; no empty `auth=;` prefix is needed. Bare legacy `auth` cookie values remain supported. These formats work for both `authCookie` and `OPENCODE_GO_AUTH_COOKIE`. Set `OPENCODE_GO_CONFIG_FILE` to use a different config path. The monitor reads usage from the console JSON API using this workspace ID and cookie.
+A signed-in OpenCode Console CLI needs no configuration at all: the monitor reads the OAuth login that `opencode-console login` stores (`~/.local/share/opencode-console/credential.json`, `$XDG_DATA_HOME/opencode-console/credential.json`, or `OPENCODE_CONSOLE_CREDENTIAL_FILE`) and sends it as a bearer token with the login's organization ID, so no browser cookie is needed. Any `opencode-console` command refreshes that login; if the CLI has been signed out, run `opencode-console login` again.
+
+The workspace ID is part of the OpenCode Go console URL: `https://opencode.ai/console/<workspaceId>/go`, and is the organization ID, not the short workspace slug. Copy the `__Host-console_session` cookie from an authenticated `opencode.ai` browser session, including its name as shown above. A full Cookie header containing `__Host-console_session` or the legacy `auth` cookie is also accepted unchanged; no empty `auth=;` prefix is needed. Bare legacy `auth` cookie values remain supported. These formats work for both `authCookie` and `OPENCODE_GO_AUTH_COOKIE`. Set `OPENCODE_GO_CONFIG_FILE` to use a different config path. The monitor reads usage from the console JSON API using this workspace ID and cookie.
 
 For Cursor, `CURSOR_SESSION_TOKEN` can override the automatically detected local session.
 

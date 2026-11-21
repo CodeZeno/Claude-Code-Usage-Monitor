@@ -15,6 +15,7 @@ const DASHBOARD_USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Ap
 const WORKSPACE_ID_ENV: &str = "OPENCODE_GO_WORKSPACE_ID";
 const AUTH_COOKIE_ENV: &str = "OPENCODE_GO_AUTH_COOKIE";
 const CONFIG_FILE_ENV: &str = "OPENCODE_GO_CONFIG_FILE";
+const CONSOLE_CREDENTIAL_FILE_ENV: &str = "OPENCODE_CONSOLE_CREDENTIAL_FILE";
 
 #[derive(Deserialize)]
 struct DashboardConfig {
@@ -24,9 +25,36 @@ struct DashboardConfig {
     auth_cookie: String,
 }
 
+/// The OpenCode Console CLI keeps an OAuth login that the console API accepts as
+/// a bearer token, so its credential file can drive the status request without
+/// asking the user for a browser cookie.
+#[derive(Deserialize)]
+struct ConsoleCredential {
+    #[serde(alias = "orgID", alias = "orgId", alias = "org_id")]
+    org_id: Option<String>,
+    access: Option<String>,
+}
+
+enum DashboardAuth {
+    /// Legacy console session cookie, taken from the browser or the environment.
+    Cookie(String),
+    /// OAuth access token issued by `opencode-console login`.
+    Bearer(String),
+}
+
+impl DashboardAuth {
+    /// Label for logs and credential-change tracking; never the secret itself.
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::Cookie(_) => "cookie",
+            Self::Bearer(_) => "bearer",
+        }
+    }
+}
+
 struct DashboardCredentials {
     workspace_id: String,
-    auth_cookie: String,
+    auth: DashboardAuth,
     source: String,
 }
 
@@ -157,15 +185,22 @@ fn read_dashboard_credentials() -> Option<DashboardCredentials> {
         if valid_workspace_id(&workspace_id) && valid_cookie(&auth_cookie) {
             return Some(DashboardCredentials {
                 workspace_id,
-                auth_cookie,
+                auth: DashboardAuth::Cookie(normalize_cookie(&auth_cookie)),
                 source: "environment".to_string(),
             });
         }
     }
 
+    // Saved dashboard settings win over the console login: they are an explicit
+    // choice, while the console credential is picked up automatically.
     dashboard_config_paths()
         .into_iter()
         .find_map(|path| read_dashboard_config(&path))
+        .or_else(|| {
+            console_credential_paths()
+                .into_iter()
+                .find_map(|path| read_console_credential(&path))
+        })
 }
 
 fn read_dashboard_config(path: &Path) -> Option<DashboardCredentials> {
@@ -178,7 +213,22 @@ fn read_dashboard_config(path: &Path) -> Option<DashboardCredentials> {
     }
     Some(DashboardCredentials {
         workspace_id,
-        auth_cookie,
+        auth: DashboardAuth::Cookie(normalize_cookie(&auth_cookie)),
+        source: path.display().to_string(),
+    })
+}
+
+fn read_console_credential(path: &Path) -> Option<DashboardCredentials> {
+    let content = std::fs::read_to_string(path).ok()?;
+    let credential: ConsoleCredential = serde_json::from_str(&content).ok()?;
+    let workspace_id = credential.org_id?.trim().to_string();
+    let access = credential.access?.trim().to_string();
+    if !valid_workspace_id(&workspace_id) || !valid_header_value(&access) {
+        return None;
+    }
+    Some(DashboardCredentials {
+        workspace_id,
+        auth: DashboardAuth::Bearer(access),
         source: path.display().to_string(),
     })
 }
@@ -191,26 +241,17 @@ fn fetch_go_status(
     credentials: &DashboardCredentials,
     url: &str,
 ) -> Result<DashboardUsage, PollError> {
-    let cookie = if credentials.auth_cookie.split(';').any(|part| {
-        let part = part.trim_start();
-        part.starts_with("auth=") || part.starts_with("__Host-console_session=")
-    }) {
-        credentials.auth_cookie.clone()
-    } else {
-        // Bare legacy auth values may contain '=' padding; that alone does
-        // not identify a complete Cookie header.
-        format!("auth={}", credentials.auth_cookie)
-    };
-
-    let mut response = match build_agent()?
+    let mut request = build_agent()?
         .get(url)
         .header("Accept", "application/json")
         .header("x-org-id", &credentials.workspace_id)
-        .header("Cookie", &cookie)
-        .header("User-Agent", DASHBOARD_USER_AGENT)
-        .call()
-        .and_then(super::check_http_status)
-    {
+        .header("User-Agent", DASHBOARD_USER_AGENT);
+    request = match &credentials.auth {
+        DashboardAuth::Cookie(cookie) => request.header("Cookie", cookie),
+        DashboardAuth::Bearer(token) => request.header("Authorization", &format!("Bearer {token}")),
+    };
+
+    let mut response = match request.call().and_then(super::check_http_status) {
         Ok(response) => response,
         Err(ureq::Error::StatusCode(401 | 403)) => return Err(PollError::AuthRequired),
         Err(error) => {
@@ -311,6 +352,25 @@ fn non_empty_environment(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn console_credential_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = non_empty_environment(CONSOLE_CREDENTIAL_FILE_ENV).map(PathBuf::from) {
+        paths.push(path);
+    }
+    if let Some(data_home) = non_empty_environment("XDG_DATA_HOME").map(PathBuf::from) {
+        paths.push(data_home.join("opencode-console").join("credential.json"));
+    }
+    if let Some(home) = crate::known_folders::home_dir() {
+        paths.push(
+            home.join(".local")
+                .join("share")
+                .join("opencode-console")
+                .join("credential.json"),
+        );
+    }
+    paths
+}
+
 fn valid_workspace_id(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -318,8 +378,27 @@ fn valid_workspace_id(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
 }
 
-fn valid_cookie(value: &str) -> bool {
+fn valid_header_value(value: &str) -> bool {
     !value.is_empty() && !value.bytes().any(|byte| matches!(byte, b'\r' | b'\n'))
+}
+
+fn valid_cookie(value: &str) -> bool {
+    valid_header_value(value)
+}
+
+/// A bare legacy value carries no cookie name; a full Cookie header is sent as is.
+fn normalize_cookie(value: &str) -> String {
+    let names_a_cookie = value.split(';').any(|part| {
+        let part = part.trim_start();
+        part.starts_with("auth=") || part.starts_with("__Host-console_session=")
+    });
+    if names_a_cookie {
+        value.to_string()
+    } else {
+        // Bare legacy auth values may contain '=' padding; that alone does
+        // not identify a complete Cookie header.
+        format!("auth={value}")
+    }
 }
 
 fn credential_watch_signature() -> String {
@@ -328,11 +407,16 @@ fn credential_watch_signature() -> String {
         Some(credentials) => {
             let mut hasher = DefaultHasher::new();
             credentials.workspace_id.hash(&mut hasher);
-            credentials.auth_cookie.hash(&mut hasher);
+            let kind = credentials.auth.kind();
+            let secret = match &credentials.auth {
+                DashboardAuth::Cookie(value) | DashboardAuth::Bearer(value) => value,
+            };
+            kind.hash(&mut hasher);
+            secret.hash(&mut hasher);
             parts.push(format!(
-                "dashboard|present|{}|{}|{:x}|{}",
+                "dashboard|present|{}|{kind}|{}|{:x}|{}",
                 credentials.workspace_id.len(),
-                credentials.auth_cookie.len(),
+                secret.len(),
                 hasher.finish(),
                 credentials.source
             ));
@@ -341,6 +425,9 @@ fn credential_watch_signature() -> String {
     }
     for path in dashboard_config_paths() {
         parts.push(path_signature("config", &path));
+    }
+    for path in console_credential_paths() {
+        parts.push(path_signature("console", &path));
     }
     parts.join(";;")
 }
@@ -475,6 +562,20 @@ mod tests {
         body: &str,
         cookie: &str,
     ) -> (Result<DashboardUsage, PollError>, String) {
+        mock_status_request_with(
+            DashboardAuth::Cookie(normalize_cookie(cookie)),
+            status,
+            body,
+            "wrk_example",
+        )
+    }
+
+    fn mock_status_request_with(
+        auth: DashboardAuth,
+        status: u16,
+        body: &str,
+        workspace_id: &str,
+    ) -> (Result<DashboardUsage, PollError>, String) {
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::time::Duration;
@@ -508,8 +609,8 @@ mod tests {
         });
         let result = fetch_go_status(
             &DashboardCredentials {
-                workspace_id: "wrk_example".into(),
-                auth_cookie: cookie.into(),
+                workspace_id: workspace_id.into(),
+                auth,
                 source: "test".into(),
             },
             &url,
@@ -556,6 +657,108 @@ mod tests {
             assert!(request.contains("\r\nx-org-id: wrk_example\r\n"));
             assert!(request.contains("\r\naccept: application/json\r\n"));
         }
+    }
+
+    #[test]
+    fn console_login_file_supplies_org_context_and_bearer_token() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("credential.json");
+        std::fs::write(
+            &path,
+            r#"{
+                "type": "oauth",
+                "server": "https://opencode.ai/console",
+                "access": "access-token",
+                "refresh": "refresh-token",
+                "expires": 1797808832267,
+                "accountID": "acc_example",
+                "email": "user@example.com",
+                "orgID": "org_example",
+                "orgName": "Example"
+            }"#,
+        )
+        .unwrap();
+
+        let credentials = read_console_credential(&path).unwrap();
+        assert_eq!(credentials.workspace_id, "org_example");
+        assert!(
+            matches!(&credentials.auth, DashboardAuth::Bearer(token) if token == "access-token"),
+            "unexpected auth: {:?}",
+            credentials.auth.kind()
+        );
+        assert_eq!(credentials.source, path.display().to_string());
+    }
+
+    #[test]
+    fn console_login_file_accepts_known_id_spellings_and_trims_values() {
+        let directory = tempfile::tempdir().unwrap();
+        for (index, content) in [
+            r#"{"orgId":"org_example","access":"token"}"#,
+            r#"{"org_id":"org_example","access":"token"}"#,
+            r#"{"orgID":"org_example","access":"  token  "}"#,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let path = directory.path().join(format!("credential-{index}.json"));
+            std::fs::write(&path, content).unwrap();
+            let credentials = read_console_credential(&path).unwrap();
+            assert_eq!(credentials.workspace_id, "org_example");
+            assert!(matches!(&credentials.auth, DashboardAuth::Bearer(token) if token == "token"));
+        }
+    }
+
+    #[test]
+    fn console_login_file_rejects_missing_fields_and_header_injection() {
+        let directory = tempfile::tempdir().unwrap();
+        let write = |name: &str, content: &str| {
+            let path = directory.path().join(name);
+            std::fs::write(&path, content).unwrap();
+            path
+        };
+
+        for content in [
+            r#"{"access":"token"}"#,
+            r#"{"orgID":"org_example"}"#,
+            r#"{"orgID":"../other","access":"token"}"#,
+            r#"{"orgID":"org_example","access":"token\r\nX-Injected: 1"}"#,
+            r#"{"orgID":"org_example","access":"   "}"#,
+            "not json",
+        ] {
+            let path = write("rejected.json", content);
+            assert!(
+                read_console_credential(&path).is_none(),
+                "accepted {content}"
+            );
+        }
+
+        assert!(read_console_credential(&directory.path().join("missing.json")).is_none());
+    }
+
+    #[test]
+    fn console_login_request_sends_bearer_authorization_and_no_cookie() {
+        let (result, request) = mock_status_request_with(
+            DashboardAuth::Bearer("access-token".into()),
+            200,
+            GO_STATUS_JSON,
+            "org_example",
+        );
+        assert_eq!(result.unwrap().rolling.unwrap().usage_percent, 12.5);
+        let request = request.to_ascii_lowercase();
+        assert!(request.contains("\r\nauthorization: bearer access-token\r\n"));
+        assert!(request.contains("\r\nx-org-id: org_example\r\n"));
+        assert!(!request.contains("\r\ncookie:"));
+    }
+
+    #[test]
+    fn console_login_request_reports_rejected_tokens_as_auth_errors() {
+        let (result, _) = mock_status_request_with(
+            DashboardAuth::Bearer("expired-token".into()),
+            401,
+            "{}",
+            "org_example",
+        );
+        assert_eq!(result, Err(PollError::AuthRequired));
     }
 
     #[test]
