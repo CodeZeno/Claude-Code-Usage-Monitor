@@ -1084,3 +1084,23 @@ fn collision_fixture(
         reserved: tray.into_iter().collect(),
     }
 }
+
+#[test]
+fn desktop_drop_releases_taskbar_lock() {
+    let mut state = state_for(ThemeDocument::starter(), placement("taskbar"));
+    state.lock_taskbar = true;
+    assert!(taskbar_lock_applies(&state));
+    assert!(release_taskbar_lock_for_desktop_drop(&mut state));
+    assert!(!state.lock_taskbar);
+    assert!(!taskbar_lock_applies(&state));
+    // An unlocked drop leaves the setting alone.
+    assert!(!release_taskbar_lock_for_desktop_drop(&mut state));
+    assert!(!state.lock_taskbar);
+
+    // Moving an already-floating widget keeps the lock preference for a
+    // later dock.
+    let mut floating = state_for(ThemeDocument::starter(), placement("floating"));
+    floating.lock_taskbar = true;
+    assert!(!release_taskbar_lock_for_desktop_drop(&mut floating));
+    assert!(floating.lock_taskbar);
+}

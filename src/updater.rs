@@ -300,18 +300,38 @@ fn build_agent() -> Result<ureq::Agent, String> {
 }
 
 fn replace_target_binary(target: &Path, source: &Path) -> Result<(), String> {
+    replace_target_binary_with_retries(target, source, 60, Duration::from_millis(500))
+}
+
+fn replace_target_binary_with_retries(
+    target: &Path,
+    source: &Path,
+    attempts: u32,
+    delay: Duration,
+) -> Result<(), String> {
     let backup_path = backup_path_for(target);
     let mut last_error = None;
 
-    for _ in 0..60 {
-        let _ = std::fs::remove_file(&backup_path);
+    for _ in 0..attempts {
+        // The backup may be the only copy of the installed exe (a failed
+        // restore, or an earlier interrupted update); drop it only while the
+        // target itself is still in place.
+        if target.exists() {
+            let _ = std::fs::remove_file(&backup_path);
+        } else if backup_path.exists() {
+            return Err(format!(
+                "Unable to replace {}. The previous version is kept at {}.",
+                target.display(),
+                backup_path.display()
+            ));
+        }
 
         let renamed_existing = match std::fs::rename(target, &backup_path) {
             Ok(()) => true,
             Err(error) if error.kind() == io::ErrorKind::NotFound => false,
             Err(error) => {
                 last_error = Some(error);
-                std::thread::sleep(Duration::from_millis(500));
+                std::thread::sleep(delay);
                 continue;
             }
         };
@@ -322,15 +342,22 @@ fn replace_target_binary(target: &Path, source: &Path) -> Result<(), String> {
                 return Ok(());
             }
             Err(error) => {
-                last_error = Some(error);
                 let _ = std::fs::remove_file(target);
                 if renamed_existing {
-                    let _ = std::fs::rename(&backup_path, target);
+                    if let Err(restore_error) = std::fs::rename(&backup_path, target) {
+                        return Err(format!(
+                            "Unable to replace {}: {error}. Restoring the previous version \
+                             failed ({restore_error}); it is kept at {}.",
+                            target.display(),
+                            backup_path.display()
+                        ));
+                    }
                 }
+                last_error = Some(error);
             }
         }
 
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(delay);
     }
 
     Err(format!(
