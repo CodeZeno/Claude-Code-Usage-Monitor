@@ -4,6 +4,12 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [Unreleased]
+
+### Fixed
+
+- Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
+
 ## [2.25.3] - 2026-11-21
 
 ### Changed
@@ -1717,3 +1723,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.25.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.0...v2.25.1
 [2.25.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.1...v2.25.2
 [2.25.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.2...v2.25.3
+[Unreleased]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.3...HEAD
