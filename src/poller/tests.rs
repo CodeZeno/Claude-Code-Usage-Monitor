@@ -976,3 +976,24 @@ fn antigravity_limits_skip_unusable_buckets_and_preserve_reported_windows() {
     assert_eq!(usage.limits[1].usage, usage.weekly);
     assert_eq!(usage.limits[1].usage.percentage, 100.0);
 }
+
+#[test]
+fn antigravity_merged_gemini_pool_that_mentions_argon_still_shows() {
+    // Since late Nov 2026 Gemini is one pool ("Gemini Models", gemini-5h / gemini-weekly)
+    // whose text names Argon among its models. With no other Gemini group it is the pool.
+    let response: antigravity::AntigravityQuotaSummaryResponse = serde_json::from_str(
+        r#"{"groups":[
+            {"displayName":"Gemini Models","description":"Gemini 4 Argon, Gemini 4 Neon and Gemini 3.8 Flash","buckets":[
+                {"bucketId":"gemini-weekly","window":"weekly","remainingFraction":0.94},
+                {"bucketId":"gemini-5h","window":"5h","remainingFraction":0.76}]},
+            {"displayName":"Claude and GPT models","buckets":[
+                {"bucketId":"3p-weekly","window":"weekly","remainingFraction":1},
+                {"bucketId":"3p-5h","window":"5h","remainingFraction":1}]}
+        ]}"#,
+    )
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_summary(response).expect("usage");
+    assert!((usage.session.percentage - 24.0).abs() < 0.001);
+    assert!((usage.weekly.percentage - 6.0).abs() < 0.001);
+    assert!(usage.external_pool.is_some());
+}

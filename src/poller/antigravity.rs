@@ -595,6 +595,9 @@ pub(super) fn antigravity_usage_from_summary(
     let mut external_usage = None;
     let mut has_named_pool = false;
     let mut other_groups = Vec::new();
+    // Only a stand-in: when Google folds Argon into the main pool, the sole Gemini group can
+    // mention Argon, and skipping it would leave the Gemini pool empty.
+    let mut argon_usage = None;
 
     // A summary that returns a group list (even an empty one) answered
     // authoritatively: no recognised window means "no limit data", not a
@@ -608,6 +611,9 @@ pub(super) fn antigravity_usage_from_summary(
             // Its presence also rules out assigning an unrelated sole group
             // through the unnamed-pool fallback below.
             has_named_pool = true;
+            if argon_usage.is_none() && has_generic_gemini_buckets(&group) {
+                argon_usage = antigravity_usage_from_summary_group(group);
+            }
             continue;
         }
         let is_gemini = is_antigravity_gemini_summary_group(&group);
@@ -635,6 +641,10 @@ pub(super) fn antigravity_usage_from_summary(
         gemini_usage = other_groups.pop();
     }
 
+    if gemini_usage.is_none() {
+        gemini_usage = argon_usage;
+    }
+
     let mut usage = if let Some(mut gemini) = gemini_usage {
         if let Some(external) = external_usage {
             gemini.external_pool = Some(Box::new(external));
@@ -653,6 +663,18 @@ pub(super) fn antigravity_usage_from_summary(
     };
     usage.limits = limits;
     Some(usage)
+}
+
+// The merged pool's buckets are `gemini-5h` / `gemini-weekly`; a real Argon pool names Argon there.
+fn has_generic_gemini_buckets(group: &AntigravityQuotaSummaryGroup) -> bool {
+    group.buckets.as_ref().is_some_and(|buckets| {
+        buckets.iter().any(|bucket| {
+            bucket.bucket_id.as_deref().is_some_and(|id| {
+                let id = id.to_ascii_lowercase();
+                id.starts_with("gemini-") && !id.contains("argon")
+            })
+        })
+    })
 }
 
 pub(super) fn is_antigravity_separate_gemini_group(group: &AntigravityQuotaSummaryGroup) -> bool {
