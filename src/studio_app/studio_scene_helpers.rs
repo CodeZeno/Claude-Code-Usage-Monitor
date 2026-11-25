@@ -317,7 +317,7 @@ pub(super) fn scene_object_icon_color(
 }
 
 pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
-    let Some(color) = theme_engine::parse_color(&paint.color) else {
+    let Some(color) = theme_engine::parse_color(paint.color_for(studio_is_dark())) else {
         return egui::Color32::TRANSPARENT;
     };
     let opacity = paint
@@ -333,6 +333,23 @@ pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
         color.b,
         ((color.a as f32) * opacity).round() as u8,
     )
+}
+
+/// The Windows appearance for scene swatches. The registry is read at most
+/// once a second, since every object's swatch asks on every repaint.
+fn studio_is_dark() -> bool {
+    thread_local! {
+        static CACHED: std::cell::Cell<Option<(std::time::Instant, bool)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    CACHED.with(|cached| match cached.get() {
+        Some((read, dark)) if read.elapsed() < std::time::Duration::from_secs(1) => dark,
+        _ => {
+            let dark = crate::theme::is_dark_mode();
+            cached.set(Some((std::time::Instant::now(), dark)));
+            dark
+        }
+    })
 }
 
 pub(super) fn scene_icon_contrast_color(background: egui::Color32) -> egui::Color32 {

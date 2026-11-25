@@ -406,11 +406,60 @@ pub(super) fn segment_count_expression_control(
     edit_clicked
 }
 
-pub(super) fn paint_control(ui: &mut egui::Ui, label: &str, paint: &mut Paint) {
+/// A colour used in both appearances, which can be expanded into separate
+/// dark and light mode colours. Collapsing keeps the dark mode colour.
+pub(super) fn paint_control(
+    ui: &mut egui::Ui,
+    label: &str,
+    paint: &mut Paint,
+    language: LanguageId,
+) {
+    let split = paint.light_color.is_some();
+    let mut toggled = false;
     labeled(ui, label, |ui| {
-        let width = inspector_control_width(ui);
-        crate::ui::components::color_picker::color_string_field(ui, &mut paint.color, width);
+        let field = paint_field_width(ui);
+        if split {
+            ui.add_sized(
+                [field, CONTROL_HEIGHT],
+                egui::Label::new(
+                    egui::RichText::new(language.text("Dark and light")).color(muted()),
+                )
+                .halign(egui::Align::Min),
+            );
+        } else {
+            crate::ui::components::color_picker::color_string_field(ui, &mut paint.color, field);
+        }
+        let tooltip = if split {
+            "Use one colour in both modes"
+        } else {
+            "Set separate dark and light mode colours"
+        };
+        toggled = ui
+            .add(lucide_icon_button(LucideIcon::SunMoon).selected(split))
+            .on_hover_text(language.text(tooltip))
+            .clicked();
     });
+    if let Some(light) = &mut paint.light_color {
+        labeled(ui, language.text("Dark mode"), |ui| {
+            let field = paint_field_width(ui);
+            crate::ui::components::color_picker::color_string_field(ui, &mut paint.color, field);
+        });
+        labeled(ui, language.text("Light mode"), |ui| {
+            let field = paint_field_width(ui);
+            crate::ui::components::color_picker::color_string_field(ui, light, field);
+        });
+    }
+    if toggled {
+        paint.light_color = if split {
+            None
+        } else {
+            Some(paint.color.clone())
+        };
+    }
+}
+
+fn paint_field_width(ui: &egui::Ui) -> f32 {
+    (inspector_control_width(ui) - CONTROL_HEIGHT - ui.spacing().item_spacing.x).max(64.0)
 }
 
 pub(super) fn asset_grid(
@@ -628,10 +677,12 @@ pub(super) fn appearance_inspector(
     }
     match &mut object.background {
         LayerBackground::None => {}
-        LayerBackground::Colour { colour } => paint_control(ui, language.text("Colour"), colour),
+        LayerBackground::Colour { colour } => {
+            paint_control(ui, language.text("Colour"), colour, language)
+        }
         LayerBackground::Gradient { start, end, angle } => {
-            paint_control(ui, language.text("Start"), start);
-            paint_control(ui, language.text("End"), end);
+            paint_control(ui, language.text("Start"), start, language);
+            paint_control(ui, language.text("End"), end, language);
             if numeric_expression_control(
                 ui,
                 id.with("background-gradient-angle"),
@@ -693,7 +744,12 @@ pub(super) fn appearance_inspector(
         });
     }
     if let Some(border) = &mut object.border {
-        paint_control(ui, language.text("Border colour"), &mut border.color);
+        paint_control(
+            ui,
+            language.text("Border colour"),
+            &mut border.color,
+            language,
+        );
         if numeric_expression_control(
             ui,
             id.with("border-width"),
@@ -987,7 +1043,7 @@ pub(super) fn content_inspector(
                         }
                     });
             });
-            paint_control(ui, language.text("Colour"), color);
+            paint_control(ui, language.text("Colour"), color, language);
         }
         SceneContent::Progress {
             value,
@@ -1031,8 +1087,8 @@ pub(super) fn content_inspector(
                         }
                     });
             });
-            paint_control(ui, language.text("Fill"), fill);
-            paint_control(ui, language.text("Track"), track);
+            paint_control(ui, language.text("Fill"), fill, language);
+            paint_control(ui, language.text("Track"), track, language);
             if numeric_expression_control(
                 ui,
                 id.with("radius"),

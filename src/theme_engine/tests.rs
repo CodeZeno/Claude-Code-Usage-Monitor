@@ -1250,6 +1250,48 @@ fn colors_support_rgb_and_rgba() {
 }
 
 #[test]
+fn paints_use_their_light_colour_only_in_light_mode() {
+    let mut context = DataContext::from_usage_with_runtime(
+        None,
+        &Canvas::default(),
+        ThemeRuntime::new(true, true, false),
+    );
+    let opaque = |r, g, b| Rgba { r, g, b, a: 255 };
+
+    let single = Paint::new("#112233");
+    let split = Paint {
+        light_color: Some("#445566".into()),
+        ..Paint::new("#112233")
+    };
+    for (dark, expected) in [
+        (1.0, opaque(0x11, 0x22, 0x33)),
+        (0.0, opaque(0x44, 0x55, 0x66)),
+    ] {
+        context.insert("system.dark", dark);
+        assert_eq!(single.resolve(&context), opaque(0x11, 0x22, 0x33));
+        assert_eq!(split.resolve(&context), expected);
+    }
+
+    // One colour serializes as before, so existing themes are unchanged.
+    let encoded = serde_json::to_value(&single).unwrap();
+    assert!(encoded.get("light_color").is_none());
+    let decoded: Paint = serde_json::from_value(serde_json::to_value(&split).unwrap()).unwrap();
+    assert_eq!(decoded.light_color.as_deref(), Some("#445566"));
+
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].background = LayerBackground::Colour {
+        colour: Paint {
+            light_color: Some("not a colour".into()),
+            ..Paint::new("#112233")
+        },
+    };
+    assert!(theme
+        .validate()
+        .iter()
+        .any(|error| error.contains("light_color") && error.contains("not a colour")));
+}
+
+#[test]
 fn theme_schema_does_not_serialize_descriptions() {
     let source = serde_json::json!({
         "schema_version": THEME_SCHEMA_VERSION,

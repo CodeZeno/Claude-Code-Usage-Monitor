@@ -6,6 +6,10 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
 ## [Unreleased]
 
+### Added
+
+- Let theme colours set an optional light-mode colour (`light_color`), so one layer can serve both Windows appearances instead of a pair of layers gated on `system.dark`. In Theme Studio, the sun and moon button beside a colour expands it into separate Dark mode and Light mode colours; collapsing keeps the dark mode colour. Colours without `light_color` render and save as before, and themes that keep separate per-mode layers are unaffected.
+
 ### Fixed
 
 - Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.

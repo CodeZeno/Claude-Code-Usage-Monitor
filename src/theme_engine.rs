@@ -1250,8 +1250,15 @@ pub struct Stroke {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Paint {
+    /// The colour in both appearances, or only in dark mode when
+    /// `light_color` is set.
     #[serde(default = "default_paint_color")]
     pub color: String,
+    /// An optional replacement used while Windows is in light mode, so one
+    /// object can serve both appearances instead of a pair of layers gated on
+    /// `system.dark`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_color: Option<String>,
     #[serde(default = "default_opacity")]
     pub opacity: Expression,
 }
@@ -1260,6 +1267,7 @@ impl Default for Paint {
     fn default() -> Self {
         Self {
             color: "#00000000".to_string(),
+            light_color: None,
             opacity: Expression::from(1.0),
         }
     }
@@ -2817,6 +2825,13 @@ fn validate_paint(errors: &mut Vec<String>, context: &DataContext, label: &str, 
             paint.color
         ));
     }
+    if let Some(light) = &paint.light_color {
+        if parse_color(light).is_none() {
+            errors.push(format!(
+                "{label}.light_color: '{light}' is not #RRGGBB or #AARRGGBB"
+            ));
+        }
+    }
     validate_expression(errors, context, &format!("{label}.opacity"), &paint.opacity);
 }
 
@@ -2893,11 +2908,25 @@ impl Paint {
     pub fn new(color: &str) -> Self {
         Self {
             color: color.to_string(),
+            light_color: None,
             opacity: 1.0.into(),
         }
     }
+
+    /// The colour string for an appearance: the light-mode colour when one is
+    /// set and Windows is light, otherwise the shared colour.
+    pub fn color_for(&self, dark: bool) -> &str {
+        match &self.light_color {
+            Some(light) if !dark => light,
+            _ => &self.color,
+        }
+    }
+
     pub fn resolve(&self, context: &DataContext) -> Rgba {
-        let mut rgba = parse_color(&self.color).unwrap_or(Rgba {
+        // Contexts without the system binding (tests, previews) count as dark,
+        // which keeps the shared colour.
+        let dark = context.get("system.dark").is_none_or(|dark| dark != 0.0);
+        let mut rgba = parse_color(self.color_for(dark)).unwrap_or(Rgba {
             r: 255,
             g: 0,
             b: 255,
