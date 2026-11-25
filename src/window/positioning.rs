@@ -324,9 +324,7 @@ pub(super) fn position_custom_theme_internal(
     let taskbar = native_interop::taskbar_for_monitor(&taskbars, &displays, display.handle);
     let width = scaled_theme_dimension(theme.canvas.width.max(1), scale);
     let height = scaled_theme_dimension(theme.canvas.height.max(1), scale);
-    let tray = taskbar
-        .and_then(|tb| native_interop::find_child_window(tb.hwnd, "TrayNotifyWnd"))
-        .and_then(native_interop::get_window_rect_safe);
+    let tray = taskbar.and_then(|tb| taskbar_tray_rect(&theme.placement, tb.hwnd, tb.rect));
     let rect = surface_screen_rect(
         &theme.placement,
         width,
@@ -952,6 +950,39 @@ pub(super) fn system_tray_reference(taskbar: RECT, tray: Option<RECT>) -> RECT {
     })
 }
 
+/// Drag-docked placements stay clear of the notification area; authored
+/// placements keep their exact position.
+fn clamps_to_tray(placement: &theme_engine::Placement) -> bool {
+    placement.clamp_taskbar_drag
+        && placement.reference.region == ReferenceRegion::Taskbar
+        && placement.nest == SurfaceNest::Taskbar
+}
+
+/// The notification area a placement is positioned against. A secondary
+/// taskbar has no TrayNotifyWnd, so the clock a drag-docked widget must stay
+/// clear of is known only from the measured occupancy. Tray-referenced
+/// placements still anchor to the end of such a bar.
+pub(super) fn placement_tray_rect(
+    placement: &theme_engine::Placement,
+    tray_window: Option<RECT>,
+    measured_tray: impl FnOnce() -> Option<RECT>,
+) -> Option<RECT> {
+    tray_window.or_else(|| clamps_to_tray(placement).then(measured_tray).flatten())
+}
+
+pub(super) fn taskbar_tray_rect(
+    placement: &theme_engine::Placement,
+    taskbar: HWND,
+    taskbar_rect: RECT,
+) -> Option<RECT> {
+    placement_tray_rect(
+        placement,
+        native_interop::find_child_window(taskbar, "TrayNotifyWnd")
+            .and_then(native_interop::get_window_rect_safe),
+        || taskbar_collision::measured_tray(taskbar, taskbar_rect),
+    )
+}
+
 pub(super) fn surface_screen_rect(
     placement: &theme_engine::Placement,
     width: i32,
@@ -984,10 +1015,7 @@ pub(super) fn surface_screen_rect(
         vertical_anchor_factor(placement.surface_vertical.unwrap_or(placement.vertical)),
         (placement.offset_y as f64 * scale).round() as i32,
     );
-    let (x, y) = if placement.clamp_taskbar_drag
-        && placement.reference.region == ReferenceRegion::Taskbar
-        && placement.nest == SurfaceNest::Taskbar
-    {
+    let (x, y) = if clamps_to_tray(placement) {
         if let Some(tb) = taskbar {
             if native_interop::is_taskbar_horizontal(tb) {
                 let max_x = tray

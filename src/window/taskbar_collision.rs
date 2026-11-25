@@ -13,6 +13,10 @@ use windows::Win32::UI::Accessibility::*;
 
 const MAX_SAMPLE_AGE: Duration = Duration::from_secs(6);
 static OCCUPANCY: Mutex<Vec<(SendHwnd, Occupancy, Instant)>> = Mutex::new(Vec::new());
+/// Notification area last measured on each taskbar, with the taskbar bounds it
+/// was measured in. Unlike OCCUPANCY it outlives a failed or hidden sample: an
+/// unreadable bar is unknown, not proof that its clock is gone.
+static MEASURED_TRAYS: Mutex<Vec<(SendHwnd, RECT, RECT)>> = Mutex::new(Vec::new());
 
 #[derive(Clone, Debug)]
 pub(super) struct Occupancy {
@@ -42,6 +46,17 @@ impl Occupancy {
         self.reserved
             .iter()
             .any(|fixed| intersection(item, *fixed) == Some(item))
+    }
+
+    /// Extent of the fixed notification-area controls. A secondary taskbar
+    /// has no TrayNotifyWnd, so its clock is known only from this measurement.
+    pub fn reserved_extent(&self) -> Option<RECT> {
+        self.reserved.iter().copied().reduce(|a, b| RECT {
+            left: a.left.min(b.left),
+            top: a.top.min(b.top),
+            right: a.right.max(b.right),
+            bottom: a.bottom.max(b.bottom),
+        })
     }
 
     pub fn overlaps_app_controls(&self, widget: RECT) -> bool {
@@ -143,6 +158,31 @@ fn find_sample(
                 && now.saturating_duration_since(*at) <= MAX_SAMPLE_AGE
         })
         .map(|(_, sample, _)| sample.clone())
+}
+
+fn measured_trays() -> MutexGuard<'static, Vec<(SendHwnd, RECT, RECT)>> {
+    MEASURED_TRAYS.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The notification area measured on a taskbar that still has these bounds.
+pub(super) fn measured_tray(hwnd: HWND, bounds: RECT) -> Option<RECT> {
+    find_tray(&measured_trays(), hwnd, bounds)
+}
+
+fn find_tray(trays: &[(SendHwnd, RECT, RECT)], hwnd: HWND, bounds: RECT) -> Option<RECT> {
+    trays
+        .iter()
+        .find(|(handle, measured_in, _)| handle.to_hwnd() == hwnd && *measured_in == bounds)
+        .map(|(_, _, tray)| *tray)
+}
+
+/// Only a successful sample replaces a taskbar's entry, including with "no
+/// notification area" after the clock is turned off.
+fn record_tray(trays: &mut Vec<(SendHwnd, RECT, RECT)>, hwnd: HWND, sample: &Occupancy) {
+    trays.retain(|(handle, _, _)| handle.to_hwnd() != hwnd);
+    if let Some(tray) = sample.reserved_extent() {
+        trays.push((SendHwnd::from_hwnd(hwnd), sample.bounds, tray));
+    }
 }
 
 // Some Win10/third-party shells expose task buttons through legacy UIA proxies.
@@ -319,8 +359,17 @@ pub(super) fn spawn_reader() {
             match Reader::new() {
                 Ok(reader) => loop {
                     let mut next = Vec::new();
-                    for taskbar in native_interop::find_taskbars() {
-                        match reader.read(taskbar) {
+                    let taskbars = native_interop::find_taskbars();
+                    // Forget taskbars that no longer exist (Explorer restart).
+                    measured_trays().retain(|(handle, _, _)| {
+                        taskbars.iter().any(|tb| tb.hwnd == handle.to_hwnd())
+                    });
+                    for taskbar in taskbars {
+                        let sample = reader.read(taskbar);
+                        if let Ok(Some(sample)) = &sample {
+                            record_tray(&mut measured_trays(), taskbar.hwnd, sample);
+                        }
+                        match sample {
                             Ok(Some(sample)) => next.push((
                                 SendHwnd::from_hwnd(taskbar.hwnd),
                                 sample,
@@ -532,6 +581,36 @@ mod tests {
         )
         .is_none());
         assert!(find_sample(&[], hwnd, bounds, now).is_none());
+    }
+
+    #[test]
+    fn measured_tray_follows_the_latest_sample_of_the_same_taskbar_geometry() {
+        let hwnd = HWND(std::ptr::dangling_mut());
+        let bounds = rect(3840, 1593, 5760, 1641);
+        let clock = rect(5682, 1593, 5752, 1641);
+        let mut sample = layout(bounds, vec![rect(3895, 1593, 4203, 1641), clock]);
+        assert_eq!(sample.reserved_extent(), None);
+        sample.reserved.push(clock);
+        let mut trays = Vec::new();
+        record_tray(&mut trays, hwnd, &sample);
+        assert_eq!(find_tray(&trays, hwnd, bounds), Some(clock));
+        // A moved (auto-hidden, rescaled) or different taskbar is unknown.
+        assert_eq!(find_tray(&trays, hwnd, rect(3840, 1639, 5760, 1641)), None);
+        assert_eq!(find_tray(&trays, HWND(2usize as *mut _), bounds), None);
+
+        // Several notification-area controls are covered as one extent.
+        sample.reserved.push(rect(5600, 1593, 5682, 1641));
+        record_tray(&mut trays, hwnd, &sample);
+        assert_eq!(
+            find_tray(&trays, hwnd, bounds),
+            Some(rect(5600, 1593, 5752, 1641))
+        );
+        assert_eq!(trays.len(), 1);
+
+        // A sample without a clock (turned off in Settings) clears the entry.
+        sample.reserved.clear();
+        record_tray(&mut trays, hwnd, &sample);
+        assert_eq!(find_tray(&trays, hwnd, bounds), None);
     }
 
     #[test]

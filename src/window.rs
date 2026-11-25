@@ -674,9 +674,18 @@ fn spawn_taskbar_watchdog() {
             if let Some(s) = state.as_ref() {
                 let tray_hwnd = s.tray_notify_hwnd.map(|h| h.to_hwnd());
                 let target_hwnd = controller_for(s.hwnd.to_hwnd());
+                // A secondary taskbar has no TrayNotifyWnd. Its clock is only
+                // measured, and the first sample follows the initial placement.
+                let measured_tray = || -> Option<RECT> {
+                    let taskbar = s.taskbar_hwnd?.to_hwnd();
+                    let bounds = native_interop::get_taskbar_rect(taskbar)?;
+                    taskbar_collision::measured_tray(taskbar, bounds)
+                };
                 (
                     target_hwnd,
-                    tray_hwnd.and_then(native_interop::get_window_rect_safe),
+                    tray_hwnd
+                        .and_then(native_interop::get_window_rect_safe)
+                        .or_else(measured_tray),
                 )
             } else {
                 (HWND::default(), None)
@@ -955,8 +964,7 @@ fn restored_dock_rect(state: &AppState, taskbar: HWND, taskbar_rect: RECT) -> Op
     let mut placement = surface.placement.clone();
     placement.offset_x = offsets.offset_x;
     placement.offset_y = offsets.offset_y;
-    let tray = native_interop::find_child_window(taskbar, "TrayNotifyWnd")
-        .and_then(native_interop::get_window_rect_safe);
+    let tray = positioning::taskbar_tray_rect(&placement, taskbar, taskbar_rect);
     Some(positioning::surface_screen_rect(
         &placement,
         frame.width,

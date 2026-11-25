@@ -1060,6 +1060,59 @@ fn smart_anchoring_fractional_dpi_scaling() {
     assert_eq!(rect.left, 1000);
 }
 
+#[test]
+fn drag_docked_widget_stays_clear_of_a_secondary_taskbar_clock() {
+    // A secondary taskbar has no TrayNotifyWnd; its clock is only measured.
+    let monitor = RECT {
+        left: 3840,
+        top: 561,
+        right: 5760,
+        bottom: 1641,
+    };
+    let taskbar = RECT {
+        top: 1593,
+        ..monitor
+    };
+    let clock = RECT {
+        left: 5682,
+        right: 5752,
+        ..taskbar
+    };
+    let occupancy = collision_fixture(taskbar, Some(clock), Some(4203));
+    let rect_for = |placement: &theme_engine::Placement, width, measured: Option<RECT>| {
+        let tray = positioning::placement_tray_rect(placement, None, || measured);
+        positioning::surface_screen_rect(placement, width, 46, 1.0, monitor, Some(taskbar), tray)
+    };
+    let edges = |rect: RECT| (rect.left, rect.right);
+
+    // Dropped 1436px along the bar, where it fits beside the clock.
+    let dragged = positioning::taskbar_dock_placement(1, 1436, 1.0, true);
+    let measured = occupancy.reserved_extent();
+    assert_eq!(measured, Some(clock));
+    assert_eq!(edges(rect_for(&dragged, 310, measured)), (5276, 5586));
+    // Enabling another provider widens it: it grows away from the clock.
+    assert_eq!(edges(rect_for(&dragged, 502, measured)), (5180, 5682));
+    // Before the first sample only the end of the bar is known.
+    assert_eq!(edges(rect_for(&dragged, 502, None)), (5258, 5760));
+
+    // A TrayNotifyWnd is used as is, without consulting the measurement.
+    let tray_window = RECT {
+        left: 5600,
+        ..taskbar
+    };
+    assert_eq!(
+        positioning::placement_tray_rect(&dragged, Some(tray_window), || unreachable!()),
+        Some(tray_window)
+    );
+    // Tray-referenced placements keep anchoring to the end of the bar.
+    let snapped = positioning::dock_placement(1, 0, 1.0, true);
+    assert_eq!(
+        positioning::placement_tray_rect(&snapped, None, || unreachable!()),
+        None
+    );
+    assert_eq!(edges(rect_for(&snapped, 310, measured)), (5450, 5760));
+}
+
 // Fixture for the traditional leading-apps/trailing-tray arrangement. The
 // production detector also supports independent groups and leading-side gaps.
 fn collision_fixture(
