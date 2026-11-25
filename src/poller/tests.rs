@@ -974,3 +974,202 @@ fn antigravity_limits_skip_unusable_buckets_and_preserve_reported_windows() {
     assert_eq!(usage.limits[1].usage, usage.weekly);
     assert_eq!(usage.limits[1].usage.percentage, 100.0);
 }
+
+// Provider contract. Every provider in `ProviderId::ALL` needs a redacted
+// response in `src/poller/fixtures/<key>.json` that its own parser reads into
+// usable data that survives a save and load of the usage cache, translated
+// names in every language, and data that themes can see. A provider that is
+// only partly wired fails here with a list of what is missing.
+
+const PROVIDER_FIXTURES: &str = "src/poller/fixtures";
+
+fn provider_fixture_folder() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(PROVIDER_FIXTURES)
+}
+
+/// Collects values in a fixture that look like credentials or personal details.
+fn unredacted_values(value: &serde_json::Value, key: &str, found: &mut Vec<String>) {
+    const SECRET_KEYS: [&str; 9] = [
+        "token",
+        "secret",
+        "password",
+        "cookie",
+        "authorization",
+        "api_key",
+        "apikey",
+        "credential",
+        "session_id",
+    ];
+    const SECRET_PREFIXES: [&str; 8] = [
+        "eyJ",
+        "sk-",
+        "ghp_",
+        "gho_",
+        "ghu_",
+        "github_pat_",
+        "xai-",
+        "Bearer ",
+    ];
+    match value {
+        serde_json::Value::Object(object) => {
+            for (child_key, child) in object {
+                unredacted_values(child, child_key, found);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items {
+                unredacted_values(item, key, found);
+            }
+        }
+        serde_json::Value::String(text) => {
+            let lower_key = key.to_ascii_lowercase();
+            let secret_key = SECRET_KEYS.iter().any(|secret| lower_key.contains(secret));
+            let placeholder = text.is_empty() || text.contains("example") || text == "redacted";
+            let email = text.contains('@') && !text.ends_with("@example.com");
+            let prefixed = SECRET_PREFIXES
+                .iter()
+                .any(|prefix| text.starts_with(prefix));
+            let token_like = text.len() >= 32
+                && text
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '='))
+                && text.chars().any(|c| c.is_ascii_digit())
+                && text.chars().any(|c| c.is_ascii_alphabetic());
+            if (secret_key && !placeholder) || email || prefixed || token_like {
+                found.push(format!("{key}: {text}"));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[test]
+fn every_provider_meets_the_contract() {
+    use crate::localization::LanguageId;
+    use crate::theme_engine::{Canvas, DataContext, ThemeRuntime};
+
+    let folder = provider_fixture_folder();
+    let mut problems = Vec::new();
+    for provider in ProviderId::ALL {
+        let descriptor = provider.descriptor();
+        let key = descriptor.key;
+        let path = folder.join(format!("{key}.json"));
+
+        for language in LanguageId::ALL {
+            for text in [descriptor.display_name, descriptor.settings_description] {
+                if !language.has_translation(text) {
+                    problems.push(format!(
+                        "{key}: src/localization/locales/{}.toml has no translation for {text:?}",
+                        language.code()
+                    ));
+                }
+            }
+        }
+
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            problems.push(format!(
+                "{key}: add a redacted API response at {PROVIDER_FIXTURES}/{key}.json"
+            ));
+            continue;
+        };
+        match serde_json::from_str::<serde_json::Value>(&body) {
+            Ok(value) => {
+                let mut found = Vec::new();
+                unredacted_values(&value, "", &mut found);
+                for value in found {
+                    problems.push(format!(
+                        "{key}: fixture value looks like a credential or personal detail; \
+                         replace it with a placeholder (redacted, usr_example, \
+                         someone@example.com): {value}"
+                    ));
+                }
+            }
+            Err(error) => problems.push(format!("{key}: fixture is not valid JSON: {error}")),
+        }
+
+        let Some(usage) = usage_from_fixture(provider, &body) else {
+            problems.push(format!(
+                "{key}: the provider's parser rejected {PROVIDER_FIXTURES}/{key}.json"
+            ));
+            continue;
+        };
+        if !usage.sections().any(|section| section.available) {
+            problems.push(format!(
+                "{key}: the fixture parses without any available limit"
+            ));
+        }
+
+        let cache: AppUsageData = [(provider, usage.clone())].into_iter().collect();
+        let saved = serde_json::to_string(&cache).unwrap();
+        let loaded: AppUsageData = serde_json::from_str(&saved).unwrap();
+        if loaded.get(provider) != Some(&usage) {
+            problems.push(format!(
+                "{key}: usage changes when the cache is saved and loaded"
+            ));
+        }
+
+        let context = DataContext::from_usage_with_runtime(
+            Some(&cache),
+            &Canvas::default(),
+            ThemeRuntime::from_providers(ProviderSet::from_enabled([provider])),
+        );
+        if context.get(&format!("{key}.available")) != Some(1.0) {
+            problems.push(format!("{key}: themes do not see {key}.available"));
+        }
+    }
+
+    for entry in std::fs::read_dir(&folder).unwrap() {
+        let path = entry.unwrap().path();
+        let stem = path.file_stem().unwrap_or_default().to_string_lossy();
+        if path.extension().is_none_or(|extension| extension != "json")
+            || ProviderId::from_key(&stem).is_none()
+        {
+            problems.push(format!(
+                "{}: not a fixture for any provider key",
+                path.strip_prefix(&folder).unwrap().display()
+            ));
+        }
+    }
+
+    assert!(
+        problems.is_empty(),
+        "provider contract problems:\n  {}",
+        problems.join("\n  ")
+    );
+}
+
+#[test]
+fn provider_identifiers_are_unique() {
+    use std::collections::BTreeSet;
+    let descriptors = crate::providers::PROVIDER_DESCRIPTORS;
+    let count = descriptors.len();
+    assert_eq!(ProviderId::ALL.len(), count);
+    for (index, provider) in ProviderId::ALL.into_iter().enumerate() {
+        assert_eq!(descriptors[index].id, provider, "descriptor order");
+    }
+    let keys: BTreeSet<_> = descriptors.iter().map(|d| d.key).collect();
+    let cache_keys: BTreeSet<_> = descriptors.iter().map(|d| d.cache_key).collect();
+    let commands: BTreeSet<_> = descriptors
+        .iter()
+        .map(|d| d.native_menu_command_id)
+        .collect();
+    assert_eq!(keys.len(), count, "provider keys must be unique");
+    assert_eq!(cache_keys.len(), count, "cache keys must be unique");
+    assert_eq!(commands.len(), count, "menu command ids must be unique");
+}
+
+#[test]
+fn fixture_redaction_check_flags_secrets() {
+    let value = serde_json::json!({
+        "access_token": "abc",
+        "nested": [{"email": "person@company.com"}],
+        "id": "eyJhbGciOiJIUzI1NiJ9",
+        "opaque": "a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8",
+        "subscriberUserID": "usr_example",
+        "auth_token": "redacted",
+        "reset": "2026-09-27T13:10:00.412622+00:00"
+    });
+    let mut found = Vec::new();
+    unredacted_values(&value, "", &mut found);
+    assert_eq!(found.len(), 4, "{found:?}");
+}

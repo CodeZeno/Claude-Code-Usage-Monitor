@@ -70,6 +70,16 @@ impl LanguageId {
             .unwrap_or(english)
     }
 
+    /// Whether this language's catalogue has an entry for `english`, rather
+    /// than falling back to the English key.
+    #[cfg(test)]
+    pub fn has_translation(self, english: &str) -> bool {
+        self.locale()
+            .translations
+            .binary_search_by(|(key, _)| (*key).cmp(english))
+            .is_ok()
+    }
+
     pub fn update_via_winget_label(self) -> &'static str {
         self.locale().update_via_winget_label
     }

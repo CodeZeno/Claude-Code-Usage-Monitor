@@ -270,6 +270,13 @@ fn parse_usage_body(body: &mut ureq::Body) -> Result<UsageData, PollError> {
     validated_usage_from_response(response)
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    validated_usage_from_response(serde_json::from_str(body).ok()?).ok()
+}
+
 fn validated_usage_from_response(response: UsageResponse) -> Result<UsageData, PollError> {
     let data = usage_from_response(response);
     if !data.sections().any(|section| section.available) {

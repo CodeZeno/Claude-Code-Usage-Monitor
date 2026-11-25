@@ -61,6 +61,24 @@ check the affected dashboard or taskbar behavior and include redacted screenshot
 when helpful. For documentation-only changes, check links and formatting;
 compiling the application is not necessary.
 
+### Provider changes
+
+`every_provider_meets_the_contract` in `src/poller/tests.rs` checks every
+provider in `ProviderId::ALL`. A new provider needs:
+
+- a redacted response body in `src/poller/fixtures/<key>.json`, using
+  placeholders such as `redacted`, `usr_example` and `someone@example.com`
+  instead of tokens, cookies, account ids and email addresses. The test rejects
+  values that look like credentials;
+- a `usage_from_fixture` function in its poller module, listed in
+  `poller::usage_from_fixture`, that parses the body the way a poll does and
+  reports at least one available limit;
+- usage that survives a save and load of the usage cache, and that themes see
+  as `<key>.available`;
+- its display name and setting description in every file in
+  `src/localization/locales/`;
+- a unique key, cache key and menu command id in `src/providers.rs`.
+
 ### Lint rules
 
 `Cargo.toml`'s `[lints]` table and `clippy.toml` encode project rules, so Clippy

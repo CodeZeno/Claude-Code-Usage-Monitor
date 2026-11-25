@@ -1,0 +1,13 @@
+{
+  "subscriberUserID": "usr_example",
+  "useBalance": false,
+  "access": {
+    "startsAt": "2026-09-01T00:00:00.000Z",
+    "endsAt": "2026-10-01T00:00:00.000Z",
+    "meters": {
+      "fiveHour": { "limitMicroCents": "2000000000", "usedMicroCents": "250000000", "resetsAt": "2026-09-17T05:00:00.000Z" },
+      "week": { "limitMicroCents": "10000000000", "usedMicroCents": "4500000000", "resetsAt": "2026-09-21T00:00:00.000Z" },
+      "month": { "limitMicroCents": "20000000000", "usedMicroCents": "12000000000" }
+    }
+  }
+}

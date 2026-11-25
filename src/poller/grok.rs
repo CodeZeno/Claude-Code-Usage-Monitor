@@ -271,6 +271,13 @@ fn fetch_grok_usage(session: &GrokSession) -> Result<UsageData, PollError> {
     })
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    grok_usage_from_billing(serde_json::from_str(body).ok()?)
+}
+
 fn grok_usage_from_billing(response: GrokBillingResponse) -> Option<UsageData> {
     let config = response.config?;
     let period = config.current_period.as_ref();

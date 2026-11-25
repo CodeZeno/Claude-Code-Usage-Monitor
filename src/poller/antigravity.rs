@@ -588,6 +588,13 @@ pub(super) fn antigravity_section_from_summary_bucket(
     })
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    antigravity_usage_from_summary(serde_json::from_str(body).ok()?)
+}
+
 pub(super) fn antigravity_usage_from_summary(
     response: AntigravityQuotaSummaryResponse,
 ) -> Option<UsageData> {

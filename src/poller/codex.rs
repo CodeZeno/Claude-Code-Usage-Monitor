@@ -164,6 +164,13 @@ pub(super) fn codex_usage_from_response(
     codex_usage_from_response_at(response, account_id, None)
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    codex_usage_from_response(serde_json::from_str(body).ok()?, None)
+}
+
 fn codex_usage_from_response_at(
     response: CodexUsageResponse,
     account_id: Option<&str>,
