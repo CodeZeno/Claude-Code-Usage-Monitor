@@ -38,6 +38,20 @@ pub(crate) fn segoe_ui_family(weight: i32) -> &'static str {
     }
 }
 
+/// GDI family of the dashboard's provider brand marks, loaded privately for
+/// theme provider-mark layers. The font holds only private-use codepoints.
+pub(crate) fn brand_mark_family() -> &'static str {
+    static LOADED: OnceLock<bool> = OnceLock::new();
+    LOADED.get_or_init(|| {
+        let loaded = register_bytes(crate::ui::theme::BRAND_MARK_FONT_BYTES);
+        if !loaded {
+            crate::diagnose::log("unable to load the brand mark font for theme provider marks");
+        }
+        loaded
+    });
+    "Brand Marks"
+}
+
 fn register_face(path: &std::path::Path) -> bool {
     let Ok(mut bytes) = std::fs::read(path) else {
         return false;
@@ -45,6 +59,10 @@ fn register_face(path: &std::path::Path) -> bool {
     if rename_family(&mut bytes).is_none() {
         return false;
     }
+    register_bytes(&bytes)
+}
+
+fn register_bytes(bytes: &[u8]) -> bool {
     let Ok(size) = u32::try_from(bytes.len()) else {
         return false;
     };

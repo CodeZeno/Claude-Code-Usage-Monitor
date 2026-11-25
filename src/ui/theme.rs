@@ -29,6 +29,11 @@ const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/
 /// flattening to clockwise-wound, non-overlapping contours first, or counters
 /// such as the Codex terminal and the OpenCode ring fill in solid.
 ///
+/// The font also maps U+0020 to an empty glyph. GDI, which draws theme
+/// provider-logo layers, treats a font whose characters all sit in
+/// U+F000..U+F0FF as a symbol font and then finds none of its glyphs by
+/// codepoint, so keep that space when the font is rebuilt.
+///
 /// | Codepoint | Mark        | Source artwork                         |
 /// | --------- | ----------- | -------------------------------------- |
 /// | U+F000    | GitHub      | Simple Icons (CC0-1.0)                 |

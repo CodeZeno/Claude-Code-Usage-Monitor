@@ -830,11 +830,13 @@ pub(super) fn layer_properties_inspector(
         language.text("None (Container)"),
         language.text("Text"),
         language.text("Data bar"),
+        language.text("Provider logo"),
     ];
     let mut kind = match object.content {
         SceneContent::None => 0,
         SceneContent::Text { .. } => 1,
         SceneContent::Progress { .. } => 2,
+        SceneContent::ProviderMark { .. } => 3,
     };
     let previous_kind = kind;
     labeled(ui, language.text("Content type"), |ui| {
@@ -868,6 +870,10 @@ pub(super) fn layer_properties_inspector(
                 segments: 0,
                 segments_expression: None,
                 segment_gap: 2.0.into(),
+            },
+            3 => SceneContent::ProviderMark {
+                provider: PROVIDER_DESCRIPTORS[0].key.into(),
+                color: Paint::new("#D97757FF"),
             },
             _ => SceneContent::None,
         };
@@ -1126,6 +1132,36 @@ pub(super) fn content_inspector(
                     ExpressionField::ProgressSegmentGap,
                 ));
             }
+        }
+        SceneContent::ProviderMark { provider, color } => {
+            let selected = PROVIDER_DESCRIPTORS
+                .iter()
+                .find(|descriptor| descriptor.key == provider.as_str())
+                .map_or_else(
+                    || provider.clone(),
+                    |descriptor| language.text(descriptor.display_name).to_owned(),
+                );
+            labeled(ui, language.text("Provider"), |ui| {
+                Dropdown::from_id_salt(id.with("provider-mark"))
+                    .width(inspector_control_width(ui))
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        for descriptor in &PROVIDER_DESCRIPTORS {
+                            let mut key = provider.as_str().to_owned();
+                            if dropdown_selectable_value(
+                                ui,
+                                &mut key,
+                                descriptor.key.to_owned(),
+                                language.text(descriptor.display_name),
+                            )
+                            .clicked()
+                            {
+                                *provider = descriptor.key.into();
+                            }
+                        }
+                    });
+            });
+            paint_control(ui, language.text("Colour"), color, language);
         }
     }
     requested

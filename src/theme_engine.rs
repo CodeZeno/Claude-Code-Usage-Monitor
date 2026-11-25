@@ -22,6 +22,7 @@ pub const THEME_SCHEMA_VERSION: u32 = 1;
 pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
 pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
 pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
+pub const STACKED_ROWS_THEME_ID: &str = "stacked-rows";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
@@ -36,6 +37,10 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
         CLASSIC_VERTICAL_THEME_ID,
         include_str!(concat!(env!("OUT_DIR"), "/classic-vertical.json")),
+    ),
+    (
+        STACKED_ROWS_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/stacked-rows.json")),
     ),
 ];
 
@@ -313,6 +318,16 @@ pub enum SceneContent {
         segments_expression: Option<Expression>,
         #[serde(default = "default_segment_gap")]
         segment_gap: Expression,
+    },
+    /// A provider's logo from the brand marks the dashboard draws, tinted
+    /// with `color` and fitted, centred, into the object. Themes need no image
+    /// assets of their own to show a provider.
+    ProviderMark {
+        /// A provider key, as used by bindings: `claude`, `codex`, ...
+        #[serde(default = "default_provider_mark")]
+        provider: String,
+        #[serde(default = "default_text_paint")]
+        color: Paint,
     },
 }
 
@@ -2804,6 +2819,20 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
                 track,
             );
         }
+        SceneContent::ProviderMark { provider, color } => {
+            if crate::providers::ProviderId::from_key(provider).is_none() {
+                errors.push(format!(
+                    "{}.provider: '{provider}' is not a provider key",
+                    object.name
+                ));
+            }
+            validate_paint(
+                errors,
+                &object_context,
+                &format!("{}.color", object.name),
+                color,
+            );
+        }
     }
 }
 
@@ -3002,6 +3031,9 @@ fn default_accent_paint() -> Paint {
 }
 fn default_track_paint() -> Paint {
     Paint::new("#FFFFFF24")
+}
+fn default_provider_mark() -> String {
+    "claude".into()
 }
 fn default_text_paint() -> Paint {
     Paint::new("#FFFFFFFF")

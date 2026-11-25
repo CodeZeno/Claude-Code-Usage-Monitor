@@ -871,7 +871,11 @@ fn classic_hover_summary_survives_theme_round_trips_and_is_opt_in() {
 fn built_in_themes_hide_absent_claude_sessions_and_keep_weekly_and_fable_limits() {
     use crate::models::{UsageData, UsageLimit, UsageSection};
 
-    for (_, source) in BUILTIN_THEME_SOURCES {
+    for (id, source) in BUILTIN_THEME_SOURCES {
+        // Stacked Rows names its rows differently; see its own test.
+        if *id == STACKED_ROWS_THEME_ID {
+            continue;
+        }
         let theme: ThemeDocument = serde_json::from_str(source).unwrap();
         for session_available in [false, true] {
             let usage = AppUsageData::from_iter([(
@@ -1289,6 +1293,60 @@ fn paints_use_their_light_colour_only_in_light_mode() {
         .validate()
         .iter()
         .any(|error| error.contains("light_color") && error.contains("not a colour")));
+}
+
+#[test]
+fn provider_marks_draw_the_brand_glyph_and_reject_unknown_providers() {
+    let mut theme = ThemeDocument::starter();
+    theme.surfaces[0].children = vec![serde_json::from_value(serde_json::json!({
+        "id": "logo",
+        "name": "Logo",
+        "width": "24",
+        "height": "24",
+        "content": {
+            "type": "provider_mark",
+            "provider": "codex",
+            "color": { "color": "#FFFFFFFF", "light_color": "#1A1A1AFF" }
+        }
+    }))
+    .unwrap()];
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    let set_provider = |theme: &mut ThemeDocument, key: &str| {
+        let SceneContent::ProviderMark { provider, .. } =
+            &mut theme.surfaces[0].children[0].content
+        else {
+            unreachable!();
+        };
+        *provider = key.into();
+    };
+    // GDI draws these, and it finds no glyph in a font it takes for a symbol
+    // font, so every mark is checked through the theme renderer.
+    for provider in ProviderId::ALL {
+        set_provider(&mut theme, provider.descriptor().key);
+        let rendered = render_theme_surface_with_runtime(
+            &theme,
+            0,
+            None,
+            ThemeRuntime::new(true, true, false),
+        );
+        assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+        let logo = |x: usize, y: usize| rendered.pixels[y * rendered.width as usize + x];
+        let drawn = (0..24)
+            .flat_map(|y| (0..24).map(move |x| (x, y)))
+            .filter(|(x, y)| logo(*x, *y) >> 24 > 0)
+            .count();
+        assert!(drawn > 100, "the {provider:?} mark drew {drawn} pixels");
+        assert!(
+            (24..rendered.width as usize).all(|x| logo(x, 12) >> 24 == 0),
+            "the {provider:?} mark stays inside its layer"
+        );
+    }
+
+    set_provider(&mut theme, "nobody");
+    assert!(theme
+        .validate()
+        .iter()
+        .any(|error| error.contains("'nobody' is not a provider key")));
 }
 
 #[test]
@@ -2376,10 +2434,11 @@ fn starter_tray_icons_follow_enabled_providers() {
 
 #[test]
 fn built_in_themes_are_valid_and_cannot_be_saved_as_editable_themes() {
-    assert_eq!(BUILTIN_THEME_SOURCES.len(), 3);
+    assert_eq!(BUILTIN_THEME_SOURCES.len(), 4);
     assert_eq!(BUILTIN_THEME_SOURCES[0].0, CLASSIC_THEME_ID);
     assert_eq!(BUILTIN_THEME_SOURCES[1].0, COMPACT_FLUENT_QUAD_THEME_ID);
     assert_eq!(BUILTIN_THEME_SOURCES[2].0, CLASSIC_VERTICAL_THEME_ID);
+    assert_eq!(BUILTIN_THEME_SOURCES[3].0, STACKED_ROWS_THEME_ID);
     assert!(REMOVED_BUILTIN_THEME_IDS
         .iter()
         .all(|id| !is_builtin_theme_id(id)));
@@ -3852,4 +3911,372 @@ fn missing_antigravity_external_pool_draws_an_empty_gauge() {
     assert_eq!(value("antigravity.gemini.session.display"), 75.0);
     assert_eq!(value("antigravity.gemini.weekly.display"), 0.0);
     assert_eq!(value("antigravity.external.session.display"), 0.0);
+}
+
+fn stacked_rows_theme() -> ThemeDocument {
+    let (_, source) = BUILTIN_THEME_SOURCES
+        .iter()
+        .find(|(id, _)| *id == STACKED_ROWS_THEME_ID)
+        .unwrap();
+    let mut theme: ThemeDocument = serde_json::from_str(source).unwrap();
+    theme.prepare_runtime();
+    assert!(theme.validate().is_empty(), "{:?}", theme.validate());
+    theme
+}
+
+fn stacked_rows_model_limit(model: &str, kind: &str, percentage: f64) -> crate::models::UsageLimit {
+    crate::models::UsageLimit {
+        key: format!("weekly_scoped_{}", model.to_ascii_lowercase()),
+        kind: kind.into(),
+        label: model.into(),
+        model: Some(model.into()),
+        is_active: true,
+        usage: crate::models::UsageSection {
+            available: true,
+            percentage,
+            resets_at: None,
+        },
+        ..Default::default()
+    }
+}
+
+fn stacked_rows_credits() -> crate::models::CreditsSection {
+    crate::models::CreditsSection {
+        percentage: 40.0,
+        remaining: 30.0,
+        total: 50.0,
+    }
+}
+
+#[test]
+fn stacked_rows_draws_one_joined_row_per_reported_limit_and_hover_opens_its_flyout() {
+    use crate::models::{UsageData, UsageSection};
+
+    let theme = stacked_rows_theme();
+    let section = |available| UsageSection {
+        available,
+        percentage: 0.0,
+        resets_at: None,
+    };
+    let claude = |rows: [bool; 6]| UsageData {
+        session: section(rows[0]),
+        weekly: section(rows[1]),
+        limits: [
+            ("Fable", "weekly_scoped"),
+            ("Opus", "seven_day_opus"),
+            ("Sonnet", "seven_day_sonnet"),
+        ]
+        .into_iter()
+        .zip(&rows[2..5])
+        .filter(|(_, shown)| **shown)
+        .map(|((model, kind), _)| stacked_rows_model_limit(model, kind, 0.0))
+        .collect(),
+        credits: rows[5].then(|| crate::models::CreditsSection {
+            percentage: 0.0,
+            ..stacked_rows_credits()
+        }),
+        ..Default::default()
+    };
+    let codex = |rows: [bool; 3]| UsageData {
+        session: section(rows[0]),
+        weekly: section(rows[1]),
+        credits: rows[2].then(|| crate::models::CreditsSection {
+            percentage: 0.0,
+            ..stacked_rows_credits()
+        }),
+        ..Default::default()
+    };
+    // Whole-pixel rows that always fill the 36 px block, e.g. 7+7+7+7+8.
+    let heights = |rows: usize| {
+        let rows = rows.max(1);
+        (0..rows)
+            .map(|index| 36 * (index + 1) / rows - 36 * index / rows)
+            .collect::<Vec<_>>()
+    };
+    let popups: Vec<usize> = theme
+        .surfaces
+        .iter()
+        .enumerate()
+        .filter(|(_, surface)| surface.id.ends_with("-popup"))
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(popups, [1, 2]);
+    // Runs of identical pixels down one column of a provider's block. With
+    // nothing used and no reset known, each row is a single flat track colour.
+    let runs = |pixels: &[u32], width: u32, x: u32| {
+        let column: Vec<u32> = (0..48).map(|y| pixels[(y * width + x) as usize]).collect();
+        assert!(column[..6]
+            .iter()
+            .chain(&column[42..])
+            .all(|p| p >> 24 == 0));
+        assert!(column[6..42].iter().all(|p| p >> 24 > 0), "rows must join");
+        let mut lengths = vec![1];
+        for pair in column[6..42].windows(2) {
+            if pair[0] == pair[1] {
+                *lengths.last_mut().unwrap() += 1;
+            } else {
+                lengths.push(1);
+            }
+        }
+        lengths
+    };
+    let runtime = ThemeRuntime::new(true, true, false);
+    for bits in 0..512u16 {
+        let flag = |bit: u16| bits & (1 << bit) != 0;
+        let claude_rows = (0..6).filter(|bit| flag(*bit)).count();
+        let codex_rows = (6..9).filter(|bit| flag(*bit)).count();
+        let data = AppUsageData::from_iter([
+            (
+                ProviderId::Claude,
+                claude([flag(0), flag(1), flag(2), flag(3), flag(4), flag(5)]),
+            ),
+            (ProviderId::Codex, codex([flag(6), flag(7), flag(8)])),
+        ]);
+        let rendered = render_theme_surface_with_runtime(&theme, 0, Some(&data), runtime);
+        assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+        assert_eq!((rendered.width, rendered.height), (214, 48));
+        for (x, rows) in [(42, claude_rows), (151, codex_rows)] {
+            assert_eq!(
+                runs(&rendered.pixels, rendered.width, x),
+                heights(rows),
+                "{bits:09b}"
+            );
+        }
+        for &surface_index in &popups {
+            assert!(!surface_should_render(
+                &theme,
+                surface_index,
+                Some(&data),
+                runtime
+            ));
+        }
+    }
+
+    let data = AppUsageData::from_iter([
+        (
+            ProviderId::Claude,
+            claude([true, true, true, false, false, true]),
+        ),
+        (ProviderId::Codex, codex([false, true, false])),
+    ]);
+    for (group, popup, rows) in [("claude-group", 1, 4), ("codex-group", 2, 1)] {
+        let mut overrides = HashMap::new();
+        let enter = theme.surfaces[0]
+            .children
+            .iter()
+            .find(|object| object.id == group)
+            .and_then(|object| object.mouse_events.clone())
+            .unwrap();
+        execute_mouse_actions(
+            &theme,
+            0,
+            group,
+            &enter.mouse_enter,
+            Some(&data),
+            runtime,
+            &mut overrides,
+        )
+        .unwrap();
+        let effective = apply_mouse_action_overrides(&theme, &overrides);
+        assert!(surface_should_render(
+            &effective,
+            popup,
+            Some(&data),
+            runtime
+        ));
+        let rendered = render_theme_surface_with_runtime(&effective, popup, Some(&data), runtime);
+        assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+        assert_eq!(
+            resolve_surface_content_size(&effective, popup, Some(&data), runtime),
+            (340, 16 + 40 + 12 + rows * 80 + (rows - 1) * 12 + 16)
+        );
+        // The flyout draws its own card, so the engine must not add its padded
+        // floating card behind it as a second frame.
+        let floating = runtime.with_nest(SurfaceNest::Floating);
+        assert_eq!(surface_horizontal_padding(&theme, popup, floating), 0);
+        let card = render_theme_surface_with_runtime(&effective, popup, Some(&data), floating);
+        assert_eq!(card.width, 340);
+        assert_eq!(card.pixels[0] >> 24, 0, "flyout corners stay transparent");
+        execute_mouse_actions(
+            &theme,
+            0,
+            group,
+            &enter.mouse_leave,
+            Some(&data),
+            runtime,
+            &mut overrides,
+        )
+        .unwrap();
+        let effective = apply_mouse_action_overrides(&theme, &overrides);
+        assert!(!surface_should_render(
+            &effective,
+            popup,
+            Some(&data),
+            runtime
+        ));
+    }
+}
+
+#[test]
+fn stacked_rows_follows_the_usage_direction_and_reports_every_state() {
+    use crate::models::{UsageData, UsageSection};
+    use std::time::{Duration, SystemTime};
+
+    let theme = stacked_rows_theme();
+    // A quarter of the five-hour window has elapsed.
+    let resets_at = Some(SystemTime::now() + Duration::from_secs(13_500));
+    let usage = |percentage| UsageData {
+        session: UsageSection {
+            available: true,
+            percentage,
+            resets_at,
+        },
+        ..Default::default()
+    };
+    let object = |id: &str| {
+        theme
+            .surfaces
+            .iter()
+            .flat_map(|surface| &surface.children)
+            .find(|object| object.id == id)
+            .unwrap_or_else(|| panic!("missing {id}"))
+    };
+    let context = |data: Option<&AppUsageData>, runtime: ThemeRuntime| {
+        let mut context = DataContext::from_usage_with_runtime(data, &Canvas::default(), runtime);
+        context.insert("system.dark", 1.0);
+        context
+    };
+    let shown =
+        |id: &str, context: &DataContext| evaluate(&object(id).render.0, context).unwrap() != 0.0;
+    let text = |id: &str, context: &DataContext| match &object(id).content {
+        SceneContent::Text { template, .. } => format_template(template, context),
+        _ => panic!("{id} is not text"),
+    };
+    let runtime = ThemeRuntime::new(true, false, false);
+
+    // Used: the bar fills a fifth and the pace line sits at 25%. Remaining:
+    // the bar fills four fifths and the line moves to the 75% mark.
+    let data = AppUsageData::from_iter([(ProviderId::Claude, usage(20.0))]);
+    for (countdown, value, projection, pace, pace_x) in [
+        (
+            false,
+            "20% used",
+            "5% under pace · ~80% used at reset",
+            "Pace 25%",
+            34 + 17,
+        ),
+        (
+            true,
+            "80% left",
+            "5% under pace · ~20% left at reset",
+            "Pace 75%",
+            34 + 49,
+        ),
+    ] {
+        let runtime = runtime.with_countdown(countdown);
+        let values = context(Some(&data), runtime);
+        assert_eq!(text("claude-popup-5h-used", &values), value);
+        assert!(shown("claude-popup-5h-status-ok", &values));
+        assert!(!shown("claude-popup-5h-status-bad", &values));
+        assert_eq!(text("claude-popup-5h-status-ok", &values), projection);
+        assert_eq!(text("claude-popup-5h-pace-label", &values), pace);
+
+        let rendered = render_theme_surface_with_runtime(&theme, 0, Some(&data), runtime);
+        let pixel = |x: u32| rendered.pixels[(24 * rendered.width + x) as usize];
+        assert_eq!(
+            pixel(pace_x),
+            0xFFFF00FF,
+            "pace line, countdown={countdown}"
+        );
+        // Section 3 of the bar is track when a fifth is used, fill when four
+        // fifths are left.
+        assert_eq!(pixel(34 + 5) == pixel(34 + 40), countdown);
+    }
+
+    let over = AppUsageData::from_iter([(ProviderId::Claude, usage(50.0))]);
+    let values = context(Some(&over), runtime);
+    assert!(shown("claude-popup-5h-status-bad", &values));
+    assert_eq!(
+        text("claude-popup-5h-status-bad", &values),
+        format!(
+            "25% over pace · runs out in ~{}",
+            format_template("{4500:duration}", &values)
+        )
+    );
+    let spent = AppUsageData::from_iter([(ProviderId::Claude, usage(100.0))]);
+    let values = context(Some(&spent), runtime);
+    assert!(shown("claude-popup-5h-status-spent", &values));
+    assert!(!shown("claude-popup-5h-status-bad", &values));
+
+    // Extra usage, model quotas and a monthly Codex allowance get their own rows.
+    let data = AppUsageData::from_iter([
+        (
+            ProviderId::Claude,
+            UsageData {
+                credits: Some(stacked_rows_credits()),
+                limits: vec![stacked_rows_model_limit("Opus", "seven_day_opus", 30.0)],
+                stale: true,
+                ..usage(100.0)
+            },
+        ),
+        (
+            ProviderId::Codex,
+            UsageData {
+                weekly: UsageSection {
+                    available: true,
+                    percentage: 10.0,
+                    resets_at,
+                },
+                weekly_label: Some("30d".into()),
+                ..Default::default()
+            },
+        ),
+    ]);
+    let runtime = ThemeRuntime::new(true, true, false);
+    for (countdown, credits, opus) in [
+        (false, "40% used", "30% used"),
+        (true, "60% left", "70% left"),
+    ] {
+        let values = context(Some(&data), runtime.with_countdown(countdown));
+        assert!(shown("claude-popup-credits", &values));
+        assert_eq!(text("claude-popup-credits-used", &values), credits);
+        assert_eq!(text("claude-popup-opus-used", &values), opus);
+    }
+    let values = context(Some(&data), runtime);
+    assert_eq!(
+        text("claude-popup-credits-balance", &values),
+        "$30.00 left of $50.00"
+    );
+    assert_eq!(text("codex-popup-7d-name", &values), "30 day");
+    // 13,500 s left of a 30-day window is nearly all of it elapsed.
+    assert_eq!(text("codex-popup-7d-pace-label", &values), "Pace 99%");
+    assert_eq!(
+        evaluate(&object("claude-block").visibility.0, &values).unwrap(),
+        55.0
+    );
+    assert_eq!(
+        evaluate(&object("codex-block").visibility.0, &values).unwrap(),
+        100.0
+    );
+    assert!(shown("claude-popup-stale", &values));
+    assert!(!shown("codex-popup-stale", &values));
+    assert_eq!(text("claude-popup-vendor", &values), "Anthropic");
+    let rendered = render_theme_surface_with_runtime(&theme, 1, Some(&data), runtime);
+    assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+
+    // With nothing to show, the flyout says why.
+    for (poll_ok, has_error, state) in [
+        (false, false, "waiting"),
+        (false, true, "error"),
+        (true, false, "none"),
+    ] {
+        let values = context(None, runtime.with_poll_state(poll_ok, has_error));
+        for candidate in ["waiting", "error", "none"] {
+            assert_eq!(
+                shown(&format!("claude-popup-{candidate}"), &values),
+                candidate == state,
+                "{state}: {candidate}"
+            );
+        }
+    }
 }

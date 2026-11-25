@@ -9,6 +9,8 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 ### Added
 
 - Let theme colours set an optional light-mode colour (`light_color`), so one layer can serve both Windows appearances instead of a pair of layers gated on `system.dark`. In Theme Studio, the sun and moon button beside a colour expands it into separate Dark mode and Light mode colours; collapsing keeps the dark mode colour. Colours without `light_color` render and save as before, and themes that keep separate per-mode layers are unaffected.
+- Add the Stacked Rows built-in theme: each provider's logo beside joined rows of four-section bars, one row per limit the account reports, with a magenta pace marker. Bars follow the Usage direction setting, and hovering a provider opens a flyout with each limit's usage, reset time and pace, or a waiting, error or no-usage message.
+- Add a Provider logo layer type (`provider_mark`) to themes and Theme Studio. It draws a provider's brand mark from the dashboard's icon font, tinted and fitted to the layer, so themes need no image assets to show a provider.
 
 ### Fixed
 

@@ -1,0 +1,5184 @@
+{
+  "schema_version": 1,
+  "id": "stacked-rows",
+  "name": "Stacked Rows",
+  "surfaces": [
+    {
+      "id": "main",
+      "name": "Stacked rows",
+      "render": "providers.claude.enabled || providers.codex.enabled",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "taskbar",
+        "horizontal": "left",
+        "vertical": "bottom",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": 6,
+        "offset_y": 0
+      },
+      "width": "max(1, providers.claude.enabled + providers.codex.enabled) * 105 + max(0, providers.claude.enabled + providers.codex.enabled - 1) * 4",
+      "height": "48",
+      "background": {
+        "type": "none"
+      },
+      "border": null,
+      "mouse_events": {
+        "double_click": "show_dashboard()",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "corner_radius": "0",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "provider-row",
+          "name": "Enabled providers",
+          "render": "1",
+          "visibility": "100",
+          "width": "canvas.width",
+          "height": "48",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "row",
+          "align": "start",
+          "gap": "4",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-group",
+          "name": "Claude Code group",
+          "render": "providers.claude.enabled",
+          "visibility": "100",
+          "parent": "provider-row",
+          "width": "105",
+          "height": "48",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "mouse_events": {
+            "double_click": "show_dashboard()",
+            "right_click": "show_context_menu(\"classic-v1\")",
+            "mouse_enter": "set(\"claude-popup\", render, 1)\nset(\"claude-hover\", render, 1)",
+            "mouse_leave": "set(\"claude-popup\", render, 0)\nset(\"claude-hover\", render, 0)"
+          },
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-hover",
+          "name": "Claude Code hover",
+          "render": "0",
+          "visibility": "100",
+          "parent": "claude-group",
+          "y": "2",
+          "width": "105",
+          "height": "44",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFF12",
+              "light_color": "#0000000F",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "4",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-mark",
+          "name": "Claude Code mark",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-group",
+          "x": "4",
+          "y": "12",
+          "width": "24",
+          "height": "24",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "provider_mark",
+            "provider": "claude",
+            "color": {
+              "color": "#D97757FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-block",
+          "name": "Claude Code rows",
+          "render": "1",
+          "visibility": "if(claude.stale, 55, 100)",
+          "parent": "claude-group",
+          "x": "34",
+          "y": "6",
+          "width": "67",
+          "height": "36",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "column",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-waiting",
+          "name": "Claude Code waiting",
+          "render": "(claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) == 0",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "36",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "0",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#FFFFFF26",
+              "light_color": "#0000001F",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#FFFFFF26",
+              "light_color": "#0000001F",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-5h",
+          "name": "Claude Code 5h row",
+          "render": "claude.five_hour.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * (0 + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * 0 / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-5h-bar",
+          "name": "Claude Code 5h bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-5h",
+          "y": "-2 * 0",
+          "width": "67",
+          "height": "floor(36 * (0 + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * 0 / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (0 + min(1, claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.five_hour.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF",
+              "light_color": "#C15F3CFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#D9775747",
+              "light_color": "#C15F3C42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-5h-pace",
+          "name": "Claude Code 5h pace",
+          "render": "claude.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-5h",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * (0 + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * 0 / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-7d",
+          "name": "Claude Code 7d row",
+          "render": "claude.weekly.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-7d-bar",
+          "name": "Claude Code 7d bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-7d",
+          "y": "-2 * min(1, claude.five_hour.available)",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (min(1, claude.five_hour.available) + min(1, claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#E8B04AFF",
+              "light_color": "#B7791FFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#E8B04A47",
+              "light_color": "#B7791F42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-7d-pace",
+          "name": "Claude Code 7d pace",
+          "render": "claude.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-7d",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * ((claude.five_hour.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-fable",
+          "name": "Claude Code fable row",
+          "render": "claude.model.fable.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-fable-bar",
+          "name": "Claude Code fable bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-fable",
+          "y": "-2 * min(1, claude.five_hour.available + claude.weekly.available)",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (min(1, claude.five_hour.available + claude.weekly.available) + min(1, claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#B48CF2FF",
+              "light_color": "#7C4DDBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#B48CF247",
+              "light_color": "#7C4DDB42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-fable-pace",
+          "name": "Claude Code fable pace",
+          "render": "claude.model.fable.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-fable",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-opus",
+          "name": "Claude Code opus row",
+          "render": "claude.model.opus.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-opus-bar",
+          "name": "Claude Code opus bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-opus",
+          "y": "-2 * min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available)",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available) + min(1, claude.model.sonnet.available + claude.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.opus.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#5FB7E5FF",
+              "light_color": "#1F78B4FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#5FB7E547",
+              "light_color": "#1F78B442",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-opus-pace",
+          "name": "Claude Code opus pace",
+          "render": "claude.model.opus.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-opus",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-sonnet",
+          "name": "Claude Code sonnet row",
+          "render": "claude.model.sonnet.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-sonnet-bar",
+          "name": "Claude Code sonnet bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-sonnet",
+          "y": "-2 * min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available)",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) + min(1, claude.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.sonnet.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6CCB8AFF",
+              "light_color": "#2E8B4EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#6CCB8A47",
+              "light_color": "#2E8B4E42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-sonnet-pace",
+          "name": "Claude Code sonnet pace",
+          "render": "claude.model.sonnet.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-sonnet",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-credits",
+          "name": "Claude Code credits row",
+          "render": "claude.credits.available",
+          "visibility": "100",
+          "parent": "claude-block",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-credits-bar",
+          "name": "Claude Code credits bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-credits",
+          "y": "-2 * min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available)",
+          "width": "67",
+          "height": "floor(36 * ((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available) + 1) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) - floor(36 * (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available) / max(1, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available))) + 2 * (min(1, claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available) + 0)",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C9CED6FF",
+              "light_color": "#6B7480FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#C9CED647",
+              "light_color": "#6B748042",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-group",
+          "name": "Codex group",
+          "render": "providers.codex.enabled",
+          "visibility": "100",
+          "parent": "provider-row",
+          "width": "105",
+          "height": "48",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "mouse_events": {
+            "double_click": "show_dashboard()",
+            "right_click": "show_context_menu(\"classic-v1\")",
+            "mouse_enter": "set(\"codex-popup\", render, 1)\nset(\"codex-hover\", render, 1)",
+            "mouse_leave": "set(\"codex-popup\", render, 0)\nset(\"codex-hover\", render, 0)"
+          },
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-hover",
+          "name": "Codex hover",
+          "render": "0",
+          "visibility": "100",
+          "parent": "codex-group",
+          "y": "2",
+          "width": "105",
+          "height": "44",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFF12",
+              "light_color": "#0000000F",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "4",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-mark",
+          "name": "Codex mark",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-group",
+          "x": "4",
+          "y": "12",
+          "width": "24",
+          "height": "24",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "provider_mark",
+            "provider": "codex",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-block",
+          "name": "Codex rows",
+          "render": "1",
+          "visibility": "if(codex.stale, 55, 100)",
+          "parent": "codex-group",
+          "x": "34",
+          "y": "6",
+          "width": "67",
+          "height": "36",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "column",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-waiting",
+          "name": "Codex waiting",
+          "render": "(codex.five_hour.available + codex.weekly.available + codex.credits.available) == 0",
+          "visibility": "100",
+          "parent": "codex-block",
+          "width": "67",
+          "height": "36",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "0",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#FFFFFF26",
+              "light_color": "#0000001F",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#FFFFFF26",
+              "light_color": "#0000001F",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-5h",
+          "name": "Codex 5h row",
+          "render": "codex.five_hour.available",
+          "visibility": "100",
+          "parent": "codex-block",
+          "width": "67",
+          "height": "floor(36 * (0 + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * 0 / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-5h-bar",
+          "name": "Codex 5h bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-5h",
+          "y": "-2 * 0",
+          "width": "67",
+          "height": "floor(36 * (0 + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * 0 / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) + 2 * (0 + min(1, codex.weekly.available + codex.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.five_hour.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2FC79BFF",
+              "light_color": "#0E8A6BFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#2FC79B47",
+              "light_color": "#0E8A6B42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-5h-pace",
+          "name": "Codex 5h pace",
+          "render": "codex.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-5h",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * (0 + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * 0 / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-7d",
+          "name": "Codex 7d row",
+          "render": "codex.weekly.available",
+          "visibility": "100",
+          "parent": "codex-block",
+          "width": "67",
+          "height": "floor(36 * ((codex.five_hour.available) + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * (codex.five_hour.available) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-7d-bar",
+          "name": "Codex 7d bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-7d",
+          "y": "-2 * min(1, codex.five_hour.available)",
+          "width": "67",
+          "height": "floor(36 * ((codex.five_hour.available) + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * (codex.five_hour.available) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) + 2 * (min(1, codex.five_hour.available) + min(1, codex.credits.available))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4EA3F7FF",
+              "light_color": "#2B7BD6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#4EA3F747",
+              "light_color": "#2B7BD642",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-7d-pace",
+          "name": "Codex 7d pace",
+          "render": "codex.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-7d",
+          "x": "min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100), clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)) / 100)) - (min(66, round(67 * if(display.countdown, 100 - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100), clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)) / 100)) % 17 == 16)",
+          "width": "1",
+          "height": "floor(36 * ((codex.five_hour.available) + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * (codex.five_hour.available) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available)))",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-credits",
+          "name": "Codex credits row",
+          "render": "codex.credits.available",
+          "visibility": "100",
+          "parent": "codex-block",
+          "width": "67",
+          "height": "floor(36 * ((codex.five_hour.available + codex.weekly.available) + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * (codex.five_hour.available + codex.weekly.available) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available)))",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-credits-bar",
+          "name": "Codex credits bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-credits",
+          "y": "-2 * min(1, codex.five_hour.available + codex.weekly.available)",
+          "width": "67",
+          "height": "floor(36 * ((codex.five_hour.available + codex.weekly.available) + 1) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) - floor(36 * (codex.five_hour.available + codex.weekly.available) / max(1, (codex.five_hour.available + codex.weekly.available + codex.credits.available))) + 2 * (min(1, codex.five_hour.available + codex.weekly.available) + 0)",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F2C14EFF",
+              "light_color": "#A87400FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#F2C14E47",
+              "light_color": "#A8740042",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "claude-popup",
+      "name": "Claude Code flyout",
+      "render": "0",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "floating",
+        "horizontal": "left",
+        "vertical": "top",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": 2,
+        "offset_x_expression": "6 - 4 - (providers.codex.enabled) * 109",
+        "offset_y": -8
+      },
+      "width": "340",
+      "height": "16 + 40 + 12 + if((claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) == 0, 24, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) * 80 + max(0, (claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) - 1) * 12) + 16",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#000000",
+          "opacity": "0"
+        }
+      },
+      "border": null,
+      "corner_radius": "0",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "claude-popup-bg",
+          "name": "Flyout background",
+          "render": "1",
+          "visibility": "100",
+          "width": "canvas.width",
+          "height": "canvas.height",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#2B2B2BFF",
+              "light_color": "#F9F9F9FF",
+              "opacity": "1"
+            }
+          },
+          "border": {
+            "color": {
+              "color": "#3C3C3CFF",
+              "light_color": "#E0E0E0FF",
+              "opacity": "1"
+            },
+            "width": "1"
+          },
+          "corner_radius": "8",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-mark",
+          "name": "Flyout mark",
+          "render": "1",
+          "visibility": "100",
+          "x": "16",
+          "y": "22",
+          "width": "28",
+          "height": "28",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "provider_mark",
+            "provider": "claude",
+            "color": {
+              "color": "#D97757FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-title",
+          "name": "Flyout title",
+          "render": "1",
+          "visibility": "100",
+          "x": "54",
+          "y": "16",
+          "width": "180",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Claude Code",
+            "font_family": "Segoe UI",
+            "font_size": "16",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-vendor",
+          "name": "Flyout vendor",
+          "render": "1",
+          "visibility": "100",
+          "x": "54",
+          "y": "38",
+          "width": "270",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Anthropic{if(claude.account.name != \"\" && claude.account.name != \"Default\", \" · \", \"\")}{if(claude.account.name != \"\" && claude.account.name != \"Default\", claude.account.name, \"\")}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-stale",
+          "name": "Flyout last known",
+          "render": "claude.stale",
+          "visibility": "100",
+          "x": "234",
+          "y": "18",
+          "width": "90",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Last known",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-waiting",
+          "name": "Flyout waiting",
+          "render": "(claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) == 0 && data.loading",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Waiting for usage data",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-error",
+          "name": "Flyout error",
+          "render": "(claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) == 0 && data.has_error",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Couldn't load usage · retrying",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-none",
+          "name": "Flyout none",
+          "render": "(claude.five_hour.available + claude.weekly.available + claude.model.fable.available + claude.model.opus.available + claude.model.sonnet.available + claude.credits.available) == 0 && !data.loading && !data.has_error",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No usage reported for this account",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-rows",
+          "name": "Flyout rows",
+          "render": "1",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "canvas.height - 84",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "column",
+          "align": "start",
+          "gap": "12",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-5h",
+          "name": "Claude Code 5h details",
+          "render": "claude.five_hour.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-5h-name",
+          "name": "5h name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "5 hour",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#D97757FF",
+              "light_color": "#C15F3CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-used",
+          "name": "5h value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.five_hour.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-bar",
+          "name": "5h bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.five_hour.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#D97757FF",
+              "light_color": "#C15F3CFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#D9775747",
+              "light_color": "#C15F3C42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-5h-status-ok",
+          "name": "5h under pace",
+          "render": "claude.five_hour.reset.seconds > 0 && !(claude.five_hour.percentage > clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100))",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100) - claude.five_hour.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(claude.five_hour.percentage * 100 / max(1, clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)))), min(100, round(claude.five_hour.percentage * 100 / max(1, clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-status-bad",
+          "name": "5h over pace",
+          "render": "claude.five_hour.reset.seconds > 0 && claude.five_hour.percentage > clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100) && !(claude.five_hour.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.five_hour.percentage - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100):0}% over pace · runs out in ~{(100 - claude.five_hour.percentage) * ((18000) - claude.five_hour.reset.seconds) / max(0.01, claude.five_hour.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-status-spent",
+          "name": "5h limit reached",
+          "render": "claude.five_hour.percentage >= 100",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-pace-label",
+          "name": "5h pace value",
+          "render": "claude.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-reset",
+          "name": "5h reset",
+          "render": "claude.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {claude.five_hour.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-reset-at",
+          "name": "5h reset time",
+          "render": "claude.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.five_hour.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-no-reset",
+          "name": "5h no reset",
+          "render": "!(claude.five_hour.reset.seconds > 0) && !(claude.five_hour.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-5h-pace",
+          "name": "5h pace",
+          "render": "claude.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-5h",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - claude.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-7d",
+          "name": "Claude Code 7d details",
+          "render": "claude.weekly.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-7d-name",
+          "name": "7d name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "7 day",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#E8B04AFF",
+              "light_color": "#B7791FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-used",
+          "name": "7d value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-bar",
+          "name": "7d bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#E8B04AFF",
+              "light_color": "#B7791FFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#E8B04A47",
+              "light_color": "#B7791F42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-7d-status-ok",
+          "name": "7d under pace",
+          "render": "claude.weekly.reset.seconds > 0 && !(claude.weekly.percentage > clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100))",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100) - claude.weekly.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(claude.weekly.percentage * 100 / max(1, clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)))), min(100, round(claude.weekly.percentage * 100 / max(1, clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-status-bad",
+          "name": "7d over pace",
+          "render": "claude.weekly.reset.seconds > 0 && claude.weekly.percentage > clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100) && !(claude.weekly.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.percentage - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100):0}% over pace · runs out in ~{(100 - claude.weekly.percentage) * ((604800) - claude.weekly.reset.seconds) / max(0.01, claude.weekly.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-status-spent",
+          "name": "7d limit reached",
+          "render": "claude.weekly.percentage >= 100",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-pace-label",
+          "name": "7d pace value",
+          "render": "claude.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-reset",
+          "name": "7d reset",
+          "render": "claude.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {claude.weekly.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-reset-at",
+          "name": "7d reset time",
+          "render": "claude.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.reset.unix:weekday_short} {claude.weekly.reset.unix:day} {claude.weekly.reset.unix:month_short}, {claude.weekly.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-no-reset",
+          "name": "7d no reset",
+          "render": "!(claude.weekly.reset.seconds > 0) && !(claude.weekly.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-7d-pace",
+          "name": "7d pace",
+          "render": "claude.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-7d",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.weekly.reset.seconds / (604800)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-fable",
+          "name": "Claude Code fable details",
+          "render": "claude.model.fable.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-fable-name",
+          "name": "fable name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Fable 7 day",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#B48CF2FF",
+              "light_color": "#7C4DDBFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-used",
+          "name": "fable value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.fable.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-bar",
+          "name": "fable bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.fable.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#B48CF2FF",
+              "light_color": "#7C4DDBFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#B48CF247",
+              "light_color": "#7C4DDB42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-fable-status-ok",
+          "name": "fable under pace",
+          "render": "claude.model.fable.reset.seconds > 0 && !(claude.model.fable.percentage > clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100))",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100) - claude.model.fable.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(claude.model.fable.percentage * 100 / max(1, clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)))), min(100, round(claude.model.fable.percentage * 100 / max(1, clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-status-bad",
+          "name": "fable over pace",
+          "render": "claude.model.fable.reset.seconds > 0 && claude.model.fable.percentage > clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100) && !(claude.model.fable.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.fable.percentage - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100):0}% over pace · runs out in ~{(100 - claude.model.fable.percentage) * ((604800) - claude.model.fable.reset.seconds) / max(0.01, claude.model.fable.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-status-spent",
+          "name": "fable limit reached",
+          "render": "claude.model.fable.percentage >= 100",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-pace-label",
+          "name": "fable pace value",
+          "render": "claude.model.fable.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-reset",
+          "name": "fable reset",
+          "render": "claude.model.fable.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {claude.model.fable.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-reset-at",
+          "name": "fable reset time",
+          "render": "claude.model.fable.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.fable.reset.unix:weekday_short} {claude.model.fable.reset.unix:day} {claude.model.fable.reset.unix:month_short}, {claude.model.fable.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-no-reset",
+          "name": "fable no reset",
+          "render": "!(claude.model.fable.reset.seconds > 0) && !(claude.model.fable.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-fable-pace",
+          "name": "fable pace",
+          "render": "claude.model.fable.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-fable",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.fable.reset.seconds / (604800)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-opus",
+          "name": "Claude Code opus details",
+          "render": "claude.model.opus.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-opus-name",
+          "name": "opus name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Opus 7 day",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#5FB7E5FF",
+              "light_color": "#1F78B4FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-used",
+          "name": "opus value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.opus.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-bar",
+          "name": "opus bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.opus.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#5FB7E5FF",
+              "light_color": "#1F78B4FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#5FB7E547",
+              "light_color": "#1F78B442",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-opus-status-ok",
+          "name": "opus under pace",
+          "render": "claude.model.opus.reset.seconds > 0 && !(claude.model.opus.percentage > clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100))",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100) - claude.model.opus.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(claude.model.opus.percentage * 100 / max(1, clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)))), min(100, round(claude.model.opus.percentage * 100 / max(1, clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-status-bad",
+          "name": "opus over pace",
+          "render": "claude.model.opus.reset.seconds > 0 && claude.model.opus.percentage > clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100) && !(claude.model.opus.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.opus.percentage - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100):0}% over pace · runs out in ~{(100 - claude.model.opus.percentage) * ((604800) - claude.model.opus.reset.seconds) / max(0.01, claude.model.opus.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-status-spent",
+          "name": "opus limit reached",
+          "render": "claude.model.opus.percentage >= 100",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-pace-label",
+          "name": "opus pace value",
+          "render": "claude.model.opus.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-reset",
+          "name": "opus reset",
+          "render": "claude.model.opus.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {claude.model.opus.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-reset-at",
+          "name": "opus reset time",
+          "render": "claude.model.opus.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.opus.reset.unix:weekday_short} {claude.model.opus.reset.unix:day} {claude.model.opus.reset.unix:month_short}, {claude.model.opus.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-no-reset",
+          "name": "opus no reset",
+          "render": "!(claude.model.opus.reset.seconds > 0) && !(claude.model.opus.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-opus-pace",
+          "name": "opus pace",
+          "render": "claude.model.opus.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-opus",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.opus.reset.seconds / (604800)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-sonnet",
+          "name": "Claude Code sonnet details",
+          "render": "claude.model.sonnet.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-name",
+          "name": "sonnet name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Sonnet 7 day",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB8AFF",
+              "light_color": "#2E8B4EFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-used",
+          "name": "sonnet value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.sonnet.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-bar",
+          "name": "sonnet bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.model.sonnet.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#6CCB8AFF",
+              "light_color": "#2E8B4EFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#6CCB8A47",
+              "light_color": "#2E8B4E42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-status-ok",
+          "name": "sonnet under pace",
+          "render": "claude.model.sonnet.reset.seconds > 0 && !(claude.model.sonnet.percentage > clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100))",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100) - claude.model.sonnet.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(claude.model.sonnet.percentage * 100 / max(1, clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)))), min(100, round(claude.model.sonnet.percentage * 100 / max(1, clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-status-bad",
+          "name": "sonnet over pace",
+          "render": "claude.model.sonnet.reset.seconds > 0 && claude.model.sonnet.percentage > clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100) && !(claude.model.sonnet.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.sonnet.percentage - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100):0}% over pace · runs out in ~{(100 - claude.model.sonnet.percentage) * ((604800) - claude.model.sonnet.reset.seconds) / max(0.01, claude.model.sonnet.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-status-spent",
+          "name": "sonnet limit reached",
+          "render": "claude.model.sonnet.percentage >= 100",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-pace-label",
+          "name": "sonnet pace value",
+          "render": "claude.model.sonnet.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-reset",
+          "name": "sonnet reset",
+          "render": "claude.model.sonnet.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {claude.model.sonnet.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-reset-at",
+          "name": "sonnet reset time",
+          "render": "claude.model.sonnet.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.model.sonnet.reset.unix:weekday_short} {claude.model.sonnet.reset.unix:day} {claude.model.sonnet.reset.unix:month_short}, {claude.model.sonnet.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-no-reset",
+          "name": "sonnet no reset",
+          "render": "!(claude.model.sonnet.reset.seconds > 0) && !(claude.model.sonnet.percentage >= 100)",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-sonnet-pace",
+          "name": "sonnet pace",
+          "render": "claude.model.sonnet.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "claude-popup-sonnet",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100), clamp(100 * (1 - claude.model.sonnet.reset.seconds / (604800)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-credits",
+          "name": "Claude Code credits details",
+          "render": "claude.credits.available",
+          "visibility": "100",
+          "parent": "claude-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "claude-popup-credits-name",
+          "name": "credits name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-credits",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Extra usage",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#C9CED6FF",
+              "light_color": "#6B7480FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-credits-used",
+          "name": "credits value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-credits",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-credits-bar",
+          "name": "credits bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-credits",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "claude.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#C9CED6FF",
+              "light_color": "#6B7480FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#C9CED647",
+              "light_color": "#6B748042",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "claude-popup-credits-balance",
+          "name": "credits balance",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-credits",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${claude.credits.balance:0.00} left of ${claude.credits.total:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "claude-popup-credits-note",
+          "name": "credits note",
+          "render": "1",
+          "visibility": "100",
+          "parent": "claude-popup-credits",
+          "y": "60",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "In use while a plan limit is reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "codex-popup",
+      "name": "Codex flyout",
+      "render": "0",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "floating",
+        "horizontal": "left",
+        "vertical": "top",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": 2,
+        "offset_x_expression": "6 - 4",
+        "offset_y": -8
+      },
+      "width": "340",
+      "height": "16 + 40 + 12 + if((codex.five_hour.available + codex.weekly.available + codex.credits.available) == 0, 24, (codex.five_hour.available + codex.weekly.available + codex.credits.available) * 80 + max(0, (codex.five_hour.available + codex.weekly.available + codex.credits.available) - 1) * 12) + 16",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#000000",
+          "opacity": "0"
+        }
+      },
+      "border": null,
+      "corner_radius": "0",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "codex-popup-bg",
+          "name": "Flyout background",
+          "render": "1",
+          "visibility": "100",
+          "width": "canvas.width",
+          "height": "canvas.height",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#2B2B2BFF",
+              "light_color": "#F9F9F9FF",
+              "opacity": "1"
+            }
+          },
+          "border": {
+            "color": {
+              "color": "#3C3C3CFF",
+              "light_color": "#E0E0E0FF",
+              "opacity": "1"
+            },
+            "width": "1"
+          },
+          "corner_radius": "8",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-mark",
+          "name": "Flyout mark",
+          "render": "1",
+          "visibility": "100",
+          "x": "16",
+          "y": "22",
+          "width": "28",
+          "height": "28",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "provider_mark",
+            "provider": "codex",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-title",
+          "name": "Flyout title",
+          "render": "1",
+          "visibility": "100",
+          "x": "54",
+          "y": "16",
+          "width": "180",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Codex",
+            "font_family": "Segoe UI",
+            "font_size": "16",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-vendor",
+          "name": "Flyout vendor",
+          "render": "1",
+          "visibility": "100",
+          "x": "54",
+          "y": "38",
+          "width": "270",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "OpenAI{if(codex.account.name != \"\" && codex.account.name != \"Default\", \" · \", \"\")}{if(codex.account.name != \"\" && codex.account.name != \"Default\", codex.account.name, \"\")}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-stale",
+          "name": "Flyout last known",
+          "render": "codex.stale",
+          "visibility": "100",
+          "x": "234",
+          "y": "18",
+          "width": "90",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Last known",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-waiting",
+          "name": "Flyout waiting",
+          "render": "(codex.five_hour.available + codex.weekly.available + codex.credits.available) == 0 && data.loading",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Waiting for usage data",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-error",
+          "name": "Flyout error",
+          "render": "(codex.five_hour.available + codex.weekly.available + codex.credits.available) == 0 && data.has_error",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Couldn't load usage · retrying",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-none",
+          "name": "Flyout none",
+          "render": "(codex.five_hour.available + codex.weekly.available + codex.credits.available) == 0 && !data.loading && !data.has_error",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "20",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No usage reported for this account",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-rows",
+          "name": "Flyout rows",
+          "render": "1",
+          "visibility": "100",
+          "x": "16",
+          "y": "68",
+          "width": "308",
+          "height": "canvas.height - 84",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "column",
+          "align": "start",
+          "gap": "12",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-5h",
+          "name": "Codex 5h details",
+          "render": "codex.five_hour.available",
+          "visibility": "100",
+          "parent": "codex-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-5h-name",
+          "name": "5h name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "5 hour",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#2FC79BFF",
+              "light_color": "#0E8A6BFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-used",
+          "name": "5h value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.five_hour.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-bar",
+          "name": "5h bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.five_hour.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#2FC79BFF",
+              "light_color": "#0E8A6BFF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#2FC79B47",
+              "light_color": "#0E8A6B42",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-popup-5h-status-ok",
+          "name": "5h under pace",
+          "render": "codex.five_hour.reset.seconds > 0 && !(codex.five_hour.percentage > clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100))",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100) - codex.five_hour.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(codex.five_hour.percentage * 100 / max(1, clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)))), min(100, round(codex.five_hour.percentage * 100 / max(1, clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-status-bad",
+          "name": "5h over pace",
+          "render": "codex.five_hour.reset.seconds > 0 && codex.five_hour.percentage > clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100) && !(codex.five_hour.percentage >= 100)",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.five_hour.percentage - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100):0}% over pace · runs out in ~{(100 - codex.five_hour.percentage) * ((18000) - codex.five_hour.reset.seconds) / max(0.01, codex.five_hour.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-status-spent",
+          "name": "5h limit reached",
+          "render": "codex.five_hour.percentage >= 100",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-pace-label",
+          "name": "5h pace value",
+          "render": "codex.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-reset",
+          "name": "5h reset",
+          "render": "codex.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {codex.five_hour.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-reset-at",
+          "name": "5h reset time",
+          "render": "codex.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.five_hour.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-no-reset",
+          "name": "5h no reset",
+          "render": "!(codex.five_hour.reset.seconds > 0) && !(codex.five_hour.percentage >= 100)",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-5h-pace",
+          "name": "5h pace",
+          "render": "codex.five_hour.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-5h",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100), clamp(100 * (1 - codex.five_hour.reset.seconds / (18000)), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-7d",
+          "name": "Codex 7d details",
+          "render": "codex.weekly.available",
+          "visibility": "100",
+          "parent": "codex-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-7d-name",
+          "name": "7d name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{if(codex.weekly.label == \"30d\", \"30 day\", \"7 day\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#4EA3F7FF",
+              "light_color": "#2B7BD6FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-used",
+          "name": "7d value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.weekly.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-bar",
+          "name": "7d bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.weekly.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#4EA3F7FF",
+              "light_color": "#2B7BD6FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#4EA3F747",
+              "light_color": "#2B7BD642",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-popup-7d-status-ok",
+          "name": "7d under pace",
+          "render": "codex.weekly.reset.seconds > 0 && !(codex.weekly.percentage > clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100))",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100) - codex.weekly.percentage:0}% under pace · ~{if(display.countdown, 100 - min(100, round(codex.weekly.percentage * 100 / max(1, clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)))), min(100, round(codex.weekly.percentage * 100 / max(1, clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100))))):0}% {if(display.countdown, \"left\", \"used\")} at reset",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#6CCB5FFF",
+              "light_color": "#0F7B0FFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-status-bad",
+          "name": "7d over pace",
+          "render": "codex.weekly.reset.seconds > 0 && codex.weekly.percentage > clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100) && !(codex.weekly.percentage >= 100)",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.weekly.percentage - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100):0}% over pace · runs out in ~{(100 - codex.weekly.percentage) * ((if(codex.weekly.label == \"30d\", 2592000, 604800)) - codex.weekly.reset.seconds) / max(0.01, codex.weekly.percentage):duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-status-spent",
+          "name": "7d limit reached",
+          "render": "codex.weekly.percentage >= 100",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "42",
+          "width": "228",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Limit reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FF6B5EFF",
+              "light_color": "#C42B1CFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-pace-label",
+          "name": "7d pace value",
+          "render": "codex.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "x": "228",
+          "y": "42",
+          "width": "80",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Pace {if(display.countdown, 100 - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100), clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)):0}%",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-reset",
+          "name": "7d reset",
+          "render": "codex.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Resets in {codex.weekly.reset.seconds:duration}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-reset-at",
+          "name": "7d reset time",
+          "render": "codex.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "x": "154",
+          "y": "60",
+          "width": "154",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.weekly.reset.unix:weekday_short} {codex.weekly.reset.unix:day} {codex.weekly.reset.unix:month_short}, {codex.weekly.reset.unix:time_short}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-no-reset",
+          "name": "7d no reset",
+          "render": "!(codex.weekly.reset.seconds > 0) && !(codex.weekly.percentage >= 100)",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "No reset time reported",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-7d-pace",
+          "name": "7d pace",
+          "render": "codex.weekly.reset.seconds > 0",
+          "visibility": "100",
+          "parent": "codex-popup-7d",
+          "x": "min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100), clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)) / 100)) - (min(306, round(307 * if(display.countdown, 100 - clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100), clamp(100 * (1 - codex.weekly.reset.seconds / (if(codex.weekly.label == \"30d\", 2592000, 604800))), 0, 100)) / 100)) % 77 == 76)",
+          "y": "26",
+          "width": "1",
+          "height": "8",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FF00FFFF",
+              "opacity": "1"
+            }
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-credits",
+          "name": "Codex credits details",
+          "render": "codex.credits.available",
+          "visibility": "100",
+          "parent": "codex-popup-rows",
+          "width": "308",
+          "height": "80",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "codex-popup-credits-name",
+          "name": "credits name",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-credits",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "Credits",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#F2C14EFF",
+              "light_color": "#A87400FF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-credits-used",
+          "name": "credits value",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-credits",
+          "x": "154",
+          "width": "154",
+          "height": "22",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.display:0}% {if(display.countdown, \"left\", \"used\")}",
+            "font_family": "Segoe UI",
+            "font_size": "15",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-credits-bar",
+          "name": "credits bar",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-credits",
+          "y": "26",
+          "width": "307",
+          "height": "8",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "progress",
+            "value": "codex.credits.display",
+            "direction": "left_to_right",
+            "fill": {
+              "color": "#F2C14EFF",
+              "light_color": "#A87400FF",
+              "opacity": "1"
+            },
+            "track": {
+              "color": "#F2C14E47",
+              "light_color": "#A8740042",
+              "opacity": "1"
+            },
+            "corner_radius": "2",
+            "segments": 4,
+            "segment_gap": "1"
+          }
+        },
+        {
+          "id": "codex-popup-credits-balance",
+          "name": "credits balance",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-credits",
+          "y": "42",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "${codex.credits.balance:0.00} left of ${codex.credits.total:0.00}",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFFFF",
+              "light_color": "#1A1A1AFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "codex-popup-credits-note",
+          "name": "credits note",
+          "render": "1",
+          "visibility": "100",
+          "parent": "codex-popup-credits",
+          "y": "60",
+          "width": "308",
+          "height": "18",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "In use while a plan limit is reached",
+            "font_family": "Segoe UI",
+            "font_size": "13",
+            "weight": "regular",
+            "rendering": "clear_type",
+            "contrast": "1",
+            "align": "left",
+            "color": {
+              "color": "#FFFFFF9E",
+              "light_color": "#1A1A1A9E",
+              "opacity": "1"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "claude-tray-icon",
+      "name": "Claude Code usage",
+      "render": "providers.claude.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#D97757FF"
+        }
+      },
+      "corner_radius": "1",
+      "children": [
+        {
+          "id": "claude-tray-70-color",
+          "name": "Claude 50 to 70 percent colour transition",
+          "render": "claude.headline.percentage > 50",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#D08540FF",
+              "opacity": "clamp((claude.session.percentage - 50) / 20, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-85-color",
+          "name": "Claude 70 to 85 percent colour transition",
+          "render": "claude.headline.percentage > 70",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#CC8C20FF",
+              "opacity": "clamp((claude.session.percentage - 70) / 15, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-95-color",
+          "name": "Claude 85 to 95 percent colour transition",
+          "render": "claude.headline.percentage > 85",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#C45020FF",
+              "opacity": "clamp((claude.session.percentage - 85) / 10, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-100-color",
+          "name": "Claude 95 to 100 percent colour transition",
+          "render": "claude.headline.percentage > 95",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#B82020FF",
+              "opacity": "clamp((claude.session.percentage - 95) / 5, 0, 1)"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "claude-tray-one-digit",
+          "name": "Claude one-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display < 9.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-two-digits",
+          "name": "Claude two-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display >= 9.5 && claude.headline.display < 99.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-three-digits",
+          "name": "Claude three-digit percentage",
+          "render": "(data.poll_ok && claude.available && claude.headline.display >= 99.5) && claude.credits.available == 0",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-one-digit",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance < 9.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-two-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 9.5 && claude.credits.balance < 99.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-three-digits",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 99.5 && claude.credits.balance < 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "claude-tray-credit-thousands",
+          "name": "claude credit balance badge",
+          "render": "data.poll_ok && claude.available && claude.credits.available && claude.credits.balance >= 999.5",
+          "parent": "claude-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{claude.credits.balance / 1000:0.0}k",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "codex-tray-icon",
+      "name": "Codex usage",
+      "render": "providers.codex.enabled",
+      "mouse_events": {
+        "click": "toggle(\"main\", render)",
+        "double_click": "toggle(\"main\", render)",
+        "right_click": "show_context_menu(\"classic-v1\")"
+      },
+      "placement": {
+        "nest": "tray_icon"
+      },
+      "width": "64",
+      "height": "64",
+      "background": {
+        "type": "colour",
+        "colour": {
+          "color": "#FFFFFFFF"
+        }
+      },
+      "corner_radius": "3",
+      "children": [
+        {
+          "id": "codex-tray-high-outline",
+          "name": "Codex high-usage dark outline",
+          "render": "codex.headline.percentage >= 90",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#111111FF"
+            }
+          },
+          "corner_radius": "3"
+        },
+        {
+          "id": "codex-tray-low-fill",
+          "name": "Codex normal dark fill",
+          "render": "codex.headline.percentage < 90",
+          "parent": "codex-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#111111FF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "codex-tray-high-fill",
+          "name": "Codex high-usage white fill",
+          "render": "codex.headline.percentage >= 90",
+          "parent": "codex-tray-icon",
+          "x": "3",
+          "y": "3",
+          "width": "58",
+          "height": "58",
+          "background": {
+            "type": "colour",
+            "colour": {
+              "color": "#FFFFFFFF"
+            }
+          },
+          "corner_radius": "1"
+        },
+        {
+          "id": "codex-tray-placeholder",
+          "name": "Codex loading placeholder",
+          "render": "data.poll_ok == 0 || codex.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "C",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-one-digit",
+          "name": "Codex normal one-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display < 9.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-two-digits",
+          "name": "Codex normal two-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 9.5 && codex.headline.display < 99.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-low-three-digits",
+          "name": "Codex normal three-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 99.5 && codex.headline.percentage < 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-one-digit",
+          "name": "Codex high-usage one-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display < 9.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-two-digits",
+          "name": "Codex high-usage two-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 9.5 && codex.headline.display < 99.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-high-three-digits",
+          "name": "Codex high-usage three-digit percentage",
+          "render": "(data.poll_ok && codex.available && codex.headline.display >= 99.5 && codex.headline.percentage >= 90) && codex.credits.available == 0",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.headline.display:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-one-digit",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance < 9.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "50",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-two-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 9.5 && codex.credits.balance < 99.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "42",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#FFFFFFFF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-three-digits",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 99.5 && codex.credits.balance < 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance:0}",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        },
+        {
+          "id": "codex-tray-credit-thousands",
+          "name": "codex credit balance badge",
+          "render": "data.poll_ok && codex.available && codex.credits.available && codex.credits.balance >= 999.5",
+          "parent": "codex-tray-icon",
+          "width": "64",
+          "height": "64",
+          "content": {
+            "type": "text",
+            "template": "{codex.credits.balance / 1000:0.0}k",
+            "font_family": "Arial Bold",
+            "font_size": "30",
+            "weight": "bold",
+            "align": "center",
+            "color": {
+              "color": "#111111FF"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

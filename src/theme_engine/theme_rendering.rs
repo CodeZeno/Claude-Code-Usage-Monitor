@@ -1075,6 +1075,34 @@ pub(super) fn render_object_content(
                 color.resolve(context),
             );
         }
+        SceneContent::ProviderMark { provider, color } => {
+            let Some(provider) = crate::providers::ProviderId::from_key(provider) else {
+                warnings.push(format!(
+                    "{}: '{provider}' is not a provider key",
+                    object.source.name
+                ));
+                return;
+            };
+            // Each mark fills a square em (ascent 1000, descent 0) with its
+            // artwork's padding built in, so the em is the fitted square.
+            let size = width.min(height) as f64;
+            if size < 1.0 {
+                return;
+            }
+            render_text_mask(
+                pixels,
+                width,
+                height,
+                &crate::ui::theme::provider_mark_glyph(provider).to_string(),
+                crate::widget_font::brand_mark_family(),
+                size,
+                400,
+                FontRendering::Antialiased,
+                1.0,
+                TextAlign::Center,
+                color.resolve(context),
+            );
+        }
     }
 }
 

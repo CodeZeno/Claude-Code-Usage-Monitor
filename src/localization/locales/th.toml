@@ -462,6 +462,7 @@ copilot_window_title = "ตัวติดตามการใช้งาน C
 "Keep the widget docked; never float automatically" = "Keep the widget docked; never float automatically"
 "Locked" = "Locked"
 "Updates are managed by Chocolatey. Save your work and quit the monitor and dashboard, then run this command in an administrator terminal:\n\nchoco upgrade claude-code-usage-monitor\n\nStart the monitor again after the upgrade completes." = "Chocolatey เป็นผู้จัดการการอัปเดต บันทึกงานของคุณ ปิดโปรแกรมและแดชบอร์ด แล้วเรียกใช้คำสั่งนี้ในเทอร์มินัลผู้ดูแลระบบ:\n\nchoco upgrade claude-code-usage-monitor\n\nเริ่มโปรแกรมอีกครั้งหลังจากการอัปเกรดเสร็จสมบูรณ์"
+"Provider logo" = "โลโก้ผู้ให้บริการ"
 "Dark and light" = "มืดและสว่าง"
 "Dark mode" = "โหมดมืด"
 "Light mode" = "โหมดสว่าง"
