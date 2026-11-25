@@ -40,7 +40,10 @@ accounts. Keep credentials and local configuration out of commits and fixtures.
 
 See the [user guide](USER_GUIDE.md) for application behavior,
 [localization guide](src/localization/README.md) for translations, and
-[updater documentation](docs/updater.md) for update verification changes.
+[updater documentation](docs/updater.md) for update verification changes. The
+[feature map](docs/feature-map.md) names each part of the app (widget, tray icon,
+context menu, dashboard pages, Theme Studio panels) and where its code lives; use
+those names in issues and pull requests.
 
 ## Checks
 

@@ -17,6 +17,7 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 - Render themes to PNG without starting the app: `--render-theme <theme.json | built-in id> --out <file.png | folder>`, with `--surface`, `--appearance`, `--fixture`, `--now`, `--utc-offset` and `--scale`. The clock, time zone and appearance are fixed, so the same input gives the same image. See [CONTRIBUTING.md](CONTRIBUTING.md#theme-changes).
 - Test every surface of every built-in theme in dark and light mode against reference images in `tests/snapshots/themes`. CI uploads the renders as the `theme-snapshots` artifact, so a theme pull request can be reviewed as pictures.
 - Add a provider contract test: every provider needs a redacted response fixture that its parser reads, usage that survives the usage cache and reaches themes, translated setting text, and unique identifiers. See [CONTRIBUTING.md](CONTRIBUTING.md#provider-changes).
+- Add a [feature map](docs/feature-map.md) naming each part of the app and where its code lives.
 - Auto-merge Dependabot pull requests with patch-level Cargo updates once `CI passed` succeeds. `scripts/New-Release.ps1` adds changelog entries for them and refuses to prepare a release when `origin/main` has commits that local `main` lacks. See [docs/releasing.md](docs/releasing.md#dependabot-updates).
 
 ### Changed
