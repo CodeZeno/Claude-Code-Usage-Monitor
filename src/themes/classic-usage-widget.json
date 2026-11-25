@@ -27,23 +27,24 @@
       },
       "children": [
         {
-          "id": "divider-dark-left",
-          "name": "Dark divider left",
-          "render": "system.dark",
+          "id": "divider-left",
+          "name": "Divider left",
+          "render": "1",
           "y": "10",
           "width": "2",
           "height": "25",
           "background": {
             "type": "colour",
             "colour": {
-              "color": "#505050FF"
+              "color": "#505050FF",
+              "light_color": "#A0A0A0FF"
             }
           }
         },
         {
-          "id": "divider-dark-right",
-          "name": "Dark divider right",
-          "render": "system.dark",
+          "id": "divider-right",
+          "name": "Divider right",
+          "render": "1",
           "x": "2",
           "y": "10",
           "width": "1",
@@ -51,43 +52,15 @@
           "background": {
             "type": "colour",
             "colour": {
-              "color": "#282828FF"
+              "color": "#282828FF",
+              "light_color": "#E6E6E6FF"
             }
           }
         },
         {
-          "id": "divider-light-left",
-          "name": "Light divider left",
-          "render": "1 - system.dark",
-          "y": "10",
-          "width": "2",
-          "height": "25",
-          "background": {
-            "type": "colour",
-            "colour": {
-              "color": "#A0A0A0FF"
-            }
-          }
-        },
-        {
-          "id": "divider-light-right",
-          "name": "Light divider right",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "10",
-          "width": "1",
-          "height": "25",
-          "background": {
-            "type": "colour",
-            "colour": {
-              "color": "#E6E6E6FF"
-            }
-          }
-        },
-        {
-          "id": "session-label-dark",
-          "name": "dark 5-hour label",
-          "render": "system.dark && !(providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
+          "id": "session-label",
+          "name": "5-hour label",
+          "render": "!(providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "x": "13",
           "y": "5",
           "width": "18",
@@ -102,14 +75,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#888888FF"
+              "color": "#888888FF",
+              "light_color": "#404040FF"
             }
           }
         },
         {
-          "id": "weekly-label-dark",
-          "name": "dark 7-day label",
-          "render": "system.dark && !providers.opencode.enabled && !((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available) && providers.count == 1)",
+          "id": "weekly-label",
+          "name": "7-day label",
+          "render": "!providers.opencode.enabled && !((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available) && providers.count == 1)",
           "x": "13",
           "y": "28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
           "width": "18",
@@ -124,14 +98,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#888888FF"
+              "color": "#888888FF",
+              "light_color": "#404040FF"
             }
           }
         },
         {
-          "id": "claude-window-label-dark",
-          "name": "dark Claude 7-day label",
-          "render": "system.dark && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "id": "claude-window-label",
+          "name": "Claude 7-day label",
+          "render": "(providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "x": "0",
           "y": "5",
           "width": "18",
@@ -146,15 +121,16 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#888888FF"
+              "color": "#888888FF",
+              "light_color": "#404040FF"
             }
           },
           "parent": "claude-usage"
         },
         {
-          "id": "fable-window-label-dark",
-          "name": "dark Fable 7-day label",
-          "render": "system.dark && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
+          "id": "fable-window-label",
+          "name": "Fable 7-day label",
+          "render": "(providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "x": "0",
           "y": "28",
           "width": "18",
@@ -169,97 +145,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#888888FF"
-            }
-          },
-          "parent": "claude-usage"
-        },
-        {
-          "id": "session-label-light",
-          "name": "light 5-hour label",
-          "render": "(1 - system.dark) && !(providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
-          "x": "13",
-          "y": "5",
-          "width": "18",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.session_window}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#404040FF"
-            }
-          }
-        },
-        {
-          "id": "weekly-label-light",
-          "name": "light 7-day label",
-          "render": "(1 - system.dark) && !providers.opencode.enabled && !((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available) && providers.count == 1)",
-          "x": "13",
-          "y": "28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available)",
-          "width": "18",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.weekly_window}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#404040FF"
-            }
-          }
-        },
-        {
-          "id": "claude-window-label-light",
-          "name": "light Claude 7-day label",
-          "render": "(1 - system.dark) && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
-          "x": "0",
-          "y": "5",
-          "width": "18",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.weekly_window}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#404040FF"
-            }
-          },
-          "parent": "claude-usage"
-        },
-        {
-          "id": "fable-window-label-light",
-          "name": "light Fable 7-day label",
-          "render": "(1 - system.dark) && (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
-          "x": "0",
-          "y": "28",
-          "width": "18",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.weekly_window}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#404040FF"
+              "color": "#888888FF",
+              "light_color": "#404040FF"
             }
           },
           "parent": "claude-usage"
@@ -273,9 +160,9 @@
           "height": "46"
         },
         {
-          "id": "cursor-session-segments-dark",
-          "name": "dark Cursor Auto segments",
-          "render": "system.dark",
+          "id": "cursor-session-segments",
+          "name": "Cursor Auto segments",
+          "render": "1",
           "parent": "cursor-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -285,10 +172,12 @@
             "value": "cursor.session.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1A1A1AFF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -297,9 +186,9 @@
           }
         },
         {
-          "id": "cursor-session-value-dark",
-          "name": "dark Cursor Auto value",
-          "render": "system.dark",
+          "id": "cursor-session-value",
+          "name": "Cursor Auto value",
+          "render": "1",
           "parent": "cursor-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -315,61 +204,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#E0E0E0FF"
+              "color": "#E0E0E0FF",
+              "light_color": "#1A1A1AFF"
             }
           }
         },
         {
-          "id": "cursor-session-segments-light",
-          "name": "light Cursor Auto segments",
-          "render": "1 - system.dark",
-          "parent": "cursor-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "cursor.session.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#1A1A1AFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "cursor-session-value-light",
-          "name": "light Cursor Auto value",
-          "render": "1 - system.dark",
-          "parent": "cursor-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.cursor_auto_window} {cursor.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1A1A1AFF"
-            }
-          }
-        },
-        {
-          "id": "cursor-weekly-segments-dark",
-          "name": "dark Cursor API segments",
-          "render": "system.dark",
+          "id": "cursor-weekly-segments",
+          "name": "Cursor API segments",
+          "render": "1",
           "parent": "cursor-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -379,10 +222,12 @@
             "value": "cursor.weekly.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1A1A1AFF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -391,9 +236,9 @@
           }
         },
         {
-          "id": "cursor-weekly-value-dark",
-          "name": "dark Cursor API value",
-          "render": "system.dark",
+          "id": "cursor-weekly-value",
+          "name": "Cursor API value",
+          "render": "1",
           "parent": "cursor-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -409,61 +254,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#E0E0E0FF"
+              "color": "#E0E0E0FF",
+              "light_color": "#1A1A1AFF"
             }
           }
         },
         {
-          "id": "cursor-weekly-segments-light",
-          "name": "light Cursor API segments",
-          "render": "1 - system.dark",
-          "parent": "cursor-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "cursor.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#1A1A1AFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "cursor-weekly-value-light",
-          "name": "light Cursor API value",
-          "render": "1 - system.dark",
-          "parent": "cursor-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{i18n.cursor_api_window} {cursor.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1A1A1AFF"
-            }
-          }
-        },
-        {
-          "id": "opencode-long-label-dark",
-          "name": "dark OpenCode 7-day or 30-day label",
-          "render": "system.dark * providers.opencode.enabled",
+          "id": "opencode-long-label",
+          "name": "OpenCode 7-day or 30-day label",
+          "render": "providers.opencode.enabled",
           "x": "8",
           "y": "28",
           "width": "30",
@@ -478,29 +277,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#888888FF"
-            }
-          }
-        },
-        {
-          "id": "opencode-long-label-light",
-          "name": "light OpenCode 7-day or 30-day label",
-          "render": "(1 - system.dark) * providers.opencode.enabled",
-          "x": "8",
-          "y": "28",
-          "width": "30",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "7/30d",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#404040FF"
+              "color": "#888888FF",
+              "light_color": "#404040FF"
             }
           }
         },
@@ -530,9 +308,9 @@
           "height": "46"
         },
         {
-          "id": "claude-session-segments-dark",
-          "name": "dark Claude Code 5-hour segments",
-          "render": "(system.dark) && claude.session.available",
+          "id": "claude-session-segments",
+          "name": "Claude Code 5-hour segments",
+          "render": "claude.session.available",
           "parent": "claude-usage",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -545,7 +323,8 @@
               "color": "#D97757FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -554,9 +333,9 @@
           }
         },
         {
-          "id": "claude-session-value-dark",
-          "name": "dark Claude Code 5-hour value",
-          "render": "(system.dark) && claude.session.available",
+          "id": "claude-session-value",
+          "name": "Claude Code 5-hour value",
+          "render": "claude.session.available",
           "parent": "claude-usage",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -572,61 +351,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F09A7AFF"
+              "color": "#F09A7AFF",
+              "light_color": "#A94F32FF"
             }
           }
         },
         {
-          "id": "claude-session-segments-light",
-          "name": "light Claude Code 5-hour segments",
-          "render": "(1 - system.dark) && claude.session.available",
-          "parent": "claude-usage",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "claude.session.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#D97757FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "claude-session-value-light",
-          "name": "light Claude Code 5-hour value",
-          "render": "(1 - system.dark) && claude.session.available",
-          "parent": "claude-usage",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{claude.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#A94F32FF"
-            }
-          }
-        },
-        {
-          "id": "claude-weekly-segments-dark",
-          "name": "dark Claude Code 7-day segments",
-          "render": "system.dark",
+          "id": "claude-weekly-segments",
+          "name": "Claude Code 7-day segments",
+          "render": "1",
           "parent": "claude-usage",
           "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -639,7 +372,8 @@
               "color": "#D97757FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -649,9 +383,9 @@
           "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
-          "id": "claude-weekly-value-dark",
-          "name": "dark Claude Code 7-day value",
-          "render": "(system.dark) && !claude.credits.available",
+          "id": "claude-weekly-value",
+          "name": "Claude Code 7-day value",
+          "render": "!claude.credits.available",
           "parent": "claude-usage",
           "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
@@ -667,55 +401,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F09A7AFF"
-            }
-          }
-        },
-        {
-          "id": "claude-weekly-segments-light",
-          "name": "light Claude Code 7-day segments",
-          "render": "1 - system.dark",
-          "parent": "claude-usage",
-          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "claude.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#D97757FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          },
-          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
-        },
-        {
-          "id": "claude-weekly-value-light",
-          "name": "light Claude Code 7-day value",
-          "render": "(1 - system.dark) && !claude.credits.available",
-          "parent": "claude-usage",
-          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
-          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{claude.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#A94F32FF"
+              "color": "#F09A7AFF",
+              "light_color": "#A94F32FF"
             }
           }
         },
@@ -728,9 +415,9 @@
           "height": "46"
         },
         {
-          "id": "codex-session-segments-dark",
-          "name": "dark Codex 5-hour segments",
-          "render": "system.dark",
+          "id": "codex-session-segments",
+          "name": "Codex 5-hour segments",
+          "render": "1",
           "parent": "codex-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -740,10 +427,12 @@
             "value": "codex.five_hour.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -752,9 +441,9 @@
           }
         },
         {
-          "id": "codex-session-value-dark",
-          "name": "dark Codex 5-hour value",
-          "render": "system.dark",
+          "id": "codex-session-value",
+          "name": "Codex 5-hour value",
+          "render": "1",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -770,61 +459,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             }
           }
         },
         {
-          "id": "codex-session-segments-light",
-          "name": "light Codex 5-hour segments",
-          "render": "1 - system.dark",
-          "parent": "codex-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "codex.five_hour.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#1F1F1FFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "codex-session-value-light",
-          "name": "light Codex 5-hour value",
-          "render": "1 - system.dark",
-          "parent": "codex-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{codex.five_hour.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1F1F1FFF"
-            }
-          }
-        },
-        {
-          "id": "codex-weekly-segments-dark",
-          "name": "dark Codex 7-day segments",
-          "render": "system.dark",
+          "id": "codex-weekly-segments",
+          "name": "Codex 7-day segments",
+          "render": "1",
           "parent": "codex-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -834,10 +477,12 @@
             "value": "codex.weekly.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -846,9 +491,9 @@
           }
         },
         {
-          "id": "codex-weekly-value-dark",
-          "name": "dark Codex 7-day value",
-          "render": "(system.dark) && !codex.credits.available",
+          "id": "codex-weekly-value",
+          "name": "Codex 7-day value",
+          "render": "!codex.credits.available",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -864,54 +509,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F5F5F5FF"
-            }
-          }
-        },
-        {
-          "id": "codex-weekly-segments-light",
-          "name": "light Codex 7-day segments",
-          "render": "1 - system.dark",
-          "parent": "codex-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "codex.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#1F1F1FFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "codex-weekly-value-light",
-          "name": "light Codex 7-day value",
-          "render": "(1 - system.dark) && !codex.credits.available",
-          "parent": "codex-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{codex.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1F1F1FFF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             }
           }
         },
@@ -924,9 +523,9 @@
           "height": "46"
         },
         {
-          "id": "antigravity-session-segments-dark",
-          "name": "dark Antigravity 5-hour segments",
-          "render": "system.dark",
+          "id": "antigravity-session-segments",
+          "name": "Antigravity 5-hour segments",
+          "render": "1",
           "parent": "antigravity-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -939,7 +538,8 @@
               "color": "#4285F4FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -948,9 +548,9 @@
           }
         },
         {
-          "id": "antigravity-session-value-dark",
-          "name": "dark Antigravity 5-hour value",
-          "render": "system.dark",
+          "id": "antigravity-session-value",
+          "name": "Antigravity 5-hour value",
+          "render": "1",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -966,61 +566,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#8AB4F8FF"
+              "color": "#8AB4F8FF",
+              "light_color": "#1967D2FF"
             }
           }
         },
         {
-          "id": "antigravity-session-segments-light",
-          "name": "light Antigravity 5-hour segments",
-          "render": "1 - system.dark",
-          "parent": "antigravity-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "antigravity.session.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#4285F4FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "antigravity-session-value-light",
-          "name": "light Antigravity 5-hour value",
-          "render": "1 - system.dark",
-          "parent": "antigravity-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1967D2FF"
-            }
-          }
-        },
-        {
-          "id": "antigravity-weekly-segments-dark",
-          "name": "dark Antigravity 7-day segments",
-          "render": "system.dark",
+          "id": "antigravity-weekly-segments",
+          "name": "Antigravity 7-day segments",
+          "render": "1",
           "parent": "antigravity-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1033,7 +587,8 @@
               "color": "#4285F4FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -1042,9 +597,9 @@
           }
         },
         {
-          "id": "antigravity-weekly-value-dark",
-          "name": "dark Antigravity 7-day value",
-          "render": "system.dark",
+          "id": "antigravity-weekly-value",
+          "name": "Antigravity 7-day value",
+          "render": "1",
           "parent": "antigravity-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1060,54 +615,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#8AB4F8FF"
-            }
-          }
-        },
-        {
-          "id": "antigravity-weekly-segments-light",
-          "name": "light Antigravity 7-day segments",
-          "render": "1 - system.dark",
-          "parent": "antigravity-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "antigravity.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#4285F4FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "antigravity-weekly-value-light",
-          "name": "light Antigravity 7-day value",
-          "render": "1 - system.dark",
-          "parent": "antigravity-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1967D2FF"
+              "color": "#8AB4F8FF",
+              "light_color": "#1967D2FF"
             }
           }
         },
@@ -1120,9 +629,9 @@
           "height": "46"
         },
         {
-          "id": "opencode-session-segments-dark",
-          "name": "dark OpenCode 5-hour segments",
-          "render": "system.dark",
+          "id": "opencode-session-segments",
+          "name": "OpenCode 5-hour segments",
+          "render": "1",
           "parent": "opencode-provider",
           "y": "5",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1132,10 +641,12 @@
             "value": "opencode.session.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#4CAF50FF"
+              "color": "#4CAF50FF",
+              "light_color": "#2E7D32FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -1144,9 +655,9 @@
           }
         },
         {
-          "id": "opencode-session-value-dark",
-          "name": "dark OpenCode 5-hour value",
-          "render": "system.dark",
+          "id": "opencode-session-value",
+          "name": "OpenCode 5-hour value",
+          "render": "1",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "5",
@@ -1162,61 +673,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#81C784FF"
+              "color": "#81C784FF",
+              "light_color": "#1B5E20FF"
             }
           }
         },
         {
-          "id": "opencode-session-segments-light",
-          "name": "light OpenCode 5-hour segments",
-          "render": "1 - system.dark",
-          "parent": "opencode-provider",
-          "y": "5",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "opencode.session.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#2E7D32FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "opencode-session-value-light",
-          "name": "light OpenCode 5-hour value",
-          "render": "1 - system.dark",
-          "parent": "opencode-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "5",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{opencode.session.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1B5E20FF"
-            }
-          }
-        },
-        {
-          "id": "opencode-weekly-segments-dark",
-          "name": "dark OpenCode long-window segments",
-          "render": "system.dark",
+          "id": "opencode-weekly-segments",
+          "name": "OpenCode long-window segments",
+          "render": "1",
           "parent": "opencode-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1226,10 +691,12 @@
             "value": "opencode.weekly.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#4CAF50FF"
+              "color": "#4CAF50FF",
+              "light_color": "#2E7D32FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -1238,9 +705,9 @@
           }
         },
         {
-          "id": "opencode-weekly-value-dark",
-          "name": "dark OpenCode long-window value",
-          "render": "system.dark",
+          "id": "opencode-weekly-value",
+          "name": "OpenCode long-window value",
+          "render": "1",
           "parent": "opencode-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1256,61 +723,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#81C784FF"
+              "color": "#81C784FF",
+              "light_color": "#1B5E20FF"
             }
           }
         },
         {
-          "id": "opencode-weekly-segments-light",
-          "name": "light OpenCode long-window segments",
-          "render": "1 - system.dark",
-          "parent": "opencode-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "opencode.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#2E7D32FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "opencode-weekly-value-light",
-          "name": "light OpenCode long-window value",
-          "render": "1 - system.dark",
-          "parent": "opencode-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1B5E20FF"
-            }
-          }
-        },
-        {
-          "id": "claude-credits-segments-dark",
-          "name": "dark claude credit overlay",
-          "render": "(system.dark) && claude.credits.available",
+          "id": "claude-credits-segments",
+          "name": "claude credit overlay",
+          "render": "claude.credits.available",
           "parent": "claude-usage",
           "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1321,6 +742,7 @@
             "direction": "left_to_right",
             "fill": {
               "color": "#F5A623FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             },
             "track": {
@@ -1335,9 +757,9 @@
           "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
         },
         {
-          "id": "claude-credits-value-dark",
-          "name": "dark claude credit balance",
-          "render": "(system.dark) && claude.credits.available",
+          "id": "claude-credits-value",
+          "name": "claude credit balance",
+          "render": "claude.credits.available",
           "parent": "claude-usage",
           "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
@@ -1354,65 +776,15 @@
             "align": "left",
             "color": {
               "color": "#F5A623FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             }
           }
         },
         {
-          "id": "claude-credits-segments-light",
-          "name": "light claude credit overlay",
-          "render": "(1 - system.dark) && claude.credits.available",
-          "parent": "claude-usage",
-          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "claude.credits.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#C77700FF",
-              "opacity": "1"
-            },
-            "track": {
-              "color": "#00000000",
-              "opacity": "0"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          },
-          "x": "0 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)"
-        },
-        {
-          "id": "claude-credits-value-light",
-          "name": "light claude credit balance",
-          "render": "(1 - system.dark) && claude.credits.available",
-          "parent": "claude-usage",
-          "x": "(ceil(10 / max(1, providers.count)) * 11 - 1) + 4 + 28 * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
-          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 5, 28 - 12 * (providers.count == 1 && providers.claude.enabled && claude.weekly.available && !claude.session.available))",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "${claude.credits.balance:0.00}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#C77700FF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "codex-credits-segments-dark",
-          "name": "dark codex credit overlay",
-          "render": "(system.dark) && codex.credits.available",
+          "id": "codex-credits-segments",
+          "name": "codex credit overlay",
+          "render": "codex.credits.available",
           "parent": "codex-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1423,6 +795,7 @@
             "direction": "left_to_right",
             "fill": {
               "color": "#F5A623FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             },
             "track": {
@@ -1436,9 +809,9 @@
           }
         },
         {
-          "id": "codex-credits-value-dark",
-          "name": "dark codex credit balance",
-          "render": "(system.dark) && codex.credits.available",
+          "id": "codex-credits-value",
+          "name": "codex credit balance",
+          "render": "codex.credits.available",
           "parent": "codex-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1455,56 +828,7 @@
             "align": "left",
             "color": {
               "color": "#F5A623FF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "codex-credits-segments-light",
-          "name": "light codex credit overlay",
-          "render": "(1 - system.dark) && codex.credits.available",
-          "parent": "codex-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "codex.credits.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#C77700FF",
-              "opacity": "1"
-            },
-            "track": {
-              "color": "#00000000",
-              "opacity": "0"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "codex-credits-value-light",
-          "name": "light codex credit balance",
-          "render": "(1 - system.dark) && codex.credits.available",
-          "parent": "codex-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "${codex.credits.balance:0.00}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#C77700FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             }
           }
@@ -1518,9 +842,9 @@
           "height": "46"
         },
         {
-          "id": "grok-pool-segments-dark",
-          "name": "dark Grok pool segments",
-          "render": "system.dark",
+          "id": "grok-pool-segments",
+          "name": "Grok pool segments",
+          "render": "1",
           "parent": "grok-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1530,10 +854,12 @@
             "value": "grok.weekly.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#8B5CF6FF"
+              "color": "#8B5CF6FF",
+              "light_color": "#7C3AEDFF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -1542,9 +868,9 @@
           }
         },
         {
-          "id": "grok-pool-value-dark",
-          "name": "dark Grok pool value",
-          "render": "(system.dark) && !grok.credits.available",
+          "id": "grok-pool-value",
+          "name": "Grok pool value",
+          "render": "!grok.credits.available",
           "parent": "grok-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1560,61 +886,15 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F5F5F5FF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             }
           }
         },
         {
-          "id": "grok-pool-segments-light",
-          "name": "light Grok pool segments",
-          "render": "1 - system.dark",
-          "parent": "grok-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "grok.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#7C3AEDFF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "grok-pool-value-light",
-          "name": "light Grok pool value",
-          "render": "(1 - system.dark) && !grok.credits.available",
-          "parent": "grok-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{grok.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1F1F1FFF"
-            }
-          }
-        },
-        {
-          "id": "grok-credits-segments-dark",
-          "name": "dark Grok on-demand segments",
-          "render": "(system.dark) && grok.credits.available",
+          "id": "grok-credits-segments",
+          "name": "Grok on-demand segments",
+          "render": "grok.credits.available",
           "parent": "grok-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1625,6 +905,7 @@
             "direction": "left_to_right",
             "fill": {
               "color": "#F5A623FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             },
             "track": {
@@ -1638,9 +919,9 @@
           }
         },
         {
-          "id": "grok-credits-value-dark",
-          "name": "dark Grok on-demand value",
-          "render": "(system.dark) && grok.credits.available",
+          "id": "grok-credits-value",
+          "name": "Grok on-demand value",
+          "render": "grok.credits.available",
           "parent": "grok-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1657,56 +938,7 @@
             "align": "left",
             "color": {
               "color": "#F5A623FF",
-              "opacity": "1"
-            }
-          }
-        },
-        {
-          "id": "grok-credits-segments-light",
-          "name": "light Grok on-demand segments",
-          "render": "(1 - system.dark) && grok.credits.available",
-          "parent": "grok-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "grok.credits.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#C77700FF",
-              "opacity": "1"
-            },
-            "track": {
-              "color": "#00000000",
-              "opacity": "0"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "grok-credits-value-light",
-          "name": "light Grok on-demand value",
-          "render": "(1 - system.dark) && grok.credits.available",
-          "parent": "grok-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "${grok.credits.balance:0.00}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#C77700FF",
+              "light_color": "#C77700FF",
               "opacity": "1"
             }
           }
@@ -1720,9 +952,9 @@
           "height": "46"
         },
         {
-          "id": "copilot-pool-segments-dark",
-          "name": "dark Copilot pool segments",
-          "render": "system.dark",
+          "id": "copilot-pool-segments",
+          "name": "Copilot pool segments",
+          "render": "1",
           "parent": "copilot-provider",
           "y": "28",
           "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
@@ -1732,10 +964,12 @@
             "value": "copilot.weekly.display",
             "direction": "left_to_right",
             "fill": {
-              "color": "#EC4899FF"
+              "color": "#EC4899FF",
+              "light_color": "#DB2777FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 10,
@@ -1744,9 +978,9 @@
           }
         },
         {
-          "id": "copilot-pool-value-dark",
-          "name": "dark Copilot pool value",
-          "render": "system.dark",
+          "id": "copilot-pool-value",
+          "name": "Copilot pool value",
+          "render": "1",
           "parent": "copilot-provider",
           "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
           "y": "28",
@@ -1762,54 +996,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#F5F5F5FF"
-            }
-          }
-        },
-        {
-          "id": "copilot-pool-segments-light",
-          "name": "light Copilot pool segments",
-          "render": "1 - system.dark",
-          "parent": "copilot-provider",
-          "y": "28",
-          "width": "ceil(10 / max(1, providers.count)) * 11 - 1",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "copilot.weekly.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#DB2777FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 10,
-            "segments_expression": "ceil(10 / max(1, providers.count))",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "copilot-pool-value-light",
-          "name": "light Copilot pool value",
-          "render": "1 - system.dark",
-          "parent": "copilot-provider",
-          "x": "ceil(10 / max(1, providers.count)) * 11 - 1 + 4",
-          "y": "28",
-          "width": "62",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "{copilot.weekly.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#1F1F1FFF"
+              "color": "#F5F5F5FF",
+              "light_color": "#1F1F1FFF"
             }
           }
         },
@@ -1822,9 +1010,9 @@
           "height": "46"
         },
         {
-          "id": "fable-weekly-segments-dark",
-          "name": "dark Fable weekly segments",
-          "render": "system.dark",
+          "id": "fable-weekly-segments",
+          "name": "Fable weekly segments",
+          "render": "1",
           "parent": "fable-provider",
           "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 28, 5)",
           "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1), 87)",
@@ -1837,7 +1025,8 @@
               "color": "#7C6BB0FF"
             },
             "track": {
-              "color": "#444444FF"
+              "color": "#444444FF",
+              "light_color": "#AAAAAAFF"
             },
             "corner_radius": "2",
             "segments": 8,
@@ -1846,9 +1035,9 @@
           }
         },
         {
-          "id": "fable-weekly-value-dark",
-          "name": "dark Fable weekly value",
-          "render": "system.dark",
+          "id": "fable-weekly-value",
+          "name": "Fable weekly value",
+          "render": "1",
           "parent": "fable-provider",
           "x": "((ceil(10 / max(1, providers.count)) * 11 - 1) + 4) * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
           "y": "28",
@@ -1864,54 +1053,8 @@
             "contrast": "1",
             "align": "left",
             "color": {
-              "color": "#B5A8E0FF"
-            }
-          }
-        },
-        {
-          "id": "fable-weekly-segments-light",
-          "name": "light Fable weekly segments",
-          "render": "1 - system.dark",
-          "parent": "fable-provider",
-          "y": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), 28, 5)",
-          "width": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), (ceil(10 / max(1, providers.count)) * 11 - 1), 87)",
-          "height": "13",
-          "content": {
-            "type": "progress",
-            "value": "claude.model.fable.display",
-            "direction": "left_to_right",
-            "fill": {
-              "color": "#7C6BB0FF"
-            },
-            "track": {
-              "color": "#AAAAAAFF"
-            },
-            "corner_radius": "2",
-            "segments": 8,
-            "segments_expression": "if((providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available), ceil(10 / max(1, providers.count)), 8)",
-            "segment_gap": "1"
-          }
-        },
-        {
-          "id": "fable-weekly-value-light",
-          "name": "light Fable weekly value",
-          "render": "1 - system.dark",
-          "parent": "fable-provider",
-          "x": "((ceil(10 / max(1, providers.count)) * 11 - 1) + 4) * (providers.claude.enabled && claude.weekly.available && !claude.session.available && claude.model.fable.available)",
-          "y": "28",
-          "width": "90",
-          "height": "13",
-          "content": {
-            "type": "text",
-            "template": "Fable {claude.model.fable.display:usage_line}",
-            "font_family": "Segoe UI",
-            "font_size": "12",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "left",
-            "color": {
-              "color": "#5B4B8AFF"
+              "color": "#B5A8E0FF",
+              "light_color": "#5B4B8AFF"
             }
           }
         }

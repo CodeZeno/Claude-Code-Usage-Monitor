@@ -1,4 +1,5 @@
 //! Shared, atomically persisted state used by the widget and studio processes.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
 
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -469,6 +470,8 @@ pub fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), Str
     }
     let source = wide_path(&temporary);
     let destination = wide_path(path);
+    // SAFETY: both buffers are NUL-terminated UTF-16 paths from wide_path and
+    // outlive the call.
     let moved = unsafe {
         MoveFileExW(
             PCWSTR::from_raw(source.as_ptr()),

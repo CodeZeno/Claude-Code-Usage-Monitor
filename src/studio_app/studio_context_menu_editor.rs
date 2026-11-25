@@ -240,7 +240,9 @@ pub(super) fn move_context_menu_item_to(
             path
         }
         ContextMenuDropTarget::Before(_) | ContextMenuDropTarget::After(_) => {
-            let (&target_index, parent_path) = adjusted_target.split_last().unwrap();
+            let Some((&target_index, parent_path)) = adjusted_target.split_last() else {
+                return false;
+            };
             let Some(siblings) = context_menu_items_mut(items, parent_path) else {
                 return false;
             };

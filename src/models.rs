@@ -255,7 +255,9 @@ impl AppUsageData {
                 .is_some_and(|selected| *selected == account.profile);
         }
         for provider in [ProviderId::Claude, ProviderId::Codex] {
-            let configured = settings.get(provider).unwrap();
+            let Some(configured) = settings.get(provider) else {
+                continue;
+            };
             let tracked = self
                 .accounts
                 .iter()

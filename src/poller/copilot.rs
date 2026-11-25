@@ -210,6 +210,13 @@ fn fetch_copilot_usage(token: &str) -> Result<UsageData, PollError> {
     })
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    copilot_usage_from_user(serde_json::from_str(body).ok()?)
+}
+
 fn copilot_usage_from_user(response: CopilotUserResponse) -> Option<UsageData> {
     let snapshots = response
         .quota_snapshots

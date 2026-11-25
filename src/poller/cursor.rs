@@ -331,6 +331,13 @@ fn fetch_cursor_usage_summary(cookie: &str) -> Result<UsageData, PollError> {
     })
 }
 
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    cursor_usage_from_current_period(&serde_json::from_str(body).ok()?)
+}
+
 fn cursor_usage_from_current_period(value: &serde_json::Value) -> Option<UsageData> {
     if value.get("enabled").and_then(|value| value.as_bool()) == Some(false) {
         return None;

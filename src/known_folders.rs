@@ -2,6 +2,7 @@
 //!
 //! Resolves the same folders as `SHGetKnownFolderPath`-based crates, so paths
 //! follow folder redirection instead of trusting environment variables.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
 
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
@@ -30,6 +31,9 @@ pub fn local_app_data_dir() -> Option<PathBuf> {
 }
 
 fn known_folder(id: &GUID) -> Option<PathBuf> {
+    // SAFETY: on success SHGetKnownFolderPath returns a NUL-terminated string
+    // allocated with CoTaskMemAlloc. It is copied before CoTaskMemFree releases
+    // it exactly once, and the pointer is not used afterwards.
     unsafe {
         let path = SHGetKnownFolderPath(id, KNOWN_FOLDER_FLAG(0), None).ok()?;
         let wide = OsString::from_wide(path.as_wide());

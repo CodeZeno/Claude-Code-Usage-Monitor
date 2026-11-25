@@ -274,7 +274,12 @@ pub fn delete_theme(path: &Path) -> Result<(), String> {
 
 pub fn load_theme(path: &Path) -> Result<ThemeDocument, String> {
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-    let mut theme: ThemeDocument = serde_json::from_str(&content).map_err(|e| e.to_string())?;
+    parse_theme(&content)
+}
+
+/// Parse, normalize and validate a theme document, as `load_theme` does for a file.
+pub fn parse_theme(content: &str) -> Result<ThemeDocument, String> {
+    let mut theme: ThemeDocument = serde_json::from_str(content).map_err(|e| e.to_string())?;
     theme.prepare_runtime();
     let errors = theme.validate();
     if errors.is_empty() {
@@ -282,6 +287,23 @@ pub fn load_theme(path: &Path) -> Result<ThemeDocument, String> {
     } else {
         Err(errors.join("\n"))
     }
+}
+
+/// Ids of the themes compiled into the executable, including editable starters.
+pub fn bundled_theme_ids() -> impl Iterator<Item = &'static str> {
+    BUILTIN_THEME_SOURCES
+        .iter()
+        .chain(BUNDLED_EDITABLE_THEME_SOURCES)
+        .map(|(id, _)| *id)
+}
+
+/// A theme compiled into the executable, parsed and validated.
+pub fn bundled_theme(id: &str) -> Option<Result<ThemeDocument, String>> {
+    BUILTIN_THEME_SOURCES
+        .iter()
+        .chain(BUNDLED_EDITABLE_THEME_SOURCES)
+        .find(|(theme_id, _)| *theme_id == id)
+        .map(|(_, source)| parse_theme(source))
 }
 
 pub fn ensure_starter_theme() -> Result<PathBuf, String> {

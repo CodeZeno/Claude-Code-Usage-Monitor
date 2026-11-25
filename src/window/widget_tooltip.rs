@@ -1,4 +1,9 @@
 //! Explorer-style native tooltips, owned and accessed only by the window thread.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 use std::cell::RefCell;
 
 use windows::core::PWSTR;

@@ -151,11 +151,19 @@ pub(super) fn scene_object_preview(
         ));
     }
 
-    let icon = scene_object_icon(object);
+    // A provider logo previews as the mark itself; it shares the icon family.
+    let glyph = match &object.content {
+        SceneContent::ProviderMark { provider, .. } => {
+            crate::providers::ProviderId::from_key(provider)
+                .map(provider_mark_glyph)
+                .unwrap_or_else(|| scene_object_icon(object).unicode())
+        }
+        _ => scene_object_icon(object).unicode(),
+    };
     ui.painter().text(
         preview_bounds.center(),
         egui::Align2::CENTER_CENTER,
-        icon.unicode().to_string(),
+        glyph.to_string(),
         egui::FontId::new(16.0, egui::FontFamily::Name("lucide".into())),
         scene_object_icon_color(object, background),
     );
@@ -292,6 +300,7 @@ pub(super) fn scene_object_icon(object: &SceneObject) -> LucideIcon {
     match &object.content {
         SceneContent::Text { .. } => LucideIcon::Type,
         SceneContent::Progress { .. } => LucideIcon::Gauge,
+        SceneContent::ProviderMark { .. } => LucideIcon::Image,
         SceneContent::None => {
             if matches!(&object.background, LayerBackground::Image { .. }) {
                 LucideIcon::Image
@@ -311,13 +320,15 @@ pub(super) fn scene_object_icon_color(
     background: egui::Color32,
 ) -> egui::Color32 {
     match &object.content {
-        SceneContent::Text { color, .. } => scene_paint_color(color),
+        SceneContent::Text { color, .. } | SceneContent::ProviderMark { color, .. } => {
+            scene_paint_color(color)
+        }
         SceneContent::None | SceneContent::Progress { .. } => scene_icon_contrast_color(background),
     }
 }
 
 pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
-    let Some(color) = theme_engine::parse_color(&paint.color) else {
+    let Some(color) = theme_engine::parse_color(paint.color_for(studio_is_dark())) else {
         return egui::Color32::TRANSPARENT;
     };
     let opacity = paint
@@ -333,6 +344,23 @@ pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
         color.b,
         ((color.a as f32) * opacity).round() as u8,
     )
+}
+
+/// The Windows appearance for scene swatches. The registry is read at most
+/// once a second, since every object's swatch asks on every repaint.
+fn studio_is_dark() -> bool {
+    thread_local! {
+        static CACHED: std::cell::Cell<Option<(std::time::Instant, bool)>> =
+            const { std::cell::Cell::new(None) };
+    }
+    CACHED.with(|cached| match cached.get() {
+        Some((read, dark)) if read.elapsed() < std::time::Duration::from_secs(1) => dark,
+        _ => {
+            let dark = crate::theme::is_dark_mode();
+            cached.set(Some((std::time::Instant::now(), dark)));
+            dark
+        }
+    })
 }
 
 pub(super) fn scene_icon_contrast_color(background: egui::Color32) -> egui::Color32 {

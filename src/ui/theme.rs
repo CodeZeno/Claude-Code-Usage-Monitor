@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use std::path::PathBuf;
 
 use eframe::egui;
@@ -28,6 +34,11 @@ const UI_FALLBACK_FONT_BYTES: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/
 /// other. TrueType has no even-odd fill rule, so an SVG drawn that way needs
 /// flattening to clockwise-wound, non-overlapping contours first, or counters
 /// such as the Codex terminal and the OpenCode ring fill in solid.
+///
+/// The font also maps U+0020 to an empty glyph. GDI, which draws theme
+/// provider-logo layers, treats a font whose characters all sit in
+/// U+F000..U+F0FF as a symbol font and then finds none of its glyphs by
+/// codepoint, so keep that space when the font is rebuilt.
 ///
 /// | Codepoint | Mark        | Source artwork                         |
 /// | --------- | ----------- | -------------------------------------- |

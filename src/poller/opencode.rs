@@ -99,13 +99,26 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
             credentials.source
         ));
     })?;
-
-    if usage.rolling.is_none() && usage.weekly.is_none() && usage.monthly.is_none() {
+    usage_data_from_dashboard(&usage).ok_or_else(|| {
         diagnose::log(format!(
             "OpenCode dashboard returned no usage windows from {}",
             credentials.source
         ));
-        return Err(PollError::RequestFailed);
+        PollError::RequestFailed
+    })
+}
+
+/// Parses a saved response body as a poll would, for the provider contract test
+/// in `poller::tests`.
+#[cfg(test)]
+pub(super) fn usage_from_fixture(body: &str) -> Option<UsageData> {
+    let status = serde_json::from_str::<Option<GoStatus>>(body).ok()?;
+    usage_data_from_dashboard(&usage_from_status(status).ok()?)
+}
+
+fn usage_data_from_dashboard(usage: &DashboardUsage) -> Option<UsageData> {
+    if usage.rolling.is_none() && usage.weekly.is_none() && usage.monthly.is_none() {
+        return None;
     }
 
     let session = usage
@@ -113,9 +126,9 @@ fn poll_dashboard(credentials: &DashboardCredentials) -> Result<UsageData, PollE
         .as_ref()
         .map(section_from_window)
         .unwrap_or_default();
-    let (weekly, weekly_label) = select_long_window(&usage);
+    let (weekly, weekly_label) = select_long_window(usage);
 
-    Ok(UsageData {
+    Some(UsageData {
         limits: Vec::new(),
         session,
         weekly,

@@ -1,6 +1,11 @@
 // Keep the complete translation catalogue while the GPU dashboard progressively
 // adopts the legacy widget strings.
 #![allow(dead_code)]
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use windows::core::PWSTR;
 use windows::Win32::Globalization::{
@@ -63,6 +68,16 @@ impl LanguageId {
             .binary_search_by(|(key, _)| (*key).cmp(english))
             .map(|index| locale.translations[index].1)
             .unwrap_or(english)
+    }
+
+    /// Whether this language's catalogue has an entry for `english`, rather
+    /// than falling back to the English key.
+    #[cfg(test)]
+    pub fn has_translation(self, english: &str) -> bool {
+        self.locale()
+            .translations
+            .binary_search_by(|(key, _)| (*key).cmp(english))
+            .is_ok()
     }
 
     pub fn update_via_winget_label(self) -> &'static str {

@@ -364,6 +364,10 @@ fn antigravity_credential_watch_snapshot(_all_sources: bool) -> CredentialWatchS
     vec![antigravity::antigravity_credential_watch_signature()]
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one place this module creates its HTTP agent"
+)]
 fn build_agent() -> Result<ureq::Agent, PollError> {
     static AGENT: OnceLock<Result<ureq::Agent, PollError>> = OnceLock::new();
     // Agent clones share their connection pool, cookies, and TLS configuration.
@@ -577,6 +581,22 @@ pub fn is_past_reset(data: &UsageData) -> bool {
 
 pub fn app_is_past_reset(data: &AppUsageData) -> bool {
     data.all_usage().any(is_past_reset)
+}
+
+/// Parses a saved response body for `provider` with that provider's own
+/// parser. A new provider does not compile here until it has one; see the
+/// provider contract test in `tests`.
+#[cfg(test)]
+fn usage_from_fixture(provider: ProviderId, body: &str) -> Option<UsageData> {
+    match provider {
+        ProviderId::Claude => claude::usage_from_fixture(body),
+        ProviderId::Codex => codex::usage_from_fixture(body),
+        ProviderId::Antigravity => antigravity::usage_from_fixture(body),
+        ProviderId::OpenCode => opencode::usage_from_fixture(body),
+        ProviderId::Cursor => cursor::usage_from_fixture(body),
+        ProviderId::Grok => grok::usage_from_fixture(body),
+        ProviderId::Copilot => copilot::usage_from_fixture(body),
+    }
 }
 
 #[cfg(test)]

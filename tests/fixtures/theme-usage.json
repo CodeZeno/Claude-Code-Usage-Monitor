@@ -1,0 +1,42 @@
+{
+  "claude_code": {
+    "session": {
+      "available": true,
+      "percentage": 42.0,
+      "resets_at": { "secs_since_epoch": 1800008100, "nanos_since_epoch": 0 }
+    },
+    "weekly": {
+      "available": true,
+      "percentage": 63.0,
+      "resets_at": { "secs_since_epoch": 1800273600, "nanos_since_epoch": 0 }
+    },
+    "limits": [
+      {
+        "key": "weekly_scoped_fable",
+        "kind": "weekly_scoped",
+        "label": "Fable",
+        "model": "Fable",
+        "model_id": null,
+        "scope": { "model": { "display_name": "Fable" } },
+        "is_active": true,
+        "usage": {
+          "available": true,
+          "percentage": 18.0,
+          "resets_at": { "secs_since_epoch": 1800273600, "nanos_since_epoch": 0 }
+        }
+      }
+    ]
+  },
+  "codex": {
+    "session": {
+      "available": true,
+      "percentage": 12.0,
+      "resets_at": { "secs_since_epoch": 1800014400, "nanos_since_epoch": 0 }
+    },
+    "weekly": {
+      "available": true,
+      "percentage": 71.0,
+      "resets_at": { "secs_since_epoch": 1800432000, "nanos_since_epoch": 0 }
+    }
+  }
+}

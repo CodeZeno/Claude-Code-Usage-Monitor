@@ -1,4 +1,5 @@
 //! Platform font discovery used by font-selection UI.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
 
 use std::sync::OnceLock;
 
@@ -11,6 +12,9 @@ pub(crate) fn installed_font_families() -> &'static [String] {
     static FAMILIES: OnceLock<Vec<String>> = OnceLock::new();
     FAMILIES.get_or_init(|| {
         let mut families = Vec::new();
+        // SAFETY: the screen DC is released on the path that acquired it.
+        // Enumeration is synchronous, so `families` outlives every callback,
+        // and collect_font_family casts the LPARAM back to that same Vec.
         unsafe {
             let hdc = GetDC(None);
             if !hdc.is_invalid() {

@@ -3,6 +3,11 @@
 //! Keep this intentionally narrow: the monitor only needs to retrieve one text
 //! value from an application-owned database. Linking as a raw DLL import avoids
 //! bundling SQLite or depending on a Windows SDK import library at build time.
+#![allow(unsafe_code, reason = "calls the SQLite library shipped with Windows")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use std::ffi::{c_char, c_int, c_uchar, CStr, CString};
 use std::fmt;

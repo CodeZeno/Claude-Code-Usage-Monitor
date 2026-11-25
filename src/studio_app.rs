@@ -1,4 +1,9 @@
 //! DPI-aware settings dashboard and visual theme studio, hosted in a separate process.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

@@ -1,5 +1,10 @@
 //! Narrow migration of Windows 11's legacy, position-based tray cache.
 //! This cache is undocumented: missing or unfamiliar values are left alone.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::{
@@ -361,8 +366,10 @@ fn prune_order(cache: HKEY, removed: &[u64]) {
         return;
     }
     let retained: Vec<u8> = order
-        .chunks_exact(8)
-        .filter(|chunk| !removed.contains(&u64::from_le_bytes((*chunk).try_into().unwrap())))
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .filter(|chunk| !removed.contains(&u64::from_le_bytes(**chunk)))
         .flatten()
         .copied()
         .collect();

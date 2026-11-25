@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use super::*;
 
 use windows::core::PCWSTR;
@@ -41,7 +47,7 @@ pub(super) fn format_timestamp(unix: f64, format: &str, context: &DataContext) -
     let (utc, format) = normalized
         .strip_prefix("utc_")
         .map_or((false, normalized.as_str()), |format| (true, format));
-    if !is_timestamp_format(format) {
+    if !super::theme_language::is_timestamp_format(format) {
         return None;
     }
     let Some(value) = timestamp_system_time(unix, !utc) else {
@@ -102,42 +108,22 @@ pub(super) fn format_timestamp(unix: f64, format: &str, context: &DataContext) -
     Some(result.unwrap_or_else(|| "--".into()))
 }
 
-fn is_timestamp_format(format: &str) -> bool {
-    matches!(
-        format,
-        "weekday_2"
-            | "weekday_short"
-            | "weekday_long"
-            | "day"
-            | "day_2"
-            | "month"
-            | "month_2"
-            | "month_short"
-            | "month_long"
-            | "year_2"
-            | "year"
-            | "date"
-            | "date_short"
-            | "date_long"
-            | "time"
-            | "time_short"
-            | "time_seconds"
-            | "time_24"
-            | "time_24_seconds"
-            | "time_12"
-            | "time_12_seconds"
-            | "am_pm"
-            | "datetime"
-            | "datetime_short"
-            | "datetime_long"
-            | "iso_date"
-            | "iso_time"
-            | "iso_datetime"
-    )
-}
-
 fn timestamp_system_time(unix: f64, local: bool) -> Option<SYSTEMTIME> {
     if !unix.is_finite() || unix <= 0.0 {
+        return None;
+    }
+    // A pinned render environment fixes the offset, so local times do not
+    // depend on the machine's time zone.
+    let fixed_offset = if local {
+        super::theme_render_environment::fixed_utc_offset_seconds()
+    } else {
+        None
+    };
+    let (unix, local) = match fixed_offset {
+        Some(offset) => (unix + offset as f64, false),
+        None => (unix, local),
+    };
+    if unix <= 0.0 {
         return None;
     }
     let seconds = unix.floor() as u64;

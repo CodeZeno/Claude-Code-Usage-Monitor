@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use super::*;
 
 /// The automatic floating card owns its inset; it is not part of theme layout.
@@ -122,7 +128,7 @@ pub fn render_theme_surface_with_runtime_at_scale(
         let alpha = ((runtime.floating_card_opacity.min(100) as u32 * 255) / 100) as u8;
         // Match the card to the system theme: a fixed dark card under
         // light-mode content destroys contrast when the widget floats.
-        let dark = crate::theme::is_dark_mode();
+        let dark = render_dark_mode();
         let card_color = if dark {
             Rgba {
                 r: 24,
@@ -1075,6 +1081,34 @@ pub(super) fn render_object_content(
                 color.resolve(context),
             );
         }
+        SceneContent::ProviderMark { provider, color } => {
+            let Some(provider) = crate::providers::ProviderId::from_key(provider) else {
+                warnings.push(format!(
+                    "{}: '{provider}' is not a provider key",
+                    object.source.name
+                ));
+                return;
+            };
+            // Each mark fills a square em (ascent 1000, descent 0) with its
+            // artwork's padding built in, so the em is the fitted square.
+            let size = width.min(height) as f64;
+            if size < 1.0 {
+                return;
+            }
+            render_text_mask(
+                pixels,
+                width,
+                height,
+                &crate::ui::theme::provider_mark_glyph(provider).to_string(),
+                crate::widget_font::brand_mark_family(),
+                size,
+                400,
+                FontRendering::Antialiased,
+                1.0,
+                TextAlign::Center,
+                color.resolve(context),
+            );
+        }
     }
 }
 
@@ -1089,7 +1123,9 @@ pub(super) fn resolve_asset_path(path: &str) -> PathBuf {
     if expanded.is_absolute() {
         expanded
     } else {
-        themes_directory().join(expanded)
+        theme_render_environment::fixed_asset_root()
+            .unwrap_or_else(themes_directory)
+            .join(expanded)
     }
 }
 

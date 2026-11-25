@@ -22,6 +22,7 @@ pub const THEME_SCHEMA_VERSION: u32 = 1;
 pub const CLASSIC_THEME_ID: &str = "classic-usage-widget";
 pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
 pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
+pub const STACKED_ROWS_THEME_ID: &str = "stacked-rows";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
 
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
@@ -36,6 +37,10 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
         CLASSIC_VERTICAL_THEME_ID,
         include_str!(concat!(env!("OUT_DIR"), "/classic-vertical.json")),
+    ),
+    (
+        STACKED_ROWS_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/stacked-rows.json")),
     ),
 ];
 
@@ -313,6 +318,16 @@ pub enum SceneContent {
         segments_expression: Option<Expression>,
         #[serde(default = "default_segment_gap")]
         segment_gap: Expression,
+    },
+    /// A provider's logo from the brand marks the dashboard draws, tinted
+    /// with `color` and fitted, centred, into the object. Themes need no image
+    /// assets of their own to show a provider.
+    ProviderMark {
+        /// A provider key, as used by bindings: `claude`, `codex`, ...
+        #[serde(default = "default_provider_mark")]
+        provider: String,
+        #[serde(default = "default_text_paint")]
+        color: Paint,
     },
 }
 
@@ -631,7 +646,7 @@ pub fn parse_mouse_actions(source: &str) -> Result<Vec<MouseAction>, String> {
                     actions.push(MouseAction::Reset { target, property });
                 }
             }
-            _ => return Err(format!("Unknown action: {name}")),
+            _ => return Err(theme_language::unknown_action_message(&name)),
         }
     }
     Ok(actions)
@@ -1003,13 +1018,6 @@ impl LayerBackground {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum LayerBackgroundWire {
-    Current(LayerBackgroundCurrent),
-    Legacy(Paint),
-}
-
-#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum LayerBackgroundCurrent {
     None,
@@ -1034,21 +1042,26 @@ impl<'de> Deserialize<'de> for LayerBackground {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(match LayerBackgroundWire::deserialize(deserializer)? {
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::None) => Self::None,
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Colour { colour }) => {
-                Self::Colour { colour }
-            }
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Gradient {
-                start,
-                end,
-                angle,
-            }) => Self::Gradient { start, end, angle },
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Image { path, fit }) => {
-                Self::Image { path, fit }
-            }
-            LayerBackgroundWire::Legacy(paint) => Self::from_legacy_paint(paint),
-        })
+        use serde::de::Error as _;
+        // A background with a `type` is the current format, and its errors are
+        // reported. Only an untyped paint is the legacy format; trying it after
+        // a failed typed background would hide the error behind a default paint.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("type").is_none() {
+            return serde_json::from_value(value)
+                .map(Self::from_legacy_paint)
+                .map_err(D::Error::custom);
+        }
+        Ok(
+            match serde_json::from_value(value).map_err(D::Error::custom)? {
+                LayerBackgroundCurrent::None => Self::None,
+                LayerBackgroundCurrent::Colour { colour } => Self::Colour { colour },
+                LayerBackgroundCurrent::Gradient { start, end, angle } => {
+                    Self::Gradient { start, end, angle }
+                }
+                LayerBackgroundCurrent::Image { path, fit } => Self::Image { path, fit },
+            },
+        )
     }
 }
 
@@ -1250,8 +1263,15 @@ pub struct Stroke {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Paint {
+    /// The colour in both appearances, or only in dark mode when
+    /// `light_color` is set.
     #[serde(default = "default_paint_color")]
     pub color: String,
+    /// An optional replacement used while Windows is in light mode, so one
+    /// object can serve both appearances instead of a pair of layers gated on
+    /// `system.dark`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_color: Option<String>,
     #[serde(default = "default_opacity")]
     pub opacity: Expression,
 }
@@ -1260,11 +1280,16 @@ impl Default for Paint {
     fn default() -> Self {
         Self {
             color: "#00000000".to_string(),
+            light_color: None,
             opacity: Expression::from(1.0),
         }
     }
 }
 
+/// A formula stored as text, such as `"canvas.width - 8"` or
+/// `"claude.session.percentage > 80"`. Most theme fields are expressions; the
+/// values, operators and functions they can use are in `theme_language.rs` and
+/// the generated `docs/theme-reference.md`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Expression(pub String);
@@ -1508,7 +1533,7 @@ impl DataContext {
         context.insert("app.version.major", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.minor", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.patch", version_parts.next().unwrap_or(0.0));
-        context.insert("system.dark", crate::theme::is_dark_mode() as u8 as f64);
+        context.insert("system.dark", render_dark_mode() as u8 as f64);
         context.insert("data.poll_ok", runtime.poll_ok as u8 as f64);
         context.insert("data.has_error", runtime.has_error as u8 as f64);
         context.insert(
@@ -1527,10 +1552,7 @@ impl DataContext {
         context.insert_string("i18n.minute_suffix", strings.minute_suffix);
         context.insert_string("i18n.second_suffix", strings.second_suffix);
         context.insert("providers.count", runtime.provider_count() as f64);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_secs_f64())
-            .unwrap_or(0.0);
+        let now = render_now_unix();
         context.insert("time.now.unix", now);
         context.insert("time.now.milliseconds", now * 1000.0);
         for (zone, local) in [("local", true), ("utc", false)] {
@@ -1820,7 +1842,7 @@ impl DataContext {
                 .map(|value| value.as_secs_f64())
                 .unwrap_or(0.0);
             let seconds = reset
-                .and_then(|value| value.duration_since(std::time::SystemTime::now()).ok())
+                .and_then(|value| value.duration_since(render_now()).ok())
                 .map(|value| value.as_secs_f64())
                 .unwrap_or(0.0);
             (unix, seconds)
@@ -1904,6 +1926,20 @@ impl DataContext {
                     },
                 )
             })
+    }
+
+    /// Every number and text name set in this context, sorted. Names that only
+    /// resolve through defaults (offline accounts and quotas) are not listed.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<_> = self
+            .values
+            .keys()
+            .chain(self.strings.keys())
+            .map(String::as_str)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
     }
 
     pub fn insert_string(&mut self, name: &str, value: impl Into<String>) {
@@ -2501,6 +2537,15 @@ impl ThemeDocument {
             };
             let context = DataContext::from_usage(None, &canvas);
             validate_scene_object(&mut errors, &context, root);
+            for (field, expression) in [
+                ("offset_x_expression", &root.placement.offset_x_expression),
+                ("offset_y_expression", &root.placement.offset_y_expression),
+            ] {
+                if let Some(expression) = expression {
+                    let label = format!("{}.placement.{field}", root.name);
+                    validate_expression(&mut errors, &context, &label, expression);
+                }
+            }
             validate_scene_mouse_events(&mut errors, &context, self, surface_index, root);
 
             let mut ids = std::collections::HashSet::new();
@@ -2796,6 +2841,20 @@ fn validate_scene_object(errors: &mut Vec<String>, context: &DataContext, object
                 track,
             );
         }
+        SceneContent::ProviderMark { provider, color } => {
+            if crate::providers::ProviderId::from_key(provider).is_none() {
+                errors.push(format!(
+                    "{}.provider: '{provider}' is not a provider key",
+                    object.name
+                ));
+            }
+            validate_paint(
+                errors,
+                &object_context,
+                &format!("{}.color", object.name),
+                color,
+            );
+        }
     }
 }
 
@@ -2806,8 +2865,19 @@ fn validate_expression(
     expression: &Expression,
 ) {
     if let Err(error) = evaluate(&expression.0, context) {
-        errors.push(format!("{label}: {error}"));
+        errors.push(format!("{label}: {}", explain_error(error, context)));
     }
+}
+
+/// Adds the closest known name to an unknown-value error. Only validation does
+/// this; evaluation runs every frame and keeps the short message.
+fn explain_error(error: String, context: &DataContext) -> String {
+    error
+        .strip_prefix("Unknown value '")
+        .and_then(|rest| rest.strip_suffix('\''))
+        .map_or(error.clone(), |name| {
+            theme_language::unknown_value_message(name, context)
+        })
 }
 
 fn validate_paint(errors: &mut Vec<String>, context: &DataContext, label: &str, paint: &Paint) {
@@ -2816,6 +2886,13 @@ fn validate_paint(errors: &mut Vec<String>, context: &DataContext, label: &str, 
             "{label}: '{}' is not #RRGGBB or #AARRGGBB",
             paint.color
         ));
+    }
+    if let Some(light) = &paint.light_color {
+        if parse_color(light).is_none() {
+            errors.push(format!(
+                "{label}.light_color: '{light}' is not #RRGGBB or #AARRGGBB"
+            ));
+        }
     }
     validate_expression(errors, context, &format!("{label}.opacity"), &paint.opacity);
 }
@@ -2847,6 +2924,8 @@ pub fn validate_template(template: &str, context: &DataContext) -> Vec<String> {
             continue;
         }
         if let Err(error) = evaluate_value(expression, context) {
+            errors.push(explain_error(error, context));
+        } else if let Some(error) = theme_language::unknown_format_message(format) {
             errors.push(error);
         }
         remaining = &remaining[end + 1..];
@@ -2893,11 +2972,25 @@ impl Paint {
     pub fn new(color: &str) -> Self {
         Self {
             color: color.to_string(),
+            light_color: None,
             opacity: 1.0.into(),
         }
     }
+
+    /// The colour string for an appearance: the light-mode colour when one is
+    /// set and Windows is light, otherwise the shared colour.
+    pub fn color_for(&self, dark: bool) -> &str {
+        match &self.light_color {
+            Some(light) if !dark => light,
+            _ => &self.color,
+        }
+    }
+
     pub fn resolve(&self, context: &DataContext) -> Rgba {
-        let mut rgba = parse_color(&self.color).unwrap_or(Rgba {
+        // Contexts without the system binding (tests, previews) count as dark,
+        // which keeps the shared colour.
+        let dark = context.get("system.dark").is_none_or(|dark| dark != 0.0);
+        let mut rgba = parse_color(self.color_for(dark)).unwrap_or(Rgba {
             r: 255,
             g: 0,
             b: 255,
@@ -2921,8 +3014,13 @@ mod theme_expression;
 pub use theme_expression::*;
 
 mod theme_datetime;
+mod theme_language;
+pub use theme_language::*;
 mod theme_limits;
+mod theme_render_environment;
 use theme_datetime::*;
+use theme_render_environment::{render_dark_mode, render_now, render_now_unix};
+pub use theme_render_environment::{with_fixed_render_environment, FixedRenderEnvironment};
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }
@@ -2973,6 +3071,9 @@ fn default_accent_paint() -> Paint {
 }
 fn default_track_paint() -> Paint {
     Paint::new("#FFFFFF24")
+}
+fn default_provider_mark() -> String {
+    "claude".into()
 }
 fn default_text_paint() -> Paint {
     Paint::new("#FFFFFFFF")

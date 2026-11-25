@@ -240,6 +240,14 @@ mod tests {
         response.body(ureq::Body::builder().data(b"{}")).unwrap()
     }
 
+    /// Makes `cooldown` behave as if it were received `age` ago. `Instant`
+    /// cannot go back past boot on Windows, and CI runners may have been up
+    /// for less than `MAX_RETRY_AFTER`, so shorten the delay instead of
+    /// moving `received` back; `remaining` gives the same result.
+    fn age(cooldown: &mut Cooldown, age: Duration) {
+        cooldown.delay = cooldown.delay.saturating_sub(age);
+    }
+
     #[test]
     fn parses_seconds_dates_and_invalid_values() {
         let now = httpdate::parse_http_date("Wed, 23 Sep 2026 00:00:00 GMT").unwrap();
@@ -305,11 +313,10 @@ mod tests {
                 ));
 
                 // Advance the cooldown's age without sleeping or restarting.
-                {
-                    let mut cooldowns = state.cooldowns.lock().unwrap();
-                    cooldowns.get_mut(&key).unwrap().received =
-                        Instant::now() - Duration::from_secs(900);
-                }
+                age(
+                    state.cooldowns.lock().unwrap().get_mut(&key).unwrap(),
+                    Duration::from_secs(900),
+                );
                 let mut sent = false;
                 state
                     .handle(request("first"), |_| {
@@ -453,13 +460,10 @@ mod tests {
                     state.cooldowns.lock().unwrap()[&key].received,
                     original.received
                 );
-                state
-                    .cooldowns
-                    .lock()
-                    .unwrap()
-                    .get_mut(&key)
-                    .unwrap()
-                    .received = Instant::now() - MAX_RETRY_AFTER;
+                age(
+                    state.cooldowns.lock().unwrap().get_mut(&key).unwrap(),
+                    MAX_RETRY_AFTER,
+                );
                 assert!(state
                     .handle(request("first"), |_| Ok(response(200, None)))
                     .is_ok());
@@ -567,13 +571,10 @@ mod tests {
             assert!(state
                 .handle(request("second"), |_| Ok(response(200, None)))
                 .is_ok());
-            state
-                .cooldowns
-                .lock()
-                .unwrap()
-                .get_mut(&key)
-                .unwrap()
-                .received = Instant::now() - DEFAULT_RATE_LIMIT_DELAY;
+            age(
+                state.cooldowns.lock().unwrap().get_mut(&key).unwrap(),
+                DEFAULT_RATE_LIMIT_DELAY,
+            );
             assert!(state
                 .handle(request("first"), |_| Ok(response(200, None)))
                 .is_ok());

@@ -391,28 +391,24 @@ pub(super) fn call_function(
     name: &str,
     args: &[ExpressionValue],
 ) -> Result<ExpressionValue, String> {
-    let arity = |count: usize| {
-        if args.len() == count {
-            Ok(())
-        } else {
-            Err(format!("{name} expects {count} argument(s)"))
-        }
+    // EXPRESSION_FUNCTIONS is the list of functions; this only runs them.
+    let Some(function) = super::expression_function(name) else {
+        return Err(super::theme_language::unknown_function_message(name));
     };
-    match name.to_ascii_lowercase().as_str() {
-        "min" => {
-            arity(2)?;
-            Ok(ExpressionValue::Number(
-                args[0].number()?.min(args[1].number()?),
-            ))
-        }
-        "max" => {
-            arity(2)?;
-            Ok(ExpressionValue::Number(
-                args[0].number()?.max(args[1].number()?),
-            ))
-        }
+    if args.len() != function.arguments {
+        return Err(format!(
+            "{} expects {} argument(s): {}",
+            function.name, function.arguments, function.signature
+        ));
+    }
+    match function.name {
+        "min" => Ok(ExpressionValue::Number(
+            args[0].number()?.min(args[1].number()?),
+        )),
+        "max" => Ok(ExpressionValue::Number(
+            args[0].number()?.max(args[1].number()?),
+        )),
         "clamp" => {
-            arity(3)?;
             let value = args[0].number()?;
             let minimum = args[1].number()?;
             let maximum = args[2].number()?;
@@ -421,49 +417,29 @@ pub(super) fn call_function(
             }
             Ok(ExpressionValue::Number(value.clamp(minimum, maximum)))
         }
-        "round" => {
-            arity(1)?;
-            Ok(ExpressionValue::Number(args[0].number()?.round()))
-        }
-        "floor" => {
-            arity(1)?;
-            Ok(ExpressionValue::Number(args[0].number()?.floor()))
-        }
-        "ceil" => {
-            arity(1)?;
-            Ok(ExpressionValue::Number(args[0].number()?.ceil()))
-        }
-        "abs" => {
-            arity(1)?;
-            Ok(ExpressionValue::Number(args[0].number()?.abs()))
-        }
-        "sqrt" => {
-            arity(1)?;
-            Ok(ExpressionValue::Number(args[0].number()?.sqrt()))
-        }
-        "pow" => {
-            arity(2)?;
-            Ok(ExpressionValue::Number(
-                args[0].number()?.powf(args[1].number()?),
-            ))
-        }
-        "if" => {
-            arity(3)?;
-            Ok(if args[0].number()? != 0.0 {
-                args[1].clone()
-            } else {
-                args[2].clone()
-            })
-        }
+        "round" => Ok(ExpressionValue::Number(args[0].number()?.round())),
+        "floor" => Ok(ExpressionValue::Number(args[0].number()?.floor())),
+        "ceil" => Ok(ExpressionValue::Number(args[0].number()?.ceil())),
+        "abs" => Ok(ExpressionValue::Number(args[0].number()?.abs())),
+        "sqrt" => Ok(ExpressionValue::Number(args[0].number()?.sqrt())),
+        "pow" => Ok(ExpressionValue::Number(
+            args[0].number()?.powf(args[1].number()?),
+        )),
+        "if" => Ok(if args[0].number()? != 0.0 {
+            args[1].clone()
+        } else {
+            args[2].clone()
+        }),
         "lerp" => {
-            arity(3)?;
             let start = args[0].number()?;
             let end = args[1].number()?;
             Ok(ExpressionValue::Number(
                 start + (end - start) * args[2].number()?,
             ))
         }
-        _ => Err(format!("Unknown function '{name}'")),
+        listed => Err(format!(
+            "{listed} is in EXPRESSION_FUNCTIONS but call_function does not run it"
+        )),
     }
 }
 

@@ -4,6 +4,45 @@ Notable changes to Claude Code Usage Monitor are documented here, newest first.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with
 changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
+## [Unreleased]
+
+### Added
+
+- Run formatting, Clippy with warnings denied, tests, a locked release build, and repository checks on every pull request and push to `main`, reporting a single `CI passed` status for branch protection.
+- Check release metadata in CI and locally with `tests/Test-Repository.ps1`: tracked ignored or local-only files, the `Cargo.lock` package version, and `CHANGELOG.md` structure, ordering, links, and agreement with the `Cargo.toml` version. Merged changes accumulate under `[Unreleased]` until a release is prepared.
+- Add `scripts/New-Release.ps1` to prepare a `vVERSION` release commit from the `[Unreleased]` entries, `scripts/Publish-Release.ps1` to tag a pushed release, and `scripts/Build-Release.ps1` for local release builds. See [docs/releasing.md](docs/releasing.md).
+- Let theme colours set an optional light-mode colour (`light_color`), so one layer can serve both Windows appearances instead of a pair of layers gated on `system.dark`. In Theme Studio, the sun and moon button beside a colour expands it into separate Dark mode and Light mode colours; collapsing keeps the dark mode colour. Colours without `light_color` render and save as before, and themes that keep separate per-mode layers are unaffected.
+- Add the Stacked Rows built-in theme: each provider's logo beside joined rows of four-section bars, one row per limit the account reports, with a magenta pace marker. Bars follow the Usage direction setting, and hovering a provider opens a flyout with each limit's usage, reset time and pace, or a waiting, error or no-usage message.
+- Add a Provider logo layer type (`provider_mark`) to themes and Theme Studio. It draws a provider's brand mark from the dashboard's icon font, tinted and fitted to the layer, so themes need no image assets to show a provider.
+- Render themes to PNG without starting the app: `--render-theme <theme.json | built-in id> --out <file.png | folder>`, with `--surface`, `--appearance`, `--fixture`, `--now`, `--utc-offset` and `--scale`. The clock, time zone and appearance are fixed, so the same input gives the same image. See [CONTRIBUTING.md](CONTRIBUTING.md#theme-changes).
+- Test every surface of every built-in theme in dark and light mode against reference images in `tests/snapshots/themes`. CI uploads the renders as the `theme-snapshots` artifact, so a theme pull request can be reviewed as pictures.
+- Add a provider contract test: every provider needs a redacted response fixture that its parser reads, usage that survives the usage cache and reaches themes, translated setting text, and unique identifiers. See [CONTRIBUTING.md](CONTRIBUTING.md#provider-changes).
+- Add a [feature map](docs/feature-map.md) naming each part of the app and where its code lives.
+- Add a generated [theme reference](docs/theme-reference.md) listing every theme field, expression value, operator, function, template format and mouse action, with results computed from the sample usage. It is generated from the definitions the theme engine and Theme Studio use, `cargo test` fails when it is out of date, and `--theme-reference` prints it.
+- Report theme mistakes with the likely fix: `--render-theme` warns about fields the engine does not know (`'widht' is not a theme field; did you mean 'width'?`), and theme validation suggests the closest value, function, mouse action or template format for an unknown one.
+- Auto-merge Dependabot pull requests with patch-level Cargo updates once `CI passed` succeeds. `scripts/New-Release.ps1` adds changelog entries for them and refuses to prepare a release when `origin/main` has commits that local `main` lacks. See [docs/releasing.md](docs/releasing.md#dependabot-updates).
+
+### Changed
+
+- Require the CI checks to pass before the tagged Release workflow builds and publishes artifacts.
+- Resolve the remaining Clippy warnings in test code so CI can deny warnings.
+- Enforce code boundaries with lints in `Cargo.toml` and `clippy.toml`, described in [CONTRIBUTING.md](CONTRIBUTING.md#lint-rules):
+  - unsafe code is allowed only in files that opt in;
+  - new unsafe blocks need a `// SAFETY:` comment, as a ratchet;
+  - production code cannot use `unwrap()`, and the 11 remaining calls are replaced;
+  - HTTP agents are created only in the poller and updater;
+  - code cannot modify the process environment.
+- Draw the Classic, Compact Fluent Quad and Classic Vertical built-in themes from single layers with light-mode colours instead of duplicate layers gated on `system.dark` (163 to 124, 158 to 118 and 133 to 114 layers), with identical rendering in both appearances. Custom themes that keep separate dark and light layers render as before.
+- Run the dependency security checks as part of `CI passed` on pull requests and pushes to `main`, and once in the tagged Release workflow through CI.
+
+### Fixed
+
+- Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
+- Update the transitive `cookie` dependency from 0.18.2 to 0.18.3 to resolve RUSTSEC-2026-0594 found by the release dependency checks.
+- Translate the Cursor and OpenCode Go provider setting descriptions, which showed in English in every other language.
+- Reject a theme layer background with an invalid value, such as an unknown image `fit`, instead of silently replacing it with a default colour.
+- Validate a surface's `placement.offset_x_expression` and `placement.offset_y_expression` when a theme loads, so a broken offset is reported instead of silently falling back to `offset_x` or `offset_y`.
+
 ## [2.25.3] - 2026-11-21
 
 ### Changed
@@ -1717,3 +1756,4 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.25.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.0...v2.25.1
 [2.25.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.1...v2.25.2
 [2.25.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.2...v2.25.3
+[Unreleased]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.3...HEAD

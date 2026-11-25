@@ -42,6 +42,7 @@ features = [
     "Win32_Graphics_Gdi",
     "Win32_System_LibraryLoader",
     "Win32_System_Com",
+    "Win32_System_Console",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_UI_Shell",
@@ -80,6 +81,20 @@ winresource = "0.1.31"
 [patch.crates-io]
 # Keep native text copy/paste without arboard's image codecs. See vendor/egui-winit/PATCH.md.
 egui-winit = { path = "vendor/egui-winit" }
+
+[lints.rust]
+# Unsafe code needs an explicit opt-in: a file that calls native APIs starts with
+# #![allow(unsafe_code, reason = "...")]. Keep new unsafe code in those files.
+unsafe_code = "deny"
+
+[lints.clippy]
+# Every new unsafe block needs a // SAFETY: comment. Files listed with a
+# "ratchet" allow predate this rule; document their blocks and drop the allow.
+undocumented_unsafe_blocks = "deny"
+# Outside tests, handle the error, or use expect("why this cannot fail").
+unwrap_used = "deny"
+dbg_macro = "deny"
+todo = "deny"
 
 [profile.release]
 opt-level = "z"

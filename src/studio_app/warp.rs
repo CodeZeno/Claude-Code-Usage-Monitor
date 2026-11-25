@@ -1,5 +1,10 @@
 //! Native D3D11/WARP host. Runs in a fresh dashboard process after OpenGL fails.
 //! Windows supplies the software rasterizer; the painter embeds precompiled shaders.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use super::{egui, style_native_titlebar, Page, StudioApp};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};

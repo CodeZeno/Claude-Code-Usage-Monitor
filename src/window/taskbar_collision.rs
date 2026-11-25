@@ -1,5 +1,10 @@
 //! Physical taskbar occupancy. Shell accessibility calls stay on a dedicated
 //! MTA thread; neither the UI thread nor the Explorer watchdog waits for them.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 use super::*;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -511,7 +516,7 @@ mod tests {
     #[test]
     fn stale_failed_moved_and_recreated_taskbars_are_unknown_not_free() {
         let now = Instant::now();
-        let hwnd = HWND(1usize as *mut _);
+        let hwnd = HWND(std::ptr::dangling_mut());
         let other = HWND(2usize as *mut _);
         let bounds = rect(0, 1032, 1920, 1080);
         let sample = layout(bounds, vec![rect(700, 1032, 1220, 1080)]);

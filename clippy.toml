@@ -1,0 +1,31 @@
+# Project rules enforced by Clippy. Lint levels live in Cargo.toml's [lints] table.
+# Each `reason` is printed with the error, so it should name the fix.
+
+# Tests may unwrap; production code may not (see `unwrap_used` in Cargo.toml).
+allow-unwrap-in-tests = true
+
+disallowed-methods = [
+    # HTTP stays in poller/ and updater/. Each has one `build_agent` that sets
+    # native TLS, the platform certificate verifier and timeouts;
+    # those two functions are the only places allowed to create a ureq agent.
+    { path = "ureq::Agent::new_with_defaults", reason = "create HTTP agents only in poller::build_agent or updater::build_agent, which apply the TLS and timeout policy; call those instead" },
+    { path = "ureq::Agent::new_with_config", reason = "create HTTP agents only in poller::build_agent or updater::build_agent, which apply the TLS and timeout policy; call those instead" },
+    { path = "ureq::Agent::config_builder", reason = "create HTTP agents only in poller::build_agent or updater::build_agent, which apply the TLS and timeout policy; call those instead" },
+    { path = "ureq::Agent::with_parts", reason = "create HTTP agents only in poller::build_agent or updater::build_agent, which apply the TLS and timeout policy; call those instead" },
+    { path = "ureq::config::Config::new_agent", reason = "create HTTP agents only in poller::build_agent or updater::build_agent, which apply the TLS and timeout policy; call those instead" },
+    { path = "ureq::agent", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::run", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::get", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::post", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::put", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::delete", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::head", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::options", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::connect", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::patch", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+    { path = "ureq::trace", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
+
+    # The process environment is shared by provider discovery and parallel tests.
+    { path = "std::env::set_var", reason = "the process environment is shared by provider discovery and parallel tests; pass paths or settings explicitly (tests use app_settings::app_data_directory)" },
+    { path = "std::env::remove_var", reason = "the process environment is shared by provider discovery and parallel tests; pass paths or settings explicitly (tests use app_settings::app_data_directory)" },
+]

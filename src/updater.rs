@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use std::fs::File;
 use std::io::{self, Read};
 use std::os::windows::process::CommandExt;
@@ -286,6 +292,10 @@ fn fetch_latest_release() -> Result<Option<ReleaseDescriptor>, String> {
     release_descriptor(release, env!("CARGO_PKG_VERSION"))
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one place this module creates its HTTP agent"
+)]
 fn build_agent() -> Result<ureq::Agent, String> {
     let tls = ureq::tls::TlsConfig::builder()
         .provider(ureq::tls::TlsProvider::NativeTls)

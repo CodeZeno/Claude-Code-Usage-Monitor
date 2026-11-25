@@ -1,0 +1,45 @@
+name: Dependabot auto-merge
+
+# Turns on auto-merge for Dependabot pull requests that only make patch-level
+# Cargo updates. GitHub merges them once the required "CI passed" check
+# succeeds. Minor and major updates, the egui group (the local egui-winit patch
+# needs review, see docs/dependency-security.md) and GitHub Actions updates
+# (workflow code that runs with release secrets) still wait for a maintainer. Merged updates collect
+# on main until the next release, and scripts/New-Release.ps1 lists them in
+# CHANGELOG.md. See docs/releasing.md.
+#
+# Needs "Allow auto-merge" in the repository settings and a branch protection
+# rule (or ruleset) on main that requires "CI passed". Without the required
+# check, auto-merge would merge immediately.
+
+on:
+  pull_request_target:
+    types: [opened, reopened, synchronize]
+
+permissions: {}
+
+jobs:
+  auto-merge:
+    name: auto-merge patch updates
+    # pull_request_target runs with write access, so this job never checks out
+    # or runs code from the pull request.
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.repository == 'CodeZeno/Claude-Code-Usage-Monitor'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3.1.0
+
+      - name: Enable auto-merge
+        if: >-
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' &&
+          steps.metadata.outputs.package-ecosystem == 'cargo' &&
+          steps.metadata.outputs.dependency-group != 'egui'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"
