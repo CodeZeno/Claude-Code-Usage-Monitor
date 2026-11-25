@@ -75,8 +75,11 @@ in navigation order (`Page` in `src/studio_app.rs`):
 
 A theme is a JSON document of surfaces and layers. The engine is `src/theme_engine.rs`
 and `src/theme_engine/`; built-in themes are in `src/themes/`: Classic v1, Classic
-Vertical, Compact Fluent Quad, Minecraft (Codex) and Stacked Rows. Render any theme
-to PNG without starting the app with `--render-theme`; see
+Vertical, Compact Fluent Quad, Minecraft (Codex) and Stacked Rows. Most fields are
+expressions (`"width": "canvas.width - 8"`) and text uses `{expression:format}`
+templates; [theme-reference.md](theme-reference.md) lists every field, value,
+function, format and mouse action, generated from `src/theme_engine/theme_language.rs`.
+Render any theme to PNG without starting the app with `--render-theme`; see
 [CONTRIBUTING.md](../CONTRIBUTING.md#theme-changes).
 
 ## Providers
@@ -101,3 +104,4 @@ needs.
   - `--no-poll` starts without polling providers.
   - `--diagnose` and `--diagnose-append` write a diagnostic log.
   - `--render-theme` renders a theme to PNG and exits.
+  - `--theme-reference` prints [theme-reference.md](theme-reference.md) and exits.

@@ -14,8 +14,8 @@ use crate::models::AppUsageData;
 use crate::providers::{ProviderId, ProviderSet};
 use crate::theme_engine::{
     bundled_theme, bundled_theme_ids, load_theme, render_theme_surface_with_runtime_at_scale,
-    with_fixed_render_environment, FixedRenderEnvironment, RenderedTheme, SurfaceNest,
-    ThemeDocument, ThemeRuntime,
+    unknown_theme_fields, with_fixed_render_environment, FixedRenderEnvironment, RenderedTheme,
+    SurfaceNest, ThemeDocument, ThemeRuntime,
 };
 
 /// Usage figures for Claude Code and Codex, timed against `DEFAULT_NOW_UNIX`.
@@ -147,8 +147,14 @@ pub fn to_rgba_image(rendered: &RenderedTheme) -> image::RgbaImage {
         .expect("a rendered theme has width * height pixels")
 }
 
-/// `--render-theme`: returns an exit code, or `None` when the flag is absent.
+/// `--render-theme` and `--theme-reference`: returns an exit code, or `None`
+/// when neither flag is present.
 pub fn handle_cli_mode(args: &[String]) -> Option<i32> {
+    if args.iter().any(|arg| arg == "--theme-reference") {
+        attach_parent_console();
+        print!("{}", reference::theme_reference());
+        return Some(0);
+    }
     if !args.iter().any(|arg| arg == "--render-theme") {
         return None;
     }
@@ -335,6 +341,15 @@ fn load_requested_theme(theme: &str) -> Result<(ThemeDocument, Option<PathBuf>),
     if path.is_file() {
         let document =
             load_theme(path).map_err(|error| format!("invalid theme {theme}: {error}"))?;
+        // Serde ignores fields the format does not have; say which ones.
+        if let Some(json) = std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+        {
+            for warning in unknown_theme_fields(&json) {
+                eprintln!("warning: {warning}");
+            }
+        }
         let root = path
             .parent()
             .map(|parent| parent.to_path_buf())
@@ -359,6 +374,8 @@ fn attach_parent_console() {
     // parent has no console or this process already has one.
     let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
 }
+
+pub mod reference;
 
 #[cfg(test)]
 mod tests;

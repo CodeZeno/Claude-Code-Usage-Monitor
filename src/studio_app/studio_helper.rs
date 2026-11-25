@@ -69,60 +69,9 @@ const MENU_ACTION_CATEGORIES: &[&str] = &[
     OPERATORS,
 ];
 
-/// `(name, signature, insertion, description)`
-const EXPRESSION_FUNCTIONS: &[(&str, &str, &str, &str)] = &[
-    (
-        "get",
-        "get(this, property)",
-        "get(this, gap)",
-        "Value expression",
-    ),
-    ("min", "min(a, b)", "min(0, 0)", "Smaller value"),
-    ("max", "max(a, b)", "max(0, 0)", "Larger value"),
-    (
-        "clamp",
-        "clamp(value, min, max)",
-        "clamp(0, 0, 100)",
-        "Constrain a value",
-    ),
-    ("round", "round(value)", "round(0)", "Nearest integer"),
-    ("floor", "floor(value)", "floor(0)", "Round down"),
-    ("ceil", "ceil(value)", "ceil(0)", "Round up"),
-    ("abs", "abs(value)", "abs(0)", "Absolute value"),
-    ("sqrt", "sqrt(value)", "sqrt(0)", "Square root"),
-    ("pow", "pow(base, power)", "pow(0, 2)", "Exponent"),
-    (
-        "if",
-        "if(condition, yes, no)",
-        "if(true, 1, 0)",
-        "Conditional value",
-    ),
-    (
-        "lerp",
-        "lerp(start, end, amount)",
-        "lerp(0, 100, 0.5)",
-        "Linear interpolation",
-    ),
-];
-
-/// `(operator, description)`
-const EXPRESSION_OPERATORS: &[(&str, &str)] = &[
-    ("&&", "And"),
-    ("||", "Or"),
-    ("!", "Not"),
-    ("==", "Equal"),
-    ("!=", "Not equal"),
-    (">", "Greater than"),
-    ("<", "Less than"),
-    (">=", "Greater or equal"),
-    ("<=", "Less or equal"),
-    ("+", "Add"),
-    ("-", "Subtract"),
-    ("*", "Multiply"),
-    ("/", "Divide"),
-    ("%", "Remainder"),
-    ("()", "Grouping"),
-];
+// Functions, operators and mouse actions are defined by the theme engine
+// (`theme_engine::EXPRESSION_FUNCTIONS` and friends) so the helper, the
+// evaluator and docs/theme-reference.md cannot disagree.
 
 /// An action the helper can build: `(id, category, label, code, token)`.
 type ActionSpec = (
@@ -132,72 +81,6 @@ type ActionSpec = (
     &'static str,
     &'static str,
 );
-
-const MOUSE_ACTIONS: &[ActionSpec] = &[
-    (
-        "show_dashboard",
-        DASHBOARD,
-        "Show dashboard",
-        "show_dashboard()",
-        "show_dashboard",
-    ),
-    (
-        "toggle_dashboard",
-        DASHBOARD,
-        "Toggle dashboard",
-        "toggle_dashboard()",
-        "toggle_dashboard",
-    ),
-    (
-        "open_url",
-        LINKS_AND_MENUS,
-        "Open URL",
-        "open_url(\"https://…\")",
-        "open_url",
-    ),
-    (
-        "show_context_menu",
-        LINKS_AND_MENUS,
-        "Show context menu",
-        "show_context_menu(\"menu\")",
-        "show_context_menu",
-    ),
-    (
-        "set",
-        LAYERS,
-        "Set property",
-        "set(layer, property, value)",
-        "set",
-    ),
-    (
-        "toggle",
-        LAYERS,
-        "Toggle Render",
-        "toggle(layer, render)",
-        "toggle",
-    ),
-    (
-        "reset",
-        LAYERS,
-        "Reset property",
-        "reset(layer, property)",
-        "reset",
-    ),
-    (
-        "increase",
-        LAYERS,
-        "Increase value",
-        "increase(layer, property, amount)",
-        "increase",
-    ),
-    (
-        "decrease",
-        LAYERS,
-        "Decrease value",
-        "decrease(layer, property, amount)",
-        "decrease",
-    ),
-];
 
 const MENU_ACTIONS: &[ActionSpec] = &[
     (
@@ -435,12 +318,11 @@ impl HelperSession {
             }
             return;
         }
-        let actions = match self.target {
-            HelperTarget::MouseAction { .. } => MOUSE_ACTIONS,
-            HelperTarget::MenuAction { .. } => MENU_ACTIONS,
-            _ => &[],
+        let mut entries = match self.target {
+            HelperTarget::MouseAction { .. } => mouse_action_entries(language),
+            HelperTarget::MenuAction { .. } => action_entries(MENU_ACTIONS, language),
+            _ => Vec::new(),
         };
-        let mut entries = action_entries(actions, language);
         entries.extend(value_entries(context, language, syntax));
         self.catalogue = Some(HelperCatalogue {
             context: context.clone(),
@@ -919,35 +801,51 @@ pub(super) fn value_entries(
     let mut entries = list.entries;
     let functions = language.text("Functions");
     entries.extend(
-        EXPRESSION_FUNCTIONS
+        theme_engine::EXPRESSION_FUNCTIONS
             .iter()
-            .map(|(name, signature, _, detail)| HelperEntry {
-                id: format!("fn:{name}"),
+            .map(|function| HelperEntry {
+                id: format!("fn:{}", function.name),
                 category: FUNCTIONS,
                 scope: None,
                 group: functions.into(),
-                label: language.text(detail).into(),
-                code: (*signature).into(),
-                token: (*name).into(),
+                label: language.text(function.description).into(),
+                code: function.signature.into(),
+                token: function.name.into(),
                 value: None,
             }),
     );
     let operators = language.text("Operators");
     entries.extend(
-        EXPRESSION_OPERATORS
+        theme_engine::EXPRESSION_OPERATORS
             .iter()
-            .map(|(operator, detail)| HelperEntry {
-                id: format!("op:{operator}"),
+            .map(|operator| HelperEntry {
+                id: format!("op:{}", operator.symbol),
                 category: OPERATORS,
                 scope: None,
                 group: operators.into(),
-                label: language.text(detail).into(),
-                code: (*operator).into(),
+                label: language.text(operator.description).into(),
+                code: operator.symbol.into(),
                 token: String::new(),
                 value: None,
             }),
     );
     entries
+}
+
+fn mouse_action_entries(language: LanguageId) -> Vec<HelperEntry> {
+    theme_engine::MOUSE_ACTIONS
+        .iter()
+        .map(|action| HelperEntry {
+            id: action.name.into(),
+            category: action.category,
+            scope: None,
+            group: language.text(action.category).into(),
+            label: language.text(action.label).into(),
+            code: action.signature.into(),
+            token: action.name.into(),
+            value: None,
+        })
+        .collect()
 }
 
 fn action_entries(actions: &[ActionSpec], language: LanguageId) -> Vec<HelperEntry> {
@@ -1059,16 +957,19 @@ pub(super) fn value_details(
         };
         HelperInsertion::new(text, InsertMode::Spaced)
     };
-    let (expression, kind) = if let Some((_, _, insertion, _)) = entry
+    let (expression, kind) = if let Some(function) = entry
         .id
         .strip_prefix("fn:")
-        .and_then(|name| EXPRESSION_FUNCTIONS.iter().find(|item| item.0 == name))
+        .and_then(theme_engine::expression_function)
     {
         note(
             ui,
             language.text("Replace each argument with a value from the list or a number."),
         );
-        ((*insertion).to_string(), TextTemplateValueKind::Number)
+        (
+            function.insertion.to_string(),
+            TextTemplateValueKind::Number,
+        )
     } else if let Some(operator) = entry.id.strip_prefix("op:") {
         note(
             ui,
@@ -1689,7 +1590,7 @@ impl StudioApp {
             },
             None,
             |ui, entry, caret| {
-                if MOUSE_ACTIONS.iter().any(|action| action.0 == entry.id) {
+                if theme_engine::mouse_action(&entry.id).is_some() {
                     mouse_action_details(ui, entry, forms, &targets, &self_name, language)
                 } else {
                     let syntax = ValueSyntax::Action;

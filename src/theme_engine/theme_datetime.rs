@@ -47,7 +47,7 @@ pub(super) fn format_timestamp(unix: f64, format: &str, context: &DataContext) -
     let (utc, format) = normalized
         .strip_prefix("utc_")
         .map_or((false, normalized.as_str()), |format| (true, format));
-    if !is_timestamp_format(format) {
+    if !super::theme_language::is_timestamp_format(format) {
         return None;
     }
     let Some(value) = timestamp_system_time(unix, !utc) else {
@@ -106,40 +106,6 @@ pub(super) fn format_timestamp(unix: f64, format: &str, context: &DataContext) -
         _ => None,
     };
     Some(result.unwrap_or_else(|| "--".into()))
-}
-
-fn is_timestamp_format(format: &str) -> bool {
-    matches!(
-        format,
-        "weekday_2"
-            | "weekday_short"
-            | "weekday_long"
-            | "day"
-            | "day_2"
-            | "month"
-            | "month_2"
-            | "month_short"
-            | "month_long"
-            | "year_2"
-            | "year"
-            | "date"
-            | "date_short"
-            | "date_long"
-            | "time"
-            | "time_short"
-            | "time_seconds"
-            | "time_24"
-            | "time_24_seconds"
-            | "time_12"
-            | "time_12_seconds"
-            | "am_pm"
-            | "datetime"
-            | "datetime_short"
-            | "datetime_long"
-            | "iso_date"
-            | "iso_time"
-            | "iso_datetime"
-    )
 }
 
 fn timestamp_system_time(unix: f64, local: bool) -> Option<SYSTEMTIME> {

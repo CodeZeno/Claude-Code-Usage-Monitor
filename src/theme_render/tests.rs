@@ -365,3 +365,51 @@ fn unknown_theme_lists_the_built_in_ids() {
     let error = load_requested_theme("no-such-theme").unwrap_err();
     assert!(error.contains("classic-usage-widget"), "{error}");
 }
+
+#[test]
+fn theme_reference_is_current() {
+    let path = manifest_dir().join(crate::theme_engine::THEME_REFERENCE);
+    let generated = reference::theme_reference();
+    if std::env::var(UPDATE_SNAPSHOTS).is_ok_and(|value| value == "1") {
+        std::fs::write(&path, &generated).unwrap();
+        return;
+    }
+    let current = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        current.replace("\r\n", "\n") == generated,
+        "{} is out of date with src/theme_engine/theme_language.rs; regenerate it with \
+         `CCUM_UPDATE_SNAPSHOTS=1 cargo test --locked theme_reference` and commit the result",
+        crate::theme_engine::THEME_REFERENCE
+    );
+}
+
+#[test]
+fn every_sample_value_is_described() {
+    let context = reference::sample_context();
+    let undescribed: Vec<_> = context
+        .names()
+        .into_iter()
+        .filter(|name| {
+            !crate::theme_engine::is_usage_value(name)
+                && crate::theme_engine::value_group(name).is_none()
+        })
+        .collect();
+    assert!(
+        undescribed.is_empty(),
+        "values themes can read but the reference does not describe; add them to \
+         VALUE_GROUPS, PROVIDER_WINDOWS or PROVIDER_FIELDS in theme_language.rs: {undescribed:?}"
+    );
+}
+
+#[test]
+fn built_in_themes_use_only_theme_fields() {
+    let mut problems = Vec::new();
+    for path in theme_files(&manifest_dir().join("src/themes")) {
+        let json: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        for problem in crate::theme_engine::unknown_theme_fields(&json) {
+            problems.push(format!("{}: {problem}", path.display()));
+        }
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
+}

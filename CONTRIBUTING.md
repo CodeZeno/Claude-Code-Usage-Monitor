@@ -66,6 +66,13 @@ compiling the application is not necessary.
 
 ### Theme changes
 
+Theme fields are mostly expressions, not fixed numbers; see the generated
+[theme reference](docs/theme-reference.md) for every field, value, function,
+format and mouse action. The language is defined once in
+`src/theme_engine/theme_language.rs`: the evaluator, Theme Studio and the
+reference read it, and `cargo test` fails when the reference is out of date or a
+built-in theme uses a field the engine does not know.
+
 Every surface of every theme in `src/themes/` is rendered in dark and light mode
 from the sample usage in `tests/fixtures/theme-usage.json`, with the clock,
 time zone and appearance fixed, and compared with the reference images in
@@ -95,7 +102,8 @@ appearance) or a `.png` file when one image is rendered. Options:
 `--fixture <usage.json>`, `--now <unix seconds>`, `--utc-offset <minutes>` and
 `--scale <factor>`. The executable is a Windows GUI program, so in PowerShell
 pipe it to `Out-Host` (or use `Start-Process -Wait -NoNewWindow`) to wait for it
-and see its output.
+and see its output. It prints a warning for each unknown field and failing
+expression.
 
 ### Provider changes
 

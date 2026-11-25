@@ -18,6 +18,8 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 - Test every surface of every built-in theme in dark and light mode against reference images in `tests/snapshots/themes`. CI uploads the renders as the `theme-snapshots` artifact, so a theme pull request can be reviewed as pictures.
 - Add a provider contract test: every provider needs a redacted response fixture that its parser reads, usage that survives the usage cache and reaches themes, translated setting text, and unique identifiers. See [CONTRIBUTING.md](CONTRIBUTING.md#provider-changes).
 - Add a [feature map](docs/feature-map.md) naming each part of the app and where its code lives.
+- Add a generated [theme reference](docs/theme-reference.md) listing every theme field, expression value, operator, function, template format and mouse action, with results computed from the sample usage. It is generated from the definitions the theme engine and Theme Studio use, `cargo test` fails when it is out of date, and `--theme-reference` prints it.
+- Report theme mistakes with the likely fix: `--render-theme` warns about fields the engine does not know (`'widht' is not a theme field; did you mean 'width'?`), and theme validation suggests the closest value, function, mouse action or template format for an unknown one.
 - Auto-merge Dependabot pull requests with patch-level Cargo updates once `CI passed` succeeds. `scripts/New-Release.ps1` adds changelog entries for them and refuses to prepare a release when `origin/main` has commits that local `main` lacks. See [docs/releasing.md](docs/releasing.md#dependabot-updates).
 
 ### Changed
@@ -38,6 +40,8 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 - Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
 - Update the transitive `cookie` dependency from 0.18.2 to 0.18.3 to resolve RUSTSEC-2026-0594 found by the release dependency checks.
 - Translate the Cursor and OpenCode Go provider setting descriptions, which showed in English in every other language.
+- Reject a theme layer background with an invalid value, such as an unknown image `fit`, instead of silently replacing it with a default colour.
+- Validate a surface's `placement.offset_x_expression` and `placement.offset_y_expression` when a theme loads, so a broken offset is reported instead of silently falling back to `offset_x` or `offset_y`.
 
 ## [2.25.3] - 2026-11-21
 

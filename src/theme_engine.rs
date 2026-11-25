@@ -646,7 +646,7 @@ pub fn parse_mouse_actions(source: &str) -> Result<Vec<MouseAction>, String> {
                     actions.push(MouseAction::Reset { target, property });
                 }
             }
-            _ => return Err(format!("Unknown action: {name}")),
+            _ => return Err(theme_language::unknown_action_message(&name)),
         }
     }
     Ok(actions)
@@ -1018,13 +1018,6 @@ impl LayerBackground {
 }
 
 #[derive(Deserialize)]
-#[serde(untagged)]
-enum LayerBackgroundWire {
-    Current(LayerBackgroundCurrent),
-    Legacy(Paint),
-}
-
-#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum LayerBackgroundCurrent {
     None,
@@ -1049,21 +1042,26 @@ impl<'de> Deserialize<'de> for LayerBackground {
     where
         D: serde::Deserializer<'de>,
     {
-        Ok(match LayerBackgroundWire::deserialize(deserializer)? {
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::None) => Self::None,
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Colour { colour }) => {
-                Self::Colour { colour }
-            }
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Gradient {
-                start,
-                end,
-                angle,
-            }) => Self::Gradient { start, end, angle },
-            LayerBackgroundWire::Current(LayerBackgroundCurrent::Image { path, fit }) => {
-                Self::Image { path, fit }
-            }
-            LayerBackgroundWire::Legacy(paint) => Self::from_legacy_paint(paint),
-        })
+        use serde::de::Error as _;
+        // A background with a `type` is the current format, and its errors are
+        // reported. Only an untyped paint is the legacy format; trying it after
+        // a failed typed background would hide the error behind a default paint.
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.get("type").is_none() {
+            return serde_json::from_value(value)
+                .map(Self::from_legacy_paint)
+                .map_err(D::Error::custom);
+        }
+        Ok(
+            match serde_json::from_value(value).map_err(D::Error::custom)? {
+                LayerBackgroundCurrent::None => Self::None,
+                LayerBackgroundCurrent::Colour { colour } => Self::Colour { colour },
+                LayerBackgroundCurrent::Gradient { start, end, angle } => {
+                    Self::Gradient { start, end, angle }
+                }
+                LayerBackgroundCurrent::Image { path, fit } => Self::Image { path, fit },
+            },
+        )
     }
 }
 
@@ -1288,6 +1286,10 @@ impl Default for Paint {
     }
 }
 
+/// A formula stored as text, such as `"canvas.width - 8"` or
+/// `"claude.session.percentage > 80"`. Most theme fields are expressions; the
+/// values, operators and functions they can use are in `theme_language.rs` and
+/// the generated `docs/theme-reference.md`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Expression(pub String);
@@ -1926,6 +1928,20 @@ impl DataContext {
             })
     }
 
+    /// Every number and text name set in this context, sorted. Names that only
+    /// resolve through defaults (offline accounts and quotas) are not listed.
+    pub fn names(&self) -> Vec<&str> {
+        let mut names: Vec<_> = self
+            .values
+            .keys()
+            .chain(self.strings.keys())
+            .map(String::as_str)
+            .collect();
+        names.sort_unstable();
+        names.dedup();
+        names
+    }
+
     pub fn insert_string(&mut self, name: &str, value: impl Into<String>) {
         self.strings.insert(name.to_ascii_lowercase(), value.into());
     }
@@ -2521,6 +2537,15 @@ impl ThemeDocument {
             };
             let context = DataContext::from_usage(None, &canvas);
             validate_scene_object(&mut errors, &context, root);
+            for (field, expression) in [
+                ("offset_x_expression", &root.placement.offset_x_expression),
+                ("offset_y_expression", &root.placement.offset_y_expression),
+            ] {
+                if let Some(expression) = expression {
+                    let label = format!("{}.placement.{field}", root.name);
+                    validate_expression(&mut errors, &context, &label, expression);
+                }
+            }
             validate_scene_mouse_events(&mut errors, &context, self, surface_index, root);
 
             let mut ids = std::collections::HashSet::new();
@@ -2840,8 +2865,19 @@ fn validate_expression(
     expression: &Expression,
 ) {
     if let Err(error) = evaluate(&expression.0, context) {
-        errors.push(format!("{label}: {error}"));
+        errors.push(format!("{label}: {}", explain_error(error, context)));
     }
+}
+
+/// Adds the closest known name to an unknown-value error. Only validation does
+/// this; evaluation runs every frame and keeps the short message.
+fn explain_error(error: String, context: &DataContext) -> String {
+    error
+        .strip_prefix("Unknown value '")
+        .and_then(|rest| rest.strip_suffix('\''))
+        .map_or(error.clone(), |name| {
+            theme_language::unknown_value_message(name, context)
+        })
 }
 
 fn validate_paint(errors: &mut Vec<String>, context: &DataContext, label: &str, paint: &Paint) {
@@ -2888,6 +2924,8 @@ pub fn validate_template(template: &str, context: &DataContext) -> Vec<String> {
             continue;
         }
         if let Err(error) = evaluate_value(expression, context) {
+            errors.push(explain_error(error, context));
+        } else if let Some(error) = theme_language::unknown_format_message(format) {
             errors.push(error);
         }
         remaining = &remaining[end + 1..];
@@ -2976,6 +3014,8 @@ mod theme_expression;
 pub use theme_expression::*;
 
 mod theme_datetime;
+mod theme_language;
+pub use theme_language::*;
 mod theme_limits;
 mod theme_render_environment;
 use theme_datetime::*;
