@@ -1531,7 +1531,7 @@ impl DataContext {
         context.insert("app.version.major", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.minor", version_parts.next().unwrap_or(0.0));
         context.insert("app.version.patch", version_parts.next().unwrap_or(0.0));
-        context.insert("system.dark", crate::theme::is_dark_mode() as u8 as f64);
+        context.insert("system.dark", render_dark_mode() as u8 as f64);
         context.insert("data.poll_ok", runtime.poll_ok as u8 as f64);
         context.insert("data.has_error", runtime.has_error as u8 as f64);
         context.insert(
@@ -1550,10 +1550,7 @@ impl DataContext {
         context.insert_string("i18n.minute_suffix", strings.minute_suffix);
         context.insert_string("i18n.second_suffix", strings.second_suffix);
         context.insert("providers.count", runtime.provider_count() as f64);
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_secs_f64())
-            .unwrap_or(0.0);
+        let now = render_now_unix();
         context.insert("time.now.unix", now);
         context.insert("time.now.milliseconds", now * 1000.0);
         for (zone, local) in [("local", true), ("utc", false)] {
@@ -1843,7 +1840,7 @@ impl DataContext {
                 .map(|value| value.as_secs_f64())
                 .unwrap_or(0.0);
             let seconds = reset
-                .and_then(|value| value.duration_since(std::time::SystemTime::now()).ok())
+                .and_then(|value| value.duration_since(render_now()).ok())
                 .map(|value| value.as_secs_f64())
                 .unwrap_or(0.0);
             (unix, seconds)
@@ -2980,7 +2977,10 @@ pub use theme_expression::*;
 
 mod theme_datetime;
 mod theme_limits;
+mod theme_render_environment;
 use theme_datetime::*;
+use theme_render_environment::{render_dark_mode, render_now, render_now_unix};
+pub use theme_render_environment::{with_fixed_render_environment, FixedRenderEnvironment};
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }

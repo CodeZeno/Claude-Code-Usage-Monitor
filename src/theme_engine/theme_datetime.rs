@@ -146,6 +146,20 @@ fn timestamp_system_time(unix: f64, local: bool) -> Option<SYSTEMTIME> {
     if !unix.is_finite() || unix <= 0.0 {
         return None;
     }
+    // A pinned render environment fixes the offset, so local times do not
+    // depend on the machine's time zone.
+    let fixed_offset = if local {
+        super::theme_render_environment::fixed_utc_offset_seconds()
+    } else {
+        None
+    };
+    let (unix, local) = match fixed_offset {
+        Some(offset) => (unix + offset as f64, false),
+        None => (unix, local),
+    };
+    if unix <= 0.0 {
+        return None;
+    }
     let seconds = unix.floor() as u64;
     let milliseconds = ((unix - seconds as f64) * 1000.0).floor() as u64;
     let ticks = seconds

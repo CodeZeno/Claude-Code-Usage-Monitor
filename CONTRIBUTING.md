@@ -61,6 +61,39 @@ check the affected dashboard or taskbar behavior and include redacted screenshot
 when helpful. For documentation-only changes, check links and formatting;
 compiling the application is not necessary.
 
+### Theme changes
+
+Every surface of every theme in `src/themes/` is rendered in dark and light mode
+from the sample usage in `tests/fixtures/theme-usage.json`, with the clock,
+time zone and appearance fixed, and compared with the reference images in
+`tests/snapshots/themes/`. `cargo test` fails when a render changes, writes the
+new renders to `target/theme-snapshots/` (with a `-diff.png` beside each changed
+image), and CI uploads that folder as the `theme-snapshots` artifact, so a theme
+pull request can be reviewed as pictures.
+
+When the change is intended, update the references, look at them, and commit
+them with the change:
+
+```powershell
+$env:CCUM_UPDATE_SNAPSHOTS = 1; cargo test --locked theme_render; Remove-Item Env:CCUM_UPDATE_SNAPSHOTS
+```
+
+To render any theme file or built-in theme id without starting the app, for
+example to attach screenshots to a pull request:
+
+```powershell
+cargo build --locked
+./target/debug/claude-code-usage-monitor.exe --render-theme my-theme.json --out renders | Out-Host
+```
+
+`--out` is a folder (one `<theme>-<surface>-<appearance>.png` per surface and
+appearance) or a `.png` file when one image is rendered. Options:
+`--surface <id | index | all>`, `--appearance dark | light | both`,
+`--fixture <usage.json>`, `--now <unix seconds>`, `--utc-offset <minutes>` and
+`--scale <factor>`. The executable is a Windows GUI program, so in PowerShell
+pipe it to `Out-Host` (or use `Start-Process -Wait -NoNewWindow`) to wait for it
+and see its output.
+
 ### Provider changes
 
 `every_provider_meets_the_contract` in `src/poller/tests.rs` checks every

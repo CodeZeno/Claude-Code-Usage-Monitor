@@ -19,6 +19,7 @@ mod studio_app;
 mod theme;
 mod theme_engine;
 mod theme_package;
+mod theme_render;
 mod tray_icon;
 mod ui;
 mod updater;
@@ -48,6 +49,10 @@ fn main() {
 
     if studio_app::handle_cli_mode(&args) {
         return;
+    }
+
+    if let Some(exit_code) = theme_render::handle_cli_mode(&args) {
+        std::process::exit(exit_code);
     }
 
     if let Some(exit_code) = updater::handle_cli_mode(&args) {

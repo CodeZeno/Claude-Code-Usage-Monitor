@@ -128,7 +128,7 @@ pub fn render_theme_surface_with_runtime_at_scale(
         let alpha = ((runtime.floating_card_opacity.min(100) as u32 * 255) / 100) as u8;
         // Match the card to the system theme: a fixed dark card under
         // light-mode content destroys contrast when the widget floats.
-        let dark = crate::theme::is_dark_mode();
+        let dark = render_dark_mode();
         let card_color = if dark {
             Rgba {
                 r: 24,
@@ -1123,7 +1123,9 @@ pub(super) fn resolve_asset_path(path: &str) -> PathBuf {
     if expanded.is_absolute() {
         expanded
     } else {
-        themes_directory().join(expanded)
+        theme_render_environment::fixed_asset_root()
+            .unwrap_or_else(themes_directory)
+            .join(expanded)
     }
 }
 

@@ -23,4 +23,8 @@ Include relevant manual verification and redacted screenshots for UI changes. --
 - [ ] I have read CONTRIBUTING.md and CODE_OF_CONDUCT.md.
 - [ ] The change is focused and contains no credentials or sensitive data.
 - [ ] I have added or updated relevant documentation and tests, where applicable.
+- [ ] Theme changes: I have updated `tests/snapshots/themes` and checked the new images
+      (see CONTRIBUTING.md, Theme changes).
+- [ ] New providers: `every_provider_meets_the_contract` passes with a redacted fixture
+      (see CONTRIBUTING.md, Provider changes).
 - [ ] I have left changelog and version changes to maintainers unless requested.

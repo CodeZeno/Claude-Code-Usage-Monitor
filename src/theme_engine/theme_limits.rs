@@ -83,7 +83,7 @@ impl DataContext {
         let seconds = limit
             .usage
             .resets_at
-            .and_then(|at| at.duration_since(std::time::SystemTime::now()).ok())
+            .and_then(|at| at.duration_since(render_now()).ok())
             .map(|duration| duration.as_secs_f64())
             .unwrap_or(0.0);
         for (unit, value) in [
