@@ -8,7 +8,26 @@ const REGISTRY_KEY: &str = "SystemUsesLightTheme";
 
 /// Check if the system is in dark mode by reading the registry
 pub fn is_dark_mode() -> bool {
+    #[cfg(test)]
+    if let Some(dark) = DARK_MODE_OVERRIDE.with(std::cell::Cell::get) {
+        return dark;
+    }
     !is_light_theme()
+}
+
+#[cfg(test)]
+thread_local! {
+    static DARK_MODE_OVERRIDE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with this thread reporting the given Windows appearance, so tests
+/// can render both modes without depending on the machine's setting.
+#[cfg(test)]
+pub fn with_dark_mode<T>(dark: bool, f: impl FnOnce() -> T) -> T {
+    let previous = DARK_MODE_OVERRIDE.with(|cell| cell.replace(Some(dark)));
+    let result = f();
+    DARK_MODE_OVERRIDE.with(|cell| cell.set(previous));
+    result
 }
 
 fn is_light_theme() -> bool {

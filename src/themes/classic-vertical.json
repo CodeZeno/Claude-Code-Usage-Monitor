@@ -44,7 +44,7 @@
           "id": "claude-title",
           "name": "claude-title",
           "parent": "claude-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -59,38 +59,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#D97757"
+              "color": "#D97757",
+              "light_color": "#8B3E25"
             }
           }
         },
         {
-          "id": "claude-title-light",
-          "name": "claude-title-light",
+          "id": "claude-session-value",
+          "name": "claude-session-value",
           "parent": "claude-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Claude",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#8B3E25"
-            }
-          }
-        },
-        {
-          "id": "claude-session-value-dark",
-          "name": "claude-session-value-dark",
-          "parent": "claude-provider",
-          "render": "(system.dark) && claude.session.available",
+          "render": "claude.session.available",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -105,30 +83,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "claude-session-value-light",
-          "name": "claude-session-value-light",
-          "parent": "claude-provider",
-          "render": "(1 - system.dark) && claude.session.available",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{i18n.session_window} {claude.session.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -155,10 +111,10 @@
           }
         },
         {
-          "id": "claude-weekly-value-dark",
-          "name": "claude-weekly-value-dark",
+          "id": "claude-weekly-value",
+          "name": "claude-weekly-value",
           "parent": "claude-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
@@ -173,30 +129,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "claude-weekly-value-light",
-          "name": "claude-weekly-value-light",
-          "parent": "claude-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "40",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{claude.weekly.label} {claude.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -234,7 +168,7 @@
           "id": "codex-title",
           "name": "codex-title",
           "parent": "codex-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -249,38 +183,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#4CAF50"
+              "color": "#4CAF50",
+              "light_color": "#1B5E20"
             }
           }
         },
         {
-          "id": "codex-title-light",
-          "name": "codex-title-light",
+          "id": "codex-session-value",
+          "name": "codex-session-value",
           "parent": "codex-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Codex",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#1B5E20"
-            }
-          }
-        },
-        {
-          "id": "codex-session-value-dark",
-          "name": "codex-session-value-dark",
-          "parent": "codex-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -295,30 +207,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "codex-session-value-light",
-          "name": "codex-session-value-light",
-          "parent": "codex-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{i18n.session_window} {codex.session.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -345,10 +235,10 @@
           }
         },
         {
-          "id": "codex-weekly-value-dark",
-          "name": "codex-weekly-value-dark",
+          "id": "codex-weekly-value",
+          "name": "codex-weekly-value",
           "parent": "codex-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
@@ -363,30 +253,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "codex-weekly-value-light",
-          "name": "codex-weekly-value-light",
-          "parent": "codex-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "40",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{codex.weekly.label} {codex.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -424,7 +292,7 @@
           "id": "antigravity-title",
           "name": "antigravity-title",
           "parent": "antigravity-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -439,38 +307,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#2196F3"
+              "color": "#2196F3",
+              "light_color": "#0B5C9E"
             }
           }
         },
         {
-          "id": "antigravity-title-light",
-          "name": "antigravity-title-light",
+          "id": "antigravity-session-value",
+          "name": "antigravity-session-value",
           "parent": "antigravity-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Antigravity",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#0B5C9E"
-            }
-          }
-        },
-        {
-          "id": "antigravity-session-value-dark",
-          "name": "antigravity-session-value-dark",
-          "parent": "antigravity-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -485,30 +331,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "antigravity-session-value-light",
-          "name": "antigravity-session-value-light",
-          "parent": "antigravity-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{i18n.session_window} {antigravity.session.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -535,10 +359,10 @@
           }
         },
         {
-          "id": "antigravity-weekly-value-dark",
-          "name": "antigravity-weekly-value-dark",
+          "id": "antigravity-weekly-value",
+          "name": "antigravity-weekly-value",
           "parent": "antigravity-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
@@ -553,30 +377,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "antigravity-weekly-value-light",
-          "name": "antigravity-weekly-value-light",
-          "parent": "antigravity-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "40",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{antigravity.weekly.label} {antigravity.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -614,7 +416,7 @@
           "id": "opencode-title",
           "name": "opencode-title",
           "parent": "opencode-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -629,38 +431,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F59E0B"
+              "color": "#F59E0B",
+              "light_color": "#805000"
             }
           }
         },
         {
-          "id": "opencode-title-light",
-          "name": "opencode-title-light",
+          "id": "opencode-session-value",
+          "name": "opencode-session-value",
           "parent": "opencode-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "OpenCode",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#805000"
-            }
-          }
-        },
-        {
-          "id": "opencode-session-value-dark",
-          "name": "opencode-session-value-dark",
-          "parent": "opencode-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -675,30 +455,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "opencode-session-value-light",
-          "name": "opencode-session-value-light",
-          "parent": "opencode-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{i18n.session_window} {opencode.session.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -725,10 +483,10 @@
           }
         },
         {
-          "id": "opencode-weekly-value-dark",
-          "name": "opencode-weekly-value-dark",
+          "id": "opencode-weekly-value",
+          "name": "opencode-weekly-value",
           "parent": "opencode-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
@@ -743,30 +501,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "opencode-weekly-value-light",
-          "name": "opencode-weekly-value-light",
-          "parent": "opencode-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "40",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{opencode.weekly.label} {opencode.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -804,7 +540,7 @@
           "id": "cursor-title",
           "name": "cursor-title",
           "parent": "cursor-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -819,38 +555,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#00BCD4"
+              "color": "#00BCD4",
+              "light_color": "#006473"
             }
           }
         },
         {
-          "id": "cursor-title-light",
-          "name": "cursor-title-light",
+          "id": "cursor-session-value",
+          "name": "cursor-session-value",
           "parent": "cursor-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Cursor",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#006473"
-            }
-          }
-        },
-        {
-          "id": "cursor-session-value-dark",
-          "name": "cursor-session-value-dark",
-          "parent": "cursor-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -865,30 +579,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "cursor-session-value-light",
-          "name": "cursor-session-value-light",
-          "parent": "cursor-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Auto {cursor.session.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -915,10 +607,10 @@
           }
         },
         {
-          "id": "cursor-weekly-value-dark",
-          "name": "cursor-weekly-value-dark",
+          "id": "cursor-weekly-value",
+          "name": "cursor-weekly-value",
           "parent": "cursor-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "40",
           "width": "max(1, canvas.width - 4)",
@@ -933,30 +625,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "cursor-weekly-value-light",
-          "name": "cursor-weekly-value-light",
-          "parent": "cursor-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "40",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "API {cursor.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -994,7 +664,7 @@
           "id": "grok-title",
           "name": "grok-title",
           "parent": "grok-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -1009,38 +679,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#B57EF8"
+              "color": "#B57EF8",
+              "light_color": "#7132A8"
             }
           }
         },
         {
-          "id": "grok-title-light",
-          "name": "grok-title-light",
+          "id": "grok-weekly-value",
+          "name": "grok-weekly-value",
           "parent": "grok-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Grok",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#7132A8"
-            }
-          }
-        },
-        {
-          "id": "grok-weekly-value-dark",
-          "name": "grok-weekly-value-dark",
-          "parent": "grok-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -1055,30 +703,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "grok-weekly-value-light",
-          "name": "grok-weekly-value-light",
-          "parent": "grok-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{grok.weekly.label} {grok.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },
@@ -1116,7 +742,7 @@
           "id": "copilot-title",
           "name": "copilot-title",
           "parent": "copilot-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "2",
           "width": "max(1, canvas.width - 4)",
@@ -1131,38 +757,16 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F472B6"
+              "color": "#F472B6",
+              "light_color": "#A11250"
             }
           }
         },
         {
-          "id": "copilot-title-light",
-          "name": "copilot-title-light",
+          "id": "copilot-weekly-value",
+          "name": "copilot-weekly-value",
           "parent": "copilot-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "2",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "Copilot",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#A11250"
-            }
-          }
-        },
-        {
-          "id": "copilot-weekly-value-dark",
-          "name": "copilot-weekly-value-dark",
-          "parent": "copilot-provider",
-          "render": "system.dark",
+          "render": "1",
           "x": "2",
           "y": "18",
           "width": "max(1, canvas.width - 4)",
@@ -1177,30 +781,8 @@
             "contrast": "1",
             "align": "center",
             "color": {
-              "color": "#F5F5F5"
-            }
-          }
-        },
-        {
-          "id": "copilot-weekly-value-light",
-          "name": "copilot-weekly-value-light",
-          "parent": "copilot-provider",
-          "render": "1 - system.dark",
-          "x": "2",
-          "y": "18",
-          "width": "max(1, canvas.width - 4)",
-          "height": "14",
-          "content": {
-            "type": "text",
-            "template": "{copilot.weekly.label} {copilot.weekly.display:usage_badge}",
-            "font_family": "Segoe UI",
-            "font_size": "min(10, (canvas.width - 4) / 5.5)",
-            "weight": "medium",
-            "rendering": "clear_type",
-            "contrast": "1",
-            "align": "center",
-            "color": {
-              "color": "#202020"
+              "color": "#F5F5F5",
+              "light_color": "#202020"
             }
           }
         },

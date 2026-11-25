@@ -1008,27 +1008,24 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
             let weekly_y = if stacked { 5.0 } else { 28.0 };
 
             assert_eq!(
-                find("session-label-").is_some(),
+                find("session-label").is_some(),
                 session_available || provider_count > 1
             );
-            assert_eq!(
-                find("claude-session-segments-").is_some(),
-                session_available
-            );
-            assert_eq!(find("claude-window-label-").is_some(), stacked);
-            assert_eq!(find("fable-window-label-").is_some(), stacked);
+            assert_eq!(find("claude-session-segments").is_some(), session_available);
+            assert_eq!(find("claude-window-label").is_some(), stacked);
+            assert_eq!(find("fable-window-label").is_some(), stacked);
 
-            let weekly_bar = find("claude-weekly-segments-").unwrap();
-            let weekly_value = find("claude-weekly-value-").unwrap();
-            let fable_bar = find("fable-weekly-segments-").unwrap();
-            let fable_value = find("fable-weekly-value-").unwrap();
+            let weekly_bar = find("claude-weekly-segments").unwrap();
+            let weekly_value = find("claude-weekly-value").unwrap();
+            let fable_bar = find("fable-weekly-segments").unwrap();
+            let fable_value = find("fable-weekly-value").unwrap();
             assert_eq!(weekly_bar.y, weekly_y);
             assert_eq!(weekly_value.y, weekly_y);
             assert_eq!(fable_bar.y, if stacked { 28.0 } else { 5.0 });
             assert_eq!(fable_value.y, 28.0);
             if stacked {
-                let claude_label = find("claude-window-label-").unwrap();
-                let fable_label = find("fable-window-label-").unwrap();
+                let claude_label = find("claude-window-label").unwrap();
+                let fable_label = find("fable-window-label").unwrap();
                 assert_eq!(claude_label.x, fable_label.x);
                 assert_eq!(claude_label.y, weekly_bar.y);
                 assert_eq!(fable_label.y, fable_bar.y);
@@ -1045,14 +1042,14 @@ fn classic_stacks_weekly_and_fable_without_a_claude_session() {
                 }
                 if provider_count == 1 {
                     assert_eq!(width, 245);
-                    assert!(find("weekly-label-").is_none());
+                    assert!(find("weekly-label").is_none());
                 } else if mask == 3 {
-                    let codex_session = find("codex-session-segments-").unwrap();
-                    let codex_weekly = find("codex-weekly-segments-").unwrap();
+                    let codex_session = find("codex-session-segments").unwrap();
+                    let codex_weekly = find("codex-weekly-segments").unwrap();
                     assert_eq!(codex_session.x, 41.0);
                     assert_eq!(codex_session.x, codex_weekly.x);
-                    assert_eq!(find("session-label-").unwrap().y, codex_session.y);
-                    assert_eq!(find("weekly-label-").unwrap().y, codex_weekly.y);
+                    assert_eq!(find("session-label").unwrap().y, codex_session.y);
+                    assert_eq!(find("weekly-label").unwrap().y, codex_weekly.y);
                 }
             } else {
                 assert!(fable_bar.x >= weekly_value.x + weekly_value.width);
@@ -1161,16 +1158,12 @@ fn starter_theme_round_trips_and_validates() {
             _ => None,
         })
         .collect::<Vec<_>>();
-    // Classic contains separate light and dark progress layers so the
-    // 1.4.9 palette follows the taskbar mode without runtime recolouring:
-    // five providers over two windows in two modes, plus Grok and Copilot,
-    // which fill only the long-window row, plus a credit overlay on that row
-    // for the three providers that report credits, plus the two eight-segment
-    // Fable layers.
-    assert_eq!(
-        segments,
-        [vec![10; 5 * 2 * 2 + 2 * 2 + 3 * 2], vec![8; 2]].concat()
-    );
+    // Each Classic progress layer carries its light-mode colours, so the
+    // 1.4.9 palette follows the taskbar mode from one layer: five providers
+    // over two windows, plus Grok and Copilot, which fill only the
+    // long-window row, plus a credit overlay on that row for the three
+    // providers that report credits, plus the eight-segment Fable layer.
+    assert_eq!(segments, [vec![10; 5 * 2 + 2 + 3], vec![8; 1]].concat());
     assert!(theme.surfaces[0]
         .children
         .iter()
@@ -1293,6 +1286,72 @@ fn paints_use_their_light_colour_only_in_light_mode() {
         .validate()
         .iter()
         .any(|error| error.contains("light_color") && error.contains("not a colour")));
+}
+
+#[test]
+fn custom_themes_with_separate_dark_and_light_layers_still_render() {
+    // Themes written before light-mode colours existed draw one layer per
+    // appearance gated on `system.dark`; they must keep rendering exactly as
+    // a single layer that carries both colours.
+    let layer = |id: &str, render: &str, fill: serde_json::Value| -> SceneObject {
+        serde_json::from_value(serde_json::json!({
+            "id": id,
+            "name": id,
+            "width": "20",
+            "height": "10",
+            "render": render,
+            "content": { "type": "shape", "shape": "rectangle", "fill": fill }
+        }))
+        .unwrap()
+    };
+    let mut separate = ThemeDocument::starter();
+    separate.surfaces[0].children = vec![
+        layer(
+            "bar-dark",
+            "system.dark",
+            serde_json::json!({ "color": "#D97757FF" }),
+        ),
+        layer(
+            "bar-light",
+            "1 - system.dark",
+            serde_json::json!({ "color": "#1A5FB4FF" }),
+        ),
+    ];
+    let mut combined = ThemeDocument::starter();
+    combined.surfaces[0].children = vec![layer(
+        "bar",
+        "1",
+        serde_json::json!({ "color": "#D97757FF", "light_color": "#1A5FB4FF" }),
+    )];
+    assert!(separate.validate().is_empty(), "{:?}", separate.validate());
+    assert!(combined.validate().is_empty(), "{:?}", combined.validate());
+
+    let runtime = ThemeRuntime::new(true, true, false);
+    let render = |theme: &ThemeDocument, dark: bool| {
+        crate::theme::with_dark_mode(dark, || {
+            render_theme_surface_with_runtime(theme, 0, None, runtime).pixels
+        })
+    };
+    for dark in [true, false] {
+        assert_eq!(
+            render(&separate, dark),
+            render(&combined, dark),
+            "dark = {dark}"
+        );
+    }
+    assert_ne!(render(&separate, true), render(&separate, false));
+
+    // The built-in themes use light-mode colours rather than duplicate layers.
+    for (id, source) in BUILTIN_THEME_SOURCES {
+        assert!(
+            !source.contains("system.dark"),
+            "{id} gates layers on system.dark"
+        );
+        assert!(
+            source.contains("light_color"),
+            "{id} has no light-mode colours"
+        );
+    }
 }
 
 #[test]
@@ -2562,7 +2621,7 @@ fn classic_vertical_formats_monthly_limits_and_countdown_badges() {
         let text = theme.surfaces[0]
             .children
             .iter()
-            .find(|object| object.id == "codex-weekly-value-dark")
+            .find(|object| object.id == "codex-weekly-value")
             .unwrap();
         let SceneContent::Text { template, .. } = &text.content else {
             panic!("missing usage badge")
@@ -2590,12 +2649,12 @@ fn classic_vertical_headings_remain_legible_on_taskbars_and_floating_cards() {
         };
         0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
     };
-    for (suffix, backgrounds) in [
-        ("-light", ["#CBD4E6", "#D3D3D3", "#FFFFFF", "#F3F3F3"]),
-        ("", ["#010A1C", "#181820", "#141E34", "#182137"]),
+    for (dark, backgrounds) in [
+        (false, ["#CBD4E6", "#D3D3D3", "#FFFFFF", "#F3F3F3"]),
+        (true, ["#010A1C", "#181820", "#141E34", "#182137"]),
     ] {
         for provider in ProviderId::ALL {
-            let id = format!("{}-title{suffix}", provider.descriptor().key);
+            let id = format!("{}-title", provider.descriptor().key);
             let title = theme.surfaces[0]
                 .children
                 .iter()
@@ -2604,7 +2663,7 @@ fn classic_vertical_headings_remain_legible_on_taskbars_and_floating_cards() {
             let SceneContent::Text { color, .. } = &title.content else {
                 panic!("missing heading");
             };
-            let foreground = luminance(parse_color(&color.color).unwrap());
+            let foreground = luminance(parse_color(color.color_for(dark)).unwrap());
             // Include the tinted Windows 10 VM taskbar and floating card.
             for background in backgrounds {
                 let background = luminance(parse_color(background).unwrap());
@@ -3447,12 +3506,12 @@ fn classic_usage_direction_defaults_to_used_until_enabled() {
     let gauge = theme.surfaces[0]
         .children
         .iter()
-        .find(|object| object.id == "claude-session-segments-dark")
+        .find(|object| object.id == "claude-session-segments")
         .unwrap();
     let label = theme.surfaces[0]
         .children
         .iter()
-        .find(|object| object.id == "claude-session-value-dark")
+        .find(|object| object.id == "claude-session-value")
         .unwrap();
     let SceneContent::Progress { value, .. } = &gauge.content else {
         panic!("expected gauge")
@@ -3778,12 +3837,12 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .unwrap_or(false)
         };
 
-        assert!(find_render("antigravity-session-gemini-solo-dark"));
-        assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
-        assert!(find_render("antigravity-session-gemini-value-dark"));
-        assert!(!find_render("antigravity-session-external-value-dark"));
+        assert!(find_render("antigravity-session-gemini-solo"));
+        assert!(!find_render("antigravity-session-external-solo"));
+        assert!(!find_render("antigravity-session-gemini-dual"));
+        assert!(!find_render("antigravity-session-external-dual"));
+        assert!(find_render("antigravity-session-gemini-value"));
+        assert!(!find_render("antigravity-session-external-value"));
     }
 
     // 2. Solo External
@@ -3813,12 +3872,12 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .unwrap_or(false)
         };
 
-        assert!(!find_render("antigravity-session-gemini-solo-dark"));
-        assert!(find_render("antigravity-session-external-solo-dark"));
-        assert!(!find_render("antigravity-session-gemini-dual-dark"));
-        assert!(!find_render("antigravity-session-external-dual-dark"));
-        assert!(!find_render("antigravity-session-gemini-value-dark"));
-        assert!(find_render("antigravity-session-external-value-dark"));
+        assert!(!find_render("antigravity-session-gemini-solo"));
+        assert!(find_render("antigravity-session-external-solo"));
+        assert!(!find_render("antigravity-session-gemini-dual"));
+        assert!(!find_render("antigravity-session-external-dual"));
+        assert!(!find_render("antigravity-session-gemini-value"));
+        assert!(find_render("antigravity-session-external-value"));
     }
 
     // 3. Dual Mode Crossfade
@@ -3841,12 +3900,12 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .unwrap_or(false)
         };
 
-        assert!(!find_render("antigravity-session-gemini-solo-dark"));
-        assert!(!find_render("antigravity-session-external-solo-dark"));
-        assert!(find_render("antigravity-session-gemini-dual-dark"));
-        assert!(find_render("antigravity-session-external-dual-dark"));
-        assert!(find_render("antigravity-session-gemini-value-dark"));
-        assert!(!find_render("antigravity-session-external-value-dark"));
+        assert!(!find_render("antigravity-session-gemini-solo"));
+        assert!(!find_render("antigravity-session-external-solo"));
+        assert!(find_render("antigravity-session-gemini-dual"));
+        assert!(find_render("antigravity-session-external-dual"));
+        assert!(find_render("antigravity-session-gemini-value"));
+        assert!(!find_render("antigravity-session-external-value"));
 
         // At opacity 0.5 (Mid-transition)
         let runtime_mid =
@@ -3863,8 +3922,8 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_mid).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(find_render_mid("antigravity-session-gemini-value-dark"));
-        assert!(find_render_mid("antigravity-session-external-value-dark"));
+        assert!(find_render_mid("antigravity-session-gemini-value"));
+        assert!(find_render_mid("antigravity-session-external-value"));
 
         // At opacity 0.0 (External holding)
         let runtime_ext =
@@ -3881,8 +3940,8 @@ fn compact_fluent_quad_antigravity_dual_and_solo_modes() {
                 .map(|o| evaluate(&o.render.0, &context_ext).unwrap() != 0.0)
                 .unwrap_or(false)
         };
-        assert!(!find_render_ext("antigravity-session-gemini-value-dark"));
-        assert!(find_render_ext("antigravity-session-external-value-dark"));
+        assert!(!find_render_ext("antigravity-session-gemini-value"));
+        assert!(find_render_ext("antigravity-session-external-value"));
     }
 }
 

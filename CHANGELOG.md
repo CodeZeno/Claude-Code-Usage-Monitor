@@ -12,6 +12,10 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 - Add the Stacked Rows built-in theme: each provider's logo beside joined rows of four-section bars, one row per limit the account reports, with a magenta pace marker. Bars follow the Usage direction setting, and hovering a provider opens a flyout with each limit's usage, reset time and pace, or a waiting, error or no-usage message.
 - Add a Provider logo layer type (`provider_mark`) to themes and Theme Studio. It draws a provider's brand mark from the dashboard's icon font, tinted and fitted to the layer, so themes need no image assets to show a provider.
 
+### Changed
+
+- Draw the Classic, Compact Fluent Quad and Classic Vertical built-in themes from single layers with light-mode colours instead of duplicate layers gated on `system.dark` (163 to 124, 158 to 118 and 133 to 114 layers), with identical rendering in both appearances. Custom themes that keep separate dark and light layers render as before.
+
 ### Fixed
 
 - Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
