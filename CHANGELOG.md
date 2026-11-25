@@ -19,6 +19,7 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 ### Fixed
 
 - Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
+- Update the transitive `cookie` dependency from 0.18.2 to 0.18.3 to resolve RUSTSEC-2026-0594 found by the release dependency checks.
 
 ## [2.25.3] - 2026-11-21
 
