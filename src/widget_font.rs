@@ -4,6 +4,11 @@
 //! "Segoe UI". Load the installed files under a private family name so opting
 //! out of the Windows font actually bypasses that substitution. The original
 //! files and system settings are never changed or redistributed.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use std::path::PathBuf;
 use std::sync::OnceLock;

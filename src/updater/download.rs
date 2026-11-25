@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
 use std::os::windows::fs::OpenOptionsExt;
@@ -30,8 +36,8 @@ impl AssetIntegrity {
             .ok_or_else(|| "The update is missing a valid GitHub SHA-256 digest.".to_string())?;
         let mut sha256 = [0; 32];
         for (byte, pair) in sha256.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
-            // Validated as ASCII hex above.
-            *byte = u8::from_str_radix(std::str::from_utf8(pair).unwrap(), 16).unwrap();
+            let pair = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+            *byte = u8::from_str_radix(pair, 16).map_err(|error| error.to_string())?;
         }
         Ok(Self { size, sha256 })
     }

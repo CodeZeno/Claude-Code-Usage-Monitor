@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU32, Ordering};
@@ -1280,22 +1286,19 @@ fn tray_error_lines(
     let mut accounts: Vec<_> = data
         .into_iter()
         .flat_map(|data| &data.accounts)
-        .filter(|account| {
-            providers.contains(account.provider)
-                && account.profile.enabled
-                && account.error.is_some()
-        })
+        .filter(|account| providers.contains(account.provider) && account.profile.enabled)
+        .filter_map(|account| account.error.map(|error| (account, error)))
         .collect();
     // Windows truncates tray tooltips: put the selected account's error first.
-    accounts.sort_by_key(|account| !account.selected);
+    accounts.sort_by_key(|(account, _)| !account.selected);
     let mut lines: Vec<_> = accounts
         .into_iter()
-        .map(|account| {
+        .map(|(account, error)| {
             format!(
                 "{} ({}): {}",
                 language.text(account.provider.descriptor().display_name),
                 account.profile.name,
-                account.error.unwrap().message(language),
+                error.message(language),
             )
         })
         .collect();
@@ -2242,7 +2245,8 @@ unsafe fn create_desktop_surface_window() -> HWND {
 }
 
 unsafe fn create_desktop_surface_window_in(desktop: native_interop::DesktopHost) -> HWND {
-    let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
+    let instance =
+        GetModuleHandleW(PCWSTR::null()).expect("the running executable has a module handle");
     let class = native_interop::wide_str("CCUMDesktopSurface");
     let title = native_interop::wide_str("");
     let wc = WNDCLASSEXW {
@@ -2284,7 +2288,8 @@ unsafe fn create_desktop_surface_window_in(desktop: native_interop::DesktopHost)
 }
 
 unsafe fn create_mirror_window() -> HWND {
-    let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
+    let instance =
+        GetModuleHandleW(PCWSTR::null()).expect("the running executable has a module handle");
     let class = native_interop::wide_str("CCUMThemeMirror");
     let wc = WNDCLASSEXW {
         cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -2470,7 +2475,8 @@ pub fn run() {
     let class_name = native_interop::wide_str("ClaudeCodeUsageMonitor");
 
     unsafe {
-        let hinstance = GetModuleHandleW(PCWSTR::null()).unwrap();
+        let hinstance =
+            GetModuleHandleW(PCWSTR::null()).expect("the running executable has a module handle");
         let (large_icon, small_icon) = tray_icon::load_app_icons();
 
         let wc = WNDCLASSEXW {

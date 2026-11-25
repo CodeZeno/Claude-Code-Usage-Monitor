@@ -1,5 +1,10 @@
 //! Physical taskbar occupancy. Shell accessibility calls stay on a dedicated
 //! MTA thread; neither the UI thread nor the Explorer watchdog waits for them.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 use super::*;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,

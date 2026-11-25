@@ -20,6 +20,12 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
 - Require the CI checks to pass before the tagged Release workflow builds and publishes artifacts.
 - Resolve the remaining Clippy warnings in test code so CI can deny warnings.
+- Enforce code boundaries with lints in `Cargo.toml` and `clippy.toml`, described in [CONTRIBUTING.md](CONTRIBUTING.md#lint-rules):
+  - unsafe code is allowed only in files that opt in;
+  - new unsafe blocks need a `// SAFETY:` comment, as a ratchet;
+  - production code cannot use `unwrap()`, and the 11 remaining calls are replaced;
+  - HTTP agents are created only in the poller and updater;
+  - code cannot modify the process environment.
 - Draw the Classic, Compact Fluent Quad and Classic Vertical built-in themes from single layers with light-mode colours instead of duplicate layers gated on `system.dark` (163 to 124, 158 to 118 and 133 to 114 layers), with identical rendering in both appearances. Custom themes that keep separate dark and light layers render as before.
 - Run the dependency security checks as part of `CI passed` on pull requests and pushes to `main`, and once in the tagged Release workflow through CI.
 

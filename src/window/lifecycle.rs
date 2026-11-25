@@ -1,4 +1,9 @@
 //! The controller owns application lifetime; Explorer owns only replaceable surfaces.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 use super::*;
 use std::cell::Cell;
 
@@ -147,7 +152,8 @@ unsafe fn dispatch_to_surface(msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESU
 }
 
 pub(super) unsafe fn create_primary_surface() -> HWND {
-    let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
+    let instance =
+        GetModuleHandleW(PCWSTR::null()).expect("the running executable has a module handle");
     let class = native_interop::wide_str("ClaudeCodeUsageSurface");
     RegisterClassW(&WNDCLASSW {
         style: CS_DBLCLKS,

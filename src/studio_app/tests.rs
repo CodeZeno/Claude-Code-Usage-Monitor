@@ -1,3 +1,9 @@
+#![allow(unsafe_code, reason = "test fixtures call Win32 APIs")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
+
 use super::*;
 
 #[test]

@@ -10,6 +10,11 @@
 //!
 //! Everything here is read-only, runs as the signed-in user, and degrades to
 //! `None` whenever the layout is not what we expect.
+#![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
+#![allow(
+    clippy::undocumented_unsafe_blocks,
+    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
+)]
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};

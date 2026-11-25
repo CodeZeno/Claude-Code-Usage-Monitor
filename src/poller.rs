@@ -364,6 +364,10 @@ fn antigravity_credential_watch_snapshot(_all_sources: bool) -> CredentialWatchS
     vec![antigravity::antigravity_credential_watch_signature()]
 }
 
+#[allow(
+    clippy::disallowed_methods,
+    reason = "the one place this module creates its HTTP agent"
+)]
 fn build_agent() -> Result<ureq::Agent, PollError> {
     static AGENT: OnceLock<Result<ureq::Agent, PollError>> = OnceLock::new();
     // Agent clones share their connection pool, cookies, and TLS configuration.

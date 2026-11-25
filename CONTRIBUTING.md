@@ -61,6 +61,27 @@ check the affected dashboard or taskbar behavior and include redacted screenshot
 when helpful. For documentation-only changes, check links and formatting;
 compiling the application is not necessary.
 
+### Lint rules
+
+`Cargo.toml`'s `[lints]` table and `clippy.toml` encode project rules, so Clippy
+reports a broken rule and the fix:
+
+- `unsafe` code is denied unless a file opts in with
+  `#![allow(unsafe_code, reason = "...")]`. Keep native calls in files that
+  already opt in where practical.
+- Every unsafe block needs a `// SAFETY:` comment explaining why the call is
+  sound. Files with a `ratchet` allow for `clippy::undocumented_unsafe_blocks`
+  predate the rule. When you document their blocks, remove the allow.
+- Production code must not use `unwrap()`. Return or handle the error, or use
+  `expect("...")` stating why the value cannot be missing. Tests may unwrap.
+- HTTP agents are created only by `poller::build_agent` and
+  `updater::build_agent`, which apply the TLS and timeout settings.
+- Do not change the process environment (`std::env::set_var` and
+  `std::env::remove_var`); provider discovery and parallel tests share it.
+
+Fix the code rather than adding an `allow`. When an exception is necessary,
+scope it to the item that needs it and give a `reason`.
+
 ## Pull requests
 
 Keep each pull request focused on one problem and avoid unrelated formatting or

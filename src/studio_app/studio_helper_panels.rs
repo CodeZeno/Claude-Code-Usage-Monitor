@@ -725,7 +725,7 @@ pub(super) fn text_template_choices(
 ) -> Vec<TextTemplateChoice> {
     let mut result = Vec::new();
     for (index, value) in TEXT_TEMPLATE_VALUES.iter().enumerate() {
-        result.push(text_template_choice(value.expression, context, language).unwrap());
+        result.extend(text_template_choice(value.expression, context, language));
         if TEXT_TEMPLATE_VALUES
             .get(index + 1)
             .is_some_and(|next| next.group == value.group)
