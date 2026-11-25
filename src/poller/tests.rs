@@ -498,7 +498,6 @@ fn antigravity_gemini_weekly_reset_projection_tests() {
             let leap = (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
             let y_days = if leap { 366 } else { 365 };
             if d < y_days {
-                let mut month = 1;
                 let month_days = [
                     31,
                     if leap { 29 } else { 28 },
@@ -513,7 +512,7 @@ fn antigravity_gemini_weekly_reset_projection_tests() {
                     30,
                     31,
                 ];
-                for &m_len in &month_days {
+                for (month, &m_len) in (1..).zip(&month_days) {
                     if d < m_len {
                         return format!(
                             "{year:04}-{month:02}-{:02}T{hours:02}:{minutes:02}:{seconds:02}Z",
@@ -521,7 +520,6 @@ fn antigravity_gemini_weekly_reset_projection_tests() {
                         );
                     }
                     d -= m_len;
-                    month += 1;
                 }
             }
             d -= y_days;

@@ -1,9 +1,8 @@
 name: Dependency security
 
+# Pull requests and pushes to main run these checks through ci.yml, as part of
+# the CI passed status.
 on:
-  pull_request:
-  push:
-    branches: ["**"]
   schedule:
     # Find newly published advisories even when the lockfile has not changed.
     - cron: "23 3 * * *"

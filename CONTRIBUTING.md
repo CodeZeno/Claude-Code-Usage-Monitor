@@ -44,12 +44,15 @@ See the [user guide](USER_GUIDE.md) for application behavior,
 
 ## Checks
 
-For Rust changes, run the checks relevant to your change on Windows:
+For Rust changes, run these checks on Windows. CI runs the same checks on every
+pull request, and all of them must pass before merging:
 
 ```powershell
 cargo fmt --all -- --check
+cargo clippy --locked --all-targets -- -D warnings
 cargo test --locked
 cargo build --locked --release
+./tests/Test-Repository.ps1
 ```
 
 Add regression coverage for behavior changes where practical, using dummy data
@@ -69,8 +72,9 @@ Use a descriptive title, such as `fix(poller): handle expired credentials` or
 sections in the pull request template. Link related public issues when relevant.
 
 Do not edit `CHANGELOG.md`, bump package versions, or create release tags as part
-of a contribution unless a maintainer explicitly requests it. Release metadata
-is handled separately. Change `Cargo.lock` only when the contribution requires a
+of a contribution unless a maintainer explicitly requests it. Maintainers add
+merged changes to the `[Unreleased]` changelog section and prepare releases
+separately; see [releasing](docs/releasing.md). Change `Cargo.lock` only when the contribution requires a
 dependency update.
 
 Contributions are provided under the repository's [MIT License](LICENSE).

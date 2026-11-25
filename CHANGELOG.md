@@ -8,13 +8,20 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
 ### Added
 
+- Run formatting, Clippy with warnings denied, tests, a locked release build, and repository checks on every pull request and push to `main`, reporting a single `CI passed` status for branch protection.
+- Check release metadata in CI and locally with `tests/Test-Repository.ps1`: tracked ignored or local-only files, the `Cargo.lock` package version, and `CHANGELOG.md` structure, ordering, links, and agreement with the `Cargo.toml` version. Merged changes accumulate under `[Unreleased]` until a release is prepared.
+- Add `scripts/New-Release.ps1` to prepare a `vVERSION` release commit from the `[Unreleased]` entries, `scripts/Publish-Release.ps1` to tag a pushed release, and `scripts/Build-Release.ps1` for local release builds. See [docs/releasing.md](docs/releasing.md).
 - Let theme colours set an optional light-mode colour (`light_color`), so one layer can serve both Windows appearances instead of a pair of layers gated on `system.dark`. In Theme Studio, the sun and moon button beside a colour expands it into separate Dark mode and Light mode colours; collapsing keeps the dark mode colour. Colours without `light_color` render and save as before, and themes that keep separate per-mode layers are unaffected.
 - Add the Stacked Rows built-in theme: each provider's logo beside joined rows of four-section bars, one row per limit the account reports, with a magenta pace marker. Bars follow the Usage direction setting, and hovering a provider opens a flyout with each limit's usage, reset time and pace, or a waiting, error or no-usage message.
 - Add a Provider logo layer type (`provider_mark`) to themes and Theme Studio. It draws a provider's brand mark from the dashboard's icon font, tinted and fitted to the layer, so themes need no image assets to show a provider.
+- Auto-merge Dependabot pull requests with patch-level Cargo updates once `CI passed` succeeds. `scripts/New-Release.ps1` adds changelog entries for them and refuses to prepare a release when `origin/main` has commits that local `main` lacks. See [docs/releasing.md](docs/releasing.md#dependabot-updates).
 
 ### Changed
 
+- Require the CI checks to pass before the tagged Release workflow builds and publishes artifacts.
+- Resolve the remaining Clippy warnings in test code so CI can deny warnings.
 - Draw the Classic, Compact Fluent Quad and Classic Vertical built-in themes from single layers with light-mode colours instead of duplicate layers gated on `system.dark` (163 to 124, 158 to 118 and 133 to 114 layers), with identical rendering in both appearances. Custom themes that keep separate dark and light layers render as before.
+- Run the dependency security checks as part of `CI passed` on pull requests and pushes to `main`, and once in the tagged Release workflow through CI.
 
 ### Fixed
 

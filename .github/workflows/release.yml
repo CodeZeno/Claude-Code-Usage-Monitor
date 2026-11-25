@@ -13,13 +13,14 @@ env:
   WINGET_PACKAGE_ID: CodeZeno.ClaudeCodeUsageMonitor
 
 jobs:
-  dependency-security:
-    uses: ./.github/workflows/dependency-security.yml
+  # Includes the dependency security checks.
+  ci:
+    uses: ./.github/workflows/ci.yml
     permissions:
       contents: read
 
   build:
-    needs: dependency-security
+    needs: [ci]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
