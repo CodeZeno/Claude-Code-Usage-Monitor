@@ -61,7 +61,7 @@ cargo build --locked --release
 Add regression coverage for behavior changes where practical, using dummy data
 instead of real credentials or live provider requests. For UI changes, manually
 check the affected dashboard or taskbar behavior and include redacted screenshots
-when helpful. For documentation-only changes, check links and formatting;
+when helpful; dashboard pages also have [snapshot tests](#dashboard-changes). For documentation-only changes, check links and formatting;
 compiling the application is not necessary.
 
 ### Theme changes
@@ -104,6 +104,27 @@ appearance) or a `.png` file when one image is rendered. Options:
 pipe it to `Out-Host` (or use `Start-Process -Wait -NoNewWindow`) to wait for it
 and see its output. It prints a warning for each unknown field and failing
 expression.
+
+### Dashboard changes
+
+The Settings page and Theme Studio (with the canvas and with a layer selected)
+are drawn offscreen by the same Direct3D WARP renderer as `--dashboard-warp`,
+at 1100 x 760 with Classic v1, the sample usage and the bundled themes, and
+compared with the reference images in `tests/snapshots/ui/`. Nothing is read
+from your settings, themes or usage cache. As with themes, `cargo test` fails
+when a page changes, writes the renders to `target/ui-snapshots/` (with a
+`-diff.png` beside each changed page), and CI uploads that folder as the
+`ui-snapshots` artifact, so a dashboard pull request can be reviewed as pictures.
+
+When the change is intended, update the references, look at them, and commit
+them with the change:
+
+```powershell
+$env:CCUM_UPDATE_SNAPSHOTS = 1; cargo test --locked ui_snapshots; Remove-Item Env:CCUM_UPDATE_SNAPSHOTS
+```
+
+The test is `src/studio_app/tests/ui_snapshots.rs`; add a page there when a
+change needs one.
 
 ### Provider changes
 

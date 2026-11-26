@@ -92,6 +92,18 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      # The dashboard pages drawn offscreen by the UI snapshot tests, plus a
+      # -diff.png for each mismatch, so dashboard changes can be reviewed as
+      # pictures.
+      - name: Upload dashboard renders
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-snapshots
+          path: target/ui-snapshots
+          if-no-files-found: ignore
+          retention-days: 14
+
   release-build:
     name: release build
     runs-on: windows-latest

@@ -15,6 +15,8 @@ mod models;
 mod native_interop;
 mod poller;
 mod providers;
+#[cfg(test)]
+mod snapshot_test;
 mod studio_app;
 mod theme;
 mod theme_engine;

@@ -44,6 +44,12 @@ pub fn with_fixed_render_environment<T>(
     f()
 }
 
+/// The environment `with_fixed_render_environment` pinned on this thread, if
+/// any, so a render handed to a worker thread can run under the same one.
+pub fn current_fixed_render_environment() -> Option<FixedRenderEnvironment> {
+    FIXED_ENVIRONMENT.with(|cell| cell.borrow().clone())
+}
+
 fn fixed<T>(read: impl FnOnce(&FixedRenderEnvironment) -> T) -> Option<T> {
     FIXED_ENVIRONMENT.with(|cell| cell.borrow().as_ref().map(read))
 }

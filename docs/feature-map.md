@@ -64,7 +64,9 @@ in navigation order (`Page` in `src/studio_app.rs`):
 | Diagnostics | Diagnostic logging and the live event log | `studio_app/studio_diagnostics.rs` |
 
 `--dashboard-warp` opens an alternative WARP-rendered dashboard
-(`studio_app/warp.rs`); see [dashboard rendering](dashboard-rendering.md).
+(`studio_app/warp.rs`); see [dashboard rendering](dashboard-rendering.md). The
+same renderer draws the dashboard snapshot tests
+(`studio_app/tests/ui_snapshots.rs`).
 
 ### Theme Studio
 

@@ -2,17 +2,9 @@ use super::*;
 
 use std::collections::BTreeSet;
 
-/// Set to `1` to write the current renders as the new reference images.
-const UPDATE_SNAPSHOTS: &str = "CCUM_UPDATE_SNAPSHOTS";
-/// A channel that moves by more than this counts as a changed pixel.
-const CHANNEL_TOLERANCE: u8 = 48;
-/// Share of pixels allowed to change, for small anti-aliasing differences
-/// between Windows builds. A changed label or bar is well above this.
-const CHANGED_PIXEL_RATIO: f64 = 0.005;
-
-fn manifest_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-}
+use crate::snapshot_test::{
+    check, manifest_dir, update_requested, Snapshots, THEME_CHANGED_PIXEL_RATIO, UPDATE_SNAPSHOTS,
+};
 
 fn theme_files(folder: &Path) -> Vec<PathBuf> {
     let mut files = std::fs::read_dir(folder)
@@ -50,54 +42,6 @@ fn reference_images(root: &Path) -> BTreeSet<PathBuf> {
     images
 }
 
-/// Returns why `actual` does not match `reference`, and writes a diff image
-/// that shows changed pixels in red over a faded copy of the reference.
-fn compare(
-    actual: &image::RgbaImage,
-    reference: &image::RgbaImage,
-    diff_path: &Path,
-) -> Option<String> {
-    if actual.dimensions() != reference.dimensions() {
-        return Some(format!(
-            "size changed from {:?} to {:?}",
-            reference.dimensions(),
-            actual.dimensions()
-        ));
-    }
-    let mut diff = image::RgbaImage::new(actual.width(), actual.height());
-    let mut changed = 0_usize;
-    for ((actual, reference), out) in actual
-        .pixels()
-        .zip(reference.pixels())
-        .zip(diff.pixels_mut())
-    {
-        let moved = actual
-            .0
-            .iter()
-            .zip(reference.0)
-            .any(|(a, r)| a.abs_diff(r) > CHANNEL_TOLERANCE);
-        if moved {
-            changed += 1;
-            *out = image::Rgba([255, 0, 0, 255]);
-        } else {
-            let [red, green, blue, alpha] = reference.0;
-            let grey = ((u16::from(red) + u16::from(green) + u16::from(blue)) / 3) as u8;
-            *out = image::Rgba([grey, grey, grey, alpha / 3]);
-        }
-    }
-    let total = actual.pixels().len().max(1);
-    let ratio = changed as f64 / total as f64;
-    if ratio <= CHANGED_PIXEL_RATIO {
-        return None;
-    }
-    diff.save(diff_path).unwrap();
-    Some(format!(
-        "{changed} of {total} pixels changed ({:.2}%); see {}",
-        ratio * 100.0,
-        diff_path.display()
-    ))
-}
-
 /// Renders every surface of every theme in `src/themes`, in dark and light
 /// mode, with the sample usage fixture, and compares it with
 /// `tests/snapshots/themes/<theme file>/<surface>-<appearance>.png`.
@@ -110,7 +54,13 @@ fn themes_match_reference_snapshots() {
     let themes = root.join("src/themes");
     let references = root.join("tests/snapshots/themes");
     let actual_root = root.join("target/theme-snapshots");
-    let update = std::env::var(UPDATE_SNAPSHOTS).is_ok_and(|value| value == "1");
+    let update = update_requested();
+    let snapshots = Snapshots {
+        references: &references,
+        actual_root: &actual_root,
+        update,
+        max_changed_ratio: THEME_CHANGED_PIXEL_RATIO,
+    };
     let usage = parse_usage(SAMPLE_USAGE).unwrap();
 
     let mut failures = Vec::new();
@@ -137,27 +87,8 @@ fn themes_match_reference_snapshots() {
                     failures.push(format!("{}: warning: {warning}", relative.display()));
                 }
                 let image = to_rgba_image(&rendered);
-                let actual_path = actual_root.join(&relative);
-                std::fs::create_dir_all(actual_path.parent().unwrap()).unwrap();
-                image.save(&actual_path).unwrap();
                 expected.insert(relative.clone());
-
-                let reference_path = references.join(&relative);
-                if update {
-                    std::fs::create_dir_all(reference_path.parent().unwrap()).unwrap();
-                    image.save(&reference_path).unwrap();
-                    continue;
-                }
-                let Ok(reference) = image::open(&reference_path) else {
-                    failures.push(format!("{}: no reference image", relative.display()));
-                    continue;
-                };
-                let diff_path = actual_path.with_file_name(format!(
-                    "{}-{}-diff.png",
-                    surface.id,
-                    appearance.name()
-                ));
-                if let Some(problem) = compare(&image, &reference.to_rgba8(), &diff_path) {
+                if let Some(problem) = check(&image, &relative, &snapshots) {
                     failures.push(format!("{}: {problem}", relative.display()));
                 }
             }

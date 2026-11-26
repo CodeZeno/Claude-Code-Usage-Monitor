@@ -895,6 +895,7 @@ fn preview_render_mailbox_keeps_only_the_latest_request() {
         usage: None,
         runtime: ThemeRuntime::default(),
         scale: 1.0,
+        environment: None,
     };
     let mut mailbox = PreviewRenderMailbox::default();
     mailbox.replace(request(1));
@@ -919,6 +920,7 @@ fn preview_renderer_returns_results_from_its_worker_thread() {
         usage: None,
         runtime: ThemeRuntime::default(),
         scale: 1.0,
+        environment: None,
     });
 
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -1855,3 +1857,5 @@ fn scene_preview_stretches_the_entire_layer_background() {
         end
     );
 }
+
+mod ui_snapshots;

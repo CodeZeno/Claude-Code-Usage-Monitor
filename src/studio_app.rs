@@ -387,6 +387,9 @@ struct PreviewRenderRequest {
     usage: Option<AppUsageData>,
     runtime: ThemeRuntime,
     scale: f64,
+    /// The requesting thread's pinned render environment, so snapshot tests
+    /// get the same preview on any machine. `None` in the app.
+    environment: Option<theme_engine::FixedRenderEnvironment>,
 }
 
 struct PreviewRenderResult {
@@ -435,31 +438,39 @@ impl PreviewRenderer {
                     state.pending.take().expect("pending preview request")
                 };
 
-                let mut rendered = if (request.scale - 1.0).abs() < f64::EPSILON {
-                    theme_engine::render_theme_surface_with_runtime(
+                let render = || {
+                    let mut rendered = if (request.scale - 1.0).abs() < f64::EPSILON {
+                        theme_engine::render_theme_surface_with_runtime(
+                            &request.theme,
+                            request.key.surface_index,
+                            request.usage.as_ref(),
+                            request.runtime,
+                        )
+                    } else {
+                        theme_engine::render_theme_surface_with_runtime_at_scale(
+                            &request.theme,
+                            request.key.surface_index,
+                            request.usage.as_ref(),
+                            request.runtime,
+                            request.scale,
+                        )
+                    };
+                    if !theme_engine::surface_should_render(
                         &request.theme,
                         request.key.surface_index,
                         request.usage.as_ref(),
                         request.runtime,
-                    )
-                } else {
-                    theme_engine::render_theme_surface_with_runtime_at_scale(
-                        &request.theme,
-                        request.key.surface_index,
-                        request.usage.as_ref(),
-                        request.runtime,
-                        request.scale,
-                    )
+                    ) {
+                        rendered.pixels.fill(0);
+                    }
+                    rendered
                 };
-                let _render_warnings = &rendered.warnings;
-                if !theme_engine::surface_should_render(
-                    &request.theme,
-                    request.key.surface_index,
-                    request.usage.as_ref(),
-                    request.runtime,
-                ) {
-                    rendered.pixels.fill(0);
-                }
+                let rendered = match request.environment.clone() {
+                    Some(environment) => {
+                        theme_engine::with_fixed_render_environment(environment, render)
+                    }
+                    None => render(),
+                };
 
                 let superseded = {
                     let (lock, _) = &*worker_mailbox;

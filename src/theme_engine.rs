@@ -1164,8 +1164,10 @@ pub use theme_language::*;
 mod theme_limits;
 mod theme_render_environment;
 use theme_datetime::*;
+pub use theme_render_environment::{
+    current_fixed_render_environment, with_fixed_render_environment, FixedRenderEnvironment,
+};
 use theme_render_environment::{render_dark_mode, render_now, render_now_unix};
-pub use theme_render_environment::{with_fixed_render_environment, FixedRenderEnvironment};
 fn schema_version() -> u32 {
     THEME_SCHEMA_VERSION
 }

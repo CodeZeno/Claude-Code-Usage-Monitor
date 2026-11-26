@@ -923,6 +923,7 @@ impl StudioApp {
                 usage: self.usage.clone(),
                 runtime,
                 scale: render_scale,
+                environment: theme_engine::current_fixed_render_environment(),
             });
             self.preview_render_key = Some(render_key);
             self.preview_dirty = false;
