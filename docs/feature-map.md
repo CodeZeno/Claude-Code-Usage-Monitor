@@ -14,9 +14,13 @@ one widget window.
 - **Host**: where the widget is placed. Theme Studio calls the choices Automatic,
   Taskbar, Tray Icon, Desktop and Floating (`SurfaceNest` in the theme format).
   Placement, taskbar fitting and window lifetime are in `src/window/` (`positioning.rs`,
-  `host_geometry.rs`, `taskbar_collision.rs`, `lifecycle.rs`); desktop hosting is
-  `src/desktop_compositor.rs`; the message loop is `src/window.rs` and
-  `src/window/message_loop.rs`.
+  `host_geometry.rs`, `taskbar_collision.rs`, `lifecycle.rs`), and each surface's
+  window is created in `surfaces.rs`; desktop hosting is `src/desktop_compositor.rs`.
+- **Widget process**: `src/window.rs` holds the app state and start-up, and
+  `src/window/` the rest: the message loop (`message_loop.rs`), polling providers
+  (`polling.rs`), update checks (`updates.rs`), Start with Windows (`startup.rs`)
+  and the watchdogs that relaunch a hung widget or re-register after an
+  explorer.exe restart (`watchdog.rs`).
 - **Widget tooltip**: the hover summary, shown when a surface sets
   `"tooltip": "usage_summary"` (`src/window/widget_tooltip.rs`).
 - **Widget actions**: what clicks, double-clicks, right-clicks and hovering do, as
@@ -31,7 +35,8 @@ one widget window.
 The notification-area icon (`src/tray_icon.rs`, `src/tray_icon/`). Left-click
 shows or hides the widget; right-click opens the context menu. The app icon is the
 fallback; a theme can draw per-provider tray icons from `<provider>-tray-icon`
-surfaces (`provider_artwork.rs`).
+surfaces (`provider_artwork.rs`). Its usage tooltip and icon updates are in
+`src/window/tray_summary.rs`.
 
 ## Context menu
 
@@ -74,9 +79,12 @@ in navigation order (`Page` in `src/studio_app.rs`):
 ## Themes
 
 A theme is a JSON document of surfaces and layers. The engine is `src/theme_engine.rs`
-and `src/theme_engine/`; built-in themes are in `src/themes/`: Classic v1, Classic
-Vertical, Compact Fluent Quad, Minecraft (Codex) and Stacked Rows. Most fields are
-expressions (`"width": "canvas.width - 8"`) and text uses `{expression:format}`
+(the document format) and `src/theme_engine/`: expressions (`theme_expression.rs`),
+the values they read (`theme_data_context.rs`), mouse actions
+(`theme_mouse_actions.rs`), validation (`theme_validation.rs`), rendering
+(`theme_rendering.rs`) and saved themes (`theme_storage.rs`). Built-in themes are
+in `src/themes/`: Classic v1, Classic Vertical, Compact Fluent Quad, Minecraft
+(Codex) and Stacked Rows. Most fields are expressions (`"width": "canvas.width - 8"`) and text uses `{expression:format}`
 templates; [theme-reference.md](theme-reference.md) lists every field, value,
 function, format and mouse action, generated from `src/theme_engine/theme_language.rs`.
 Render any theme to PNG without starting the app with `--render-theme`; see
@@ -95,7 +103,8 @@ needs.
 
 - **Message boxes**: update prompts, update failures, provider sign-in errors and
   dashboard start-up failures.
-- **Updater**: `src/updater.rs`; `--apply-update` is the internal helper mode.
+- **Updater**: `src/updater.rs`, started from `src/window/updates.rs`;
+  `--apply-update` is the internal helper mode.
   See [updater](updater.md).
 - **Command-line flags**:
   - `--dashboard` opens the dashboard on start.
