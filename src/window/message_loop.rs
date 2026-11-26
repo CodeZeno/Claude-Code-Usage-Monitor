@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -208,10 +204,13 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_LBUTTONDOWN => {
             widget_tooltip::hide();
+            // SAFETY: SetCapture takes no pointers; `hwnd` is the window whose procedure
+            // is running, on the thread that owns it, as capture requires.
             unsafe {
                 let _ = SetCapture(hwnd);
             }
             let mut pt = POINT::default();
+            // SAFETY: GetCursorPos writes only to the live local POINT for the call.
             let _ = unsafe { GetCursorPos(&mut pt) };
             let rect = native_interop::get_window_rect_safe(hwnd).unwrap_or_default();
             let mut state = lock_state();
@@ -229,13 +228,16 @@ pub(super) unsafe extern "system" fn wnd_proc(
         }
         WM_MOUSEMOVE => {
             let mut pt = POINT::default();
+            // SAFETY: GetCursorPos writes only to the live local POINT for the call.
             let _ = unsafe { GetCursorPos(&mut pt) };
 
             let (should_start_drag, is_dragging) = {
                 let mut state = lock_state();
                 if let Some(s) = state.as_mut() {
                     if s.pending_drag && !s.dragging {
+                        // SAFETY: GetSystemMetrics takes only an index and has no preconditions.
                         let cx_drag = unsafe { GetSystemMetrics(SM_CXDRAG) };
+                        // SAFETY: as above.
                         let cy_drag = unsafe { GetSystemMetrics(SM_CYDRAG) };
                         let dx = (pt.x - s.drag_start_cursor.x).abs();
                         let dy = (pt.y - s.drag_start_cursor.y).abs();
@@ -264,6 +266,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     }
                 }
                 native_interop::make_popup(hwnd, true);
+                // SAFETY: SetCapture takes no pointers; `hwnd` is this procedure's window,
+                // used on its owning thread.
                 unsafe {
                     let _ = SetCapture(hwnd);
                 }
@@ -374,6 +378,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     }
 
                     let (final_x, final_y) = snapped_pos.unwrap_or((origin_x, origin_y));
+                    // SAFETY: SetWindowPos takes no pointers; `hwnd` is the surface whose window
+                    // procedure is running on its owning thread, and Windows validates it anyway.
                     unsafe {
                         let _ = SetWindowPos(
                             hwnd,
@@ -439,6 +445,7 @@ pub(super) unsafe extern "system" fn wnd_proc(
                 return LRESULT(0);
             }
             let mut pt = POINT::default();
+            // SAFETY: GetCursorPos writes only to the live local POINT for the call.
             let _ = unsafe { GetCursorPos(&mut pt) };
 
             if released.dragging {
@@ -622,6 +629,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                         }
                     }
                     save_state_settings();
+                    // SAFETY: SetWindowPos takes no pointers; `hwnd` is the surface whose window
+                    // procedure is running on its owning thread, and Windows validates it anyway.
                     unsafe {
                         let _ = SetWindowPos(
                             hwnd,
@@ -723,6 +732,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                     s.is_switching_window_style = false;
                 }
 
+                // SAFETY: SetWindowPos takes no pointers; `hwnd` is the surface whose window
+                // procedure is running on its owning thread, and Windows validates it anyway.
                 unsafe {
                     let _ = SetWindowPos(
                         hwnd,
@@ -850,6 +861,8 @@ pub(super) unsafe extern "system" fn wnd_proc(
                                     && s.show_antigravity_external
                                     && s.providers.contains(ProviderId::Antigravity);
                                 if !dual_mode {
+                                    // SAFETY: KillTimer takes no pointers, and Windows
+                                    // validates the controller handle.
                                     unsafe {
                                         let _ = kill_controller_timer(
                                             Some(hwnd),
@@ -1038,6 +1051,9 @@ mod tests {
         // instead of permanently deadlocking the test process.
         let state = lock_state();
         let (completed, completion) = std::sync::mpsc::channel();
+        // SAFETY: the worker creates, drives and destroys its own message-only window;
+        // `class` outlives CreateWindowExW, `queued` is a live local for PeekMessageW,
+        // and WM_APP_TRAY's wParam/lParam are plain integers, not pointers.
         let worker = std::thread::spawn(move || unsafe {
             let class = native_interop::wide_str("STATIC");
             let hwnd = CreateWindowExW(
@@ -1125,6 +1141,9 @@ mod tests {
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
 
+        // SAFETY: the test thread registers the class (its name kept alive by `class`),
+        // creates both windows and destroys them; parent_proc matches WNDPROC, and the
+        // procedures are called with these live windows and integer-only parameters.
         unsafe {
             let class = native_interop::wide_str("ClaudeCodeUsageForwardingParentTest");
             RegisterClassW(&WNDCLASSW {

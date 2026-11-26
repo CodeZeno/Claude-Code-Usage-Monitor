@@ -1,9 +1,5 @@
 //! Launches and focuses the single GPU-rendered dashboard process.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::time::Duration;
 
@@ -73,6 +69,9 @@ fn monitor_process_id(owner: isize) -> Option<u32> {
     let hwnd = HWND(owner as *mut _);
     let mut class_name = [0u16; 64];
     let mut process_id = 0;
+    // SAFETY: `hwnd` may be stale; IsWindow, GetClassNameW and GetWindowThreadProcessId
+    // validate it and fail without touching memory. `class_name` and `process_id` are
+    // live locals, and GetClassNameW receives the slice with its real length.
     unsafe {
         if !IsWindow(Some(hwnd)).as_bool() {
             return None;
@@ -163,6 +162,9 @@ pub fn show(owner: HWND) {
 /// the existing window, which also closes the rapid-click startup race.
 pub fn claim_instance() -> Result<Option<HANDLE>, String> {
     let name = crate::native_interop::wide_str(DASHBOARD_MUTEX);
+    // SAFETY: `name` is a NUL-terminated UTF-16 buffer that outlives the CreateMutexW call;
+    // a null security descriptor is allowed. GetLastError reads this thread's last error,
+    // set by CreateMutexW immediately before. The returned handle is passed to the caller.
     unsafe {
         let handle =
             CreateMutexW(None, true, PCWSTR::from_raw(name.as_ptr())).map_err(|error| {
@@ -185,16 +187,21 @@ pub fn claim_instance() -> Result<Option<HANDLE>, String> {
 /// top-level FindWindow APIs used for ordinary application windows.
 pub fn start_request_listener(owner: HWND) -> Result<(), String> {
     let event_name = crate::native_interop::wide_str(DASHBOARD_REQUEST_EVENT);
+    // SAFETY: `event_name` is a NUL-terminated UTF-16 buffer that outlives the call, and a
+    // null security descriptor is allowed.
     let event = unsafe { CreateEventW(None, false, false, PCWSTR::from_raw(event_name.as_ptr())) }
         .map_err(|error| format!("Unable to create the dashboard request event: {error}"))?;
     let event_value = event.0 as isize;
     let owner_value = owner.0 as isize;
     std::thread::spawn(move || loop {
         let event = HANDLE(event_value as *mut _);
+        // SAFETY: the event handle is never closed, so it stays valid for this thread's life.
         if unsafe { WaitForSingleObject(event, INFINITE) } != WAIT_OBJECT_0 {
             break;
         }
         let owner = HWND(owner_value as *mut _);
+        // SAFETY: PostMessageW takes no pointers here; a destroyed `owner` makes it fail,
+        // which ends the loop.
         if unsafe {
             PostMessageW(
                 Some(owner),
@@ -217,6 +224,8 @@ pub fn start_request_listener(owner: HWND) -> Result<(), String> {
 pub fn request_from_existing_monitor() -> Result<(), String> {
     let event_name = crate::native_interop::wide_str(DASHBOARD_REQUEST_EVENT);
     for _ in 0..40 {
+        // SAFETY: `event_name` is NUL-terminated and outlives the call. The opened handle
+        // is owned here, signalled while open and closed exactly once before returning.
         unsafe {
             if let Ok(event) = OpenEventW(
                 EVENT_MODIFY_STATE,
@@ -242,6 +251,8 @@ pub fn request_from_existing_monitor() -> Result<(), String> {
 
 pub fn report_launch_failure(owner: HWND, detail: &str) {
     crate::diagnose::log(format!("dashboard launch failed: {detail}"));
+    // SAFETY: `title` and `message` are NUL-terminated UTF-16 locals that live until
+    // MessageBoxW returns; an invalid `owner` is rejected by Windows.
     unsafe {
         let title = crate::native_interop::wide_str(language().text("Unable to open dashboard"));
         let message = crate::native_interop::wide_str(detail);
@@ -257,6 +268,7 @@ pub fn report_launch_failure(owner: HWND, detail: &str) {
 fn find_dashboard_window(title: &str) -> Option<HWND> {
     let title = crate::native_interop::wide_str(title);
     let class = crate::native_interop::wide_str(DASHBOARD_WINDOW_CLASS);
+    // SAFETY: `class` and `title` are NUL-terminated UTF-16 locals that outlive the call.
     unsafe {
         FindWindowW(
             PCWSTR::from_raw(class.as_ptr()),
@@ -270,6 +282,8 @@ pub fn focus_existing() -> bool {
     let Some(hwnd) = find_dashboard_window(DASHBOARD_TITLE) else {
         return false;
     };
+    // SAFETY: neither call takes pointers; if `hwnd` was destroyed meanwhile Windows
+    // rejects it and the ignored results report failure.
     unsafe {
         // The dashboard runs on another UI thread/process. Do not block the
         // monitor (and its taskbar host) if that thread is busy or unresponsive.
@@ -283,6 +297,7 @@ pub fn close_existing() -> bool {
     let Some(hwnd) = find_dashboard_window(DASHBOARD_TITLE) else {
         return false;
     };
+    // SAFETY: WM_CLOSE carries no pointers; a stale `hwnd` makes PostMessageW fail.
     unsafe { PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0)).is_ok() }
 }
 
@@ -309,10 +324,14 @@ mod tests {
                 wparam: WPARAM,
                 lparam: LPARAM,
             ) -> windows::Win32::Foundation::LRESULT {
+                // SAFETY: forwards the unmodified arguments Windows passed to this procedure.
                 unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
             }
             let class = crate::native_interop::wide_str(class);
             let title = crate::native_interop::wide_str(title);
+            // SAFETY: `class` and `title` are NUL-terminated locals that outlive both calls,
+            // `procedure` has the WNDPROC signature, and `instance` is this module's handle.
+            // The created window is owned by the returned TestWindow, which destroys it.
             unsafe {
                 let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
                 let registered = RegisterClassW(&WNDCLASSW {
@@ -345,6 +364,8 @@ mod tests {
 
     impl Drop for TestWindow {
         fn drop(&mut self) {
+            // SAFETY: the window was created by this TestWindow on the same test thread and
+            // is destroyed only here, once.
             unsafe {
                 let _ = DestroyWindow(self.0);
             }

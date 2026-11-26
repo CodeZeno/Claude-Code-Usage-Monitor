@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 use crate::ui::components::layout::{setting_row_with_control_width, settings_group};
@@ -80,6 +76,8 @@ fn local_log_timestamp(seconds: u64) -> Option<String> {
     };
     let mut utc = SYSTEMTIME::default();
     let mut local = SYSTEMTIME::default();
+    // SAFETY: every argument is a reference to a live local; `None` selects the current
+    // time zone.
     unsafe {
         FileTimeToSystemTime(&file_time, &mut utc).ok()?;
         SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local).ok()?;
@@ -109,6 +107,8 @@ pub(super) fn send_owner_message(owner: isize, message: u32) -> Result<(), Strin
         "Dashboard is not connected to a running monitor. Open Settings from the monitor's tray menu."
             .to_string()
     })?;
+    // SAFETY: the message carries no pointers; if the owner window has gone, PostMessageW
+    // fails and the error is returned.
     unsafe {
         PostMessageW(Some(HWND(owner as *mut _)), message, WPARAM(0), LPARAM(0))
             .map_err(|error| format!("Unable to send request to monitor: {error}"))
@@ -237,6 +237,7 @@ mod tests {
             ..Default::default()
         };
         let mut local = SYSTEMTIME::default();
+        // SAFETY: `utc` and `local` are live locals; `None` selects the current time zone.
         unsafe { SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local).unwrap() };
         let raw = "[86400] [pid 42] first\r\n[86400] [pid 42] second";
         let prefix = format!(

@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -97,6 +93,8 @@ pub(super) fn position_at_taskbar() {
     if embedded {
         // Child window: coordinates relative to parent (taskbar)
         let mut point = [POINT { x, y }];
+        // SAFETY: the slice is a live local array whose length the wrapper passes as the
+        // point count; Windows validates the taskbar handle.
         unsafe { MapWindowPoints(None, Some(taskbar_hwnd), &mut point) };
         x = point[0].x;
         y = point[0].y;
@@ -146,6 +144,8 @@ pub(super) fn legacy_taskbar_rect(
 }
 
 pub(super) fn ensure_layered_window(hwnd: HWND) {
+    // SAFETY: Get/SetWindowLongW only read and write the integer GWL_EXSTYLE slot, and
+    // Windows validates the handle (a stale one reads 0 and the set fails).
     unsafe {
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
         if ex_style & WS_EX_LAYERED.0 as i32 == 0 {
@@ -175,6 +175,11 @@ pub(super) fn render_custom_window(
 
     let width = rendered.width as i32;
     let height = rendered.height as i32;
+    // SAFETY: the DCs and bitmap are created here and released on every path; `info`
+    // and the POINT/SIZE/BLENDFUNCTION are live locals. The pixel slice assumes the
+    // renderer's invariant pixels.len() == width * height, the size of the 32bpp DIB
+    // CreateDIBSection allocated at `bits` (checked non-null), which it is not checked
+    // against here; the slice is last used before the bitmap is deleted.
     unsafe {
         // Keep the DWM surface alive across frames. Desktop rendering uses a
         // separate DirectComposition window, so no layered-style reset is
@@ -306,6 +311,7 @@ pub(super) fn position_custom_theme_internal(
                 == Some(hwnd)
     });
     if !is_primary_surface && display_index >= displays.len() {
+        // SAFETY: ShowWindow takes no pointers, and Windows validates the handle.
         unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
@@ -316,6 +322,7 @@ pub(super) fn position_custom_theme_internal(
         .copied()
         .or_else(|| displays.first().copied());
     let Some(display) = selected_display else {
+        // SAFETY: ShowWindow takes no pointers, and Windows validates the handle.
         unsafe {
             let _ = ShowWindow(hwnd, SW_HIDE);
         }
@@ -341,6 +348,8 @@ pub(super) fn position_custom_theme_internal(
         .placement
         .nest
         .resolve(theme.placement.reference.region);
+    // SAFETY: the window calls take handles Windows validates; MapWindowPoints gets a
+    // live local one-element array, and hosted_child_is_placed only needs the same.
     unsafe {
         match nest {
             SurfaceNest::Taskbar => {
@@ -430,6 +439,8 @@ pub(super) fn sync_theme_window_visibility() {
         )
     };
     let display_count = native_interop::find_monitors().len();
+    // SAFETY: IsWindow, IsWindowVisible, SetWindowPos and ShowWindow take no pointers,
+    // and Windows validates each surface handle (stale ones are skipped or fail).
     unsafe {
         for (surface_index, surface) in theme.surfaces.iter().enumerate() {
             let nest = surface
@@ -484,6 +495,9 @@ pub(super) fn sync_theme_window_visibility() {
 }
 
 pub(super) fn foreground_is_fullscreen_on_display(display_index: usize) -> bool {
+    // SAFETY: the foreground handle is only passed to calls that validate it; the
+    // DwmGetWindowAttribute buffer is a live local RECT with its exact size, and
+    // GetWindowRect writes to the same local.
     unsafe {
         let foreground = GetForegroundWindow();
         if foreground.is_invalid()
@@ -662,18 +676,21 @@ pub(super) fn is_tray_event_source(
     }
     // Never treat our own surface windows as tray events (prevents feedback loops)
     for &our in our_hwnds {
+        // SAFETY: IsChild takes no pointers and returns false for stale handles.
         if our == hwnd || unsafe { IsChild(our, hwnd).as_bool() } {
             return false;
         }
     }
     // Check if hwnd is TrayNotifyWnd or any descendant (e.g. ToolbarWindow32, SIBTrayButton, SysPager)
     if let Some(tray) = tray_hwnd {
+        // SAFETY: IsChild takes no pointers and returns false for stale handles.
         if tray == hwnd || unsafe { IsChild(tray, hwnd).as_bool() } {
             return true;
         }
     }
     // Check if hwnd is the taskbar or a child window (e.g. overflow chevron buttons placed directly on Shell_TrayWnd)
     if let Some(taskbar) = taskbar_hwnd {
+        // SAFETY: IsChild takes no pointers and returns false for stale handles.
         if taskbar == hwnd || unsafe { IsChild(taskbar, hwnd).as_bool() } {
             return true;
         }
@@ -724,6 +741,8 @@ pub(super) fn schedule_tray_reposition(hwnd: HWND) {
     // events. Resetting a short trailing timer ensures we wait for the final settled
     // geometry before updating the position, avoiding transient jumps and jitter.
     const TRAY_REPOSITION_TRAILING_DELAY_MS: u32 = 80;
+    // SAFETY: SetTimer takes no pointers here (no callback), and Windows validates
+    // the controller handle.
     unsafe {
         let _ = set_controller_timer(
             Some(hwnd),

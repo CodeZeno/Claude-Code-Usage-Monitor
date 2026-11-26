@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::ffi::c_void;
 
@@ -54,6 +50,8 @@ pub(super) struct StoredCredential {
 pub(super) fn read_generic(target: &str) -> Option<String> {
     let target_wide = wide(target);
     let mut credential: *mut CredentialW = std::ptr::null_mut();
+    // SAFETY: `target_wide` is NUL-terminated and outlives the call, and `credential` is a
+    // live local out-pointer. `CredentialW` mirrors the C `CREDENTIALW` layout.
     let ok = unsafe { CredReadW(target_wide.as_ptr(), CRED_TYPE_GENERIC, 0, &mut credential) };
     if ok == 0 || credential.is_null() {
         diagnose::log(format!(
@@ -62,7 +60,11 @@ pub(super) fn read_generic(target: &str) -> Option<String> {
         return None;
     }
 
+    // SAFETY: CredReadW succeeded and returned a non-null CREDENTIALW that stays valid until
+    // CredFree below; its blob pointer and size describe one allocation.
     let secret = unsafe { credential_secret(&*credential) };
+    // SAFETY: `credential` came from CredReadW, is freed exactly once here, and the decoded
+    // secret no longer borrows it.
     unsafe { CredFree(credential as *mut c_void) };
     secret
 }
@@ -73,12 +75,17 @@ pub(super) fn enumerate_generic(prefix: &str) -> Vec<StoredCredential> {
     let filter = wide(&format!("{prefix}*"));
     let mut count = 0u32;
     let mut credentials: *mut *mut CredentialW = std::ptr::null_mut();
+    // SAFETY: `filter` is NUL-terminated and outlives the call; `count` and `credentials`
+    // are live local out-pointers.
     let ok = unsafe { CredEnumerateW(filter.as_ptr(), 0, &mut count, &mut credentials) };
     if ok == 0 || credentials.is_null() {
         return Vec::new();
     }
 
     let mut found = Vec::new();
+    // SAFETY: CredEnumerateW succeeded, so `credentials` points to `count` credential
+    // pointers in one buffer that stays valid until the single CredFree at the end. Target
+    // names are NUL-terminated and blobs match their sizes; owned copies are made first.
     unsafe {
         for &credential in std::slice::from_raw_parts(credentials, count as usize) {
             let Some(credential) = credential.as_ref() else {

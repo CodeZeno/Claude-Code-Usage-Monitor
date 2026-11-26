@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -137,11 +133,13 @@ fn timestamp_system_time(unix: f64, local: bool) -> Option<SYSTEMTIME> {
         dwHighDateTime: (ticks >> 32) as u32,
     };
     let mut utc = SYSTEMTIME::default();
+    // SAFETY: both arguments are references to live locals.
     unsafe { FileTimeToSystemTime(&file_time, &mut utc).ok()? };
     if !local {
         return Some(utc);
     }
     let mut local = SYSTEMTIME::default();
+    // SAFETY: `utc` and `local` are live locals; `None` selects the current time zone.
     unsafe { SystemTimeToTzSpecificLocalTimeEx(None, &utc, &mut local).ok()? };
     Some(local)
 }
@@ -167,6 +165,8 @@ fn format_date(
     let locale = wide(locale);
     let pattern = pattern.map(wide);
     let mut output = [0_u16; 128];
+    // SAFETY: `locale` and `pattern` are NUL-terminated locals that outlive the call (a null
+    // pattern selects the default format); `output` is passed as a slice with its length.
     let count = unsafe {
         GetDateFormatEx(
             PCWSTR(locale.as_ptr()),
@@ -199,6 +199,8 @@ fn format_time(
     let locale = wide(locale);
     let pattern = pattern.map(wide);
     let mut output = [0_u16; 128];
+    // SAFETY: `locale` and `pattern` are NUL-terminated locals that outlive the call (a null
+    // pattern selects the default format); `output` is passed as a slice with its length.
     let count = unsafe {
         GetTimeFormatEx(
             PCWSTR(locale.as_ptr()),

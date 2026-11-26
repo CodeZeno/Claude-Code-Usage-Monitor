@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -134,11 +130,18 @@ pub fn present(hwnd: HWND, rendered: &RenderedTheme) -> Result<(), String> {
             presenters.remove(&key);
         }
         if let std::collections::hash_map::Entry::Vacant(entry) = presenters.entry(key) {
+            // SAFETY: `create` passes only its own locals to D3D11, DXGI and DirectComposition;
+            // `hwnd` is validated by CreateTargetForHwnd. The resulting COM objects stay on
+            // this window thread in the thread-local map.
             let presenter =
                 unsafe { DesktopPresenter::create(hwnd, rendered.width, rendered.height) }
                     .map_err(|error| format!("DirectComposition setup failed: {error}"))?;
             entry.insert(presenter);
         }
+        // SAFETY: the presenter was created on this thread with `rendered`'s width and height
+        // (a size change recreates it above), so UpdateSubresource reads `width * 4` bytes per
+        // row for `height` rows. That assumes `rendered.pixels` holds `width * height` pixels,
+        // which every RenderedTheme producer guarantees but the type does not enforce.
         unsafe { presenters[&key].present(rendered) }
             .map_err(|error| format!("DirectComposition present failed: {error}"))
     })

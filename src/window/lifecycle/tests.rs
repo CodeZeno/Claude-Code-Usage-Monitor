@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "test fixtures call Win32 APIs")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -42,6 +38,8 @@ fn shell_surface_loss_preserves_controller_timers_and_state() {
         );
         return;
     }
+    // SAFETY: this fixture runs alone in its child process, on the test thread that
+    // creates, drives and destroys every window and timer exercise_lifetime touches.
     unsafe {
         exercise_lifetime();
     }

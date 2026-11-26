@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::sync::Mutex;
 
@@ -132,6 +128,9 @@ pub enum TrayAction {
 /// Native windows and the system tray share this source so Windows can choose
 /// the exact large or small icon instead of scaling a single bitmap.
 pub fn load_app_icons() -> (HICON, HICON) {
+    // SAFETY: `exe_buf` is a live local and the slice passes its length; GetModuleFileNameW
+    // NUL-terminates even a truncated path, so ExtractIconExW reads a valid string. The two
+    // out pointers are live locals and `1` matches the single icon each can hold.
     unsafe {
         let mut exe_buf = [0u16; 260];
         let len = GetModuleFileNameW(None, &mut exe_buf) as usize;
@@ -161,6 +160,8 @@ fn load_app_icon() -> HICON {
     let (large_icon, small_icon) = load_app_icons();
     if !small_icon.is_invalid() {
         if !large_icon.is_invalid() {
+            // SAFETY: `large_icon` came from ExtractIconExW in load_app_icons, is owned here and is not
+            // used after being destroyed.
             unsafe {
                 let _ = DestroyIcon(large_icon);
             }
@@ -189,6 +190,8 @@ pub fn cursor_over_themed_icon(hwnd: HWND, surface_index: usize) -> bool {
     let Some(identity) = identity else {
         return false;
     };
+    // SAFETY: `identifier` is a live local with `cbSize` set and `point` is a live local out
+    // pointer; Windows validates `hwnd` and the icon identity and fails if they are stale.
     unsafe {
         let identifier = NOTIFYICONIDENTIFIER {
             cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,
@@ -221,6 +224,10 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
         return HICON::default();
     }
 
+    // SAFETY: The DIB is 32 bpp, top-down, `width` x `height`, so `bits` (checked non-null)
+    // points to `width * height` u32s, exactly `icon.pixels.len()` as checked above. The DCs
+    // and bitmaps created here are owned, each released once; `icon_info` and `bitmap_info`
+    // are live locals for their calls.
     unsafe {
         let screen_dc = GetDC(None);
         let memory_dc = CreateCompatibleDC(Some(screen_dc));
@@ -275,6 +282,8 @@ fn create_themed_icon(icon: &ThemedTrayIcon) -> HICON {
 }
 
 fn remove_id(hwnd: HWND, identity: TrayIdentity) {
+    // SAFETY: `nid` is a live local with `cbSize` set by icon_data; Windows validates `hwnd` and
+    // ignores icons that are no longer registered.
     unsafe {
         let nid = icon_data(hwnd, identity);
         let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
@@ -298,6 +307,8 @@ pub fn sync(hwnd: HWND, tooltip: &str) {
         return;
     }
 
+    // SAFETY: `nid` is a live local with `cbSize` set by icon_data. Shell_NotifyIconW copies
+    // `hicon`, which is owned here and destroyed once after the call.
     unsafe {
         let mut nid = icon_data(hwnd, app_identity());
         nid.uFlags |= NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -340,6 +351,8 @@ pub fn sync_themed(hwnd: HWND, icons: &[ThemedTrayIcon]) {
             continue;
         }
         let identity = theme_identity(icon.surface_index, &icon.surface_id);
+        // SAFETY: `nid` is a live local with `cbSize` set by icon_data. Shell_NotifyIconW copies
+        // `hicon`, which create_themed_icon returned to this loop and is destroyed once after use.
         unsafe {
             let mut nid = icon_data(hwnd, identity);
             nid.uFlags |= NIF_ICON | NIF_MESSAGE | NIF_TIP;
@@ -381,6 +394,8 @@ pub fn notify_balloon(hwnd: HWND, title: &str, message: &str) {
         .first()
         .copied()
         .unwrap_or_else(app_identity);
+    // SAFETY: `nid` is a live local with `cbSize` set by icon_data and NUL-terminated title and
+    // message buffers (copy_wide); Windows validates `hwnd` and the icon identity.
     unsafe {
         let mut nid = icon_data(hwnd, identity);
         nid.uFlags |= NIF_INFO;

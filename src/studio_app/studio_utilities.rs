@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -62,6 +58,9 @@ pub(super) fn choose_file(owner: isize, title: &str, filter: &str) -> Option<Pat
         Flags: OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST,
         ..Default::default()
     };
+    // SAFETY: `lStructSize` is set; `file`, `filter` and `title` are live locals that outlive
+    // the modal call, `nMaxFile` is `file`'s length, and `title` is NUL-terminated. `filter`
+    // has no terminator of its own, so this relies on every caller ending it with "\0\0".
     if unsafe { GetOpenFileNameW(&mut dialog) }.as_bool() {
         let len = file
             .iter()
@@ -99,6 +98,10 @@ pub(super) fn choose_save_file(
         Flags: OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST,
         ..Default::default()
     };
+    // SAFETY: `lStructSize` is set; `file` (NUL-terminated after the copied default name),
+    // `filter`, `title` and `default_extension` are live locals that outlive the modal call,
+    // and `nMaxFile` is `file`'s length. `filter` has no terminator of its own, so this
+    // relies on every caller ending it with "\0\0".
     if unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
         let len = file
             .iter()

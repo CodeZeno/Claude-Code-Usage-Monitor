@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use windows::core::PCWSTR;
 use windows::Win32::System::Registry::*;
@@ -37,6 +33,9 @@ pub fn with_dark_mode<T>(dark: bool, f: impl FnOnce() -> T) -> T {
 }
 
 fn is_light_theme() -> bool {
+    // SAFETY: `path` and `key_name` are NUL-terminated wide strings held by locals; `hkey` is a
+    // live out pointer, closed once only after a successful open. The value buffer is the live
+    // `data` u32 with `data_size` set to its size, so larger values fail rather than overflow.
     unsafe {
         let path = wide_str(REGISTRY_PATH);
         let key_name = wide_str(REGISTRY_KEY);

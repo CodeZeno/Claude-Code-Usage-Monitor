@@ -4,10 +4,6 @@
 //! value from an application-owned database. Linking as a raw DLL import avoids
 //! bundling SQLite or depending on a Windows SDK import library at build time.
 #![allow(unsafe_code, reason = "calls the SQLite library shipped with Windows")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::ffi::{c_char, c_int, c_uchar, CStr, CString};
 use std::fmt;
@@ -96,6 +92,8 @@ impl Connection {
         let filename = CString::new(path.as_os_str().as_encoded_bytes())
             .map_err(|_| Error("SQLite database path contains a NUL byte".into()))?;
         let mut raw = ptr::null_mut();
+        // SAFETY: `filename` is a NUL-terminated CString that outlives the call, `raw` is a live
+        // local out pointer, and a null VFS name selects the default VFS.
         let result = unsafe {
             sqlite3_open_v2(
                 filename.as_ptr(),
@@ -106,6 +104,7 @@ impl Connection {
         };
         if result == SQLITE_OK && !raw.is_null() {
             let connection = Self { raw };
+            // SAFETY: `connection.raw` is the non-null handle sqlite3_open_v2 just returned with SQLITE_OK.
             let result = unsafe { sqlite3_busy_timeout(connection.raw, 1_000) };
             if result != SQLITE_OK {
                 return Err(error_message(
@@ -119,6 +118,8 @@ impl Connection {
 
         let error = error_message(raw, "unable to open SQLite database", result);
         if !raw.is_null() {
+            // SAFETY: `raw` is the non-null handle from the failed open, which SQLite requires the caller
+            // to close; it is closed once here and not used afterwards.
             unsafe {
                 let _ = sqlite3_close(raw);
             }
@@ -130,6 +131,9 @@ impl Connection {
         let sql =
             CString::new(sql).map_err(|_| Error("SQLite statement contains a NUL byte".into()))?;
         let mut raw = ptr::null_mut();
+        // SAFETY: `self.raw` is an open connection owned by `self`; `sql` is a NUL-terminated CString
+        // alive for the call (length -1 = read to NUL); `raw` is a live local out pointer and
+        // a null tail pointer is permitted.
         let result =
             unsafe { sqlite3_prepare_v2(self.raw, sql.as_ptr(), -1, &mut raw, ptr::null_mut()) };
         if result != SQLITE_OK || raw.is_null() {
@@ -148,6 +152,8 @@ impl Connection {
 
 impl Drop for Connection {
     fn drop(&mut self) {
+        // SAFETY: `self.raw` is the non-null handle this Connection owns; every Statement borrows the
+        // Connection, so all statements are finalized before this close runs.
         unsafe {
             let _ = sqlite3_close(self.raw);
         }
@@ -163,8 +169,11 @@ impl Statement<'_> {
     fn bind_text(&mut self, index: c_int, value: &CStr) -> Result<(), Error> {
         let value_bytes = c_int::try_from(value.to_bytes().len())
             .map_err(|_| Error("SQLite parameter is too large".into()))?;
-        // SQLITE_STATIC is safe here because the caller keeps `value` alive
-        // until after sqlite3_step returns.
+        // SAFETY: `self.raw` is a live prepared statement and `value` points to
+        // `value_bytes` bytes. Passing None (SQLITE_STATIC) makes SQLite keep the
+        // pointer, so this relies on the caller keeping `value` alive until the
+        // statement is finalized (query_optional_text declares it first, so it
+        // drops last).
         let result =
             unsafe { sqlite3_bind_text(self.raw, index, value.as_ptr(), value_bytes, None) };
         if result == SQLITE_OK {
@@ -179,16 +188,24 @@ impl Statement<'_> {
     }
 
     fn optional_text(&mut self, column: c_int) -> Result<Option<String>, Error> {
+        // SAFETY: `self.raw` is a non-null prepared statement owned by this Statement and not yet
+        // finalized.
         match unsafe { sqlite3_step(self.raw) } {
             SQLITE_DONE => Ok(None),
             SQLITE_ROW => {
+                // SAFETY: sqlite3_step just returned SQLITE_ROW on this live statement, so column access is
+                // valid; the pointer stays valid until the next step, reset or finalize.
                 let text = unsafe { sqlite3_column_text(self.raw, column) };
                 if text.is_null() {
                     return Ok(None);
                 }
+                // SAFETY: Same live statement and current row; called after sqlite3_column_text, as SQLite
+                // documents, so the length refers to the UTF-8 text already returned.
                 let bytes = unsafe { sqlite3_column_bytes(self.raw, column) };
                 let bytes = usize::try_from(bytes)
                     .map_err(|_| Error("SQLite returned an invalid text length".into()))?;
+                // SAFETY: `text` is non-null and points to `bytes` bytes owned by SQLite, valid until the
+                // next step/finalize; the slice is copied into a String before either can happen.
                 let value = unsafe { std::slice::from_raw_parts(text, bytes) };
                 String::from_utf8(value.to_vec())
                     .map(Some)
@@ -205,6 +222,8 @@ impl Statement<'_> {
 
 impl Drop for Statement<'_> {
     fn drop(&mut self) {
+        // SAFETY: `self.raw` is the non-null statement prepare() returned; it is finalized exactly
+        // once here, while the borrowed Connection is still open.
         unsafe {
             let _ = sqlite3_finalize(self.raw);
         }
@@ -215,7 +234,11 @@ fn error_message(database: *mut Sqlite3, context: &str, result: c_int) -> Error 
     let detail = if database.is_null() {
         None
     } else {
+        // SAFETY: `database` is non-null and is an open (or failed-open, not yet closed) handle at
+        // every call site.
         let message = unsafe { sqlite3_errmsg(database) };
+        // SAFETY: `message` is non-null and SQLite returns a NUL-terminated string that stays valid
+        // until the next call on this handle; it is copied before error_message returns.
         (!message.is_null()).then(|| unsafe { CStr::from_ptr(message) }.to_string_lossy())
     };
     match detail {
@@ -271,6 +294,8 @@ mod tests {
     fn create_database(path: &Path) {
         let filename = CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
         let mut database = ptr::null_mut();
+        // SAFETY: `filename` is a NUL-terminated CString that outlives the call, `database` is a
+        // live local out pointer, and a null VFS name selects the default VFS.
         let result = unsafe {
             sqlite3_open_v2(
                 filename.as_ptr(),
@@ -285,6 +310,8 @@ mod tests {
              INSERT INTO ItemTable VALUES ('cursorAuth/accessToken', 'test-token');",
         )
         .unwrap();
+        // SAFETY: `database` was opened with SQLITE_OK (asserted above); `sql` is a NUL-terminated
+        // CString alive for the call; no callback, context or error-message out pointer is used.
         let result = unsafe {
             sqlite3_exec(
                 database,
@@ -295,6 +322,8 @@ mod tests {
             )
         };
         assert_eq!(result, SQLITE_OK);
+        // SAFETY: `database` is the open handle from above with no outstanding statements (exec
+        // finalizes its own); it is closed exactly once.
         assert_eq!(unsafe { sqlite3_close(database) }, SQLITE_OK);
     }
 }

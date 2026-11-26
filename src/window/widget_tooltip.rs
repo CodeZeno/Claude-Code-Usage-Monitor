@@ -1,9 +1,5 @@
 //! Explorer-style native tooltips, owned and accessed only by the window thread.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 use std::cell::RefCell;
 
 use windows::core::PWSTR;
@@ -44,6 +40,9 @@ impl WidgetTooltip {
 
 impl Drop for WidgetTooltip {
     fn drop(&mut self) {
+        // SAFETY: the tooltip is created and kept in a thread-local on the window thread,
+        // so it is destroyed by its creating thread; both calls take only handles,
+        // which Windows validates if the controller or popup is already gone.
         unsafe {
             let _ = kill_controller_timer(Some(self.controller), REFRESH_TIMER);
             let _ = DestroyWindow(self.window);
@@ -129,6 +128,8 @@ fn set_theme(window: HWND, dark: bool) {
     } else {
         "Explorer"
     });
+    // SAFETY: `class` is a NUL-terminated wide string kept alive by the local for the
+    // call; a null sublist is allowed, and Windows validates the window handle.
     unsafe {
         let _ = SetWindowTheme(window, PCWSTR(class.as_ptr()), PCWSTR::null());
     }
@@ -142,6 +143,9 @@ pub(super) fn show(owner: HWND) {
     let Some((text, dark, controller)) = content(owner) else {
         return;
     };
+    // SAFETY: runs on the window thread that owns `owner`, `controller` and the new
+    // popup; `info` is a live local with cbSize set whose lpszText points into
+    // `tooltip.text`, which outlives each SendMessageW that reads it.
     unsafe {
         // Owned by the controller, never the surface: a popup owned by a child
         // is owned by its top-level ancestor, which for a taskbar-hosted
@@ -198,6 +202,8 @@ pub(super) fn show(owner: HWND) {
 }
 
 fn create_window(owner: HWND) -> windows::core::Result<HWND> {
+    // SAFETY: `controls` is a live local with dwSize set; CreateWindowExW receives a
+    // static class name, null title and pointers, and an owner Windows validates.
     unsafe {
         let controls = INITCOMMONCONTROLSEX {
             dwSize: std::mem::size_of::<INITCOMMONCONTROLSEX>() as u32,
@@ -269,6 +275,8 @@ pub(super) fn refresh() {
     if tooltip.text != text {
         let previous = std::mem::replace(&mut tooltip.text, text);
         let info = tooltip.tool_info();
+        // SAFETY: `info` is a live local with cbSize set, and its lpszText points into
+        // the new `tooltip.text`, which the control copies during this synchronous call.
         unsafe {
             SendMessageW(
                 tooltip.window,
@@ -290,6 +298,8 @@ fn store(tooltip: WidgetTooltip) {
 }
 
 fn cursor_over(owner: HWND) -> Option<POINT> {
+    // SAFETY: GetCursorPos writes to a live local POINT; IsWindowVisible and
+    // WindowFromPoint take no pointers and tolerate stale handles.
     unsafe {
         let mut cursor = POINT::default();
         (IsWindowVisible(owner).as_bool()
@@ -306,6 +316,9 @@ mod tests {
     #[test]
     fn native_popup_accepts_multiline_text_in_both_modes_and_cleans_up() {
         use windows::Win32::UI::Controls::{TTM_GETTEXTW, TTM_GETTOOLCOUNT};
+        // SAFETY: the test thread creates, uses and destroys the owner and popups; each
+        // message pointer is a live local TTTOOLINFOW, and TTM_GETTEXTW's wParam is
+        // the length of the buffer its lpszText points to.
         unsafe {
             let owner = CreateWindowExW(
                 WINDOW_EX_STYLE::default(),

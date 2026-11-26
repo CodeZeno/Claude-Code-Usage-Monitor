@@ -131,9 +131,9 @@ reports a broken rule and the fix:
 - `unsafe` code is denied unless a file opts in with
   `#![allow(unsafe_code, reason = "...")]`. Keep native calls in files that
   already opt in where practical.
-- Every unsafe block needs a `// SAFETY:` comment explaining why the call is
-  sound. Files with a `ratchet` allow for `clippy::undocumented_unsafe_blocks`
-  predate the rule. When you document their blocks, remove the allow.
+- Every unsafe block needs a `// SAFETY:` comment stating why each precondition
+  of the unsafe calls holds at that point: which handle is valid and who owns
+  it, what keeps a pointer alive, and why a buffer length matches.
 - Production code must not use `unwrap()`. Return or handle the error, or use
   `expect("...")` stating why the value cannot be missing. Tests may unwrap.
 - HTTP agents are created only by `poller::build_agent` and

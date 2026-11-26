@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 use windows::Win32::UI::Input::KeyboardAndMouse::{TME_NONCLIENT, TME_QUERY};
@@ -166,6 +162,8 @@ pub(super) fn schedule_or_dispatch_click(hwnd: HWND, surface_index: usize, objec
             });
             state.hwnd.to_hwnd()
         };
+        // SAFETY: the timer calls take no pointers (no callback; the timer posts WM_TIMER),
+        // and Windows validates the controller handle, failing if it is gone.
         unsafe {
             let _ = kill_controller_timer(Some(owner), TIMER_MOUSE_CLICK);
             set_controller_timer(
@@ -194,6 +192,7 @@ pub(super) fn dispatch_double_click(hwnd: HWND, surface_index: usize, object_id:
         state.suppress_next_left_up = true;
         state.hwnd.to_hwnd()
     };
+    // SAFETY: KillTimer takes no pointers, and Windows validates the controller handle.
     unsafe {
         let _ = kill_controller_timer(Some(owner), TIMER_MOUSE_CLICK);
     }
@@ -202,6 +201,8 @@ pub(super) fn dispatch_double_click(hwnd: HWND, surface_index: usize, object_id:
 }
 
 pub(super) fn update_mouse_hover(hwnd: HWND, lparam: LPARAM) {
+    // SAFETY: `tracking` is a live &mut TRACKMOUSEEVENT whose cbSize the helper sets;
+    // hwndTrack is this surface, whose window procedure is calling us.
     track_mouse_hover_with(hwnd, widget_tooltip::visible_for(hwnd), |tracking| unsafe {
         TrackMouseEvent(tracking)
     });
@@ -295,6 +296,8 @@ pub(super) fn update_tray_mouse_hover(hwnd: HWND, surface_index: usize, object_i
             return;
         };
         if state.hovered_mouse_layer == target {
+            // SAFETY: SetTimer takes no pointers here (no callback), and Windows
+            // validates the controller handle.
             unsafe {
                 set_controller_timer(Some(hwnd), TIMER_TRAY_HOVER, 100, None);
             }
@@ -308,6 +311,8 @@ pub(super) fn update_tray_mouse_hover(hwnd: HWND, surface_index: usize, object_i
     if let Some((surface, object)) = target {
         let _ = dispatch_mouse_event(surface, &object, MouseEventKind::MouseEnter);
     }
+    // SAFETY: SetTimer takes no pointers here (no callback), and Windows validates
+    // the controller handle.
     unsafe {
         set_controller_timer(Some(hwnd), TIMER_TRAY_HOVER, 100, None);
     }
@@ -333,6 +338,7 @@ pub(super) fn clear_tray_mouse_hover_if_left(hwnd: HWND) {
         })
     };
     let Some((target, true)) = hovered else {
+        // SAFETY: KillTimer takes no pointers, and Windows validates the controller handle.
         unsafe {
             let _ = kill_controller_timer(Some(hwnd), TIMER_TRAY_HOVER);
         }
@@ -346,6 +352,7 @@ pub(super) fn clear_tray_mouse_hover_if_left(hwnd: HWND) {
             .then(|| state.hovered_mouse_layer.take())
             .flatten()
     });
+    // SAFETY: KillTimer takes no pointers, and Windows validates the controller handle.
     unsafe {
         let _ = kill_controller_timer(Some(hwnd), TIMER_TRAY_HOVER);
     }

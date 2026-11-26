@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::sync::Mutex;
 
@@ -65,6 +61,9 @@ pub fn open_web_url(owner: Option<HWND>, url: &str) -> bool {
     }
     let operation = wide_str("open");
     let target = wide_str(url.trim());
+    // SAFETY: `operation` and `target` are NUL-terminated wide strings (wide_str, interior NUL
+    // rejected above) held by locals that outlive the call; the other strings are null,
+    // which ShellExecuteW accepts, and `owner` may be None or any HWND.
     let result = unsafe {
         ShellExecuteW(
             owner,
@@ -114,6 +113,8 @@ pub fn find_monitors() -> Vec<DisplayMonitor> {
             cbSize: std::mem::size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
+        // SAFETY: `info` is a live local MONITORINFO with `cbSize` set; `monitor` is the handle
+        // EnumDisplayMonitors just passed to this callback.
         if unsafe { GetMonitorInfoW(monitor, &mut info).as_bool() } {
             result.push(DisplayMonitor {
                 handle: monitor,
@@ -124,6 +125,9 @@ pub fn find_monitors() -> Vec<DisplayMonitor> {
         BOOL(1)
     }
     let mut result: Vec<DisplayMonitor> = Vec::new();
+    // SAFETY: `enum_proc` has the MONITORENUMPROC signature, and the LPARAM is a pointer to the
+    // local `result` Vec, which outlives the synchronous enumeration and is not otherwise
+    // accessed until it returns.
     unsafe {
         let _ = EnumDisplayMonitors(
             None,
@@ -141,6 +145,9 @@ pub fn find_monitors() -> Vec<DisplayMonitor> {
 pub fn monitor_device_name(monitor: HMONITOR) -> Option<String> {
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+    // SAFETY: `info.monitorInfo` is the first field of a live local MONITORINFOEXW whose `cbSize`
+    // is the size of the whole struct, so Windows may write the device name; an invalid
+    // `monitor` makes the call fail.
     if !unsafe { GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() } {
         return None;
     }
@@ -156,6 +163,8 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         let taskbars = &mut *(lparam.0 as *mut Vec<TaskbarWindow>);
         let mut class_name = [0u16; 64];
+        // SAFETY: `class_name` is a live local buffer; the slice passes its true length. `hwnd` is
+        // the window EnumWindows passed to this callback.
         let len = unsafe { GetClassNameW(hwnd, &mut class_name) };
         if len > 0 {
             let class_name = String::from_utf16_lossy(&class_name[..len as usize]);
@@ -173,6 +182,9 @@ pub fn find_taskbars() -> Vec<TaskbarWindow> {
     }
 
     let mut taskbars: Vec<TaskbarWindow> = Vec::new();
+    // SAFETY: `enum_proc` has the WNDENUMPROC signature, and the LPARAM is a pointer to the
+    // local `taskbars` Vec, which outlives the synchronous enumeration and is not
+    // otherwise accessed until it returns.
     unsafe {
         let _ = EnumWindows(Some(enum_proc), LPARAM(&mut taskbars as *mut _ as isize));
     }
@@ -271,6 +283,8 @@ fn rect_distance_squared(a: RECT, b: RECT) -> i128 {
 
 /// Find a child window by class name
 pub fn find_child_window(parent: HWND, class_name: &str) -> Option<HWND> {
+    // SAFETY: `class` is a NUL-terminated wide string kept alive by a local for the call; the
+    // window name is null (match any). Windows validates `parent` and fails on a stale one.
     unsafe {
         let class = wide_str(class_name);
         match FindWindowExW(
@@ -296,6 +310,8 @@ pub fn get_taskbar_rect(taskbar_hwnd: HWND) -> Option<RECT> {
 
 /// Get the bounding rectangle of a window
 pub fn get_window_rect_safe(hwnd: HWND) -> Option<RECT> {
+    // SAFETY: `rect` is a live local the call writes into; Windows validates `hwnd` and returns
+    // an error for a stale or invalid handle.
     unsafe {
         let mut rect = RECT::default();
         if GetWindowRect(hwnd, &mut rect).is_ok() {
@@ -307,6 +323,8 @@ pub fn get_window_rect_safe(hwnd: HWND) -> Option<RECT> {
 }
 
 pub fn window_class_name(hwnd: HWND) -> Option<String> {
+    // SAFETY: `class_name` is a live local buffer and the slice passes its true length;
+    // Windows validates `hwnd` and returns 0 for a stale handle.
     unsafe {
         let mut class_name = [0u16; 128];
         let len = GetClassNameW(hwnd, &mut class_name);
@@ -318,6 +336,8 @@ pub fn window_class_name(hwnd: HWND) -> Option<String> {
 /// surface share the host's visibility and z-order instead of competing with
 /// it as an independent topmost popup.
 pub fn embed_as_child(hwnd: HWND, parent: HWND) {
+    // SAFETY: These calls take only window handles and integer styles, no pointers; Windows
+    // validates `hwnd` and `parent` and fails on stale handles.
     unsafe {
         let current_parent = GetParent(hwnd).ok();
         let ex_style = GetWindowLongW(hwnd, GWL_EXSTYLE);
@@ -366,6 +386,8 @@ pub fn embed_as_child(hwnd: HWND, parent: HWND) {
 
 /// Restore a shell-hosted surface to a regular top-level popup.
 pub fn make_popup(hwnd: HWND, topmost: bool) {
+    // SAFETY: These calls take only window handles, integer styles and coordinates, no
+    // pointers; Windows validates `hwnd` and fails on a stale handle.
     unsafe {
         let style = GetWindowLongW(hwnd, GWL_STYLE) as u32;
         let detaching = style & WS_CHILD_STYLE != 0;
@@ -441,6 +463,8 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
     unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
         if find_child_window(hwnd, "SHELLDLL_DefView").is_some() {
             let class = wide_str("WorkerW");
+            // SAFETY: `class` is a NUL-terminated wide string kept alive by a local for the call; the
+            // window name is null. `hwnd` is the window EnumWindows passed to this callback.
             if let Ok(worker) = unsafe {
                 FindWindowExW(
                     None,
@@ -450,6 +474,9 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
                 )
             } {
                 if !worker.is_invalid() {
+                    // SAFETY: This callback is only passed to EnumWindows below, whose LPARAM points to the
+                    // local `top_level_worker` HWND; that local outlives the enumeration and nothing else
+                    // accesses it until EnumWindows returns.
                     let result = unsafe { &mut *(lparam.0 as *mut HWND) };
                     *result = worker;
                     return BOOL(0);
@@ -459,6 +486,10 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
         BOOL(1)
     }
 
+    // SAFETY: IsWindow/IsWindowVisible/SendMessageTimeoutW take handles (validated by Windows,
+    // so cached stale ones are harmless) and no output pointer; `progman_class` is a
+    // NUL-terminated wide string held by a local. EnumWindows gets a WNDENUMPROC-shaped
+    // callback and a pointer to the local `top_level_worker`, which outlives the call.
     unsafe {
         let cached = *DESKTOP_HOST
             .lock()
@@ -547,6 +578,7 @@ pub fn find_desktop_host() -> Option<DesktopHost> {
 
 /// Move the window
 pub fn move_window(hwnd: HWND, x: i32, y: i32, w: i32, h: i32) {
+    // SAFETY: MoveWindow takes no pointers; Windows validates `hwnd` and fails on a stale handle.
     unsafe {
         let _ = MoveWindow(hwnd, x, y, w, h, true);
     }
@@ -557,6 +589,8 @@ pub fn set_tray_event_hook(
     thread_id: u32,
     callback: unsafe extern "system" fn(HWINEVENTHOOK, u32, HWND, i32, i32, u32, u32),
 ) -> Option<HWINEVENTHOOK> {
+    // SAFETY: `callback` has the WINEVENTPROC signature required by the type; with
+    // WINEVENT_OUTOFCONTEXT and no module handle, Windows calls it on this thread's message loop.
     unsafe {
         let hook = SetWinEventHook(
             EVENT_OBJECT_LOCATIONCHANGE,
@@ -577,11 +611,15 @@ pub fn set_tray_event_hook(
 
 /// Get the thread ID that owns a window
 pub fn get_window_thread_id(hwnd: HWND) -> u32 {
+    // SAFETY: No out pointer is passed (None); Windows validates `hwnd` and returns 0 for a
+    // stale handle.
     unsafe { GetWindowThreadProcessId(hwnd, None) }
 }
 
 /// Unhook a WinEvent hook
 pub fn unhook_win_event(hook: HWINEVENTHOOK) {
+    // SAFETY: Takes only the hook handle; Windows validates it and fails on an already-removed
+    // hook.
     unsafe {
         let _ = UnhookWinEvent(hook);
     }

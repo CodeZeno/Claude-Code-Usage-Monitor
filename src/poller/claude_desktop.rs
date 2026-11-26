@@ -11,10 +11,6 @@
 //! Everything here is read-only, runs as the signed-in user, and degrades to
 //! `None` whenever the layout is not what we expect.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
@@ -393,6 +389,8 @@ fn dpapi_unprotect(data: &[u8]) -> Option<Vec<u8>> {
         pb_data: std::ptr::null_mut(),
     };
 
+    // SAFETY: `input` borrows `data`, which outlives the call and is only read; `output` is a
+    // live local that receives a LocalAlloc buffer. The other optional arguments may be null.
     let ok = unsafe {
         CryptUnprotectData(
             &input,
@@ -410,6 +408,8 @@ fn dpapi_unprotect(data: &[u8]) -> Option<Vec<u8>> {
         return None;
     }
 
+    // SAFETY: CryptUnprotectData succeeded, so `output` describes one LocalAlloc buffer of
+    // `cb_data` bytes; it is copied before being freed exactly once with LocalFree.
     Some(unsafe {
         let key = std::slice::from_raw_parts(output.pb_data, output.cb_data as usize).to_vec();
         LocalFree(output.pb_data as *mut c_void);
@@ -420,6 +420,8 @@ fn dpapi_unprotect(data: &[u8]) -> Option<Vec<u8>> {
 fn aes_gcm_decrypt(key: &[u8], nonce: &[u8], ciphertext: &[u8], tag: &[u8]) -> Option<Vec<u8>> {
     let algorithm_id = wide("AES");
     let mut algorithm: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `algorithm` is a live local out-pointer and `algorithm_id` is NUL-terminated and
+    // outlives the call; a null implementation selects the default provider.
     if unsafe {
         BCryptOpenAlgorithmProvider(&mut algorithm, algorithm_id.as_ptr(), std::ptr::null(), 0)
     } != 0
@@ -432,6 +434,8 @@ fn aes_gcm_decrypt(key: &[u8], nonce: &[u8], ciphertext: &[u8], tag: &[u8]) -> O
         decrypt_with_key(key_handle, nonce, ciphertext, tag)
     });
 
+    // SAFETY: `algorithm` was opened above, every key derived from it was destroyed inside
+    // `with_gcm_key`, and it is closed exactly once here.
     unsafe { BCryptCloseAlgorithmProvider(algorithm, 0) };
     plaintext
 }
@@ -443,6 +447,8 @@ fn with_gcm_key(
 ) -> Option<Vec<u8>> {
     let chaining_property = wide("ChainingMode");
     let chaining_gcm = wide("ChainingModeGCM");
+    // SAFETY: `algorithm` is an open provider handle from the caller. Both wide strings are
+    // NUL-terminated locals, and the input length is the byte size of `chaining_gcm`.
     if unsafe {
         BCryptSetProperty(
             algorithm,
@@ -460,6 +466,8 @@ fn with_gcm_key(
     let object_length_property = wide("ObjectLength");
     let mut object_length = 0u32;
     let mut written = 0u32;
+    // SAFETY: `algorithm` is open; the output pointer and length describe the local `u32`
+    // `object_length`, and `written` is a live local.
     if unsafe {
         BCryptGetProperty(
             algorithm,
@@ -477,6 +485,8 @@ fn with_gcm_key(
     // The key object buffer must outlive the key handle it backs.
     let mut key_object = vec![0u8; object_length as usize];
     let mut key_handle: *mut c_void = std::ptr::null_mut();
+    // SAFETY: `algorithm` is open; `key_object` has exactly `object_length` bytes and is kept
+    // alive until after BCryptDestroyKey; `key` and `key_handle` are live for the call.
     if unsafe {
         BCryptGenerateSymmetricKey(
             algorithm,
@@ -494,6 +504,8 @@ fn with_gcm_key(
     }
 
     let plaintext = decrypt(key_handle);
+    // SAFETY: `key_handle` was created above, is no longer used by `decrypt`, and is
+    // destroyed exactly once, before its backing `key_object` is dropped.
     unsafe { BCryptDestroyKey(key_handle) };
     drop(key_object);
     plaintext
@@ -525,6 +537,9 @@ fn decrypt_with_key(
 
     let mut plaintext = vec![0u8; ciphertext.len()];
     let mut written = 0u32;
+    // SAFETY: `key_handle` is a live AES-GCM key. Input and output pointers and lengths come
+    // from live slices of equal size; `mode_info` has `cb_size` set and points at the
+    // local `nonce` and `tag` buffers, which outlive the call. GCM takes no IV here.
     let status = unsafe {
         BCryptDecrypt(
             key_handle,

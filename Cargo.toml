@@ -88,8 +88,7 @@ egui-winit = { path = "vendor/egui-winit" }
 unsafe_code = "deny"
 
 [lints.clippy]
-# Every new unsafe block needs a // SAFETY: comment. Files listed with a
-# "ratchet" allow predate this rule; document their blocks and drop the allow.
+# Every unsafe block needs a // SAFETY: comment saying why it is sound here.
 undocumented_unsafe_blocks = "deny"
 # Outside tests, handle the error, or use expect("why this cannot fail").
 unwrap_used = "deny"

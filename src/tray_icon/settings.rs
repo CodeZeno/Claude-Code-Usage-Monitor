@@ -1,10 +1,6 @@
 //! Narrow migration of Windows 11's legacy, position-based tray cache.
 //! This cache is undocumented: missing or unfamiliar values are left alone.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::{
@@ -22,6 +18,8 @@ struct Key(HKEY);
 
 impl Drop for Key {
     fn drop(&mut self) {
+        // SAFETY: `Key` is only built by open()/create() from a key they successfully opened, and
+        // owns it; Drop closes it exactly once.
         unsafe {
             let _ = RegCloseKey(self.0);
         }
@@ -35,6 +33,8 @@ fn wide(value: &str) -> Vec<u16> {
 fn open(parent: HKEY, path: &str, access: REG_SAM_FLAGS) -> Option<Key> {
     let path = wide(path);
     let mut key = HKEY::default();
+    // SAFETY: `path` is a NUL-terminated wide string held by a local for the call, `key` is a
+    // live local out pointer, and `parent` is a predefined or open key owned by the caller.
     unsafe {
         RegOpenKeyExW(parent, PCWSTR(path.as_ptr()), None, access, &mut key)
             .ok()
@@ -47,6 +47,9 @@ fn open(parent: HKEY, path: &str, access: REG_SAM_FLAGS) -> Option<Key> {
 fn create(parent: HKEY, path: &str) -> Option<Key> {
     let path = wide(path);
     let mut key = HKEY::default();
+    // SAFETY: `path` is a NUL-terminated wide string held by a local; the class is null and the
+    // security attributes and disposition are None, which the API permits; `key` is a live
+    // local out pointer; `parent` is a predefined or open key.
     unsafe {
         RegCreateKeyExW(
             parent,
@@ -71,6 +74,9 @@ fn string(key: HKEY, name: &str) -> Option<String> {
     // invalid UTF-16 and races rather than making a destructive guess.
     let mut buffer = vec![0u16; 32_768];
     let mut bytes = (buffer.len() * 2) as u32;
+    // SAFETY: `name` is a NUL-terminated wide string held by a local; the data pointer is the
+    // live `buffer` and `bytes` holds its exact byte size, which Windows updates; `key` is an
+    // open key owned by the caller.
     unsafe {
         RegGetValueW(
             key,
@@ -94,6 +100,8 @@ fn string(key: HKEY, name: &str) -> Option<String> {
 fn has_value(key: HKEY, name: &str) -> bool {
     let name = wide(name);
     // Treat errors other than an absent value as a reason to preserve the entry.
+    // SAFETY: `name` is a NUL-terminated wide string held by a local; all optional out pointers
+    // are None; `key` is an open key owned by the caller.
     unsafe {
         RegQueryValueExW(key, PCWSTR(name.as_ptr()), None, None, None, None) != ERROR_FILE_NOT_FOUND
     }
@@ -105,6 +113,8 @@ fn path_key(path: &str) -> String {
     let expanded = path.strip_prefix('{').and_then(|rest| {
         let (folder, suffix) = rest.split_once('}')?;
         let guid = windows::core::GUID::try_from(folder).ok()?;
+        // SAFETY: `guid` is a live local for the call. On success the returned string is a valid,
+        // NUL-terminated CoTaskMem allocation: it is read once and then freed exactly once.
         unsafe {
             let value = windows::Win32::UI::Shell::SHGetKnownFolderPath(
                 &guid,
@@ -133,6 +143,9 @@ fn owned_legacy_entry(key: HKEY, executable: &str) -> bool {
 // A complete snapshot across sessions avoids removing another running copy's
 // preferences. If a matching process cannot be inspected, skip cross-path cleanup.
 fn running_copies() -> Option<Vec<String>> {
+    // SAFETY: `entry.dwSize` is set and `entry` and `buffer`/`length` are live locals passed as
+    // out pointers (length is the buffer's size in characters). The snapshot and process
+    // handles were just opened here and each is closed once after its last use.
     unsafe {
         let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
         let result = (|| {
@@ -186,6 +199,10 @@ fn running_copies() -> Option<Vec<String>> {
 }
 
 fn verified_monitor(path: &str) -> bool {
+    // SAFETY: `path` and `query` strings are NUL-terminated wide buffers that outlive each call.
+    // `data` holds at least `size` bytes, as passed to GetFileVersionInfoW. VerQueryValueW
+    // returns pointers to `length`/`chars` units inside `data`, which outlives the slices read
+    // from them; null pointers and lengths larger than the block are rejected first.
     unsafe {
         let path = wide(path);
         let size = GetFileVersionInfoSizeW(PCWSTR(path.as_ptr()), None);
@@ -267,6 +284,8 @@ fn dword(key: HKEY, name: &str) -> Option<u32> {
     let name = wide(name);
     let mut value = 0u32;
     let mut bytes = 4;
+    // SAFETY: `name` is a NUL-terminated wide string held by a local; the data pointer is the
+    // live `value` u32 and `bytes` is its size (4); `key` is an open key owned by the caller.
     unsafe {
         RegGetValueW(
             key,
@@ -289,6 +308,8 @@ fn numeric_subkeys(cache: HKEY) -> Option<Vec<String>> {
     for index in 0.. {
         let mut buffer = [0u16; 256];
         let mut length = buffer.len() as u32;
+        // SAFETY: `buffer` is a live local array and `length` is its size in characters, which
+        // Windows updates; the remaining out pointers are None; `cache` is an open key.
         let result = unsafe {
             RegEnumKeyExW(
                 cache,
@@ -319,6 +340,9 @@ fn numeric_subkeys(cache: HKEY) -> Option<Vec<String>> {
 fn binary(key: HKEY, name: &str) -> Option<Vec<u8>> {
     let name = wide(name);
     let mut length = 0;
+    // SAFETY: `name` is a NUL-terminated wide string held by a local. The first call only reads
+    // the size; the second passes the live `value` buffer with `length` equal to its byte size,
+    // so a value that grew in between fails instead of overrunning; `key` is an open key.
     unsafe {
         RegGetValueW(
             key,
@@ -353,6 +377,8 @@ fn binary(key: HKEY, name: &str) -> Option<Vec<u8>> {
 
 fn set_binary(key: HKEY, name: &str, bytes: &[u8]) -> bool {
     let name = wide(name);
+    // SAFETY: `name` is a NUL-terminated wide string held by a local and `bytes` is a live slice
+    // passed with its own length; `key` is an open key owned by the caller.
     unsafe { RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_BINARY, Some(bytes)).is_ok() }
 }
 
@@ -444,6 +470,8 @@ fn migrate_with(cache: HKEY, executable: &str, mut stale: impl FnMut(&str) -> bo
             continue;
         };
         let key_name = wide(&name);
+        // SAFETY: `key_name` is a NUL-terminated wide string held by a local and `cache` is an open
+        // key owned by the caller; the subkey's own handle was dropped above.
         if unsafe { RegDeleteKeyW(cache, PCWSTR(key_name.as_ptr())) }.is_ok() {
             removed += 1;
             removed_ids.push(id);
@@ -482,6 +510,8 @@ mod tests {
     fn set_string(key: HKEY, name: &str, value: &str) {
         let name = wide(name);
         let data: Vec<_> = wide(value).into_iter().flat_map(u16::to_le_bytes).collect();
+        // SAFETY: `name` is a NUL-terminated wide string held by a local and `data` is a live,
+        // NUL-terminated UTF-16 byte buffer passed with its own length; `key` is an open test key.
         unsafe {
             RegSetValueExW(key, PCWSTR(name.as_ptr()), None, REG_SZ, Some(&data))
                 .ok()
@@ -498,6 +528,8 @@ mod tests {
         struct Fixture(String);
         impl Drop for Fixture {
             fn drop(&mut self) {
+                // SAFETY: The temporary wide string is NUL-terminated and lives until the end of the
+                // statement, past the call; HKEY_CURRENT_USER is a predefined key.
                 unsafe {
                     let _ = RegDeleteTreeW(HKEY_CURRENT_USER, PCWSTR(wide(&self.0).as_ptr()));
                 }
@@ -515,6 +547,8 @@ mod tests {
         ] {
             let entry = create(cache.0, name).unwrap();
             set_string(entry.0, "ExecutablePath", executable);
+            // SAFETY: `entry.0` is the key just created by this test; the wide temporary and the 4-byte
+            // array live until the end of the statement, past the call.
             unsafe {
                 RegSetValueExW(
                     entry.0,

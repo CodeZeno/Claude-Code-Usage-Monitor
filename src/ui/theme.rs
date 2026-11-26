@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::path::PathBuf;
 
@@ -164,6 +160,10 @@ pub(crate) fn configure_style(context: &egui::Context, language: LanguageId) {
 /// Loads the exact font selected by Windows for native menus. Reading the
 /// selected GDI font avoids assuming that every machine still uses Segoe UI.
 fn load_native_menu_font(fonts: &mut egui::FontDefinitions) -> Option<String> {
+    // SAFETY: `metrics` is a live local whose `cbSize` is passed as uiParam, as
+    // SPI_GETNONCLIENTMETRICS requires. The DC and font are checked for validity, the second
+    // GetFontData buffer is exactly the `size` bytes reported by the first, the previous object
+    // is reselected, and the font and DC are released once each.
     unsafe {
         let mut metrics = NONCLIENTMETRICSW {
             cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,

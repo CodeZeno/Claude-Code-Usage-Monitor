@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "test fixtures call Win32 APIs")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 use std::cell::RefCell;
@@ -158,6 +154,8 @@ struct TestWindow(HWND);
 
 impl Drop for TestWindow {
     fn drop(&mut self) {
+        // SAFETY: the wrapped window was created by this test thread and is destroyed only
+        // here, once.
         unsafe {
             let _ = DestroyWindow(self.0);
         }
@@ -166,6 +164,9 @@ impl Drop for TestWindow {
 
 #[test]
 fn detaching_a_child_never_exposes_parent_relative_coordinates_as_a_popup() {
+    // SAFETY: `class` is NUL-terminated and outlives registration, window creation and
+    // unregistration; `observe_transition` has the WNDPROC signature. Windows are created,
+    // used and destroyed on this thread, and the class is unregistered after all are gone.
     unsafe {
         let class = wide_str("UsageMonitorPopupTransitionRegression");
         let instance = GetModuleHandleW(PCWSTR::null()).unwrap();

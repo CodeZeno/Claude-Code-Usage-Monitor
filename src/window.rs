@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -307,6 +303,8 @@ fn refresh_dpi() {
         state.as_ref().map(|s| s.hwnd.to_hwnd())
     };
     if let Some(hwnd) = hwnd {
+        // SAFETY: GetDpiForWindow takes the surface HWND by value and no pointers;
+        // a stale handle makes it return 0, which is ignored below.
         let dpi = unsafe { GetDpiForWindow(hwnd) };
         if dpi > 0 {
             CURRENT_DPI.store(dpi, Ordering::Relaxed);
@@ -329,12 +327,15 @@ fn display_scale(display_index: usize) -> f64 {
 fn monitor_scale(display: native_interop::DisplayMonitor) -> f64 {
     let mut dpi_x = 96;
     let mut dpi_y = 96;
+    // SAFETY: the monitor handle comes from EnumDisplayMonitors and is only read by
+    // value (an invalid one returns an error); both out-pointers are live locals.
     if unsafe { GetDpiForMonitor(display.handle, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y) }
         .is_ok()
         && dpi_x > 0
     {
         (dpi_x as f64 / 96.0).clamp(0.25, 8.0)
     } else {
+        // SAFETY: GetDpiForSystem takes no arguments and has no preconditions.
         let system_dpi = unsafe { GetDpiForSystem() };
         if system_dpi > 0 {
             (system_dpi as f64 / 96.0).clamp(0.25, 8.0)
@@ -499,6 +500,8 @@ fn relaunch_after_ui_hang(streak: u32) {
             diagnose::log_recovery("watchdog: relaunched fresh instance, exiting old one");
             // Skip DLL detach on a wedged process: another thread may hold a
             // lock needed by detach code. Recovery diagnostics are already flushed.
+            // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing, and
+            // TerminateProcess takes no pointers; ending this process is the intent.
             unsafe {
                 let _ = TerminateProcess(GetCurrentProcess(), 0);
             }
@@ -524,6 +527,9 @@ fn relaunch_after_ui_hang(streak: u32) {
 /// which stayed false while the UI thread of a taskbar-embedded widget was
 /// suspended, and only turned true once a frozen widget had been orphaned.
 fn ui_thread_responds(hwnd: HWND) -> bool {
+    // SAFETY: IsWindow accepts any handle value. SendMessageTimeoutW sends WM_NULL with
+    // zero parameters, which is valid across threads, and its result pointer is a
+    // live local that outlives the call.
     unsafe {
         // A missing controller is shutdown, not an unresponsive UI thread;
         // calling it responsive keeps the two verdicts from overlapping.
@@ -559,6 +565,7 @@ fn spawn_ui_hang_watchdog() {
             std::thread::sleep(Duration::from_secs(TASKBAR_WATCH_INTERVAL_SECS));
             // Stepping through the UI thread in a debugger leaves it as silent
             // as a wedged one, and a relaunch would end the debugging session.
+            // SAFETY: IsDebuggerPresent takes no arguments and has no preconditions.
             if unsafe { IsDebuggerPresent() }.as_bool() {
                 silence = None;
                 continue;
@@ -664,6 +671,8 @@ fn spawn_taskbar_watchdog() {
         if controller.is_invalid() {
             return;
         }
+        // SAFETY: PostMessageW may target a window of another thread; the HWND is passed
+        // by value (Windows rejects a stale one) and the message carries no pointers.
         unsafe {
             let _ = PostMessageW(Some(controller), WM_APP_RECONCILE, WPARAM(0), LPARAM(0));
         }
@@ -688,6 +697,8 @@ fn spawn_taskbar_watchdog() {
                 .unwrap_or_else(|e| e.into_inner());
             if rect_changed(*last_rect, current_tray_rect) {
                 *last_rect = current_tray_rect;
+                // SAFETY: PostMessageW may target a window of another thread; the HWND is passed
+                // by value (Windows rejects a stale one) and the message carries no pointers.
                 unsafe {
                     let _ = PostMessageW(
                         Some(reposition_target),
@@ -705,6 +716,8 @@ fn spawn_taskbar_watchdog() {
         });
 
         if let Some((target_hwnd, action)) = collision_action {
+            // SAFETY: PostMessageW may target a window of another thread; the HWND is passed
+            // by value (Windows rejects a stale one) and WPARAM is a plain action code.
             unsafe {
                 let _ = PostMessageW(
                     Some(target_hwnd),
@@ -724,6 +737,8 @@ fn taskbar_collision_action(state: &AppState) -> Option<usize> {
     let taskbar = state.taskbar_hwnd?.to_hwnd();
     let bounds = native_interop::get_taskbar_rect(taskbar)?;
     // Do not interpret an auto-hide slide or reveal strip as a capacity change.
+    // SAFETY: IsWindowVisible only reads the taskbar HWND by value; Windows
+    // validates it and returns false for a stale handle.
     if !unsafe { IsWindowVisible(taskbar).as_bool() } || !taskbar_collision::taskbar_shown(bounds) {
         return None;
     }
@@ -1003,6 +1018,9 @@ fn set_window_state_timer(hwnd: HWND, required: bool) {
         }
         state.window_state_timer_active = required;
     }
+    // SAFETY: set_controller_timer/kill_controller_timer forward to SetTimer/KillTimer
+    // with no TIMERPROC, so no callback pointer must stay valid; the HWND is
+    // passed by value and Windows rejects a stale one.
     unsafe {
         if required {
             set_controller_timer(
@@ -1442,6 +1460,8 @@ fn theme_tray_uses_current_time(theme: &ThemeDocument) -> bool {
 
 fn taskbar_created_message() -> u32 {
     static MESSAGE: OnceLock<u32> = OnceLock::new();
+    // SAFETY: `name` is a NUL-terminated UTF-16 buffer that stays alive for the
+    // RegisterWindowMessageW call, which only reads it.
     *MESSAGE.get_or_init(|| unsafe {
         let name = native_interop::wide_str("TaskbarCreated");
         RegisterWindowMessageW(PCWSTR::from_raw(name.as_ptr()))
@@ -1483,6 +1503,9 @@ fn schedule_auto_update_check(hwnd: HWND) {
         }
     };
 
+    // SAFETY: set_controller_timer/kill_controller_timer forward to SetTimer/KillTimer
+    // with no TIMERPROC, so no callback pointer must stay valid; the HWND is
+    // passed by value and Windows rejects a stale one.
     unsafe {
         let _ = kill_controller_timer(Some(hwnd), TIMER_UPDATE_CHECK);
         if let Some(delay_ms) = delay_ms {
@@ -1492,6 +1515,8 @@ fn schedule_auto_update_check(hwnd: HWND) {
 }
 
 fn set_window_title(hwnd: HWND, strings: Strings) {
+    // SAFETY: `title` is a NUL-terminated UTF-16 buffer that outlives SetWindowTextW;
+    // the HWND is passed by value and Windows validates it.
     unsafe {
         let title = native_interop::wide_str(strings.window_title);
         let _ = SetWindowTextW(hwnd, PCWSTR::from_raw(title.as_ptr()));
@@ -1499,6 +1524,8 @@ fn set_window_title(hwnd: HWND, strings: Strings) {
 }
 
 fn show_info_message(hwnd: HWND, title: &str, message: &str) {
+    // SAFETY: both strings are NUL-terminated UTF-16 buffers kept alive by locals until
+    // MessageBoxW returns; the owner HWND is only used by value.
     unsafe {
         let title_wide = native_interop::wide_str(title);
         let message_wide = native_interop::wide_str(message);
@@ -1512,6 +1539,8 @@ fn show_info_message(hwnd: HWND, title: &str, message: &str) {
 }
 
 fn show_error_message(hwnd: HWND, title: &str, message: &str) {
+    // SAFETY: both strings are NUL-terminated UTF-16 buffers kept alive by locals until
+    // MessageBoxW returns; the owner HWND is only used by value.
     unsafe {
         let title_wide = native_interop::wide_str(title);
         let message_wide = native_interop::wide_str(message);
@@ -1536,6 +1565,8 @@ fn show_update_prompt(hwnd: HWND, strings: Strings, update: &AvailableUpdate) ->
         .update_prompt_now
         .replace("{version}", update.version());
 
+    // SAFETY: both strings are NUL-terminated UTF-16 buffers kept alive by locals until
+    // MessageBoxW returns; the owner HWND is only used by value.
     unsafe {
         let title_wide = native_interop::wide_str(strings.update_available);
         let message_wide = native_interop::wide_str(&message);
@@ -1667,6 +1698,8 @@ fn begin_update_check(hwnd: HWND, interactive: bool) {
                 }
             }
         }
+        // SAFETY: PostMessageW may be called from this worker thread for the controller
+        // window; the HWND is passed by value and the message carries no pointers.
         unsafe {
             let _ = PostMessageW(
                 Some(hwnd),
@@ -1706,6 +1739,8 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
     std::thread::spawn(move || {
         let hwnd = send_hwnd.to_hwnd();
         match updater::begin_self_update(&release) {
+            // SAFETY: PostMessageW may be called from this worker thread for the controller
+            // window; the HWND is passed by value and WM_CLOSE carries no pointers.
             Ok(()) => unsafe {
                 let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
             },
@@ -1720,6 +1755,8 @@ fn begin_update_apply(hwnd: HWND, release: ReleaseDescriptor) {
                 }
                 let message = format!("{}.\n\n{}", strings.update_failed, error);
                 show_error_message(hwnd, strings.updates, &message);
+                // SAFETY: PostMessageW may be called from this worker thread for the controller
+                // window; the HWND is passed by value and the message carries no pointers.
                 unsafe {
                     let _ = PostMessageW(
                         Some(hwnd),
@@ -1751,6 +1788,8 @@ fn begin_winget_update(hwnd: HWND) {
     };
 
     match updater::begin_winget_update() {
+        // SAFETY: PostMessageW takes the HWND by value (Windows rejects a stale one) and
+        // WM_CLOSE carries no pointers.
         Ok(()) => unsafe {
             let _ = PostMessageW(Some(hwnd), WM_CLOSE, WPARAM(0), LPARAM(0));
         },
@@ -1787,6 +1826,12 @@ fn startup_command_targets(command: &str, executable: &str) -> bool {
 }
 
 fn read_startup_command() -> Option<String> {
+    // SAFETY: the key path and value name are NUL-terminated buffers that outlive every
+    // call; `hkey` is only used after RegOpenKeyExW succeeds and is closed once.
+    // The second query passes `buf` with `data_size` equal to its length, and
+    // Windows only shrinks `data_size`, so the u16 view stays inside `buf`. That
+    // view assumes the System allocator (HeapAlloc) aligns `buf` to at least 2
+    // bytes; Vec<u8> itself only guarantees alignment 1.
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
         let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
@@ -1846,6 +1891,8 @@ fn read_startup_command() -> Option<String> {
 
 fn current_executable_path() -> Option<String> {
     let mut exe_buf = [0u16; 260];
+    // SAFETY: the windows crate passes the slice pointer and its exact length, and
+    // `exe_buf` outlives the call; a None module means this executable.
     let len = unsafe { GetModuleFileNameW(None, &mut exe_buf) } as usize;
     (len > 0).then(|| String::from_utf16_lossy(&exe_buf[..len]))
 }
@@ -1872,6 +1919,10 @@ fn upgrade_legacy_startup_command() {
 }
 
 pub(crate) fn set_startup_enabled(enable: bool) {
+    // SAFETY: the key path, value name and command are NUL-terminated buffers that
+    // outlive the calls; the byte view of `command` covers exactly its
+    // `len() * 2` bytes, and `hkey` is used only after a successful open and
+    // closed once.
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
 
@@ -2035,6 +2086,8 @@ fn apply_custom_theme(
     if let Some(hook) = old_hook {
         native_interop::unhook_win_event(hook.to_hook());
     }
+    // SAFETY: SetWindowPos takes the primary surface HWND and the HWND_NOTOPMOST
+    // sentinel by value, with no pointers; Windows validates the handle.
     unsafe {
         native_interop::make_popup(hwnd, false);
         ensure_layered_window(hwnd);
@@ -2056,6 +2109,8 @@ fn apply_custom_theme(
 }
 
 fn sync_surface_windows() {
+    // SAFETY: sync_surface_windows runs on the UI thread, which owns and pumps the
+    // surface windows; the creator uses only its own NUL-terminated buffers.
     sync_surface_windows_with(|| unsafe { create_desktop_surface_window() });
 }
 
@@ -2065,6 +2120,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         return;
     };
     if !lifecycle::surface_has_class(primary, "ClaudeCodeUsageSurface") {
+        // SAFETY: this runs on the UI thread, which owns and pumps the surfaces; the
+        // creator uses only its own NUL-terminated class buffer and a WNDPROC.
         let replacement = unsafe { lifecycle::create_primary_surface() };
         if replacement.is_invalid() {
             diagnose::log_recovery("unable to recreate primary surface; will retry");
@@ -2095,6 +2152,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         .unwrap_or_default();
     for (index, mirror) in mirrors.into_iter().enumerate() {
         if !lifecycle::surface_has_class(mirror.to_hwnd(), "CCUMThemeMirror") {
+            // SAFETY: this runs on the UI thread, which owns and pumps the surfaces; the
+            // creator uses only its own NUL-terminated buffers and a WNDPROC.
             let replacement = unsafe { create_mirror_window() };
             // Window creation can re-enter; never index a list it may shrink.
             let orphaned = match lock_state()
@@ -2108,6 +2167,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
                 None => true,
             };
             if orphaned {
+                // SAFETY: `replacement` was created on this UI thread, which is required for
+                // DestroyWindow; destroy_surface checks IsWindow first.
                 unsafe { lifecycle::destroy_surface(replacement) };
             }
         }
@@ -2151,6 +2212,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
             })
         };
         match remove {
+            // SAFETY: mirror surfaces are created on this UI thread, so DestroyWindow is
+            // called from their owning thread; destroy_surface checks IsWindow first.
             Some(hwnd) => unsafe {
                 lifecycle::destroy_surface(hwnd.to_hwnd());
             },
@@ -2163,6 +2226,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         .unwrap_or(0)
         < desired_mirrors
     {
+        // SAFETY: this runs on the UI thread, which owns and pumps the surfaces; the
+        // creator uses only its own NUL-terminated buffers and a WNDPROC.
         let mirror = unsafe { create_mirror_window() };
         if mirror.is_invalid() {
             break;
@@ -2198,6 +2263,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         stale
     };
     for window in stale_desktop_windows {
+        // SAFETY: desktop surfaces are created on this UI thread, so destroy_surface calls
+        // DestroyWindow from their owning thread after checking IsWindow.
         unsafe {
             if lifecycle::surface_has_class(window.to_hwnd(), "CCUMDesktopSurface") {
                 lifecycle::destroy_surface(window.to_hwnd());
@@ -2221,6 +2288,7 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         if window.is_invalid() {
             continue;
         }
+        // SAFETY: ShowWindow takes the just-created surface HWND by value with no pointers.
         unsafe {
             let _ = ShowWindow(window, SW_HIDE);
         }
@@ -2230,6 +2298,8 @@ fn sync_surface_windows_with(mut create_desktop: impl FnMut() -> HWND) {
         {
             *slot = Some(SendHwnd::from_hwnd(window));
         } else {
+            // SAFETY: `window` was created on this UI thread, which is required for
+            // DestroyWindow; destroy_surface checks IsWindow first.
             unsafe {
                 lifecycle::destroy_surface(window);
             }
@@ -2418,6 +2488,8 @@ pub fn run() {
         .iter()
         .any(|argument| argument == "--allow-multiple");
     let no_poll = run_args.iter().any(|argument| argument == "--no-poll");
+    // SAFETY: both calls take only values: a predefined DPI awareness context for this
+    // thread, and no arguments for GetDpiForSystem.
     unsafe {
         let _ = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
         CURRENT_DPI.store(GetDpiForSystem(), Ordering::Relaxed);
@@ -2434,6 +2506,9 @@ pub fn run() {
     } else {
         "Local\\ClaudeCodeUsageMonitor".to_string()
     });
+    // SAFETY: `mutex_name` is a NUL-terminated buffer that outlives CreateMutexW;
+    // GetLastError is read immediately after it, and WaitForSingleObject is
+    // given the mutex handle just returned, which stays open for the process.
     let _mutex = unsafe {
         let handle = CreateMutexW(None, true, PCWSTR::from_raw(mutex_name.as_ptr()));
         match handle {
@@ -2474,6 +2549,12 @@ pub fn run() {
     upgrade_legacy_startup_command();
     let class_name = native_interop::wide_str("ClaudeCodeUsageMonitor");
 
+    // SAFETY: this is the UI thread for the rest of the process. Class and title
+    // buffers are NUL-terminated locals that outlive the calls, `wc.cbSize` is
+    // set, and both registered procedures have the WNDPROC signature. Windows
+    // created here are destroyed only on this thread; WM_SETICON passes icon
+    // handles by value; timers install no TIMERPROC; and `msg` is a live local
+    // for GetMessageW, TranslateMessage and DispatchMessageW.
     unsafe {
         let hinstance =
             GetModuleHandleW(PCWSTR::null()).expect("the running executable has a module handle");
@@ -2823,6 +2904,8 @@ fn render_layered() {
             .resolve(surface.placement.reference.region);
         let desktop_nested = nest == SurfaceNest::Desktop;
         let target_hwnd = if desktop_nested {
+            // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+            // validates the handle.
             unsafe {
                 let _ = ShowWindow(regular_hwnd, SW_HIDE);
             }
@@ -2838,6 +2921,8 @@ fn render_layered() {
             continue;
         }
         if nest == SurfaceNest::TrayIcon {
+            // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+            // validates the handle.
             unsafe {
                 let _ = ShowWindow(target_hwnd, SW_HIDE);
             }
@@ -2849,6 +2934,8 @@ fn render_layered() {
             usage_data.as_ref(),
             surface_runtime,
         ) {
+            // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+            // validates the handle.
             unsafe {
                 let _ = ShowWindow(target_hwnd, SW_HIDE);
             }
@@ -2885,11 +2972,15 @@ fn render_layered() {
             continue;
         }
         if desktop_nested {
+            // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+            // validates the handle.
             unsafe {
                 let _ = ShowWindow(target_hwnd, SW_SHOWNOACTIVATE);
             }
         }
         render_custom_window(target_hwnd, &rendered, desktop_nested);
+        // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+        // validates the handle.
         unsafe {
             let show = nest != SurfaceNest::Floating
                 || !foreground_is_fullscreen_on_display(positioned.placement.reference.display);
@@ -2901,6 +2992,8 @@ fn render_layered() {
         .chain(mirror_hwnds.iter().map(|mirror| mirror.to_hwnd()))
         .skip(target_count)
     {
+        // SAFETY: ShowWindow takes the surface HWND by value with no pointers; Windows
+        // validates the handle.
         unsafe {
             let _ = ShowWindow(target, SW_HIDE);
         }
@@ -3103,6 +3196,8 @@ fn do_poll_once(hwnd: HWND) {
             if let Err(error) = app_settings::save_usage_cache(&cache_data, true) {
                 diagnose::log_error("unable to save partial usage cache", error);
             }
+            // SAFETY: PostMessageW may be called from the poll worker for the controller
+            // window; the HWND is passed by value and the message carries no pointers.
             unsafe {
                 let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
@@ -3135,6 +3230,8 @@ fn do_poll_once(hwnd: HWND) {
             if let Some(s) = state.as_mut() {
                 // Stop fast-poll if reset data is now fresh
                 if !poller::app_is_past_reset(&data) {
+                    // SAFETY: kill_controller_timer forwards to KillTimer, which takes the
+                    // controller HWND by value and no pointers; Windows validates it.
                     unsafe {
                         let _ = kill_controller_timer(Some(hwnd), TIMER_RESET_POLL);
                     }
@@ -3155,6 +3252,9 @@ fn do_poll_once(hwnd: HWND) {
                 // Retry partial failures; restore the normal interval after recovery.
                 if let Some(retry_ms) = retry_ms {
                     s.retry_count = s.retry_count.saturating_add(1);
+                    // SAFETY: the timer helpers forward to KillTimer/SetTimer with no
+                    // TIMERPROC, so no callback pointer must stay valid; the HWND is
+                    // passed by value.
                     unsafe {
                         let _ = kill_controller_timer(Some(hwnd), TIMER_RESET_POLL);
                         set_controller_timer(Some(hwnd), TIMER_POLL, retry_ms, None);
@@ -3162,6 +3262,8 @@ fn do_poll_once(hwnd: HWND) {
                 } else if s.retry_count > 0 {
                     s.retry_count = 0;
                     let interval = s.poll_interval_ms;
+                    // SAFETY: set_controller_timer forwards to SetTimer with no TIMERPROC, so no
+                    // callback pointer must stay valid; the HWND is passed by value.
                     unsafe {
                         set_controller_timer(Some(hwnd), TIMER_POLL, interval, None);
                     }
@@ -3198,6 +3300,8 @@ fn do_poll_once(hwnd: HWND) {
                 tray_icon::notify_balloon(hwnd, language.text("Sign in again"), &body);
             }
 
+            // SAFETY: PostMessageW may be called from the poll worker for the controller
+            // window; the HWND is passed by value and the message carries no pointers.
             unsafe {
                 let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
@@ -3264,6 +3368,9 @@ fn do_poll_once(hwnd: HWND) {
                             s.auth_watch_mode = watch_mode;
                             s.auth_watch_snapshot = watch_snapshot;
                             s.retry_count = s.retry_count.saturating_add(1);
+                            // SAFETY: the timer helpers forward to KillTimer/SetTimer with
+                            // no TIMERPROC, so no callback pointer must stay valid; the
+                            // HWND is passed by value.
                             unsafe {
                                 let _ = kill_controller_timer(Some(hwnd), TIMER_POLL);
                                 let _ = kill_controller_timer(Some(hwnd), TIMER_RESET_POLL);
@@ -3291,6 +3398,9 @@ fn do_poll_once(hwnd: HWND) {
                                 backoff.min(s.poll_interval_ms),
                                 poll_started,
                             );
+                            // SAFETY: the timer helpers forward to KillTimer/SetTimer with
+                            // no TIMERPROC, so no callback pointer must stay valid; the
+                            // HWND is passed by value.
                             unsafe {
                                 let _ = kill_controller_timer(Some(hwnd), TIMER_RESET_POLL);
                                 set_controller_timer(Some(hwnd), TIMER_POLL, retry_ms, None);
@@ -3330,6 +3440,8 @@ fn do_poll_once(hwnd: HWND) {
                 }
             }
 
+            // SAFETY: PostMessageW may be called from the poll worker for the controller
+            // window; the HWND is passed by value and the message carries no pointers.
             unsafe {
                 let _ = PostMessageW(Some(hwnd), WM_APP_USAGE_UPDATED, WPARAM(0), LPARAM(0));
             }
@@ -3346,6 +3458,8 @@ fn schedule_countdown_timer() {
 
     let hwnd = s.hwnd.to_hwnd();
     if !s.last_poll_ok {
+        // SAFETY: kill_controller_timer forwards to KillTimer, which takes the HWND by
+        // value and no pointers; Windows validates the handle.
         unsafe {
             let _ = kill_controller_timer(Some(hwnd), TIMER_COUNTDOWN);
             let _ = kill_controller_timer(Some(hwnd), TIMER_RESET_POLL);
@@ -3355,6 +3469,8 @@ fn schedule_countdown_timer() {
 
     // If a reset time has passed, poll every 5s to pick up fresh data
     if s.retry_count == 0 && s.data.as_ref().is_some_and(poller::app_is_past_reset) {
+        // SAFETY: set_controller_timer forwards to SetTimer with no TIMERPROC, so no
+        // callback pointer must stay valid; the HWND is passed by value.
         unsafe {
             set_controller_timer(Some(hwnd), TIMER_RESET_POLL, 5_000, None);
         }
@@ -3372,6 +3488,8 @@ fn schedule_countdown_timer() {
         .as_millis()
         .max(1000) as u32;
 
+    // SAFETY: set_controller_timer forwards to SetTimer with no TIMERPROC, so no
+    // callback pointer must stay valid; the HWND is passed by value.
     unsafe {
         set_controller_timer(Some(hwnd), TIMER_COUNTDOWN, ms, None);
     }
@@ -3384,12 +3502,16 @@ fn schedule_clock_timer() {
     };
     let hwnd = s.hwnd.to_hwnd();
     let Some(interval) = s.theme_clock_interval else {
+        // SAFETY: kill_controller_timer forwards to KillTimer, which takes the HWND by
+        // value and no pointers; Windows validates the handle.
         unsafe {
             let _ = kill_controller_timer(Some(hwnd), TIMER_CLOCK);
         }
         return;
     };
     let ms = time_until_next_clock_refresh(interval).as_millis().max(1) as u32;
+    // SAFETY: set_controller_timer forwards to SetTimer with no TIMERPROC, so no
+    // callback pointer must stay valid; the HWND is passed by value.
     unsafe {
         set_controller_timer(Some(hwnd), TIMER_CLOCK, ms, None);
     }
@@ -3462,6 +3584,8 @@ pub(super) fn arm_crossfade_schedule(hwnd: HWND) {
     if let Some(state) = state.as_mut() {
         state.crossfade_opacity = if dual_mode { opacity } else { 1.0 };
     }
+    // SAFETY: the timer helpers forward to SetTimer/KillTimer with no TIMERPROC, so no
+    // callback pointer must stay valid; the HWND is passed by value.
     unsafe {
         if dual_mode {
             let _ = set_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE, delay_ms, None);
@@ -3504,6 +3628,8 @@ fn reload_external_settings(hwnd: HWND) {
             && state.show_antigravity_external
             && state.providers.contains(ProviderId::Antigravity);
         if !dual_mode {
+            // SAFETY: kill_controller_timer forwards to KillTimer, which takes the HWND by
+            // value and no pointers; Windows validates the handle.
             unsafe {
                 let _ = kill_controller_timer(Some(hwnd), TIMER_CROSSFADE_SCHEDULE);
             }
@@ -3523,6 +3649,8 @@ fn reload_external_settings(hwnd: HWND) {
     if dual_mode && (antigravity_changed || providers_changed) {
         arm_crossfade_schedule(hwnd);
     }
+    // SAFETY: set_controller_timer forwards to SetTimer with no TIMERPROC, so no
+    // callback pointer must stay valid; the HWND is passed by value.
     unsafe {
         set_controller_timer(Some(hwnd), TIMER_POLL, settings.poll_interval_ms, None);
     }
@@ -3923,6 +4051,9 @@ mod ui_hang_watchdog_tests {
     fn spawn_window_thread(pumping: bool) -> WindowThread {
         let (ready_tx, ready_rx) = mpsc::channel();
         let (release, release_rx) = mpsc::channel::<()>();
+        // SAFETY: the window uses the system STATIC class with a NUL-terminated name kept
+        // alive by `class`, and is created, pumped and destroyed on this thread;
+        // `msg` is a live local for GetMessageW and DispatchMessageW.
         let handle = std::thread::spawn(move || unsafe {
             let class = native_interop::wide_str("STATIC");
             let hwnd = CreateWindowExW(
@@ -3978,6 +4109,8 @@ mod ui_hang_watchdog_tests {
 
         wedged.release.send(()).expect("release the wedged thread");
         wedged.handle.join().expect("wedged thread exits");
+        // SAFETY: PostThreadMessageW takes only values; `thread_id` names the pumping
+        // thread, which is still running until the join below.
         unsafe {
             PostThreadMessageW(pumping.thread_id, WM_QUIT, WPARAM(0), LPARAM(0))
                 .expect("stop the pumping thread");

@@ -1,9 +1,5 @@
 //! The controller owns application lifetime; Explorer owns only replaceable surfaces.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 use super::*;
 use std::cell::Cell;
 
@@ -45,6 +41,8 @@ pub(super) unsafe fn kill_controller_timer(
 }
 
 pub(super) fn schedule_reconcile(controller: HWND) {
+    // SAFETY: SetTimer takes no pointers here (the callback is None, so the timer
+    // posts WM_TIMER); Windows validates the controller handle and fails if stale.
     unsafe {
         set_controller_timer(Some(controller), TIMER_RECONCILE, 80, None);
     }
@@ -207,9 +205,12 @@ pub(super) unsafe fn destroy_surface(hwnd: HWND) {
 
 pub(super) fn surface_alive(hwnd: HWND) -> bool {
     let mut process_id = 0;
+    // SAFETY: the out-pointer is a live local u32 that outlives the call; a stale
+    // or foreign handle is validated by Windows and leaves process_id at 0.
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut process_id));
     }
+    // SAFETY: IsWindow takes no pointers and accepts any handle value.
     (unsafe { IsWindow(Some(hwnd)).as_bool() })
         && process_id == std::process::id()
         && native_interop::window_class_name(hwnd).is_some_and(|name| {

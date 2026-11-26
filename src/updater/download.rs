@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, Write};
@@ -62,6 +58,8 @@ struct Sha256(BCRYPT_HASH_HANDLE);
 impl Sha256 {
     fn new() -> Result<Self, String> {
         let mut handle = BCRYPT_HASH_HANDLE::default();
+        // SAFETY: the SHA-256 pseudo-handle is always valid, `handle` is a live local out-pointer,
+        // and passing no hash-object buffer or secret lets CNG allocate and own the state.
         unsafe { BCryptCreateHash(BCRYPT_SHA256_ALG_HANDLE, &mut handle, None, None, 0) }
             .ok()
             .map_err(|e| format!("Unable to start the update SHA-256 check: {e}"))?;
@@ -69,6 +67,8 @@ impl Sha256 {
     }
 
     fn update(&mut self, data: &[u8]) -> Result<(), String> {
+        // SAFETY: `self.0` is a live hash handle owned by this value (destroyed only in Drop),
+        // and `data` is a valid slice for the call.
         unsafe { BCryptHashData(self.0, data, 0) }
             .ok()
             .map_err(|e| format!("Unable to compute the update SHA-256: {e}"))
@@ -76,6 +76,8 @@ impl Sha256 {
 
     fn finish(self) -> Result<[u8; 32], String> {
         let mut digest = [0; 32];
+        // SAFETY: `self.0` is still live (Drop runs after this), and `digest` is exactly the
+        // 32-byte SHA-256 output size.
         unsafe { BCryptFinishHash(self.0, &mut digest, 0) }
             .ok()
             .map_err(|e| format!("Unable to compute the update SHA-256: {e}"))?;
@@ -85,6 +87,8 @@ impl Sha256 {
 
 impl Drop for Sha256 {
     fn drop(&mut self) {
+        // SAFETY: `self.0` came from BCryptCreateHash, `Sha256` is not Clone, and Drop runs once,
+        // so the handle is destroyed exactly once.
         unsafe {
             let _ = BCryptDestroyHash(self.0);
         }

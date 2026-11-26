@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "test fixtures call Win32 APIs")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 use std::cell::RefCell;
@@ -41,6 +37,8 @@ struct TestWindow(HWND);
 
 impl TestWindow {
     fn new(ex_style: WINDOW_EX_STYLE) -> Self {
+        // SAFETY: `class` is a NUL-terminated wide string that outlives both calls, the
+        // WNDCLASSW is a live temporary, and observe_layered_style matches WNDPROC.
         unsafe {
             let class = native_interop::wide_str("UsageMonitorLayeredSurfaceRegression");
             let instance = GetModuleHandleW(PCWSTR::null()).unwrap();
@@ -92,6 +90,7 @@ impl TestWindow {
 
 impl Drop for TestWindow {
     fn drop(&mut self) {
+        // SAFETY: the window was created by this test thread, which also drops it here.
         unsafe {
             let _ = DestroyWindow(self.0);
         }
@@ -113,6 +112,8 @@ fn watchdog_tray_requests_leave_a_delayed_reposition_pending() {
         if already_pending {
             schedule_tray_reposition(window.0);
         }
+        // SAFETY: the window is this thread's live TestWindow, and the message carries
+        // only integer parameters, so wnd_proc and KillTimer receive no pointers.
         unsafe {
             // Exercise the production message handler without touching Explorer
             // or waiting on wall-clock timing. Both paths must leave a timer.
@@ -161,6 +162,7 @@ fn docking_rebinds_layered_surface_only_when_parent_changes() {
         .enumerate()
     {
         native_interop::embed_as_child(window.0, parent);
+        // SAFETY: GetParent takes no pointers; the window is a live TestWindow.
         assert_eq!(unsafe { GetParent(window.0) }.unwrap(), parent);
         assert_eq!(take_transitions(), vec![false, true]);
         window.render(3 + index as u32 * 2);
@@ -186,8 +188,10 @@ fn reparenting_desktop_composition_windows_does_not_enable_layering() {
     let window = TestWindow::new(WS_EX_NOREDIRECTIONBITMAP);
     take_transitions();
     native_interop::embed_as_child(window.0, parent.0);
+    // SAFETY: GetParent takes no pointers; the window is a live TestWindow.
     assert_eq!(unsafe { GetParent(window.0) }.unwrap(), parent.0);
     assert!(take_transitions().is_empty());
+    // SAFETY: GetWindowLongW only reads an integer slot of the live TestWindow.
     let ex_style = unsafe { GetWindowLongW(window.0, GWL_EXSTYLE) } as u32;
     assert_eq!(ex_style & WS_EX_LAYERED.0, 0);
     assert_ne!(ex_style & WS_EX_NOREDIRECTIONBITMAP.0, 0);
@@ -213,6 +217,7 @@ fn re_embedding_a_hosted_surface_does_not_change_its_frame() {
     take_frame_changes();
     native_interop::embed_as_child(window.0, parent.0);
     assert!(take_frame_changes() > 0);
+    // SAFETY: GetParent takes no pointers; the window is a live TestWindow.
     assert_eq!(unsafe { GetParent(window.0) }.unwrap(), parent.0);
 }
 
@@ -222,6 +227,8 @@ fn hosted_placement_detects_real_moves_resizes_and_z_order_changes() {
     let window = TestWindow::new(WS_EX_LAYERED);
     let sibling = TestWindow::new(WS_EX_LAYERED);
     let origin = POINT { x: 23, y: 17 };
+    // SAFETY: all handles are live TestWindows owned by this thread; SetWindowPos takes
+    // no pointers, and hosted_child_is_placed only needs valid window handles.
     unsafe {
         // A displaced host verifies conversion from screen to client coordinates.
         SetWindowPos(
@@ -286,6 +293,8 @@ fn re_embedding_repairs_styles_even_when_the_parent_matches() {
     let parent = TestWindow::new(WINDOW_EX_STYLE::default());
     let window = TestWindow::new(WS_EX_LAYERED);
     native_interop::embed_as_child(window.0, parent.0);
+    // SAFETY: Get/SetWindowLongW only touch the integer GWL_STYLE slot of a live
+    // TestWindow owned by this thread.
     unsafe {
         let style = GetWindowLongW(window.0, GWL_STYLE);
         SetWindowLongW(window.0, GWL_STYLE, style & !(WS_CLIPSIBLINGS.0 as i32));
@@ -294,6 +303,7 @@ fn re_embedding_repairs_styles_even_when_the_parent_matches() {
     native_interop::embed_as_child(window.0, parent.0);
     assert!(take_frame_changes() > 0);
     assert_ne!(
+        // SAFETY: GetWindowLongW only reads an integer slot of the live TestWindow.
         unsafe { GetWindowLongW(window.0, GWL_STYLE) } as u32 & WS_CLIPSIBLINGS.0,
         0
     );

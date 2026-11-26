@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -32,6 +28,8 @@ impl NativeContextMenuAppearance {
             cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32,
             ..Default::default()
         };
+        // SAFETY: `metrics` is a live local whose `cbSize` and the passed size both equal
+        // `size_of::<NONCLIENTMETRICSW>()`, so Windows writes only within it.
         unsafe {
             let _ = SystemParametersInfoForDpi(
                 SPI_GETNONCLIENTMETRICS.0,
@@ -44,11 +42,15 @@ impl NativeContextMenuAppearance {
         let points = |pixels: i32| pixels.unsigned_abs() as f32 / pixels_per_point;
         let font_size = points(metrics.lfMenuFont.lfHeight).clamp(9.0, 24.0);
         let menu_height = points(metrics.iMenuHeight);
+        // SAFETY: GetSystemMetricsForDpi takes no pointers and only reads system metrics.
         let check_width =
             unsafe { GetSystemMetricsForDpi(SM_CXMENUCHECK, dpi) } as f32 / pixels_per_point;
+        // SAFETY: GetSystemMetricsForDpi takes no pointers and only reads system metrics.
         let check_height =
             unsafe { GetSystemMetricsForDpi(SM_CYMENUCHECK, dpi) } as f32 / pixels_per_point;
+        // SAFETY: GetSystemMetricsForDpi takes no pointers and only reads system metrics.
         let edge_x = unsafe { GetSystemMetricsForDpi(SM_CXEDGE, dpi) } as f32 / pixels_per_point;
+        // SAFETY: GetSystemMetricsForDpi takes no pointers and only reads system metrics.
         let edge_y = unsafe { GetSystemMetricsForDpi(SM_CYEDGE, dpi) } as f32 / pixels_per_point;
         let menu_unit = points(metrics.iMenuWidth).max(15.0);
         let check_width = check_width.max(13.0);
@@ -98,6 +100,8 @@ pub(super) struct NativeMenuThemeColors {
 }
 
 pub(super) fn native_menu_theme_colors() -> Option<NativeMenuThemeColors> {
+    // SAFETY: `class` is a NUL-terminated local that outlives OpenThemeData. The theme handle
+    // is checked, used by GetThemeColor only while open, and closed exactly once at the end.
     unsafe {
         let class = native_interop::wide_str("Menu");
         let theme = OpenThemeData(None, PCWSTR::from_raw(class.as_ptr()));
@@ -149,6 +153,7 @@ pub(super) fn normalize_native_menu_theme_colors(
 }
 
 pub(super) fn win32_color(index: windows::Win32::Graphics::Gdi::SYS_COLOR_INDEX) -> egui::Color32 {
+    // SAFETY: GetSysColor takes no pointers and returns a value for any index.
     colorref_to_egui(unsafe { GetSysColor(index) })
 }
 

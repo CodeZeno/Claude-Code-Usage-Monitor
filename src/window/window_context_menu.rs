@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -24,6 +20,9 @@ pub(super) fn show_context_menu_document(
         .unwrap_or_else(localization::detect_system_language);
     let data_context = context_menu_data_context(origin.as_ref());
     let mut actions = Vec::new();
+    // SAFETY: `menu` is a popup menu created here, filled, tracked and destroyed in
+    // this block before any other use; `point` is a live local for GetCursorPos, and
+    // `hwnd` is this thread's surface window, which Windows validates for TrackPopupMenu.
     unsafe {
         let Ok(menu) = CreatePopupMenu() else {
             return;
@@ -331,6 +330,8 @@ pub(super) fn execute_context_menu_action(
         | ContextMenuAction::OpenUrl { .. } => None,
     };
     if let Some(command) = static_command {
+        // SAFETY: PostMessageW carries only integer parameters here, and Windows
+        // validates the controller handle, failing harmlessly if it is gone.
         unsafe {
             let _ = PostMessageW(
                 Some(controller_for(hwnd)),
@@ -412,6 +413,8 @@ mod tests {
         for enabled in [false, true, false] {
             context.insert("providers.codex.enabled", enabled as u8 as f64);
             let mut actions = Vec::new();
+            // SAFETY: `menu` is a popup menu this test creates, queries and destroys
+            // within the block; its submenus are owned by it and read before DestroyMenu.
             unsafe {
                 let menu = CreatePopupMenu().unwrap();
                 append_context_menu_items(

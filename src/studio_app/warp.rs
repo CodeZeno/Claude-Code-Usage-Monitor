@@ -1,10 +1,6 @@
 //! Native D3D11/WARP host. Runs in a fresh dashboard process after OpenGL fails.
 //! Windows supplies the software rasterizer; the painter embeds precompiled shaders.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::{egui, style_native_titlebar, Page, StudioApp};
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -55,6 +51,9 @@ impl Painter {
             ..Default::default()
         };
         let (mut device, mut context, mut swap_chain) = (None, None, None);
+        // SAFETY: `desc` and the feature-level slice are live for the call, the out-params
+        // are live locals, and `OutputWindow` is the HWND of `window`, which the caller keeps
+        // alive while this painter (dropped first in Desktop) exists.
         unsafe {
             D3D11CreateDeviceAndSwapChain(
                 None,
@@ -75,6 +74,8 @@ impl Painter {
         let context = context.ok_or("WARP returned no context")?;
         let swap_chain = swap_chain.ok_or("WARP returned no swap chain")?;
         // Disable DXGI's automatic Alt+Enter transition; window state belongs to winit.
+        // SAFETY: the COM calls use the live swap chain and device created above and the same
+        // live output window; `info.Description` is a fixed array read in place.
         unsafe {
             let factory: IDXGIFactory = swap_chain.GetParent().map_err(|e| e.to_string())?;
             factory
@@ -105,6 +106,8 @@ impl Painter {
     }
 
     fn create_target(&mut self) -> Result<(), String> {
+        // SAFETY: `swap_chain` and `device` are live interfaces owned by this painter, and
+        // `self.target` is a valid out-slot for the new view.
         unsafe {
             let buffer: ID3D11Texture2D =
                 self.swap_chain.GetBuffer(0).map_err(|e| e.to_string())?;
@@ -122,6 +125,9 @@ impl Painter {
         output: egui_directx11::RendererOutput,
     ) -> Result<(), String> {
         if size != self.size {
+            // SAFETY: the painter's live interfaces are used on their own thread. The back
+            // buffer view is unbound and released before ResizeBuffers, as DXGI requires;
+            // `create_target` rebuilds it afterwards.
             unsafe {
                 self.context.OMSetRenderTargets(None, None);
                 self.target = None;
@@ -139,6 +145,8 @@ impl Painter {
             self.create_target()?;
         }
         let target = self.target.as_ref().ok_or("WARP render target missing")?;
+        // SAFETY: `target` is a live view created on this device, and the color is a live
+        // four-float array.
         unsafe {
             self.context
                 .ClearRenderTargetView(target, &[0.125, 0.125, 0.125, 1.0]);
@@ -146,6 +154,7 @@ impl Painter {
         self.renderer
             .render(&self.context, target, context, output)
             .map_err(|e| e.to_string())?;
+        // SAFETY: Present takes no pointers and uses the painter's live swap chain.
         unsafe {
             self.swap_chain
                 .Present(1, DXGI_PRESENT(0))
@@ -430,6 +439,7 @@ mod tests {
     fn warp_renders_partial_textures_at_zoom_and_frees_after_paint() {
         use egui::epaint::{ClippedShape, ImageDelta, Mesh, Shape};
         let (mut device, mut immediate) = (None, None);
+        // SAFETY: the feature-level slice and the out-params are live locals for the call.
         unsafe {
             D3D11CreateDevice(
                 None,
@@ -461,6 +471,8 @@ mod tests {
             ..Default::default()
         };
         let (mut texture, mut target, mut readback) = (None, None, None);
+        // SAFETY: the descriptors and out-params are live locals; no initial data is passed,
+        // and the view is created from the texture just created on the same device.
         unsafe {
             device
                 .CreateTexture2D(&desc, None, Some(&mut texture))
@@ -509,6 +521,9 @@ mod tests {
         );
         let shapes = vec![ClippedShape::new(egui::Rect::EVERYTHING, Shape::mesh(mesh))];
         let read_pixel = |x: usize, y: usize| -> [u8; 4] {
+            // SAFETY: both textures share one 16x16 RGBA8 descriptor, so CopyResource is
+            // valid. While mapped, `pData` addresses 16 rows of `RowPitch` bytes; every caller
+            // passes x, y < 16, so the four bytes read lie inside the mapping, before Unmap.
             unsafe {
                 immediate.CopyResource(&readback, &texture);
                 let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
@@ -524,6 +539,8 @@ mod tests {
                 pixel
             }
         };
+        // SAFETY: `target` is a live view on `immediate`'s device, and the color is a live
+        // four-float array.
         unsafe {
             immediate.ClearRenderTargetView(&target, &[0.0, 0.0, 0.0, 1.0]);
         }
@@ -546,6 +563,8 @@ mod tests {
             [0, 0, 0, 255],
             "zoom must only be applied once"
         );
+        // SAFETY: `target` is a live view on `immediate`'s device, and the color is a live
+        // four-float array.
         unsafe {
             immediate.ClearRenderTargetView(&target, &[0.0, 0.0, 0.0, 1.0]);
         }

@@ -2,10 +2,6 @@
 // adopts the legacy widget strings.
 #![allow(dead_code)]
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use windows::core::PWSTR;
 use windows::Win32::Globalization::{
@@ -229,6 +225,9 @@ pub fn update_via_winget(language: LanguageId) -> &'static str {
 }
 
 fn preferred_ui_languages() -> Vec<String> {
+    // SAFETY: The counters are live locals. The first call passes no buffer and only reports the
+    // required length; the second passes a live buffer of exactly `buffer_len` UTF-16 units,
+    // the length Windows reported and is told about.
     unsafe {
         let mut num_languages = 0u32;
         let mut buffer_len = 0u32;
@@ -260,6 +259,8 @@ fn preferred_ui_languages() -> Vec<String> {
 }
 
 fn default_ui_locale() -> Option<LanguageId> {
+    // SAFETY: GetUserDefaultUILanguage takes no arguments. LCIDToLocaleName receives a live local
+    // buffer as a slice, so the length Windows writes up to is the buffer's true length.
     unsafe {
         let lang_id = GetUserDefaultUILanguage();
         let mut buffer = [0u16; MAX_LOCALE_NAME as usize];
@@ -277,6 +278,7 @@ fn default_ui_locale() -> Option<LanguageId> {
 }
 
 fn default_locale_name() -> Option<LanguageId> {
+    // SAFETY: `buffer` is a live local array passed as a slice, so Windows is given its true length.
     unsafe {
         let mut buffer = [0u16; MAX_LOCALE_NAME as usize];
         let len = GetUserDefaultLocaleName(&mut buffer);

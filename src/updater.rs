@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::fs::File;
 use std::io::{self, Read};
@@ -381,6 +377,8 @@ fn wait_for_process_exit(pid: u32, timeout: Duration) -> Result<(), String> {
         return Ok(());
     }
 
+    // SAFETY: OpenProcess takes no pointers; the handle it returns is owned here, waited on
+    // while open and closed exactly once before the result is inspected.
     unsafe {
         let handle = OpenProcess(PROCESS_SYNCHRONIZE, false, pid)
             .map_err(|e| format!("Unable to monitor the running app process: {e}"))?;
@@ -629,6 +627,8 @@ fn normalize_path(path: &Path) -> String {
 }
 
 fn show_error_message(title: &str, message: &str) {
+    // SAFETY: both wide strings are NUL-terminated locals that live until MessageBoxW
+    // returns; a null owner window is allowed.
     unsafe {
         let title_wide = wide_str(title);
         let message_wide = wide_str(message);

@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "test fixtures call Win32 APIs")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -526,9 +522,13 @@ mod monitor_reconnection {
                 wparam: WPARAM,
                 lparam: LPARAM,
             ) -> LRESULT {
+                // SAFETY: forwards the unmodified arguments Windows passed to this procedure.
                 unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
             }
             let class = native_interop::wide_str("ClaudeCodeUsageMonitor");
+            // SAFETY: `class` is NUL-terminated and outlives both calls (RegisterClassW copies
+            // the name), `procedure` has the WNDPROC signature, and `module` is this module.
+            // The message-only window is owned by the returned value, which destroys it.
             unsafe {
                 let module = GetModuleHandleW(PCWSTR::null()).unwrap();
                 REGISTERED.call_once(|| {
@@ -566,6 +566,8 @@ mod monitor_reconnection {
 
         fn assert_message(&self, message: u32) {
             let mut received = MSG::default();
+            // SAFETY: `received` is a live local, and `self.0` is a window this test thread
+            // created and still owns.
             assert!(unsafe {
                 PeekMessageW(&mut received, Some(self.0), message, message, PM_REMOVE).as_bool()
             });
@@ -576,6 +578,8 @@ mod monitor_reconnection {
 
     impl Drop for MonitorWindow {
         fn drop(&mut self) {
+            // SAFETY: the window was created on this test thread and is destroyed only here,
+            // once.
             unsafe { DestroyWindow(self.0).unwrap() };
         }
     }
@@ -669,6 +673,8 @@ mod monitor_reconnection {
         );
 
         let unrelated_class = native_interop::wide_str("STATIC");
+        // SAFETY: `unrelated_class` names the built-in STATIC class, is NUL-terminated and
+        // outlives the call; the window is owned and destroyed by the MonitorWindow wrapper.
         let unrelated = MonitorWindow(unsafe {
             CreateWindowExW(
                 WINDOW_EX_STYLE::default(),

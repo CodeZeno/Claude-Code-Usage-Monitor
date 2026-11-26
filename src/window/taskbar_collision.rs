@@ -1,10 +1,6 @@
 //! Physical taskbar occupancy. Shell accessibility calls stay on a dedicated
 //! MTA thread; neither the UI thread nor the Explorer watchdog waits for them.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 use super::*;
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
@@ -122,6 +118,7 @@ impl Occupancy {
 }
 
 pub(super) fn cached(hwnd: HWND, bounds: RECT) -> Option<Occupancy> {
+    // SAFETY: IsWindowVisible takes no pointers and returns false for a stale handle.
     if !unsafe { IsWindowVisible(hwnd).as_bool() } {
         return None;
     }
@@ -164,6 +161,8 @@ fn occupies_space(role: UIA_CONTROLTYPE_ID) -> bool {
 struct ComApartment;
 impl ComApartment {
     fn new() -> windows::core::Result<Self> {
+        // SAFETY: CoInitializeEx takes no pointers here (reserved is None); a guard is
+        // only returned on success, so Drop's CoUninitialize balances this call.
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
         }
@@ -172,6 +171,8 @@ impl ComApartment {
 }
 impl Drop for ComApartment {
     fn drop(&mut self) {
+        // SAFETY: a guard exists only after CoInitializeEx succeeded; both callers keep
+        // it as a local, so it is dropped on the thread that initialized COM.
         unsafe {
             CoUninitialize();
         }
@@ -186,6 +187,8 @@ struct Reader {
 
 impl Reader {
     fn new() -> windows::core::Result<Self> {
+        // SAFETY: the COM calls use interfaces just returned by CoCreateInstance and
+        // borrowed GUID/ID arguments; without an apartment they fail with an error.
         unsafe {
             let automation: IUIAutomation2 =
                 CoCreateInstance(&CUIAutomation8, None, CLSCTX_INPROC_SERVER)?;
@@ -216,6 +219,8 @@ impl Reader {
         &self,
         taskbar: native_interop::TaskbarWindow,
     ) -> windows::core::Result<Option<Occupancy>> {
+        // SAFETY: the UIA calls go through interfaces owned by `self` and returned
+        // elements, with borrowed arguments; taskbar handles are validated by Windows.
         unsafe {
             let bounds = taskbar.rect;
             if !IsWindowVisible(taskbar.hwnd).as_bool() || !taskbar_shown(bounds) {

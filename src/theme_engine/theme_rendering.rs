@@ -1,8 +1,4 @@
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use super::*;
 
@@ -1236,6 +1232,11 @@ pub(super) fn render_text_mask(
     if text.is_empty() || width == 0 || height == 0 || target.is_empty() {
         return;
     }
+    // SAFETY: the DC, bitmap and font are created and released here, each once, with the
+    // original objects reselected first. A 32bpp top-down DIB has no row padding, so `bits`
+    // spans exactly `width * height * 4` bytes and stays valid until the bitmap is deleted;
+    // it is written and read only within that size. `font_name` is NUL-terminated, and
+    // `wide` is non-empty (see above) and outlives DrawTextW.
     unsafe {
         let memory_dc = CreateCompatibleDC(None);
         if memory_dc.is_invalid() {

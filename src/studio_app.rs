@@ -1,9 +1,5 @@
 //! DPI-aware settings dashboard and visual theme studio, hosted in a separate process.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -157,6 +153,8 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
                 // Release our process slot before starting a fresh WARP dashboard. The
                 // child claims the same guard, so concurrent launch requests still coalesce.
                 if let Some(handle) = dashboard_instance.take() {
+                    // SAFETY: `take()` moves the mutex handle from claim_instance out of the
+                    // Option, so it is closed exactly once and never used afterwards.
                     unsafe {
                         let _ = windows::Win32::Foundation::CloseHandle(handle);
                     }
@@ -167,6 +165,8 @@ pub fn handle_cli_mode(args: &[String]) -> bool {
         })
     };
     if let Some(handle) = dashboard_instance.take() {
+        // SAFETY: `take()` moves the mutex handle out of the Option (empty if the WARP path
+        // already closed it), so it is closed exactly once and never used afterwards.
         unsafe {
             let _ = windows::Win32::Foundation::CloseHandle(handle);
         }
@@ -813,6 +813,9 @@ fn style_native_titlebar(context: &impl HasWindowHandle) {
     let surface_color = 0x0020_2020u32;
     let border_color = 0x0054_5454u32;
     let text_color = 0x00F0_F0F0u32;
+    // SAFETY: `hwnd` is the live Win32 window borrowed from `context` on its UI thread. The
+    // WM_SETICON messages carry icon handles, not pointers, and DwmSetWindowAttribute reads
+    // one `u32` from a live local whose size is passed with it.
     unsafe {
         if !large_icon.is_invalid() {
             let _ = SendMessageW(

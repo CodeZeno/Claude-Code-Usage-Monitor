@@ -5,10 +5,6 @@
 //! out of the Windows font actually bypasses that substitution. The original
 //! files and system settings are never changed or redistributed.
 #![allow(unsafe_code, reason = "calls Win32 APIs through the windows crate")]
-#![allow(
-    clippy::undocumented_unsafe_blocks,
-    reason = "ratchet: add // SAFETY: comments to the existing unsafe blocks, then remove this allow"
-)]
 
 use std::path::PathBuf;
 use std::sync::OnceLock;
@@ -74,6 +70,8 @@ fn register_bytes(bytes: &[u8]) -> bool {
     let mut count = 0;
     // Windows copies the buffer. These non-enumerable resources remain private
     // to this process and Windows releases them when the process exits.
+    // SAFETY: `bytes` is a live slice of `size` bytes for the call (Windows copies it), the
+    // reserved argument is None, and `count` is a live local written through a raw pointer.
     unsafe {
         // The generated binding marks this output pointer const. Keep a raw
         // mutable pointer so Windows can write the count without aliasing an
@@ -212,6 +210,10 @@ mod tests {
             rename_family(&mut bytes).unwrap();
             assert_eq!(checksum(&bytes), 0xB1B0_AFBA);
             assert_eq!(bytes[glyphs], original_glyphs);
+            // SAFETY: `name` and `face` are live locals (name NUL-terminated, face passed as a slice);
+            // the second GetFontData gets a buffer of exactly the `size` bytes reported by the first.
+            // The DC and font are created and checked here, the old font is reselected, and each
+            // GDI object is deleted once.
             unsafe {
                 let dc = CreateCompatibleDC(None);
                 assert!(!dc.is_invalid());
