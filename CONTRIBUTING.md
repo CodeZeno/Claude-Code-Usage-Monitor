@@ -144,6 +144,13 @@ reports a broken rule and the fix:
 Fix the code rather than adding an `allow`. When an exception is necessary,
 scope it to the item that needs it and give a `reason`.
 
+### Line endings
+
+`.gitattributes` stores text files with LF line endings, whatever your
+`core.autocrlf` setting; Windows checkouts still get CRLF. Keep a file's existing
+line endings when you edit it, and do not reformat line endings in unrelated
+files. `tests/Test-Repository.ps1` reports any text file stored with CRLF.
+
 ## Pull requests
 
 Keep each pull request focused on one problem and avoid unrelated formatting or

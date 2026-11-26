@@ -1,0 +1,24 @@
+# Text files are stored with LF line endings in the repository, whatever the
+# committer's core.autocrlf setting. Checkouts use the platform default (CRLF on
+# Windows with core.autocrlf=true), so diffs show only real changes.
+# tests/Test-Repository.ps1 reports text files stored with CRLF.
+* text=auto
+
+# Batch files must use CRLF on every checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files: never convert or diff as text.
+*.png binary
+*.ico binary
+*.gif binary
+*.jpg binary
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.exe binary
+*.dll binary
+*.bin binary
+*.zip binary
+*.nupkg binary

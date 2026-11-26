@@ -401,6 +401,23 @@ function Add-UnreleasedEntries([string]$Text, [string]$Category, [string[]]$Entr
     $lines -join $newline
 }
 
+# Returns problems with line endings: .gitattributes must normalize text files,
+# and no staged text file may be stored with CRLF or mixed line endings.
+function Test-LineEndings([string]$Root) {
+    $problems = New-Object System.Collections.Generic.List[string]
+    $attribute = @(Invoke-Git -C $Root check-attr text -- Cargo.toml)
+    if ($attribute -notmatch ': text: auto$') {
+        $problems.Add(".gitattributes must set '* text=auto' so text files are stored with LF line endings.")
+    }
+    # Each line is "i/<index eol> w/<worktree eol> attr/<attributes> <TAB><path>".
+    foreach ($line in @(Invoke-Git -C $Root ls-files --eol)) {
+        if ($line -match 'i/(crlf|mixed)\s.*\t(.+)$') {
+            $problems.Add("$($Matches[2]) is stored with $($Matches[1]) line endings. Store it with LF: git add --renormalize -- `"$($Matches[2])`"")
+        }
+    }
+    $problems.ToArray()
+}
+
 # Returns problems with the files the repository must not track and with the
 # Cargo.toml, Cargo.lock and CHANGELOG.md release metadata.
 function Test-RepositoryState([string]$Root) {
@@ -418,6 +435,10 @@ function Test-RepositoryState([string]$Root) {
         if ($LASTEXITCODE -ne 0) {
             $problems.Add("$path must stay listed in .gitignore.")
         }
+    }
+
+    foreach ($problem in (Test-LineEndings $Root)) {
+        $problems.Add($problem)
     }
 
     $packageVersion = Get-PackageVersionFromToml (Read-TextFile (Join-Path $Root 'Cargo.toml'))
@@ -460,6 +481,6 @@ Export-ModuleMember -Function `
     ConvertTo-ReleaseVersion, Get-NextVersion, Get-VersionChangeLevel, `
     Get-PackageVersionFromToml, Set-PackageVersionInToml, Get-LockedPackageVersion, `
     Read-Changelog, Get-UnreleasedEntryCount, Get-UnreleasedCategories, `
-    Test-ChangelogText, Add-ChangelogRelease, Test-RepositoryState, `
+    Test-ChangelogText, Add-ChangelogRelease, Test-LineEndings, Test-RepositoryState, `
     Get-DependabotCommitSubjects, Get-DependencyUpdateEntries, Add-UnreleasedEntries, `
     Assert-RepositoryState, Assert-CleanWorktree, Assert-OnMainBranch

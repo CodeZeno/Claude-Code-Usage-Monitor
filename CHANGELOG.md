@@ -33,6 +33,7 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
   - HTTP agents are created only in the poller and updater;
   - code cannot modify the process environment.
 - Draw the Classic, Compact Fluent Quad and Classic Vertical built-in themes from single layers with light-mode colours instead of duplicate layers gated on `system.dark` (163 to 124, 158 to 118 and 133 to 114 layers), with identical rendering in both appearances. Custom themes that keep separate dark and light layers render as before.
+- Store text files with LF line endings whatever the committer's `core.autocrlf` setting, with a `.gitattributes` file; `tests/Test-Repository.ps1` reports text files stored with CRLF.
 - Run the dependency security checks as part of `CI passed` on pull requests and pushes to `main`, and once in the tagged Release workflow through CI.
 
 ### Fixed

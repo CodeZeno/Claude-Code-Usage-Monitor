@@ -134,6 +134,27 @@ Assert-True ($ordered.Contains("- New.`n`n### Changed`n`n- Update ``a`` from 1 t
 Assert-Equal $described (Add-UnreleasedEntries $described 'Changed' @()) 'no entries leaves the changelog unchanged'
 Assert-Throws { Add-UnreleasedEntries (New-Changelog) 'Changed' @('- X.') } 'a changelog without Unreleased is refused'
 
+# Line endings: a scratch repository with and without .gitattributes.
+$eolRepo = Join-Path ([System.IO.Path]::GetTempPath()) ("eol-" + [guid]::NewGuid())
+New-Item -ItemType Directory $eolRepo | Out-Null
+try {
+    Invoke-Git -C $eolRepo init -q | Out-Null
+    Invoke-Git -C $eolRepo config core.autocrlf false | Out-Null
+    Invoke-Git -C $eolRepo config core.eol lf | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $eolRepo 'Cargo.toml'), "[package]`r`n")
+    Invoke-Git -C $eolRepo add Cargo.toml | Out-Null
+    $eolProblems = @(Test-LineEndings $eolRepo)
+    Assert-Problem $eolProblems "must set '\* text=auto'" 'a repository without .gitattributes is reported'
+    Assert-Problem $eolProblems 'Cargo.toml is stored with crlf' 'a text file stored with CRLF is reported'
+
+    [System.IO.File]::WriteAllText((Join-Path $eolRepo '.gitattributes'), "* text=auto`n")
+    Invoke-Git -C $eolRepo add --renormalize . | Out-Null
+    Invoke-Git -C $eolRepo add .gitattributes | Out-Null
+    Assert-Equal 0 @(Test-LineEndings $eolRepo).Count 'renormalized text files pass'
+} finally {
+    Remove-Item -Recurse -Force $eolRepo
+}
+
 if ($script:Failures.Count -gt 0) {
     foreach ($failure in $script:Failures) { Write-Host "FAILED: $failure" }
     throw "$($script:Failures.Count) of $script:Count release tool checks failed."
