@@ -1828,10 +1828,8 @@ fn startup_command_targets(command: &str, executable: &str) -> bool {
 fn read_startup_command() -> Option<String> {
     // SAFETY: the key path and value name are NUL-terminated buffers that outlive every
     // call; `hkey` is only used after RegOpenKeyExW succeeds and is closed once.
-    // The second query passes `buf` with `data_size` equal to its length, and
-    // Windows only shrinks `data_size`, so the u16 view stays inside `buf`. That
-    // view assumes the System allocator (HeapAlloc) aligns `buf` to at least 2
-    // bytes; Vec<u8> itself only guarantees alignment 1.
+    // The second query passes `buf` with `data_size` equal to its size in bytes,
+    // and Windows only shrinks `data_size`, so at most `buf.len()` u16s are read.
     unsafe {
         let path = native_interop::wide_str(STARTUP_REGISTRY_PATH);
         let key_name = native_interop::wide_str(STARTUP_REGISTRY_KEY);
@@ -1863,14 +1861,15 @@ fn read_startup_command() -> Option<String> {
             return None;
         }
 
-        // Read the value
-        let mut buf = vec![0u8; data_size as usize];
+        // Read the value into a u16 buffer, so the UTF-16 view is aligned.
+        let mut buf = vec![0u16; (data_size as usize).div_ceil(2)];
+        data_size = (buf.len() * 2) as u32;
         let result = RegQueryValueExW(
             hkey,
             PCWSTR::from_raw(key_name.as_ptr()),
             None,
             None,
-            Some(buf.as_mut_ptr()),
+            Some(buf.as_mut_ptr().cast()),
             Some(&mut data_size),
         );
         let _ = RegCloseKey(hkey);
@@ -1879,8 +1878,7 @@ fn read_startup_command() -> Option<String> {
         }
 
         // Convert the registry value (UTF-16) to a string
-        let wide_slice =
-            std::slice::from_raw_parts(buf.as_ptr() as *const u16, data_size as usize / 2);
+        let wide_slice = &buf[..(data_size as usize / 2).min(buf.len())];
         Some(
             String::from_utf16_lossy(wide_slice)
                 .trim_end_matches('\0')

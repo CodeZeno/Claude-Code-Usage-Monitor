@@ -120,6 +120,9 @@ pub fn present(hwnd: HWND, rendered: &RenderedTheme) -> Result<(), String> {
     if rendered.width == 0 || rendered.height == 0 {
         return Err("desktop surface has no pixels".into());
     }
+    if rendered.pixels.len() < rendered.width as usize * rendered.height as usize {
+        return Err("desktop surface pixels do not fill its size".into());
+    }
     PRESENTERS.with(|presenters| {
         let mut presenters = presenters.borrow_mut();
         let key = hwnd.0 as isize;
@@ -140,8 +143,7 @@ pub fn present(hwnd: HWND, rendered: &RenderedTheme) -> Result<(), String> {
         }
         // SAFETY: the presenter was created on this thread with `rendered`'s width and height
         // (a size change recreates it above), so UpdateSubresource reads `width * 4` bytes per
-        // row for `height` rows. That assumes `rendered.pixels` holds `width * height` pixels,
-        // which every RenderedTheme producer guarantees but the type does not enforce.
+        // row for `height` rows, which `rendered.pixels` holds (checked above).
         unsafe { presenters[&key].present(rendered) }
             .map_err(|error| format!("DirectComposition present failed: {error}"))
     })
@@ -155,4 +157,21 @@ pub fn remove(hwnd: HWND) {
 
 pub fn clear() {
     PRESENTERS.with(|presenters| presenters.borrow_mut().clear());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_pixels_that_do_not_fill_the_surface() {
+        let rendered = RenderedTheme {
+            width: 2,
+            height: 2,
+            pixels: vec![0; 3],
+            warnings: Vec::new(),
+        };
+        let error = present(HWND::default(), &rendered).unwrap_err();
+        assert!(error.contains("do not fill"), "{error}");
+    }
 }

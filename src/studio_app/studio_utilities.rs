@@ -46,7 +46,8 @@ pub(super) fn blank_theme(name: &str) -> ThemeDocument {
 
 pub(super) fn choose_file(owner: isize, title: &str, filter: &str) -> Option<PathBuf> {
     let mut file = [0u16; 32768];
-    let filter: Vec<u16> = filter.encode_utf16().collect();
+    // The filter list ends at an empty entry; terminate it whatever the caller passed.
+    let filter: Vec<u16> = filter.encode_utf16().chain([0, 0]).collect();
     let title: Vec<u16> = format!("{title}\0").encode_utf16().collect();
     let mut dialog = OPENFILENAMEW {
         lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
@@ -59,8 +60,8 @@ pub(super) fn choose_file(owner: isize, title: &str, filter: &str) -> Option<Pat
         ..Default::default()
     };
     // SAFETY: `lStructSize` is set; `file`, `filter` and `title` are live locals that outlive
-    // the modal call, `nMaxFile` is `file`'s length, and `title` is NUL-terminated. `filter`
-    // has no terminator of its own, so this relies on every caller ending it with "\0\0".
+    // the modal call, `nMaxFile` is `file`'s length, and `title` and `filter` (double
+    // NUL-terminated above) are terminated.
     if unsafe { GetOpenFileNameW(&mut dialog) }.as_bool() {
         let len = file
             .iter()
@@ -83,7 +84,8 @@ pub(super) fn choose_save_file(
     let default_name: Vec<u16> = default_name.encode_utf16().collect();
     let copy_len = default_name.len().min(file.len().saturating_sub(1));
     file[..copy_len].copy_from_slice(&default_name[..copy_len]);
-    let filter: Vec<u16> = filter.encode_utf16().collect();
+    // The filter list ends at an empty entry; terminate it whatever the caller passed.
+    let filter: Vec<u16> = filter.encode_utf16().chain([0, 0]).collect();
     let title: Vec<u16> = format!("{title}\0").encode_utf16().collect();
     let default_extension: Vec<u16> = format!("{default_extension}\0").encode_utf16().collect();
     let mut dialog = OPENFILENAMEW {
@@ -100,8 +102,7 @@ pub(super) fn choose_save_file(
     };
     // SAFETY: `lStructSize` is set; `file` (NUL-terminated after the copied default name),
     // `filter`, `title` and `default_extension` are live locals that outlive the modal call,
-    // and `nMaxFile` is `file`'s length. `filter` has no terminator of its own, so this
-    // relies on every caller ending it with "\0\0".
+    // and `nMaxFile` is `file`'s length; `filter` is double NUL-terminated above.
     if unsafe { GetSaveFileNameW(&mut dialog) }.as_bool() {
         let len = file
             .iter()

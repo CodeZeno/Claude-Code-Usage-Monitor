@@ -165,15 +165,16 @@ struct Statement<'connection> {
     connection: &'connection Connection,
 }
 
-impl Statement<'_> {
-    fn bind_text(&mut self, index: c_int, value: &CStr) -> Result<(), Error> {
+impl<'connection> Statement<'connection> {
+    /// Binds `value` without copying it, so it must outlive the connection
+    /// borrow, and therefore this statement.
+    fn bind_text(&mut self, index: c_int, value: &'connection CStr) -> Result<(), Error> {
         let value_bytes = c_int::try_from(value.to_bytes().len())
             .map_err(|_| Error("SQLite parameter is too large".into()))?;
         // SAFETY: `self.raw` is a live prepared statement and `value` points to
         // `value_bytes` bytes. Passing None (SQLITE_STATIC) makes SQLite keep the
-        // pointer, so this relies on the caller keeping `value` alive until the
-        // statement is finalized (query_optional_text declares it first, so it
-        // drops last).
+        // pointer until the statement is finalized, which `value`'s
+        // `'connection` lifetime outlasts.
         let result =
             unsafe { sqlite3_bind_text(self.raw, index, value.as_ptr(), value_bytes, None) };
         if result == SQLITE_OK {

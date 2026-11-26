@@ -43,6 +43,7 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 - Translate the Cursor and OpenCode Go provider setting descriptions, which showed in English in every other language.
 - Reject a theme layer background with an invalid value, such as an unknown image `fit`, instead of silently replacing it with a default colour.
 - Validate a surface's `placement.offset_x_expression` and `placement.offset_y_expression` when a theme loads, so a broken offset is reported instead of silently falling back to `offset_x` or `offset_y`.
+- Remove assumptions that unsafe native calls relied on but nothing enforced, found while documenting them: the start-with-Windows registry value is read into an aligned UTF-16 buffer, widget and desktop drawing never read or write past the bitmap when a render's pixels do not match its size, file dialog filters are always terminated, a SQLite text parameter must outlive its statement, and the COM guard cannot move to another thread.
 
 ## [2.25.3] - 2026-11-21
 

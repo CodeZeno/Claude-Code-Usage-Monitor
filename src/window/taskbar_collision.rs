@@ -158,7 +158,9 @@ fn occupies_space(role: UIA_CONTROLTYPE_ID) -> bool {
     .contains(&role)
 }
 
-struct ComApartment;
+/// Initializes COM on this thread until dropped. The raw pointer marker keeps
+/// the guard on its thread, so CoUninitialize runs where CoInitializeEx did.
+struct ComApartment(std::marker::PhantomData<*const ()>);
 impl ComApartment {
     fn new() -> windows::core::Result<Self> {
         // SAFETY: CoInitializeEx takes no pointers here (reserved is None); a guard is
@@ -166,13 +168,13 @@ impl ComApartment {
         unsafe {
             CoInitializeEx(None, COINIT_MULTITHREADED).ok()?;
         }
-        Ok(Self)
+        Ok(Self(std::marker::PhantomData))
     }
 }
 impl Drop for ComApartment {
     fn drop(&mut self) {
-        // SAFETY: a guard exists only after CoInitializeEx succeeded; both callers keep
-        // it as a local, so it is dropped on the thread that initialized COM.
+        // SAFETY: a guard exists only after CoInitializeEx succeeded, and it is not
+        // Send, so it is dropped on the thread that initialized COM.
         unsafe {
             CoUninitialize();
         }

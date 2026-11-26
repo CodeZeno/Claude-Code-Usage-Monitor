@@ -176,10 +176,9 @@ pub(super) fn render_custom_window(
     let width = rendered.width as i32;
     let height = rendered.height as i32;
     // SAFETY: the DCs and bitmap are created here and released on every path; `info`
-    // and the POINT/SIZE/BLENDFUNCTION are live locals. The pixel slice assumes the
-    // renderer's invariant pixels.len() == width * height, the size of the 32bpp DIB
-    // CreateDIBSection allocated at `bits` (checked non-null), which it is not checked
-    // against here; the slice is last used before the bitmap is deleted.
+    // and the POINT/SIZE/BLENDFUNCTION are live locals. The pixel slice covers
+    // `width * height` u32s, the size of the 32bpp DIB CreateDIBSection allocated at
+    // `bits` (checked non-null), and is last used before the bitmap is deleted.
     unsafe {
         // Keep the DWM surface alive across frames. Desktop rendering uses a
         // separate DirectComposition window, so no layered-style reset is
@@ -211,7 +210,10 @@ pub(super) fn render_custom_window(
             return;
         }
         let old = SelectObject(memory_dc, bitmap.into());
-        let window_pixels = std::slice::from_raw_parts_mut(bits as *mut u32, rendered.pixels.len());
+        let window_pixels = std::slice::from_raw_parts_mut(
+            bits as *mut u32,
+            rendered.width as usize * rendered.height as usize,
+        );
         for (target, source) in window_pixels.iter_mut().zip(&rendered.pixels) {
             // Windows normally lets mouse input pass through zero-alpha pixels in
             // layered windows. A nearly transparent pixel keeps the full surface
