@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use serde::Deserialize;
@@ -142,22 +143,46 @@ where
     }
 }
 
-fn installed_oauth_clients() -> Vec<(String, String)> {
+static CACHED_OAUTH_CLIENTS: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
+
+fn oauth_client_candidate_paths(
+    home: Option<PathBuf>,
+    local: Option<PathBuf>,
+    program_files: Option<PathBuf>,
+) -> Vec<PathBuf> {
     let mut paths = Vec::new();
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let local = PathBuf::from(local);
+    if let Some(home) = home {
+        paths.push(home.join(".gemini/bin/agy.exe"));
+    }
+    if let Some(local) = local {
         paths.push(local.join("Programs/Antigravity/resources/bin/language_server.exe"));
+        paths.push(local.join("Programs/Antigravity IDE/resources/bin/language_server.exe"));
         paths.push(local.join("agy/bin/agy.exe"));
     }
-    if let Some(program_files) = std::env::var_os("ProgramFiles") {
-        paths.push(
-            PathBuf::from(program_files).join("Antigravity/resources/bin/language_server.exe"),
-        );
+    if let Some(program_files) = program_files {
+        paths.push(program_files.join("Antigravity/resources/bin/language_server.exe"));
     }
-    for path in paths {
-        if let Ok(bytes) = fs::read(path) {
+    paths
+}
+
+fn installed_oauth_clients() -> Vec<(String, String)> {
+    if let Ok(guard) = CACHED_OAUTH_CLIENTS.lock() {
+        if let Some(cached) = guard.as_ref() {
+            return cached.clone();
+        }
+    }
+    let home = crate::known_folders::home_dir()
+        .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from));
+    let local = crate::known_folders::local_app_data_dir()
+        .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from));
+    let program_files = std::env::var_os("ProgramFiles").map(PathBuf::from);
+    for path in oauth_client_candidate_paths(home, local, program_files) {
+        if let Ok(bytes) = fs::read(&path) {
             let clients = oauth_clients_from_binary(&bytes);
             if !clients.is_empty() {
+                if let Ok(mut guard) = CACHED_OAUTH_CLIENTS.lock() {
+                    *guard = Some(clients.clone());
+                }
                 return clients;
             }
         }
@@ -251,6 +276,10 @@ fn refresh_from_clients(
     clients: Vec<(String, String)>,
     mut exchange: impl FnMut(&str, &str) -> Result<String, PollError>,
 ) -> Result<String, PollError> {
+    if clients.is_empty() {
+        diagnose::log("Antigravity OAuth refresh failed: no installed OAuth client found");
+        return Err(PollError::AuthRequired);
+    }
     for (client_id, client_secret) in clients {
         match exchange(&client_id, &client_secret) {
             // A rejected client pairing may not be the one that issued this token.
@@ -1031,6 +1060,20 @@ mod auth_tests {
         bytes.extend_from_slice(b"GOCSPX-");
         bytes.resize(bytes.len() + 28, b'1');
         assert_eq!(oauth_clients_from_binary(&bytes).len(), 1);
+    }
+
+    #[test]
+    fn oauth_client_candidate_paths_include_user_gemini_agy_binary() {
+        let paths = oauth_client_candidate_paths(
+            Some(PathBuf::from(r"C:\Users\dev")),
+            Some(PathBuf::from(r"C:\Users\dev\AppData\Local")),
+            Some(PathBuf::from(r"C:\Program Files")),
+        );
+        assert!(paths.contains(&PathBuf::from(r"C:\Users\dev").join(".gemini/bin/agy.exe")));
+        assert!(paths.contains(
+            &PathBuf::from(r"C:\Users\dev\AppData\Local")
+                .join("Programs/Antigravity IDE/resources/bin/language_server.exe")
+        ));
     }
 
     #[test]
