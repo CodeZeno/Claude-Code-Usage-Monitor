@@ -1,0 +1,353 @@
+{
+  "schema_version": 1,
+  "id": "theme-minecraft-claude",
+  "name": "Minecraft (Claude)",
+  "surfaces": [
+    {
+      "id": "mcc-surface",
+      "name": "Minecraft",
+      "render": "1",
+      "visibility": "100",
+      "placement": {
+        "reference": {
+          "region": "system_tray",
+          "display": 0
+        },
+        "nest": "taskbar",
+        "horizontal": "left",
+        "vertical": "bottom",
+        "surface_horizontal": "right",
+        "surface_vertical": "bottom",
+        "offset_x": -4,
+        "offset_y": 0
+      },
+      "width": "196",
+      "height": "44",
+      "background": {
+        "type": "none"
+      },
+      "border": null,
+      "mouse_events": {
+        "double_click": "show_dashboard()",
+        "right_click": "show_context_menu(\"dashboard-v2\")"
+      },
+      "corner_radius": "0",
+      "layout": "freeform",
+      "align": "start",
+      "gap": "0",
+      "content": {
+        "type": "none"
+      },
+      "children": [
+        {
+          "id": "mcc-hearts",
+          "name": "Hearts (weekly)",
+          "render": "1",
+          "visibility": "100",
+          "y": "5",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hearts-empty",
+          "name": "Hearts Empty",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hearts",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-claude-hearts-empty.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hearts-full-clip",
+          "name": "Hearts Full Container",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hearts",
+          "width": "floor((104 - clamp(round(claude.weekly.percentage), 0, 100)) / 5) * 7 + 2",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hearts-full",
+          "name": "Hearts Full",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hearts-full-clip",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-claude-hearts-full.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hunger",
+          "name": "Hunger (session)",
+          "render": "1",
+          "visibility": "100",
+          "y": "23",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hunger-empty",
+          "name": "Hunger Empty",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hunger",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-claude-hunger-empty.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hunger-full-clip",
+          "name": "Hunger Full Container",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hunger",
+          "width": "floor((104 - clamp(round(claude.session.percentage), 0, 100)) / 5) * 7 + 2",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-hunger-full",
+          "name": "Hunger Full",
+          "render": "1",
+          "visibility": "100",
+          "parent": "mcc-hunger-full-clip",
+          "width": "142",
+          "height": "16",
+          "background": {
+            "type": "image",
+            "path": "assets/minecraft-claude-hunger-full.png",
+            "fit": "contain"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "none"
+          }
+        },
+        {
+          "id": "mcc-weekly-reset-dark",
+          "name": "Weekly Reset (dark)",
+          "render": "system.dark",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "y": "5",
+          "width": "48",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.reset.seconds:duration}",
+            "font_family": "Segoe UI Variable Text",
+            "font_size": "11",
+            "weight": "regular",
+            "rendering": "antialiased",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "mcc-weekly-reset-light",
+          "name": "Weekly Reset (light)",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "y": "5",
+          "width": "48",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.weekly.reset.seconds:duration}",
+            "font_family": "Segoe UI Variable Text",
+            "font_size": "11",
+            "weight": "regular",
+            "rendering": "antialiased",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FF1A1A1A",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "mcc-session-reset-dark",
+          "name": "Session Reset (dark)",
+          "render": "system.dark",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "y": "23",
+          "width": "48",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.session.reset.seconds:duration}",
+            "font_family": "Segoe UI Variable Text",
+            "font_size": "11",
+            "weight": "regular",
+            "rendering": "antialiased",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FFFFFFFF",
+              "opacity": "1"
+            }
+          }
+        },
+        {
+          "id": "mcc-session-reset-light",
+          "name": "Session Reset (light)",
+          "render": "1 - system.dark",
+          "visibility": "100",
+          "anchor": {
+            "horizontal": "right",
+            "vertical": "top"
+          },
+          "y": "23",
+          "width": "48",
+          "height": "16",
+          "background": {
+            "type": "none"
+          },
+          "border": null,
+          "corner_radius": "0",
+          "layout": "freeform",
+          "align": "start",
+          "gap": "0",
+          "content": {
+            "type": "text",
+            "template": "{claude.session.reset.seconds:duration}",
+            "font_family": "Segoe UI Variable Text",
+            "font_size": "11",
+            "weight": "regular",
+            "rendering": "antialiased",
+            "contrast": "1",
+            "align": "right",
+            "color": {
+              "color": "#FF1A1A1A",
+              "opacity": "1"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -24,6 +24,7 @@ pub const COMPACT_FLUENT_QUAD_THEME_ID: &str = "compact-fluent-quad";
 pub const CLASSIC_VERTICAL_THEME_ID: &str = "classic-vertical";
 pub const STACKED_ROWS_THEME_ID: &str = "stacked-rows";
 pub const MINECRAFT_THEME_ID: &str = "theme-minecraft";
+pub const MINECRAFT_CLAUDE_THEME_ID: &str = "theme-minecraft-claude";
 
 const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
     (
@@ -47,11 +48,22 @@ const BUILTIN_THEME_SOURCES: &[(&str, &str)] = &[
 /// Bundled starting points are copied into the managed library only when they
 /// are missing. Their ids are deliberately excluded from `is_builtin_theme_id`
 /// so users can edit, rename, export, or delete them in Theme Studio.
-const BUNDLED_EDITABLE_THEME_SOURCES: &[(&str, &str)] = &[(
-    MINECRAFT_THEME_ID,
-    include_str!(concat!(env!("OUT_DIR"), "/minecraft-codex.json")),
-)];
-const BUNDLED_EDITABLE_INSTALL_MARKER: &str = ".minecraft-theme-installed";
+///
+/// Entries are (theme id, theme JSON, install marker). Each theme has its own
+/// marker so one added in a later release still reaches existing installs,
+/// while a bundled theme the user deleted stays deleted.
+const BUNDLED_EDITABLE_THEME_SOURCES: &[(&str, &str, &str)] = &[
+    (
+        MINECRAFT_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/minecraft-codex.json")),
+        ".minecraft-theme-installed",
+    ),
+    (
+        MINECRAFT_CLAUDE_THEME_ID,
+        include_str!(concat!(env!("OUT_DIR"), "/minecraft-claude.json")),
+        ".minecraft-claude-theme-installed",
+    ),
+];
 
 const BUNDLED_THEME_ASSETS: &[(&str, &[u8])] = &[
     (
@@ -61,6 +73,22 @@ const BUNDLED_THEME_ASSETS: &[(&str, &[u8])] = &[
     (
         "minecraft-full.png",
         include_bytes!("themes/assets/minecraft-full.png"),
+    ),
+    (
+        "minecraft-claude-hearts-empty.png",
+        include_bytes!("themes/assets/minecraft-claude-hearts-empty.png"),
+    ),
+    (
+        "minecraft-claude-hearts-full.png",
+        include_bytes!("themes/assets/minecraft-claude-hearts-full.png"),
+    ),
+    (
+        "minecraft-claude-hunger-empty.png",
+        include_bytes!("themes/assets/minecraft-claude-hunger-empty.png"),
+    ),
+    (
+        "minecraft-claude-hunger-full.png",
+        include_bytes!("themes/assets/minecraft-claude-hunger-full.png"),
     ),
 ];
 

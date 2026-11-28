@@ -46,6 +46,7 @@ fn build_themes() {
         "classic-vertical.json",
         "stacked-rows.json",
         "minecraft-codex.json",
+        "minecraft-claude.json",
     ] {
         let path = Path::new("src/themes").join(name);
         println!("cargo:rerun-if-changed={}", path.display());
