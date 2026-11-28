@@ -346,9 +346,14 @@ pub(super) fn scene_paint_color(paint: &Paint) -> egui::Color32 {
     )
 }
 
-/// The Windows appearance for scene swatches. The registry is read at most
-/// once a second, since every object's swatch asks on every repaint.
+/// The Windows appearance for scene swatches: the pinned render environment's
+/// when one is set, as in snapshot tests, so swatches match the preview.
+/// Otherwise the registry is read at most once a second, since every object's
+/// swatch asks on every repaint.
 fn studio_is_dark() -> bool {
+    if let Some(environment) = crate::theme_engine::current_fixed_render_environment() {
+        return environment.dark;
+    }
     thread_local! {
         static CACHED: std::cell::Cell<Option<(std::time::Instant, bool)>> =
             const { std::cell::Cell::new(None) };
