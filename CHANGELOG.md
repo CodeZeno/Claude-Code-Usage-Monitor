@@ -6,6 +6,8 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
 ## [Unreleased]
 
+## [2.26.0] - 2026-11-28
+
 ### Added
 
 - Run formatting, Clippy with warnings denied, tests, a locked release build, and repository checks on every pull request and push to `main`, reporting a single `CI passed` status for branch protection.
@@ -1764,4 +1766,5 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 [2.25.1]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.0...v2.25.1
 [2.25.2]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.1...v2.25.2
 [2.25.3]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.2...v2.25.3
-[Unreleased]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.3...HEAD
+[2.26.0]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.25.3...v2.26.0
+[Unreleased]: https://github.com/CodeZeno/Claude-Code-Usage-Monitor/compare/v2.26.0...HEAD
