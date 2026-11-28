@@ -996,6 +996,33 @@ fn antigravity_merged_gemini_pool_that_mentions_argon_still_shows() {
     assert!(usage.external_pool.is_some());
 }
 
+#[test]
+fn antigravity_live_quota_summary_from_issue_231_shows_gemini() {
+    // The retrieveUserQuotaSummary groups reported on #231 and #233, with the
+    // reset times removed.
+    let response: antigravity::AntigravityQuotaSummaryResponse = serde_json::from_str(
+        r#"{"groups":[
+            {"displayName":"Gemini Models",
+             "description":"Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 3.8 Flash",
+             "buckets":[
+                {"bucketId":"gemini-weekly","displayName":"Weekly Limit Remaining","window":"weekly","remainingFraction":0.7},
+                {"bucketId":"gemini-5h","displayName":"Five Hour Limit Remaining","window":"5h","remainingFraction":0.4}]},
+            {"displayName":"Claude and GPT models",
+             "description":"Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+             "buckets":[
+                {"bucketId":"3p-weekly","displayName":"Weekly Limit Remaining","window":"weekly","remainingFraction":0.9},
+                {"bucketId":"3p-5h","displayName":"Five Hour Limit Remaining","window":"5h","remainingFraction":0.5}]}
+        ]}"#,
+    )
+    .unwrap();
+    let usage = antigravity::antigravity_usage_from_summary(response).expect("usage");
+    assert!((usage.session.percentage - 60.0).abs() < 0.001);
+    assert!((usage.weekly.percentage - 30.0).abs() < 0.001);
+    let external = usage.external_pool.expect("Claude and GPT pool");
+    assert!((external.session.percentage - 50.0).abs() < 0.001);
+    assert!((external.weekly.percentage - 10.0).abs() < 0.001);
+}
+
 // Provider contract. Every provider in `ProviderId::ALL` needs a redacted
 // response in `src/poller/fixtures/<key>.json` that its own parser reads into
 // usable data that survives a save and load of the usage cache, translated

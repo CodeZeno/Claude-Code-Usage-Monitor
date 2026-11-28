@@ -2,7 +2,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
@@ -143,7 +143,32 @@ where
     }
 }
 
-static CACHED_OAUTH_CLIENTS: Mutex<Option<Vec<(String, String)>>> = Mutex::new(None);
+type OAuthClients = Vec<(String, String)>;
+
+/// The OAuth clients found in an installed Antigravity binary, kept with the
+/// binary's size and modification time so an update is rescanned instead of
+/// reading the whole binary (about 200 MB) on every token refresh.
+struct CachedOAuthClients {
+    path: PathBuf,
+    stamp: FileStamp,
+    clients: OAuthClients,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct FileStamp {
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+fn file_stamp(path: &Path) -> Option<FileStamp> {
+    let metadata = fs::metadata(path).ok()?;
+    Some(FileStamp {
+        len: metadata.len(),
+        modified: metadata.modified().ok(),
+    })
+}
+
+static CACHED_OAUTH_CLIENTS: Mutex<Option<CachedOAuthClients>> = Mutex::new(None);
 
 fn oauth_client_candidate_paths(
     home: Option<PathBuf>,
@@ -165,32 +190,54 @@ fn oauth_client_candidate_paths(
     paths
 }
 
-fn installed_oauth_clients() -> Vec<(String, String)> {
-    if let Ok(guard) = CACHED_OAUTH_CLIENTS.lock() {
-        if let Some(cached) = guard.as_ref() {
-            return cached.clone();
-        }
-    }
+fn installed_oauth_clients() -> OAuthClients {
     let home = crate::known_folders::home_dir()
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from));
     let local = crate::known_folders::local_app_data_dir()
         .or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from));
     let program_files = std::env::var_os("ProgramFiles").map(PathBuf::from);
-    for path in oauth_client_candidate_paths(home, local, program_files) {
-        if let Ok(bytes) = fs::read(&path) {
-            let clients = oauth_clients_from_binary(&bytes);
-            if !clients.is_empty() {
-                if let Ok(mut guard) = CACHED_OAUTH_CLIENTS.lock() {
-                    *guard = Some(clients.clone());
-                }
-                return clients;
-            }
+    cached_oauth_clients(
+        &CACHED_OAUTH_CLIENTS,
+        &oauth_client_candidate_paths(home, local, program_files),
+    )
+}
+
+/// Returns the cached clients while their binary is unchanged; otherwise scans
+/// the candidates in order and caches the first binary that yields clients.
+fn cached_oauth_clients(
+    cache: &Mutex<Option<CachedOAuthClients>>,
+    candidates: &[PathBuf],
+) -> OAuthClients {
+    let Ok(mut cache) = cache.lock() else {
+        return Vec::new();
+    };
+    if let Some(cached) = cache.as_ref() {
+        if file_stamp(&cached.path).as_ref() == Some(&cached.stamp) {
+            return cached.clients.clone();
+        }
+    }
+    *cache = None;
+    for path in candidates {
+        let Some(stamp) = file_stamp(path) else {
+            continue;
+        };
+        let Ok(bytes) = fs::read(path) else {
+            continue;
+        };
+        let clients = oauth_clients_from_binary(&bytes);
+        if !clients.is_empty() {
+            *cache = Some(CachedOAuthClients {
+                path: path.clone(),
+                stamp,
+                clients: clients.clone(),
+            });
+            return clients;
         }
     }
     Vec::new()
 }
 
-fn oauth_clients_from_binary(bytes: &[u8]) -> Vec<(String, String)> {
+fn oauth_clients_from_binary(bytes: &[u8]) -> OAuthClients {
     const CLIENT_ID_SUFFIX: &str = ".apps.googleusercontent.com";
     const CLIENT_SECRET_PREFIX: &str = "GOCSPX-";
     let mut ids = Vec::new();
@@ -273,7 +320,7 @@ fn refresh_antigravity_token(refresh_token: &str) -> Result<String, PollError> {
 }
 
 fn refresh_from_clients(
-    clients: Vec<(String, String)>,
+    clients: OAuthClients,
     mut exchange: impl FnMut(&str, &str) -> Result<String, PollError>,
 ) -> Result<String, PollError> {
     if clients.is_empty() {
@@ -870,6 +917,75 @@ fn read_antigravity_credentials() -> Option<AntigravityTokenData> {
 mod auth_tests {
     use super::*;
     use std::cell::Cell;
+    use std::time::UNIX_EPOCH;
+
+    // Built at runtime so no literal looks like a real OAuth client to secret scanners.
+    fn fake_client_id() -> String {
+        format!(
+            "{}-{}.apps.googleusercontent.com",
+            "1".repeat(12),
+            "c".repeat(32)
+        )
+    }
+
+    fn fake_client_secret(fill: char) -> String {
+        format!("GOCSPX-{}", fill.to_string().repeat(28))
+    }
+
+    fn scratch_directory(name: &str) -> PathBuf {
+        let directory = std::env::temp_dir().join(format!(
+            "antigravity-{name}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&directory).unwrap();
+        directory
+    }
+
+    fn fake_binary(client_secret: &str, padding: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; padding];
+        let client_id = fake_client_id();
+        bytes.extend_from_slice(format!("\0{client_id}\0{client_secret}\0").as_bytes());
+        bytes
+    }
+
+    #[test]
+    fn oauth_clients_are_cached_until_the_binary_changes() {
+        let directory = scratch_directory("oauth-cache");
+        let missing = directory.join("missing.exe");
+        let binary = directory.join("language_server.exe");
+        let cache = Mutex::new(None);
+        let candidates = [missing, binary.clone()];
+
+        assert!(cached_oauth_clients(&cache, &candidates).is_empty());
+        assert!(
+            cache.lock().unwrap().is_none(),
+            "no clients must not be cached"
+        );
+
+        fs::write(&binary, fake_binary(&fake_client_secret('a'), 16)).unwrap();
+        let old = vec![(fake_client_id(), fake_client_secret('a'))];
+        assert_eq!(cached_oauth_clients(&cache, &candidates), old);
+
+        // The cached clients are returned without reading the binary again.
+        cache.lock().unwrap().as_mut().unwrap().clients = vec![("cached".into(), "c".into())];
+        assert_eq!(cached_oauth_clients(&cache, &candidates)[0].0, "cached");
+
+        // An updated Antigravity install is rescanned.
+        fs::write(&binary, fake_binary(&fake_client_secret('b'), 64)).unwrap();
+        let new = vec![(fake_client_id(), fake_client_secret('b'))];
+        assert_eq!(cached_oauth_clients(&cache, &candidates), new);
+
+        // A removed install drops the cache.
+        fs::remove_file(&binary).unwrap();
+        assert!(cached_oauth_clients(&cache, &candidates).is_empty());
+        assert!(cache.lock().unwrap().is_none());
+
+        fs::remove_dir_all(&directory).unwrap();
+    }
 
     fn credentials(expiry: Option<&str>) -> AntigravityTokenData {
         AntigravityTokenData {

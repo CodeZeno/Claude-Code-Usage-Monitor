@@ -42,6 +42,8 @@ changes grouped into Added, Changed, Fixed, and Removed where applicable.
 
 ### Fixed
 
+- Show Antigravity's Gemini usage again. Since Antigravity merged its Gemini models into one quota whose description lists Gemini 4 Argon, the widget showed `--` for Gemini while the dashboard still listed the limits. Separately reported Argon quotas still stay out of the main Gemini meter. Thanks to @Hugo-Polloli. ([#231](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/issues/231), [#233](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/233))
+- Keep Antigravity signed in when only the Antigravity CLI is installed in `~/.gemini/bin`, or the IDE is installed in `Antigravity IDE`: the token refresh now finds the sign-in client in those folders. The installed client is found once and looked up again only when Antigravity is updated, instead of reading the 200 MB program on every refresh. Thanks to @CharlyMatzu. ([#240](https://github.com/CodeZeno/Claude-Code-Usage-Monitor/pull/240))
 - Update the transitive `url` dependency from 2.5.8 to 2.5.9, with `form_urlencoded` from 1.2.2 to 1.2.3, to resolve RUSTSEC-2026-0592 found by the release dependency checks.
 - Update the transitive `cookie` dependency from 0.18.2 to 0.18.3 to resolve RUSTSEC-2026-0594 found by the release dependency checks.
 - Translate the Cursor and OpenCode Go provider setting descriptions, which showed in English in every other language.

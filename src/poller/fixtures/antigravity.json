@@ -2,9 +2,18 @@
   "groups": [
     {
       "displayName": "Gemini Models",
+      "description": "Models within this group: Gemini 4 Neon, Gemini 4 Carbon, Gemini 4 Argon, Gemini 4 Hydrogen, Gemini 3.8 Flash",
       "buckets": [
-        { "bucketId": "gemini-5h", "window": "5h", "resetTime": "2027-01-15T12:00:00Z", "remainingFraction": 0.8 },
-        { "bucketId": "gemini-weekly", "window": "weekly", "resetTime": "2027-01-20T08:00:00Z", "remainingFraction": 0.55 }
+        { "bucketId": "gemini-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "resetTime": "2027-01-20T08:00:00Z", "remainingFraction": 0.55 },
+        { "bucketId": "gemini-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "resetTime": "2027-01-15T12:00:00Z", "remainingFraction": 0.8 }
+      ]
+    },
+    {
+      "displayName": "Claude and GPT models",
+      "description": "Models within this group: Claude Opus 5.5, Claude Sonnet 5.5, GPT-OSS 120B",
+      "buckets": [
+        { "bucketId": "3p-weekly", "displayName": "Weekly Limit Remaining", "window": "weekly", "resetTime": "2027-01-20T08:00:00Z", "remainingFraction": 1 },
+        { "bucketId": "3p-5h", "displayName": "Five Hour Limit Remaining", "window": "5h", "resetTime": "2027-01-15T12:00:00Z", "remainingFraction": 0.9 }
       ]
     }
   ]
