@@ -1674,6 +1674,18 @@ fn taskbar_lock_applies(state: &AppState) -> bool {
     }
 }
 
+/// A locked taskbar widget dragged off the taskbar turns the lock off, so the
+/// drop lands as an ordinary floating widget. A widget whose placement the
+/// lock does not cover (already floating) keeps the user's preference.
+/// Returns whether the lock was released.
+fn release_taskbar_lock_for_desktop_drop(state: &mut AppState) -> bool {
+    if !taskbar_lock_applies(state) {
+        return false;
+    }
+    state.lock_taskbar = false;
+    true
+}
+
 fn clear_locked_auto_ejection(state: &mut AppState) -> bool {
     if !taskbar_lock_applies(state) || !state.auto_ejected {
         return false;
