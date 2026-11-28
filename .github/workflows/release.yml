@@ -16,8 +16,11 @@ jobs:
   # Includes the dependency security checks.
   ci:
     uses: ./.github/workflows/ci.yml
+    # Every permission a job in ci.yml asks for; a called workflow cannot
+    # start with more than its caller grants.
     permissions:
       contents: read
+      pull-requests: read
 
   build:
     needs: [ci]
