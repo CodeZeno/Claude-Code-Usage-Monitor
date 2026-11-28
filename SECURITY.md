@@ -28,7 +28,11 @@ exposed, revoke or rotate them through the affected provider.
 ## Scope and supported versions
 
 The monitor reads local credentials for enabled providers, including Claude
-Code, Codex, Google Antigravity, OpenCode Go, Cursor, and Grok Build. Reports about
+Code, Codex, Google Antigravity, OpenCode Go, Cursor, Grok Build, and GitHub
+Copilot. It uses only the sign-in that each provider's own CLI, desktop app or
+IDE has already stored on the machine; it never asks for, stores or writes an
+API key, token or cookie, and it contacts only the providers' own endpoints and
+GitHub for updates. Reports about
 credential exposure, unsafe credential handling, unintended network requests,
 update verification, or dependencies used by the app are welcome. See
 [updater verification](docs/updater.md) for the updater's trust boundary.

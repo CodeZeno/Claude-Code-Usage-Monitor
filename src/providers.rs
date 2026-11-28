@@ -32,6 +32,52 @@ pub struct ProviderDescriptor {
     /// Stable Win32 command id used by native provider menu items.
     pub native_menu_command_id: u16,
     pub default_enabled: bool,
+    /// Where the poller finds the user's sign-in, most preferred first.
+    pub credentials: &'static [CredentialSource],
+}
+
+/// A place a provider reads the user's sign-in from.
+///
+/// Providers use only credentials that the provider's own CLI, desktop app or
+/// IDE has already stored on this machine. The monitor never asks for an API
+/// key, token or cookie, and never stores or writes one. `UserSupplied` exists
+/// only for the providers that predate this rule; the provider contract test
+/// rejects it anywhere else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CredentialSource {
+    /// A file the provider's own client writes when the user signs in.
+    SignInFile(&'static str),
+    /// A Windows Credential Manager entry the provider's own client writes.
+    CredentialManager(&'static str),
+    /// An environment variable that the provider's own tools already read.
+    ToolEnvironment(&'static str),
+    /// The provider's CLI, run so that it refreshes its own stored sign-in.
+    CliRefresh(&'static str),
+    /// A credential the user copies in by hand. Not allowed for new providers.
+    UserSupplied(&'static str),
+}
+
+impl CredentialSource {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::SignInFile(name)
+            | Self::CredentialManager(name)
+            | Self::ToolEnvironment(name)
+            | Self::CliRefresh(name)
+            | Self::UserSupplied(name) => name,
+        }
+    }
+
+    pub fn describe(self) -> String {
+        let kind = match self {
+            Self::SignInFile(_) => "sign-in file",
+            Self::CredentialManager(_) => "Windows Credential Manager",
+            Self::ToolEnvironment(_) => "environment variable",
+            Self::CliRefresh(_) => "CLI refresh",
+            Self::UserSupplied(_) => "user-supplied",
+        };
+        format!("{kind}: {}", self.name())
+    }
 }
 
 pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
@@ -43,6 +89,12 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from Anthropic",
         native_menu_command_id: 60,
         default_enabled: true,
+        credentials: &[
+            CredentialSource::SignInFile("~/.claude/.credentials.json (Claude Code)"),
+            CredentialSource::SignInFile("Claude desktop app token cache (config.json)"),
+            CredentialSource::SignInFile("~/.claude/.credentials.json in WSL (Claude Code)"),
+            CredentialSource::CliRefresh("claude"),
+        ],
     },
     ProviderDescriptor {
         id: ProviderId::Codex,
@@ -52,6 +104,10 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from OpenAI",
         native_menu_command_id: 61,
         default_enabled: false,
+        credentials: &[
+            CredentialSource::SignInFile("$CODEX_HOME/auth.json or ~/.codex/auth.json (Codex CLI)"),
+            CredentialSource::CliRefresh("codex"),
+        ],
     },
     ProviderDescriptor {
         id: ProviderId::Antigravity,
@@ -61,6 +117,9 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from Google",
         native_menu_command_id: 62,
         default_enabled: false,
+        credentials: &[CredentialSource::CredentialManager(
+            "gemini:antigravity (Antigravity)",
+        )],
     },
     ProviderDescriptor {
         id: ProviderId::OpenCode,
@@ -70,6 +129,13 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from OpenCode Go",
         native_menu_command_id: 63,
         default_enabled: false,
+        credentials: &[
+            CredentialSource::UserSupplied("OPENCODE_GO_AUTH_COOKIE"),
+            CredentialSource::UserSupplied("OPENCODE_GO_WORKSPACE_ID"),
+            CredentialSource::UserSupplied(
+                "%APPDATA%/opencode-go/config.json or OPENCODE_GO_CONFIG_FILE",
+            ),
+        ],
     },
     ProviderDescriptor {
         id: ProviderId::Cursor,
@@ -79,6 +145,12 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from Cursor",
         native_menu_command_id: 64,
         default_enabled: false,
+        credentials: &[
+            CredentialSource::SignInFile(
+                "%APPDATA%/Cursor/User/globalStorage/state.vscdb (Cursor)",
+            ),
+            CredentialSource::UserSupplied("CURSOR_SESSION_TOKEN"),
+        ],
     },
     ProviderDescriptor {
         id: ProviderId::Grok,
@@ -88,6 +160,10 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from xAI",
         native_menu_command_id: 65,
         default_enabled: false,
+        credentials: &[
+            CredentialSource::SignInFile("$GROK_HOME/auth.json or ~/.grok/auth.json (Grok CLI)"),
+            CredentialSource::CliRefresh("grok"),
+        ],
     },
     ProviderDescriptor {
         id: ProviderId::Copilot,
@@ -97,6 +173,13 @@ pub const PROVIDER_DESCRIPTORS: [ProviderDescriptor; 7] = [
         settings_description: "Collect usage from GitHub",
         native_menu_command_id: 66,
         default_enabled: false,
+        credentials: &[
+            CredentialSource::CredentialManager("Copilot CLI login"),
+            CredentialSource::CredentialManager("GitHub CLI login (gh)"),
+            CredentialSource::ToolEnvironment("COPILOT_GITHUB_TOKEN"),
+            CredentialSource::ToolEnvironment("GH_TOKEN"),
+            CredentialSource::ToolEnvironment("GITHUB_TOKEN"),
+        ],
     },
 ];
 

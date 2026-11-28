@@ -25,6 +25,10 @@ disallowed-methods = [
     { path = "ureq::patch", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
     { path = "ureq::trace", reason = "the default ureq agent skips the project's TLS and timeout policy; use poller::build_agent or updater::build_agent" },
 
+    # The app never asks for credentials: providers read the sign-in that the
+    # provider's own CLI, desktop app or IDE stores (see CONTRIBUTING.md).
+    { path = "egui::TextEdit::password", reason = "the app never asks for API keys, tokens or passwords; read the sign-in that the provider's own CLI, desktop app or IDE already stores (CONTRIBUTING.md, Provider changes)" },
+
     # The process environment is shared by provider discovery and parallel tests.
     { path = "std::env::set_var", reason = "the process environment is shared by provider discovery and parallel tests; pass paths or settings explicitly (tests use app_settings::app_data_directory)" },
     { path = "std::env::remove_var", reason = "the process environment is shared by provider discovery and parallel tests; pass paths or settings explicitly (tests use app_settings::app_data_directory)" },

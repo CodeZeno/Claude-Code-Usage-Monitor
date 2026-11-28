@@ -108,6 +108,10 @@ jobs:
     name: release build
     runs-on: windows-latest
     timeout-minutes: 45
+    permissions:
+      contents: read
+      # Read the footprint-approved label.
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -123,6 +127,40 @@ jobs:
 
       - name: Build release binary
         run: cargo build --release --locked
+
+      # Executable size, Cargo.lock packages, and the time and peak memory to
+      # render the bundled themes, compared with the last main build. Main
+      # builds save the baseline; pull requests only read it.
+      - name: Restore footprint baseline
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/footprint/baseline.json
+          key: footprint-${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+          restore-keys: footprint-
+
+      # Growth over 20% fails a pull request until a maintainer adds the
+      # footprint-approved label and re-runs this job. Elsewhere it is reported.
+      - name: Check footprint
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          FOOTPRINT: ${{ runner.temp }}/footprint/baseline.json
+        run: |
+          $allowGrowth = $true
+          if ($env:PR_NUMBER) {
+            $labels = gh api "repos/$env:GITHUB_REPOSITORY/issues/$env:PR_NUMBER/labels" --jq '.[].name'
+            if ($LASTEXITCODE -ne 0) { throw 'Could not read the pull request labels.' }
+            $allowGrowth = @($labels) -contains 'footprint-approved'
+          }
+          ./tests/Test-Footprint.ps1 -Baseline $env:FOOTPRINT -Output $env:FOOTPRINT -AllowGrowth:$allowGrowth
+
+      - name: Save footprint baseline
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/footprint/baseline.json
+          key: footprint-${{ github.sha }}
 
   # Release metadata and tracked-file rules from scripts/ReleaseTools.psm1. Uses
   # Windows PowerShell 5.1, the shell the local release scripts run in.

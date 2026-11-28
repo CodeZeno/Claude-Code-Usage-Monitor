@@ -142,7 +142,20 @@ provider in `ProviderId::ALL`. A new provider needs:
   as `<key>.available`;
 - its display name and setting description in every file in
   `src/localization/locales/`;
-- a unique key, cache key and menu command id in `src/providers.rs`.
+- a unique key, cache key and menu command id in `src/providers.rs`;
+- a `credentials` list in its descriptor naming where it reads the sign-in
+  that the provider's own CLI, desktop app or IDE already stored on the
+  machine, most preferred first: a sign-in file, a Windows Credential Manager
+  entry, an environment variable the provider's own tools read, or the
+  provider's CLI refreshing its own login.
+
+Providers use only credentials that are already on the user's machine. A
+provider must not ask the user for an API key, token, password or cookie, keep
+one in settings or the usage cache, or write to a credential file or the
+Credential Manager. `CredentialSource::UserSupplied` describes the OpenCode Go
+cookie and Cursor's `CURSOR_SESSION_TOKEN` override, which predate this rule;
+`src/policy_tests.rs` rejects it for any other provider. `--diagnose` logs each
+provider's credential sources.
 
 ### Lint rules
 
@@ -161,9 +174,50 @@ reports a broken rule and the fix:
   `updater::build_agent`, which apply the TLS and timeout settings.
 - Do not change the process environment (`std::env::set_var` and
   `std::env::remove_var`); provider discovery and parallel tests share it.
+- Do not add password fields (`egui::TextEdit::password`); the app never asks
+  for credentials.
 
 Fix the code rather than adding an `allow`. When an exception is necessary,
 scope it to the item that needs it and give a `reason`.
+
+### Policy tests
+
+`src/policy_tests.rs` scans the source for changes that need a maintainer's
+decision, and `cargo test` fails until the matching list in that file is
+updated, with the reason, in the same pull request:
+
+- every provider declares its credential sources, and only the existing
+  exceptions are `UserSupplied`;
+- environment variables that look like credentials are declared as a
+  provider's credential source;
+- settings and the usage cache have no field that looks like a credential;
+- pollers do not write, copy or delete files or credentials;
+- every URL host in the code and bundled themes is in `ALLOWED_HOSTS`, with
+  its purpose, and uses HTTPS;
+- every program the app starts (`Command::new`) is in `PROCESS_LAUNCHES`;
+- `ShellExecute`, `ureq` and native libraries stay in the files where they are
+  reviewed, and raw sockets, WinHTTP, WinINet, `curl`, PowerShell downloads
+  and credential writes are not used at all;
+- `build.rs` starts no programs and contacts nothing, and the `windows` crate
+  features include no networking APIs.
+
+`deny.toml` also bans crates that would bring a second HTTP stack, an async
+runtime, telemetry or credential storage; `cargo deny` reports them.
+
+### Footprint
+
+`tests/Test-Footprint.ps1` measures the release executable's size, the
+packages in `Cargo.lock`, and the time and peak memory to render every bundled
+theme. CI compares a pull request with the last `main` build and writes the
+table to the job summary. Executable growth over 5% and new crates are
+warnings to explain in the pull request; growth over 20% fails the check until
+a maintainer accepts it with the `footprint-approved` label. Timings vary
+between machines and only warn. To compare locally:
+
+```powershell
+./tests/Test-Footprint.ps1 -Output before.json   # before the change
+./tests/Test-Footprint.ps1 -Baseline before.json # after rebuilding
+```
 
 ### Line endings
 

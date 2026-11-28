@@ -13,6 +13,8 @@ mod known_folders;
 mod localization;
 mod models;
 mod native_interop;
+#[cfg(test)]
+mod policy_tests;
 mod poller;
 mod providers;
 #[cfg(test)]
@@ -41,7 +43,22 @@ fn main() {
             diagnose::init()
         };
         match init_result {
-            Ok(path) => diagnose::log(format!("startup args={args:?} log_path={}", path.display())),
+            Ok(path) => {
+                diagnose::log(format!("startup args={args:?} log_path={}", path.display()));
+                for provider in providers::ProviderId::ALL {
+                    let descriptor = provider.descriptor();
+                    let sources: Vec<String> = descriptor
+                        .credentials
+                        .iter()
+                        .map(|source| source.describe())
+                        .collect();
+                    diagnose::log(format!(
+                        "{} credentials: {}",
+                        descriptor.key,
+                        sources.join("; ")
+                    ));
+                }
+            }
             Err(error) => {
                 // Logging may not be available yet, but keep startup behavior unchanged.
                 let _ = error;

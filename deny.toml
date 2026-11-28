@@ -36,6 +36,28 @@ allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 # The GUI/Windows dependency graph currently needs multiple crate versions.
 multiple-versions = "warn"
 wildcards = "deny"
+# The app talks to the network only through ureq, in poller::build_agent and
+# updater::build_agent. These crates bring a second HTTP stack, an async runtime
+# or telemetry; adding one needs a maintainer decision, not an allow.
+deny = [
+    { crate = "reqwest", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "hyper", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "h2", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "isahc", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "attohttpc", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "minreq", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "surf", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "ehttp", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "curl", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "curl-sys", reason = "HTTP goes through ureq in poller::build_agent and updater::build_agent" },
+    { crate = "tungstenite", reason = "the app opens no WebSocket connections" },
+    { crate = "tokio", reason = "polling runs on plain threads; an async runtime is not needed" },
+    { crate = "async-std", reason = "polling runs on plain threads; an async runtime is not needed" },
+    { crate = "sentry", reason = "the app sends no telemetry or crash reports" },
+    { crate = "opentelemetry", reason = "the app sends no telemetry" },
+    { crate = "posthog-rs", reason = "the app sends no telemetry" },
+    { crate = "keyring", reason = "the app never stores credentials; providers read the sign-in their own client stored" },
+]
 
 [sources]
 unknown-registry = "deny"

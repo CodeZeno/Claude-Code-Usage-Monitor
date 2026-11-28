@@ -25,6 +25,11 @@ Include relevant manual verification and redacted screenshots for UI changes. --
 - [ ] I have added or updated relevant documentation and tests, where applicable.
 - [ ] Theme changes: I have updated `tests/snapshots/themes` and checked the new images
       (see CONTRIBUTING.md, Theme changes).
-- [ ] New providers: `every_provider_meets_the_contract` passes with a redacted fixture
-      (see CONTRIBUTING.md, Provider changes).
+- [ ] New providers: `every_provider_meets_the_contract` passes with a redacted fixture,
+      and the provider reads only a sign-in that its own CLI, app or IDE already stored;
+      it does not ask the user for a key, token or cookie (see CONTRIBUTING.md,
+      Provider changes).
+- [ ] New hosts, programs, native libraries or crates are explained above, and any
+      footprint warning from CI is explained (see CONTRIBUTING.md, Policy tests and
+      Footprint).
 - [ ] I have left changelog and version changes to maintainers unless requested.
